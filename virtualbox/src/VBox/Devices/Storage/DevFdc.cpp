@@ -1,10 +1,10 @@
 /* $Id: DevFdc.cpp $ */
 /** @file
- * VBox storage devices: Floppy disk controller
+ * VBox storage devices - Floppy disk controller
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -42,17 +42,17 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_FDC
 #include <VBox/vmm/pdmdev.h>
+#include <VBox/vmm/pdmstorageifs.h>
 #include <iprt/assert.h>
 #include <iprt/string.h>
 #include <iprt/uuid.h>
 
 #include "VBoxDD.h"
-#include "vl_vbox.h"
 
 #define FDC_SAVESTATE_CURRENT   2       /* The new and improved saved state. */
 #define FDC_SAVESTATE_OLD       1       /* The original saved state. */
@@ -70,19 +70,11 @@
         do { printf("FLOPPY: " fmt , ##args); } while (0)
     #endif
 #else /* !VBOX */
-    # ifdef LOG_ENABLED
-        static void FLOPPY_DPRINTF (const char *fmt, ...)
-        {
-            if (LogIsEnabled ()) {
-                va_list args;
-                va_start (args, fmt);
-                RTLogLogger (NULL, NULL, "floppy: %N", fmt, &args); /* %N - nested va_list * type formatting call. */
-                va_end (args);
-            }
-        }
-    # else
-      DECLINLINE(void) FLOPPY_DPRINTF(const char *pszFmt, ...) {}
-    # endif
+# ifdef LOG_ENABLED
+#  define FLOPPY_DPRINTF(...) Log(("floppy: " __VA_ARGS__))
+# else
+#  define FLOPPY_DPRINTF(...) do { } while (0)
+# endif
 #endif /* !VBOX */
 
 #ifndef VBOX
@@ -141,26 +133,26 @@ typedef enum fdrive_rate_t {
  * The status for one drive.
  *
  * @implements  PDMIBASE
- * @implements  PDMIBLOCKPORT
+ * @implements  PDMIMEDIAPORT
  * @implements  PDMIMOUNTNOTIFY
  */
 typedef struct fdrive_t {
 #ifndef VBOX
     BlockDriverState *bs;
 #else /* VBOX */
+    /** Pointer to the owning device instance. */
+    R3PTRTYPE(PPDMDEVINS)           pDevIns;
     /** Pointer to the attached driver's base interface. */
     R3PTRTYPE(PPDMIBASE)            pDrvBase;
     /** Pointer to the attached driver's block interface. */
-    R3PTRTYPE(PPDMIBLOCK)           pDrvBlock;
-    /** Pointer to the attached driver's block bios interface. */
-    R3PTRTYPE(PPDMIBLOCKBIOS)       pDrvBlockBios;
+    R3PTRTYPE(PPDMIMEDIA)           pDrvMedia;
     /** Pointer to the attached driver's mount interface.
      * This is NULL if the driver isn't a removable unit. */
     R3PTRTYPE(PPDMIMOUNT)           pDrvMount;
     /** The base interface. */
     PDMIBASE                        IBase;
     /** The block port interface. */
-    PDMIBLOCKPORT                   IPort;
+    PDMIMEDIAPORT                   IPort;
     /** The mount notify interface. */
     PDMIMOUNTNOTIFY                 IMountNotify;
     /** The LUN #. */
@@ -196,26 +188,27 @@ static void fd_init(fdrive_t *drv, bool fInit)
 #else  /* VBOX */
     if (fInit) {
         /* Fixate the drive type at init time if possible. */
-        if (drv->pDrvBlock) {
-            PDMBLOCKTYPE enmType = drv->pDrvBlock->pfnGetType(drv->pDrvBlock);
+        if (drv->pDrvMedia) {
+            PDMMEDIATYPE enmType = drv->pDrvMedia->pfnGetType(drv->pDrvMedia);
             switch (enmType) {
-                case PDMBLOCKTYPE_FLOPPY_360:
-                case PDMBLOCKTYPE_FLOPPY_1_20:
+                case PDMMEDIATYPE_FLOPPY_360:
+                case PDMMEDIATYPE_FLOPPY_1_20:
                     drv->drive = FDRIVE_DRV_120;
                     break;
-                case PDMBLOCKTYPE_FLOPPY_720:
-                case PDMBLOCKTYPE_FLOPPY_1_44:
+                case PDMMEDIATYPE_FLOPPY_720:
+                case PDMMEDIATYPE_FLOPPY_1_44:
                     drv->drive = FDRIVE_DRV_144;
                     break;
                 default:
                     AssertFailed();
-                case PDMBLOCKTYPE_FLOPPY_2_88:
+                    RT_FALL_THRU();
+                case PDMMEDIATYPE_FLOPPY_2_88:
                     drv->drive = FDRIVE_DRV_288;
                     break;
-                case PDMBLOCKTYPE_FLOPPY_FAKE_15_6:
+                case PDMMEDIATYPE_FLOPPY_FAKE_15_6:
                     drv->drive = FDRIVE_DRV_FAKE_15_6;
                     break;
-                case PDMBLOCKTYPE_FLOPPY_FAKE_63_5:
+                case PDMMEDIATYPE_FLOPPY_FAKE_63_5:
                     drv->drive = FDRIVE_DRV_FAKE_63_5;
                     break;
             }
@@ -249,6 +242,7 @@ static int fd_sector(fdrive_t *drv)
  * returns 2 if track is invalid
  * returns 3 if sector is invalid
  * returns 4 if seek is disabled
+ * returns 5 if no media in drive
  */
 static int fd_seek(fdrive_t *drv, uint8_t head, uint8_t track, uint8_t sect,
                    int enable_seek)
@@ -256,6 +250,12 @@ static int fd_seek(fdrive_t *drv, uint8_t head, uint8_t track, uint8_t sect,
     int sector;
     int ret;
 
+    if (!drv->last_sect) {
+        FLOPPY_DPRINTF("no disk in drive (max=%d %d %02x %02x)\n",
+                       1, (drv->flags & FDISK_DBL_SIDES) == 0 ? 0 : 1,
+                       drv->max_track, drv->last_sect);
+        return 5;
+    }
     if (track > drv->max_track ||
         (head != 0 && (drv->flags & FDISK_DBL_SIDES) == 0)) {
         FLOPPY_DPRINTF("try to read %d %02x %02x (max=%d %d %02x %02x)\n",
@@ -280,6 +280,8 @@ static int fd_seek(fdrive_t *drv, uint8_t head, uint8_t track, uint8_t sect,
                          head, track, sect, 1, drv->max_track, drv->last_sect);
             return 4;
         }
+#else
+        RT_NOREF(enable_seek);
 #endif
         drv->head = head;
         if (drv->track != track)
@@ -342,6 +344,7 @@ static fd_format_t fd_formats[] = {
     { FDRIVE_DRV_144, FDRIVE_DISK_720, 14, 80, 1, FDRIVE_RATE_250K, "1.12 MB 3\"1/2", },
     /* 1.2 MB 5"1/4 floppy disks */
     { FDRIVE_DRV_120, FDRIVE_DISK_288, 15, 80, 1, FDRIVE_RATE_500K,  "1.2 MB 5\"1/4", },
+    { FDRIVE_DRV_120, FDRIVE_DISK_288, 16, 80, 1, FDRIVE_RATE_500K, "1.28 MB 5\"1/4", },    /* CP Backup 5.25" HD */
     { FDRIVE_DRV_120, FDRIVE_DISK_288, 18, 80, 1, FDRIVE_RATE_500K, "1.44 MB 5\"1/4", },
     { FDRIVE_DRV_120, FDRIVE_DISK_288, 18, 82, 1, FDRIVE_RATE_500K, "1.48 MB 5\"1/4", },
     { FDRIVE_DRV_120, FDRIVE_DISK_288, 18, 83, 1, FDRIVE_RATE_500K, "1.49 MB 5\"1/4", },
@@ -352,63 +355,66 @@ static fd_format_t fd_formats[] = {
     /* 360 kB 5"1/4 floppy disks (newer 9-sector formats) */
     { FDRIVE_DRV_120, FDRIVE_DISK_288,  9, 40, 1, FDRIVE_RATE_300K,  "360 kB 5\"1/4", },
     { FDRIVE_DRV_120, FDRIVE_DISK_288,  9, 40, 0, FDRIVE_RATE_300K,  "180 kB 5\"1/4", },
+    { FDRIVE_DRV_120, FDRIVE_DISK_288, 10, 40, 1, FDRIVE_RATE_300K,  "400 kB 5\"1/4", },    /* CP Backup 5.25" DD */
     { FDRIVE_DRV_120, FDRIVE_DISK_288, 10, 41, 1, FDRIVE_RATE_300K,  "410 kB 5\"1/4", },
     { FDRIVE_DRV_120, FDRIVE_DISK_288, 10, 42, 1, FDRIVE_RATE_300K,  "420 kB 5\"1/4", },
     /* 320 kB 5"1/4 floppy disks (old 8-sector formats) */
     { FDRIVE_DRV_120, FDRIVE_DISK_288,  8, 40, 1, FDRIVE_RATE_300K,  "320 kB 5\"1/4", },
     { FDRIVE_DRV_120, FDRIVE_DISK_288,  8, 40, 0, FDRIVE_RATE_300K,  "160 kB 5\"1/4", },
     /* 1.2 MB and low density 3"1/2 floppy 'aliases' */
-    { FDRIVE_DRV_144, FDRIVE_DISK_144, 15, 80, 1, FDRIVE_RATE_500K, " 1.2 MB 3\"1/2", },
+    { FDRIVE_DRV_144, FDRIVE_DISK_144, 15, 80, 1, FDRIVE_RATE_500K,  "1.2 MB 3\"1/2", },
+    { FDRIVE_DRV_144, FDRIVE_DISK_144, 16, 80, 1, FDRIVE_RATE_500K, "1.28 MB 3\"1/2", },
+    { FDRIVE_DRV_144, FDRIVE_DISK_720, 10, 40, 1, FDRIVE_RATE_300K,  "400 kB 3\"1/2", },    /* CP Backup 5.25" DD */
     { FDRIVE_DRV_144, FDRIVE_DISK_720,  9, 40, 1, FDRIVE_RATE_300K,  "360 kB 3\"1/2", },
     { FDRIVE_DRV_144, FDRIVE_DISK_720,  9, 40, 0, FDRIVE_RATE_300K,  "180 kB 3\"1/2", },
     { FDRIVE_DRV_144, FDRIVE_DISK_720,  8, 40, 1, FDRIVE_RATE_300K,  "320 kB 3\"1/2", },
     { FDRIVE_DRV_144, FDRIVE_DISK_720,  8, 40, 0, FDRIVE_RATE_300K,  "160 kB 3\"1/2", },
 #ifdef VBOX /* For larger than real life floppy images (see DrvBlock.cpp). */
     /* 15.6 MB fake floppy disk (just need something big). */
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_USER,  63, 255, 1, FDRIVE_RATE_1M,   "15.6 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   36,  80, 1, FDRIVE_RATE_1M,   "2.88 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   39,  80, 1, FDRIVE_RATE_1M,   "3.12 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   40,  80, 1, FDRIVE_RATE_1M,    "3.2 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   44,  80, 1, FDRIVE_RATE_1M,   "3.52 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   48,  80, 1, FDRIVE_RATE_1M,   "3.84 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   18,  80, 1, FDRIVE_RATE_500K, "1.44 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   20,  80, 1, FDRIVE_RATE_500K,  "1.6 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   21,  80, 1, FDRIVE_RATE_500K, "1.68 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   21,  82, 1, FDRIVE_RATE_500K, "1.72 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   21,  83, 1, FDRIVE_RATE_500K, "1.74 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   22,  80, 1, FDRIVE_RATE_500K, "1.76 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   23,  80, 1, FDRIVE_RATE_500K, "1.84 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   24,  80, 1, FDRIVE_RATE_500K, "1.92 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,    9,  80, 1, FDRIVE_RATE_250K,  "720 kB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   10,  80, 1, FDRIVE_RATE_250K,  "800 kB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   10,  82, 1, FDRIVE_RATE_250K,  "820 kB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   10,  83, 1, FDRIVE_RATE_250K,  "830 kB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   13,  80, 1, FDRIVE_RATE_250K, "1.04 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   14,  80, 1, FDRIVE_RATE_250K, "1.12 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,    9,  80, 0, FDRIVE_RATE_250K,  "360 kB 3\"1/2", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_USER,  63, 255, 1, FDRIVE_RATE_1M,   "15.6 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   36,  80, 1, FDRIVE_RATE_1M,   "2.88 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   39,  80, 1, FDRIVE_RATE_1M,   "3.12 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   40,  80, 1, FDRIVE_RATE_1M,    "3.2 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   44,  80, 1, FDRIVE_RATE_1M,   "3.52 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_288,   48,  80, 1, FDRIVE_RATE_1M,   "3.84 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   18,  80, 1, FDRIVE_RATE_500K, "1.44 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   20,  80, 1, FDRIVE_RATE_500K,  "1.6 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   21,  80, 1, FDRIVE_RATE_500K, "1.68 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   21,  82, 1, FDRIVE_RATE_500K, "1.72 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   21,  83, 1, FDRIVE_RATE_500K, "1.74 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   22,  80, 1, FDRIVE_RATE_500K, "1.76 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   23,  80, 1, FDRIVE_RATE_500K, "1.84 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_144,   24,  80, 1, FDRIVE_RATE_500K, "1.92 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,    9,  80, 1, FDRIVE_RATE_250K,  "720 kB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   10,  80, 1, FDRIVE_RATE_250K,  "800 kB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   10,  82, 1, FDRIVE_RATE_250K,  "820 kB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   10,  83, 1, FDRIVE_RATE_250K,  "830 kB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   13,  80, 1, FDRIVE_RATE_250K, "1.04 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,   14,  80, 1, FDRIVE_RATE_250K, "1.12 MB fake 15.6", },
+    { FDRIVE_DRV_FAKE_15_6, FDRIVE_DISK_720,    9,  80, 0, FDRIVE_RATE_250K,  "360 kB fake 15.6", },
     /* 63.5 MB fake floppy disk (just need something big). */
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_USER, 255, 255, 1, FDRIVE_RATE_1M,   "63.5 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_USER,  63, 255, 1, FDRIVE_RATE_1M,   "15.6 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   36,  80, 1, FDRIVE_RATE_1M,   "2.88 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   39,  80, 1, FDRIVE_RATE_1M,   "3.12 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   40,  80, 1, FDRIVE_RATE_1M,    "3.2 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   44,  80, 1, FDRIVE_RATE_1M,   "3.52 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   48,  80, 1, FDRIVE_RATE_1M,   "3.84 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   18,  80, 1, FDRIVE_RATE_500K, "1.44 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   20,  80, 1, FDRIVE_RATE_500K,  "1.6 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   21,  80, 1, FDRIVE_RATE_500K, "1.68 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   21,  82, 1, FDRIVE_RATE_500K, "1.72 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   21,  83, 1, FDRIVE_RATE_500K, "1.74 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   22,  80, 1, FDRIVE_RATE_500K, "1.76 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   23,  80, 1, FDRIVE_RATE_500K, "1.84 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   24,  80, 1, FDRIVE_RATE_500K, "1.92 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,    9,  80, 1, FDRIVE_RATE_250K,  "720 kB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   10,  80, 1, FDRIVE_RATE_250K,  "800 kB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   10,  82, 1, FDRIVE_RATE_250K,  "820 kB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   10,  83, 1, FDRIVE_RATE_250K,  "830 kB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   13,  80, 1, FDRIVE_RATE_250K, "1.04 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   14,  80, 1, FDRIVE_RATE_250K, "1.12 MB 3\"1/2", },
-    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,    9,  80, 0, FDRIVE_RATE_250K,  "360 kB 3\"1/2", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_USER, 255, 255, 1, FDRIVE_RATE_1M,   "63.5 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_USER,  63, 255, 1, FDRIVE_RATE_1M,   "15.6 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   36,  80, 1, FDRIVE_RATE_1M,   "2.88 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   39,  80, 1, FDRIVE_RATE_1M,   "3.12 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   40,  80, 1, FDRIVE_RATE_1M,    "3.2 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   44,  80, 1, FDRIVE_RATE_1M,   "3.52 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_288,   48,  80, 1, FDRIVE_RATE_1M,   "3.84 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   18,  80, 1, FDRIVE_RATE_500K, "1.44 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   20,  80, 1, FDRIVE_RATE_500K,  "1.6 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   21,  80, 1, FDRIVE_RATE_500K, "1.68 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   21,  82, 1, FDRIVE_RATE_500K, "1.72 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   21,  83, 1, FDRIVE_RATE_500K, "1.74 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   22,  80, 1, FDRIVE_RATE_500K, "1.76 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   23,  80, 1, FDRIVE_RATE_500K, "1.84 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_144,   24,  80, 1, FDRIVE_RATE_500K, "1.92 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,    9,  80, 1, FDRIVE_RATE_250K,  "720 kB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   10,  80, 1, FDRIVE_RATE_250K,  "800 kB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   10,  82, 1, FDRIVE_RATE_250K,  "820 kB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   10,  83, 1, FDRIVE_RATE_250K,  "830 kB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   13,  80, 1, FDRIVE_RATE_250K, "1.04 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,   14,  80, 1, FDRIVE_RATE_250K, "1.12 MB fake 63.5", },
+    { FDRIVE_DRV_FAKE_63_5, FDRIVE_DISK_720,    9,  80, 0, FDRIVE_RATE_250K,  "360 kB fake 63.5", },
 #endif
     /* end */
     { FDRIVE_DRV_NONE, FDRIVE_DISK_NONE, (uint8_t)-1, (uint8_t)-1, 0, (fdrive_rate_t)0, NULL, },
@@ -428,10 +434,10 @@ static void fd_revalidate(fdrive_t *drv)
         ro = bdrv_is_read_only(drv->bs);
         bdrv_get_geometry_hint(drv->bs, &nb_heads, &max_track, &last_sect);
 #else /* VBOX */
-    if (   drv->pDrvBlock
+    if (   drv->pDrvMedia
         && drv->pDrvMount
         && drv->pDrvMount->pfnIsMounted (drv->pDrvMount)) {
-        ro = drv->pDrvBlock->pfnIsReadOnly (drv->pDrvBlock);
+        ro = drv->pDrvMedia->pfnIsReadOnly (drv->pDrvMedia);
         nb_heads = max_track = last_sect = 0;
 #endif /* VBOX */
         if (nb_heads != 0 && max_track != 0 && last_sect != 0) {
@@ -442,7 +448,7 @@ static void fd_revalidate(fdrive_t *drv)
             bdrv_get_geometry(drv->bs, &nb_sectors);
 #else /* VBOX */
             {
-                uint64_t size2 = drv->pDrvBlock->pfnGetSize (drv->pDrvBlock);
+                uint64_t size2 = drv->pDrvMedia->pfnGetSize (drv->pDrvMedia);
                 nb_sectors = size2 / FD_SECTOR_LEN;
             }
 #endif /* VBOX */
@@ -480,7 +486,7 @@ static void fd_revalidate(fdrive_t *drv)
 #endif
             FLOPPY_DPRINTF("%s floppy disk (%d h %d t %d s) %s\n", parse->str,
                            nb_heads, max_track, last_sect, ro ? "ro" : "rw");
-            LogRel(("%s floppy disk (%d h %d t %d s) %s\n", parse->str,
+            LogRel(("FDC: %s floppy disk (%d h %d t %d s) %s\n", parse->str,
                     nb_heads, max_track, last_sect, ro ? "ro" : "rw"));
         }
         if (nb_heads == 1) {
@@ -711,7 +717,11 @@ struct fdctrl_t {
 #endif
     uint32_t io_base;
     /* Controller state */
+#ifndef VBOX
     QEMUTimer *result_timer;
+#else
+    struct TMTIMER *result_timer;
+#endif
     uint8_t sra;
     uint8_t srb;
     uint8_t dor;
@@ -869,7 +879,7 @@ static void fdctrl_reset(fdctrl_t *fdctrl, int do_irq)
     fdctrl->sra = 0;
     fdctrl->srb = 0xc0;
 #ifdef VBOX
-    if (!fdctrl->drives[1].pDrvBlock)
+    if (!fdctrl->drives[1].pDrvMedia)
 #else
     if (!fdctrl->drives[1].bs)
 #endif
@@ -1146,6 +1156,7 @@ static void fdctrl_set_fifo(fdctrl_t *fdctrl, int fifo_len, int do_irq)
 /* Set an error: unimplemented/unknown command */
 static void fdctrl_unimplemented(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     FLOPPY_ERROR("unimplemented command 0x%02x\n", fdctrl->fifo[0]);
     fdctrl->fifo[0] = FD_SR0_INVCMD;
     fdctrl_set_fifo(fdctrl, 1, 0);
@@ -1256,6 +1267,14 @@ static void fdctrl_start_transfer(fdctrl_t *fdctrl, int direction)
     case 4:
         /* No seek enabled */
         fdctrl_stop_transfer(fdctrl, FD_SR0_ABNTERM, 0x00, 0x00);
+        fdctrl->fifo[3] = kt;
+        fdctrl->fifo[4] = kh;
+        fdctrl->fifo[5] = ks;
+        return;
+    case 5:
+        /* No disk in drive */
+        /// @todo This is wrong! Command should not complete.
+        fdctrl_stop_transfer(fdctrl, FD_SR0_ABNTERM | 0x08, /*FD_SR1_MA |*/ FD_SR1_ND, 0x00);
         fdctrl->fifo[3] = kt;
         fdctrl->fifo[4] = kh;
         fdctrl->fifo[5] = ks;
@@ -1385,6 +1404,13 @@ static void fdctrl_start_format(fdctrl_t *fdctrl)
         fdctrl->fifo[4] = kh;
         fdctrl->fifo[5] = ks;
         return;
+    case 5:
+        /* No disk in drive */
+        fdctrl_stop_transfer(fdctrl, FD_SR0_ABNTERM, FD_SR1_MA, 0x00);
+        fdctrl->fifo[3] = kt;
+        fdctrl->fifo[4] = kh;
+        fdctrl->fifo[5] = ks;
+        return;
     case 1:
         break;
     default:
@@ -1454,6 +1480,7 @@ static void fdctrl_start_format(fdctrl_t *fdctrl)
 /* Prepare a transfer of deleted data */
 static void fdctrl_start_transfer_del(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     FLOPPY_ERROR("fdctrl_start_transfer_del() unimplemented\n");
 
     /* We don't handle deleted data,
@@ -1471,7 +1498,7 @@ static int blk_write(fdrive_t *drv, int64_t sector_num, const uint8_t *buf, int 
 
     drv->Led.Asserted.s.fWriting = drv->Led.Actual.s.fWriting = 1;
 
-    rc = drv->pDrvBlock->pfnWrite(drv->pDrvBlock, sector_num * FD_SECTOR_LEN,
+    rc = drv->pDrvMedia->pfnWrite(drv->pDrvMedia, sector_num * FD_SECTOR_LEN,
                                   buf, nb_sectors * FD_SECTOR_LEN);
 
     drv->Led.Actual.s.fWriting = 0;
@@ -1487,7 +1514,7 @@ static int blk_read(fdrive_t *drv, int64_t sector_num, uint8_t *buf, int nb_sect
 
     drv->Led.Asserted.s.fReading = drv->Led.Actual.s.fReading = 1;
 
-    rc = drv->pDrvBlock->pfnRead(drv->pDrvBlock, sector_num * FD_SECTOR_LEN,
+    rc = drv->pDrvMedia->pfnRead(drv->pDrvMedia, sector_num * FD_SECTOR_LEN,
                                  buf, nb_sectors * FD_SECTOR_LEN);
 
     drv->Led.Actual.s.fReading = 0;
@@ -1512,6 +1539,7 @@ static int fdctrl_transfer_handler (void *opaque, int nchan,
                                     int dma_pos, int dma_len)
 #endif
 {
+    RT_NOREF(pDevIns, dma_pos);
     fdctrl_t *fdctrl;
     fdrive_t *cur_drv;
 #ifdef VBOX
@@ -1537,7 +1565,7 @@ static int fdctrl_transfer_handler (void *opaque, int nchan,
 #ifndef VBOX
     if (cur_drv->bs == NULL)
 #else  /* !VBOX */
-    if (cur_drv->pDrvBlock == NULL)
+    if (cur_drv->pDrvMedia == NULL)
 #endif
     {
         if (fdctrl->data_dir == FD_DIR_WRITE)
@@ -1679,7 +1707,7 @@ static int fdctrl_transfer_handler (void *opaque, int nchan,
                 uint32_t read;
                 int rc2 = PDMDevHlpDMAReadMemory (fdctrl->pDevIns, nchan, tmpbuf,
                                                   fdctrl->data_pos, len, &read);
-                AssertMsg (RT_SUCCESS (rc2), ("DMAReadMemory -> %Rrc2\n", rc2));
+                AssertMsg(RT_SUCCESS(rc2), ("DMAReadMemory -> %Rrc2\n", rc2)); NOREF(rc2);
 #else
                 DMA_read_memory (nchan, tmpbuf, fdctrl->data_pos, len);
 #endif
@@ -1737,9 +1765,8 @@ static uint32_t fdctrl_read_data(fdctrl_t *fdctrl)
         FLOPPY_ERROR("controller not ready for reading\n");
         return 0;
     }
-    pos = fdctrl->data_pos;
+    pos = fdctrl->data_pos % FD_SECTOR_LEN;
     if (fdctrl->msr & FD_MSR_NONDMA) {
-        pos %= FD_SECTOR_LEN;
         if (pos == 0) {
             if (fdctrl->data_pos != 0)
                 if (!fdctrl_seek_to_next_sect(fdctrl, cur_drv)) {
@@ -1817,6 +1844,13 @@ static void fdctrl_format_sector(fdctrl_t *fdctrl)
         fdctrl->fifo[4] = kh;
         fdctrl->fifo[5] = ks;
         return;
+    case 5:
+        /* No disk in drive */
+        fdctrl_stop_transfer(fdctrl, FD_SR0_ABNTERM, FD_SR1_MA, 0x00);
+        fdctrl->fifo[3] = kt;
+        fdctrl->fifo[4] = kh;
+        fdctrl->fifo[5] = ks;
+        return;
     case 1:
         fdctrl->data_state |= FD_STATE_SEEK;
         break;
@@ -1825,7 +1859,7 @@ static void fdctrl_format_sector(fdctrl_t *fdctrl)
     }
     memset(fdctrl->fifo, 0, FD_SECTOR_LEN);
 #ifdef VBOX
-    if (cur_drv->pDrvBlock) {
+    if (cur_drv->pDrvMedia) {
         rc = blk_write(cur_drv, fd_sector(cur_drv), fdctrl->fifo, 1);
         if (RT_FAILURE (rc)) {
             FLOPPY_ERROR("formatting sector %d\n", fd_sector(cur_drv));
@@ -1859,6 +1893,7 @@ static void fdctrl_format_sector(fdctrl_t *fdctrl)
 
 static void fdctrl_handle_lock(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdctrl->lock = (fdctrl->fifo[0] & 0x80) ? 1 : 0;
     fdctrl->fifo[0] = fdctrl->lock << 4;
     fdctrl_set_fifo(fdctrl, 1, 0);
@@ -1866,6 +1901,7 @@ static void fdctrl_handle_lock(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_dumpreg(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv = get_cur_drv(fdctrl);
 
     /* Drives position */
@@ -1891,6 +1927,7 @@ static void fdctrl_handle_dumpreg(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_version(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     /* Controller's version */
     fdctrl->fifo[0] = fdctrl->version;
     fdctrl_set_fifo(fdctrl, 1, 0);
@@ -1898,12 +1935,14 @@ static void fdctrl_handle_version(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_partid(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdctrl->fifo[0] = 0x01; /* Stepping 1 */
     fdctrl_set_fifo(fdctrl, 1, 0);
 }
 
 static void fdctrl_handle_restore(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv = get_cur_drv(fdctrl);
 
     /* Drives position */
@@ -1927,6 +1966,7 @@ static void fdctrl_handle_restore(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_save(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv = get_cur_drv(fdctrl);
 
     fdctrl->fifo[0] = 0;
@@ -1957,11 +1997,12 @@ static void fdctrl_handle_save(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_readid(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv = get_cur_drv(fdctrl);
 
     FLOPPY_DPRINTF("CMD:%02x SEL:%02x\n", fdctrl->fifo[0], fdctrl->fifo[1]);
 
-    /* XXX: should set main status register to busy */
+    fdctrl->msr &= ~FD_MSR_RQM;
     cur_drv->head = (fdctrl->fifo[1] >> 2) & 1;
 #ifdef VBOX
     TMTimerSetMillies(fdctrl->result_timer, 1000 / 50);
@@ -1973,6 +2014,7 @@ static void fdctrl_handle_readid(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_format_track(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv;
     uint8_t ns, dp;
 
@@ -2005,6 +2047,7 @@ static void fdctrl_handle_format_track(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_specify(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdctrl->timer0 = (fdctrl->fifo[1] >> 4) & 0xF;
     fdctrl->timer1 = fdctrl->fifo[2] >> 1;
     if (fdctrl->fifo[2] & 1)
@@ -2017,6 +2060,7 @@ static void fdctrl_handle_specify(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_sense_drive_status(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv;
 
     SET_CUR_DRV(fdctrl, fdctrl->fifo[1] & FD_DOR_SELMASK);
@@ -2033,6 +2077,7 @@ static void fdctrl_handle_sense_drive_status(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_recalibrate(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv;
     uint8_t  st0;
 
@@ -2050,6 +2095,7 @@ static void fdctrl_handle_recalibrate(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_sense_interrupt_status(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv = get_cur_drv(fdctrl);
 
     FLOPPY_DPRINTF("CMD:%02x\n", fdctrl->fifo[0]);
@@ -2076,6 +2122,7 @@ static void fdctrl_handle_sense_interrupt_status(fdctrl_t *fdctrl, int direction
 
 static void fdctrl_handle_seek(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv;
 
     FLOPPY_DPRINTF("CMD:%02x SEL:%02x NCN:%02x\n", fdctrl->fifo[0],
@@ -2106,6 +2153,7 @@ static void fdctrl_handle_seek(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_perpendicular_mode(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv = get_cur_drv(fdctrl);
 
     if (fdctrl->fifo[1] & 0x80)
@@ -2116,6 +2164,7 @@ static void fdctrl_handle_perpendicular_mode(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_configure(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdctrl->config = fdctrl->fifo[2];
     fdctrl->precomp_trk =  fdctrl->fifo[3];
     /* No result back */
@@ -2124,6 +2173,7 @@ static void fdctrl_handle_configure(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_powerdown_mode(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdctrl->pwrd = fdctrl->fifo[1];
     fdctrl->fifo[0] = fdctrl->fifo[1];
     fdctrl_set_fifo(fdctrl, 1, 0);
@@ -2131,34 +2181,40 @@ static void fdctrl_handle_powerdown_mode(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_option(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     /* No result back */
     fdctrl_reset_fifo(fdctrl);
 }
 
 static void fdctrl_handle_drive_specification_command(fdctrl_t *fdctrl, int direction)
 {
-    fdrive_t *cur_drv = get_cur_drv(fdctrl);
+    RT_NOREF(direction);
+    /* fdrive_t *cur_drv = get_cur_drv(fdctrl); - unused */
 
-    if (fdctrl->fifo[fdctrl->data_pos - 1] & 0x80) {
+    /* This command takes a variable number of parameters. It can be terminated
+     * at any time if the high bit of a parameter is set. Once there are 6 bytes
+     * in the FIFO (command + 5 parameter bytes), data_len/data_pos will be 7.
+     */
+    if (fdctrl->data_len == 7 || (fdctrl->fifo[fdctrl->data_pos - 1] & 0x80)) {
+
         /* Command parameters done */
         if (fdctrl->fifo[fdctrl->data_pos - 1] & 0x40) {
-            fdctrl->fifo[0] = fdctrl->fifo[1];
+            /* Data is echoed, but not stored! */
+            fdctrl->fifo[0] = fdctrl->data_len > 2 ? fdctrl->fifo[1] : 0;
+            fdctrl->fifo[1] = fdctrl->data_len > 3 ? fdctrl->fifo[2] : 0;
             fdctrl->fifo[2] = 0;
             fdctrl->fifo[3] = 0;
             fdctrl_set_fifo(fdctrl, 4, 0);
         } else {
             fdctrl_reset_fifo(fdctrl);
         }
-    } else if (fdctrl->data_len > 7) {
-        /* ERROR */
-        fdctrl->fifo[0] = 0x80 |
-            (cur_drv->head << 2) | GET_CUR_DRV(fdctrl);
-        fdctrl_set_fifo(fdctrl, 1, 0);
-    }
+    } else
+        fdctrl->data_len++; /* Wait for another byte. */
 }
 
 static void fdctrl_handle_relative_seek_out(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv;
 
     SET_CUR_DRV(fdctrl, fdctrl->fifo[1] & FD_DOR_SELMASK);
@@ -2175,6 +2231,7 @@ static void fdctrl_handle_relative_seek_out(fdctrl_t *fdctrl, int direction)
 
 static void fdctrl_handle_relative_seek_in(fdctrl_t *fdctrl, int direction)
 {
+    RT_NOREF(direction);
     fdrive_t *cur_drv;
 
     SET_CUR_DRV(fdctrl, fdctrl->fifo[1] & FD_DOR_SELMASK);
@@ -2219,7 +2276,7 @@ static const struct {
     { FD_CMD_CONFIGURE, 0xff, "CONFIGURE", 3, fdctrl_handle_configure },
     { FD_CMD_POWERDOWN_MODE, 0xff, "POWERDOWN MODE", 2, fdctrl_handle_powerdown_mode },
     { FD_CMD_OPTION, 0xff, "OPTION", 1, fdctrl_handle_option },
-    { FD_CMD_DRIVE_SPECIFICATION_COMMAND, 0xff, "DRIVE SPECIFICATION COMMAND", 5, fdctrl_handle_drive_specification_command },
+    { FD_CMD_DRIVE_SPECIFICATION_COMMAND, 0xff, "DRIVE SPECIFICATION COMMAND", 1, fdctrl_handle_drive_specification_command },
     { FD_CMD_RELATIVE_SEEK_OUT, 0xff, "RELATIVE SEEK OUT", 2, fdctrl_handle_relative_seek_out },
     { FD_CMD_FORMAT_AND_WRITE, 0xff, "FORMAT AND WRITE", 10, fdctrl_unimplemented },
     { FD_CMD_RELATIVE_SEEK_IN, 0xff, "RELATIVE SEEK IN", 2, fdctrl_handle_relative_seek_in },
@@ -2280,8 +2337,8 @@ static void fdctrl_write_data(fdctrl_t *fdctrl, uint32_t value)
         fdctrl->msr |= FD_MSR_CMDBUSY;
     }
 
-    FLOPPY_DPRINTF("%s: %02x\n", __func__, value);
-    fdctrl->fifo[fdctrl->data_pos++] = value;
+    FLOPPY_DPRINTF("%s: %02x\n", __FUNCTION__, value);
+    fdctrl->fifo[fdctrl->data_pos++ % FD_SECTOR_LEN] = value;
     if (fdctrl->data_pos == fdctrl->data_len) {
         /* We now have all parameters
          * and will be able to treat the command
@@ -2313,6 +2370,7 @@ static void fdctrl_result_timer(void *opaque)
 #ifdef VBOX
     if (!cur_drv->max_track) {
         FLOPPY_DPRINTF("read id when no disk in drive\n");
+        /// @todo This is wrong! Command should not complete.
         fdctrl_stop_transfer(fdctrl, FD_SR0_ABNTERM, FD_SR1_MA | FD_SR1_ND, FD_SR2_MD);
     } else if ((fdctrl->dsr & FD_DSR_DRATEMASK) != cur_drv->media_rate) {
         FLOPPY_DPRINTF("read id rate mismatch (fdc=%d, media=%d)\n",
@@ -2339,6 +2397,7 @@ static void fdctrl_result_timer(void *opaque)
  */
 static DECLCALLBACK(void) fdcTimerCallback(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
 {
+    RT_NOREF(pDevIns, pTimer);
     fdctrl_t *fdctrl = (fdctrl_t *)pvUser;
     fdctrl_result_timer(fdctrl);
 }
@@ -2349,24 +2408,26 @@ static DECLCALLBACK(void) fdcTimerCallback(PPDMDEVINS pDevIns, PTMTIMER pTimer, 
 /**
  * @callback_method_impl{FNIOMIOPORTOUT}
  */
-static DECLCALLBACK(int) fdcIoPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t u32, unsigned cb)
+static DECLCALLBACK(int) fdcIoPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t u32, unsigned cb)
 {
+    RT_NOREF(pDevIns);
     if (cb == 1)
-        fdctrl_write (pvUser, Port & 7, u32);
+        fdctrl_write (pvUser, uPort & 7, u32);
     else
-        AssertMsgFailed(("Port=%#x cb=%d u32=%#x\n", Port, cb, u32));
+        AssertMsgFailed(("uPort=%#x cb=%d u32=%#x\n", uPort, cb, u32));
     return VINF_SUCCESS;
 }
 
 
 /**
- * @callback_method_impl{FNIOMIOPORTOUT}
+ * @callback_method_impl{FNIOMIOPORTIN}
  */
-static DECLCALLBACK(int) fdcIoPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t *pu32, unsigned cb)
+static DECLCALLBACK(int) fdcIoPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t *pu32, unsigned cb)
 {
+    RT_NOREF(pDevIns);
     if (cb == 1)
     {
-        *pu32 = fdctrl_read (pvUser, Port & 7);
+        *pu32 = fdctrl_read (pvUser, uPort & 7);
         return VINF_SUCCESS;
     }
     return VERR_IOM_IOPORT_UNUSED;
@@ -2604,11 +2665,31 @@ static DECLCALLBACK(void *) fdQueryInterface (PPDMIBASE pInterface, const char *
     fdrive_t *pDrv = RT_FROM_MEMBER(pInterface, fdrive_t, IBase);
 
     PDMIBASE_RETURN_INTERFACE(pszIID, PDMIBASE, &pDrv->IBase);
-    PDMIBASE_RETURN_INTERFACE(pszIID, PDMIBLOCKPORT, &pDrv->IPort);
+    PDMIBASE_RETURN_INTERFACE(pszIID, PDMIMEDIAPORT, &pDrv->IPort);
     PDMIBASE_RETURN_INTERFACE(pszIID, PDMIMOUNTNOTIFY, &pDrv->IMountNotify);
     return NULL;
 }
 
+
+/**
+ * @interface_method_impl{PDMIMEDIAPORT,pfnQueryDeviceLocation}
+ */
+static DECLCALLBACK(int) fdQueryDeviceLocation(PPDMIMEDIAPORT pInterface, const char **ppcszController,
+                                               uint32_t *piInstance, uint32_t *piLUN)
+{
+    fdrive_t *pDrv = RT_FROM_MEMBER(pInterface, fdrive_t, IPort);
+    PPDMDEVINS pDevIns = pDrv->pDevIns;
+
+    AssertPtrReturn(ppcszController, VERR_INVALID_POINTER);
+    AssertPtrReturn(piInstance, VERR_INVALID_POINTER);
+    AssertPtrReturn(piLUN, VERR_INVALID_POINTER);
+
+    *ppcszController = pDevIns->pReg->szName;
+    *piInstance = pDevIns->iInstance;
+    *piLUN = pDrv->iLUN;
+
+    return VINF_SUCCESS;
+}
 
 /* -=-=-=-=-=-=-=-=- Controller level interfaces -=-=-=-=-=-=-=-=- */
 
@@ -2666,20 +2747,13 @@ static int fdConfig(fdrive_t *drv, PPDMDEVINS pDevIns, bool fInit)
      */
     rc = PDMDevHlpDriverAttach (pDevIns, drv->iLUN, &drv->IBase, &drv->pDrvBase, s_apszDesc[drv->iLUN]);
     if (RT_SUCCESS (rc)) {
-        drv->pDrvBlock = PDMIBASE_QUERY_INTERFACE(drv->pDrvBase, PDMIBLOCK);
-        if (drv->pDrvBlock) {
-            drv->pDrvBlockBios = PDMIBASE_QUERY_INTERFACE(drv->pDrvBase, PDMIBLOCKBIOS);
-            if (drv->pDrvBlockBios) {
-                drv->pDrvMount = PDMIBASE_QUERY_INTERFACE(drv->pDrvBase, PDMIMOUNT);
-                if (drv->pDrvMount) {
-                    fd_init(drv, fInit);
-                } else {
-                    AssertMsgFailed (("Configuration error: LUN#%d without mountable interface!\n", drv->iLUN));
-                    rc = VERR_PDM_MISSING_INTERFACE;
-                }
-
+        drv->pDrvMedia = PDMIBASE_QUERY_INTERFACE(drv->pDrvBase, PDMIMEDIA);
+        if (drv->pDrvMedia) {
+            drv->pDrvMount = PDMIBASE_QUERY_INTERFACE(drv->pDrvBase, PDMIMOUNT);
+            if (drv->pDrvMount) {
+                fd_init(drv, fInit);
             } else {
-                AssertMsgFailed (("Configuration error: LUN#%d hasn't a block BIOS interface!\n", drv->iLUN));
+                AssertMsgFailed (("Configuration error: LUN#%d without mountable interface!\n", drv->iLUN));
                 rc = VERR_PDM_MISSING_INTERFACE;
             }
 
@@ -2706,8 +2780,7 @@ static int fdConfig(fdrive_t *drv, PPDMDEVINS pDevIns, bool fInit)
 
     if (RT_FAILURE (rc)) {
         drv->pDrvBase = NULL;
-        drv->pDrvBlock = NULL;
-        drv->pDrvBlockBios = NULL;
+        drv->pDrvMedia = NULL;
         drv->pDrvMount = NULL;
     }
     LogFlow (("fdConfig: returns %Rrc\n", rc));
@@ -2747,13 +2820,12 @@ static DECLCALLBACK(int)  fdcAttach(PPDMDEVINS pDevIns, unsigned iLUN, uint32_t 
 
     /* the usual paranoia */
     AssertRelease (!drv->pDrvBase);
-    AssertRelease (!drv->pDrvBlock);
-    AssertRelease (!drv->pDrvBlockBios);
+    AssertRelease (!drv->pDrvMedia);
     AssertRelease (!drv->pDrvMount);
 
     rc = fdConfig (drv, pDevIns, false /*fInit*/);
     AssertMsg (rc != VERR_PDM_NO_ATTACHED_DRIVER,
-               ("Configuration error: failed to configure drive %d, rc=%Rrc\n", rc));
+               ("Configuration error: failed to configure drive %d, rc=%Rrc\n", iLUN, rc));
     if (RT_SUCCESS(rc)) {
         fd_revalidate (drv);
     }
@@ -2770,6 +2842,7 @@ static DECLCALLBACK(int)  fdcAttach(PPDMDEVINS pDevIns, unsigned iLUN, uint32_t 
  */
 static DECLCALLBACK(void) fdcDetach(PPDMDEVINS pDevIns, unsigned iLUN, uint32_t fFlags)
 {
+    RT_NOREF(fFlags);
     fdctrl_t *pThis = PDMINS_2_DATA(pDevIns, fdctrl_t *);
     LogFlow (("ideDetach: iLUN=%u\n", iLUN));
 
@@ -2780,8 +2853,7 @@ static DECLCALLBACK(void) fdcDetach(PPDMDEVINS pDevIns, unsigned iLUN, uint32_t 
         {
             fdrive_t *drv = &pThis->drives[iLUN];
             drv->pDrvBase = NULL;
-            drv->pDrvBlock = NULL;
-            drv->pDrvBlockBios = NULL;
+            drv->pDrvMedia = NULL;
             drv->pDrvMount = NULL;
             break;
         }
@@ -2818,6 +2890,7 @@ static DECLCALLBACK(void) fdcReset(PPDMDEVINS pDevIns)
  */
 static DECLCALLBACK(int) fdcConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
+    RT_NOREF(iInstance);
     fdctrl_t      *pThis = PDMINS_2_DATA(pDevIns, fdctrl_t *);
     int            rc;
     unsigned       i, j;
@@ -2876,12 +2949,14 @@ static DECLCALLBACK(int) fdcConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNO
     {
         fdrive_t *pDrv = &pThis->drives[i];
 
-        pDrv->drive = FDRIVE_DRV_NONE;
-        pDrv->iLUN = i;
+        pDrv->drive   = FDRIVE_DRV_NONE;
+        pDrv->iLUN    = i;
+        pDrv->pDevIns = pDevIns;
 
         pDrv->IBase.pfnQueryInterface       = fdQueryInterface;
         pDrv->IMountNotify.pfnMountNotify   = fdMountNotify;
         pDrv->IMountNotify.pfnUnmountNotify = fdUnmountNotify;
+        pDrv->IPort.pfnQueryDeviceLocation  = fdQueryDeviceLocation;
         pDrv->Led.u32Magic = PDMLED_MAGIC;
     }
 
@@ -2958,7 +3033,7 @@ static DECLCALLBACK(int) fdcConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNO
         if (   RT_FAILURE(rc)
             && rc != VERR_PDM_NO_ATTACHED_DRIVER)
         {
-            AssertMsgFailed(("Configuration error: failed to configure drive %d, rc=%Rrc\n", rc));
+            AssertMsgFailed(("Configuration error: failed to configure drive %d, rc=%Rrc\n", i, rc));
             return rc;
         }
     }

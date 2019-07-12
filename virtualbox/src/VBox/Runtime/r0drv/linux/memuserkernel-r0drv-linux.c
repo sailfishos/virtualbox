@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-linux-kernel.h"
 #include "internal/iprt.h"
 
@@ -37,8 +37,13 @@
 
 RTR0DECL(int) RTR0MemUserCopyFrom(void *pvDst, RTR3PTR R3PtrSrc, size_t cb)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     if (RT_LIKELY(copy_from_user(pvDst, (void *)R3PtrSrc, cb) == 0))
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VINF_SUCCESS;
+    }
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VERR_ACCESS_DENIED;
 }
 RT_EXPORT_SYMBOL(RTR0MemUserCopyFrom);
@@ -46,8 +51,13 @@ RT_EXPORT_SYMBOL(RTR0MemUserCopyFrom);
 
 RTR0DECL(int) RTR0MemUserCopyTo(RTR3PTR R3PtrDst, void const *pvSrc, size_t cb)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     if (RT_LIKELY(copy_to_user((void *)R3PtrDst, pvSrc, cb) == 0))
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VINF_SUCCESS;
+    }
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VERR_ACCESS_DENIED;
 }
 RT_EXPORT_SYMBOL(RTR0MemUserCopyTo);
@@ -55,7 +65,14 @@ RT_EXPORT_SYMBOL(RTR0MemUserCopyTo);
 
 RTR0DECL(bool) RTR0MemUserIsValidAddr(RTR3PTR R3Ptr)
 {
-    return access_ok(VERIFY_READ, (void *)R3Ptr, 1);
+    IPRT_LINUX_SAVE_EFL_AC();
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+    bool fRc = access_ok((void *)R3Ptr, 1);
+#else
+    bool fRc = access_ok(VERIFY_READ, (void *)R3Ptr, 1);
+#endif
+    IPRT_LINUX_RESTORE_EFL_AC();
+    return fRc;
 }
 RT_EXPORT_SYMBOL(RTR0MemUserIsValidAddr);
 
@@ -69,7 +86,11 @@ RTR0DECL(bool) RTR0MemKernelIsValidAddr(void *pv)
     return (uintptr_t)pv >= PAGE_OFFSET;
 #else
 # error "PORT ME"
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+    return !access_ok(pv, 1);
+#else
     return !access_ok(VERIFY_READ, pv, 1);
+#endif /* LINUX_VERSION_CODE */
 #endif
 }
 RT_EXPORT_SYMBOL(RTR0MemKernelIsValidAddr);
@@ -113,6 +134,7 @@ static int rtR0MemKernelCopyLnxWorker(void *pvDst, void const *pvSrc, size_t cb)
 #  endif
 # endif /* !_ASM_EXTABLE */
     int rc;
+    IPRT_LINUX_SAVE_EFL_AC(); /* paranoia */
     if (!cb)
         return VINF_SUCCESS;
 
@@ -122,7 +144,8 @@ static int rtR0MemKernelCopyLnxWorker(void *pvDst, void const *pvSrc, size_t cb)
                           "2:\n\t"
                           ".section .fixup,\"ax\"\n"
                           "3:\n\t"
-                          "movl %4, %0\n"
+                          "movl %4, %0\n\t"
+                          "jmp 2b\n\t"
                           ".previous\n"
                           _ASM_EXTABLE(1b, 3b)
                           : "=r" (rc),
@@ -135,6 +158,7 @@ static int rtR0MemKernelCopyLnxWorker(void *pvDst, void const *pvSrc, size_t cb)
                             "2" (pvSrc),
                             "3" (cb)
                           : "memory");
+    IPRT_LINUX_RESTORE_EFL_AC();
     return rc;
 #else
     return VERR_NOT_SUPPORTED;

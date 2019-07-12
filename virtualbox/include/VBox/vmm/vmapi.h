@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -34,7 +34,7 @@
 
 RT_C_DECLS_BEGIN
 
-/** @defgroup grp_vmm_apis  VM All Contexts API
+/** @defgroup grp_vm_apis   VM All Contexts API
  * @ingroup grp_vm
  * @{ */
 
@@ -43,7 +43,7 @@ RT_C_DECLS_BEGIN
  * raw-mode address.
  *
  * @returns raw-mode virtual address.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   pvInVM  CC Pointer within the VM.
  */
 #ifdef IN_RING3
@@ -59,7 +59,7 @@ RT_C_DECLS_BEGIN
  * ring-3 host address.
  *
  * @returns host virtual address.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   pvInVM  CC pointer within the VM.
  */
 #ifdef IN_RC
@@ -76,7 +76,7 @@ RT_C_DECLS_BEGIN
  * ring-0 host address.
  *
  * @returns host virtual address.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   pvInVM  CC pointer within the VM.
  */
 #ifdef IN_RC
@@ -96,7 +96,7 @@ RT_C_DECLS_BEGIN
  *                          occurred before successfully creating a VM.
  * @param   pvUser          The user argument.
  * @param   rc              VBox status code.
- * @param   RT_SRC_POS_DECL The source position arguments. See RT_SRC_POS and RT_SRC_POS_ARGS.
+ * @param   SRC_POS         The source position arguments. See RT_SRC_POS and RT_SRC_POS_ARGS.
  * @param   pszFormat       Error message format string.
  * @param   args            Error message arguments.
  */
@@ -104,8 +104,8 @@ typedef DECLCALLBACK(void) FNVMATERROR(PUVM pUVM, void *pvUser, int rc, RT_SRC_P
 /** Pointer to a VM error callback. */
 typedef FNVMATERROR *PFNVMATERROR;
 
-VMMDECL(int)    VMSetError(PVM pVM, int rc, RT_SRC_POS_DECL, const char *pszFormat, ...);
-VMMDECL(int)    VMSetErrorV(PVM pVM, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list args);
+VMMDECL(int)    VMSetError(PVM pVM, int rc, RT_SRC_POS_DECL, const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(6, 7);
+VMMDECL(int)    VMSetErrorV(PVM pVM, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list args) RT_IPRT_FORMAT_ATTR(6, 7);
 
 /** @def VM_SET_ERROR
  * Macro for setting a simple VM error message.
@@ -115,7 +115,7 @@ VMMDECL(int)    VMSetErrorV(PVM pVM, int rc, RT_SRC_POS_DECL, const char *pszFor
  *    @code
  *    return VM_SET_ERROR(pVM, VERR_OF_YOUR_CHOICE, "descriptive message");
  *    @endcode
- * @param   pVM             VM handle.
+ * @param   pVM             The cross context VM structure.
  * @param   rc              VBox status code.
  * @param   pszMessage      Error message string.
  * @thread  Any
@@ -130,7 +130,7 @@ VMMDECL(int)    VMSetErrorV(PVM pVM, int rc, RT_SRC_POS_DECL, const char *pszFor
  *    @code
  *    return VM_SET_ERROR(pVM, VERR_OF_YOUR_CHOICE, "descriptive message");
  *    @endcode
- * @param   pVM             VM handle.
+ * @param   pVM             The cross context VM structure.
  * @param   rc              VBox status code.
  * @param   pszMessage      Error message string.
  * @thread  Any
@@ -151,12 +151,14 @@ VMMDECL(int)    VMSetErrorV(PVM pVM, int rc, RT_SRC_POS_DECL, const char *pszFor
  * @param   va              Error message arguments.
  */
 typedef DECLCALLBACK(void) FNVMATRUNTIMEERROR(PUVM pUVM, void *pvUser, uint32_t fFlags, const char *pszErrorId,
-                                              const char *pszFormat, va_list va);
+                                              const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(5, 0);
 /** Pointer to a VM runtime error callback. */
 typedef FNVMATRUNTIMEERROR *PFNVMATRUNTIMEERROR;
 
-VMMDECL(int) VMSetRuntimeError(PVM pVM, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, ...);
-VMMDECL(int) VMSetRuntimeErrorV(PVM pVM, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, va_list args);
+VMMDECL(int) VMSetRuntimeError(PVM pVM, uint32_t fFlags, const char *pszErrorId,
+                               const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(4, 5);
+VMMDECL(int) VMSetRuntimeErrorV(PVM pVM, uint32_t fFlags, const char *pszErrorId,
+                                const char *pszFormat, va_list args) RT_IPRT_FORMAT_ATTR(4, 0);
 
 /** @name VMSetRuntimeError fFlags
  * When no flags are given the VM will continue running and it's up to the front
@@ -409,6 +411,8 @@ VMMR3DECL(VMSUSPENDREASON) VMR3GetSuspendReason(PUVM);
 VMMR3DECL(int)          VMR3Resume(PUVM pUVM, VMRESUMEREASON enmReason);
 VMMR3DECL(VMRESUMEREASON) VMR3GetResumeReason(PUVM);
 VMMR3DECL(int)          VMR3Reset(PUVM pUVM);
+VMMR3_INT_DECL(VBOXSTRICTRC) VMR3ResetFF(PVM pVM);
+VMMR3_INT_DECL(VBOXSTRICTRC) VMR3ResetTripleFault(PVM pVM);
 VMMR3DECL(int)          VMR3Save(PUVM pUVM, const char *pszFilename, bool fContinueAfterwards, PFNVMPROGRESS pfnProgress, void *pvUser, bool *pfSuspended);
 VMMR3_INT_DECL(int)     VMR3SaveFT(PUVM pUVM, PCSSMSTRMOPS pStreamOps, void *pvStreamOpsUser, bool *pfSuspended, bool fSkipStateChanges);
 VMMR3DECL(int)          VMR3Teleport(PUVM pUVM, uint32_t cMsDowntime, PCSSMSTRMOPS pStreamOps, void *pvStreamOpsUser, PFNVMPROGRESS pfnProgress, void *pvProgressUser, bool *pfSuspended);
@@ -432,11 +436,12 @@ VMMR3DECL(VMSTATE)      VMR3GetStateU(PUVM pUVM);
 VMMR3DECL(const char *) VMR3GetStateName(VMSTATE enmState);
 VMMR3DECL(int)          VMR3AtStateRegister(PUVM pUVM, PFNVMATSTATE pfnAtState, void *pvUser);
 VMMR3DECL(int)          VMR3AtStateDeregister(PUVM pUVM, PFNVMATSTATE pfnAtState, void *pvUser);
+VMMR3_INT_DECL(bool)    VMR3SetGuruMeditation(PVM pVM);
 VMMR3_INT_DECL(bool)    VMR3TeleportedAndNotFullyResumedYet(PVM pVM);
 VMMR3DECL(int)          VMR3AtErrorRegister(PUVM pUVM, PFNVMATERROR pfnAtError, void *pvUser);
 VMMR3DECL(int)          VMR3AtErrorDeregister(PUVM pUVM, PFNVMATERROR pfnAtError, void *pvUser);
-VMMR3DECL(int)          VMR3SetError(PUVM pUVM, int rc, RT_SRC_POS_DECL, const char *pszFormat, ...);
-VMMR3DECL(int)          VMR3SetErrorV(PUVM pUVM, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va);
+VMMR3DECL(int)          VMR3SetError(PUVM pUVM, int rc, RT_SRC_POS_DECL, const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(6, 7);
+VMMR3DECL(int)          VMR3SetErrorV(PUVM pUVM, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(6, 0);
 VMMR3_INT_DECL(void)    VMR3SetErrorWorker(PVM pVM);
 VMMR3_INT_DECL(uint32_t) VMR3GetErrorCount(PUVM pUVM);
 VMMR3DECL(int)          VMR3AtRuntimeErrorRegister(PUVM pUVM, PFNVMATRUNTIMEERROR pfnAtRuntimeError, void *pvUser);
@@ -483,6 +488,7 @@ VMMR3DECL(RTTHREAD)         VMR3GetVMCPUThread(PUVM pUVM);
 VMMR3DECL(RTNATIVETHREAD)   VMR3GetVMCPUNativeThread(PVM pVM);
 VMMR3DECL(RTNATIVETHREAD)   VMR3GetVMCPUNativeThreadU(PUVM pUVM);
 VMMR3DECL(int)              VMR3GetCpuCoreAndPackageIdFromCpuId(PUVM pUVM, VMCPUID idCpu, uint32_t *pidCpuCore, uint32_t *pidCpuPackage);
+VMMR3_INT_DECL(uint32_t)    VMR3GetActiveEmts(PUVM pUVM);
 VMMR3DECL(int)              VMR3HotUnplugCpu(PUVM pUVM, VMCPUID idCpu);
 VMMR3DECL(int)              VMR3HotPlugCpu(PUVM pUVM, VMCPUID idCpu);
 VMMR3DECL(int)              VMR3SetCpuExecutionCap(PUVM pUVM, uint32_t uCpuExecutionCap);

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,9 +26,10 @@
 #include "stdio.h"
 #include "stdlib.h"
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The error count. */
 unsigned g_cErrors = 0;
 
@@ -42,8 +43,9 @@ static struct KeyValuePair {
     { NULL, NULL }
 };
 
-static bool tstAreKeysValid(void *pvUser, const char *pszzValid)
+static DECLCALLBACK(bool) tstAreKeysValid(void *pvUser, const char *pszzValid)
 {
+    RT_NOREF2(pvUser, pszzValid);
     return true;
 }
 
@@ -55,8 +57,9 @@ static const char *tstGetValueByKey(const char *pszKey)
     return NULL;
 }
 
-static int tstQuerySize(void *pvUser, const char *pszName, size_t *pcbValue)
+static DECLCALLBACK(int) tstQuerySize(void *pvUser, const char *pszName, size_t *pcbValue)
 {
+    RT_NOREF1(pvUser);
     const char *pszValue = tstGetValueByKey(pszName);
     if (!pszValue)
         return VERR_CFGM_VALUE_NOT_FOUND;
@@ -64,8 +67,9 @@ static int tstQuerySize(void *pvUser, const char *pszName, size_t *pcbValue)
     return VINF_SUCCESS;
 }
 
-static int tstQuery(void *pvUser, const char *pszName, char *pszValue, size_t cchValue)
+static DECLCALLBACK(int) tstQuery(void *pvUser, const char *pszName, char *pszValue, size_t cchValue)
 {
+    RT_NOREF1(pvUser);
     const char *pszTmp = tstGetValueByKey(pszName);
     if (!pszValue)
         return VERR_CFGM_VALUE_NOT_FOUND;
@@ -82,8 +86,8 @@ static const char *tstVDDeviceType(VDTYPE enmType)
     {
         case VDTYPE_HDD:
             return "HardDisk";
-        case VDTYPE_DVD:
-            return "DVD";
+        case VDTYPE_OPTICAL_DISC:
+            return "OpticalDisc";
         case VDTYPE_FLOPPY:
             return "Floppy";
         default:

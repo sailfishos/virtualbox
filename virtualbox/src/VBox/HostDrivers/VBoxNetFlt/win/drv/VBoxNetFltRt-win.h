@@ -4,7 +4,7 @@
  * NetFlt Runtime API
  */
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 #ifndef ___VBoxNetFltRt_win_h___
 #define ___VBoxNetFltRt_win_h___
@@ -31,15 +40,15 @@ DECLHIDDEN(bool) vboxNetFltWinMatchPacketAndSG(PNDIS_PACKET pPacket, PINTNETSG p
 
 
 #define LIST_ENTRY_2_PACKET_INFO(pListEntry) \
-    ( (PVBOXNETFLT_PACKET_INFO)((uint8_t *)(pListEntry) - RT_OFFSETOF(VBOXNETFLT_PACKET_INFO, ListEntry)) )
+    ( (PVBOXNETFLT_PACKET_INFO)((uint8_t *)(pListEntry) - RT_UOFFSETOF(VBOXNETFLT_PACKET_INFO, ListEntry)) )
 
 #if !defined(VBOX_LOOPBACK_USEFLAGS) || defined(DEBUG_NETFLT_PACKETS)
 
 #define VBOX_SLE_2_PKTRSVD_PT(_pEntry) \
-    ( (PVBOXNETFLT_PKTRSVD_PT)((uint8_t *)(_pEntry) - RT_OFFSETOF(VBOXNETFLT_PKTRSVD_PT, ListEntry)) )
+    ( (PVBOXNETFLT_PKTRSVD_PT)((uint8_t *)(_pEntry) - RT_UOFFSETOF(VBOXNETFLT_PKTRSVD_PT, ListEntry)) )
 
 #define VBOX_SLE_2_SENDPACKET(_pEntry) \
-    ( (PNDIS_PACKET)((uint8_t *)(VBOX_SLE_2_PKTRSVD_PT(_pEntry)) - RT_OFFSETOF(NDIS_PACKET, ProtocolReserved)) )
+    ( (PNDIS_PACKET)((uint8_t *)(VBOX_SLE_2_PKTRSVD_PT(_pEntry)) - RT_UOFFSETOF(NDIS_PACKET, ProtocolReserved)) )
 
 #endif
 /**
@@ -80,7 +89,7 @@ DECLINLINE(void) vboxNetFltWinQuInterlockedEnqueueHead(PVBOXNETFLT_INTERLOCKED_P
 DECLINLINE(PVBOXNETFLT_PACKET_INFO) vboxNetFltWinQuDequeueHead(PVBOXNETFLT_PACKET_QUEUE pQueue)
 {
     PLIST_ENTRY pListEntry = RemoveHeadList(pQueue);
-    if(pListEntry != pQueue)
+    if (pListEntry != pQueue)
     {
         PVBOXNETFLT_PACKET_INFO pInfo = LIST_ENTRY_2_PACKET_INFO(pListEntry);
         Assert(pInfo->pPool);
@@ -92,7 +101,7 @@ DECLINLINE(PVBOXNETFLT_PACKET_INFO) vboxNetFltWinQuDequeueHead(PVBOXNETFLT_PACKE
 DECLINLINE(PVBOXNETFLT_PACKET_INFO) vboxNetFltWinQuDequeueTail(PVBOXNETFLT_PACKET_QUEUE pQueue)
 {
     PLIST_ENTRY pListEntry = RemoveTailList(pQueue);
-    if(pListEntry != pQueue)
+    if (pListEntry != pQueue)
     {
         PVBOXNETFLT_PACKET_INFO pInfo = LIST_ENTRY_2_PACKET_INFO(pListEntry);
         Assert(pInfo->pPool);
@@ -191,14 +200,14 @@ DECLINLINE(bool) vboxNetFltWinSearchListEntry(PVBOXNETFLT_SINGLE_LIST pList, PSI
     PSINGLE_LIST_ENTRY pHead = &pList->Head;
     PSINGLE_LIST_ENTRY pCur;
     PSINGLE_LIST_ENTRY pPrev;
-    for(pCur = pHead->Next, pPrev = pHead; pCur; pPrev = pCur, pCur = pCur->Next)
+    for (pCur = pHead->Next, pPrev = pHead; pCur; pPrev = pCur, pCur = pCur->Next)
     {
-        if(pEntry2Search == pCur)
+        if (pEntry2Search == pCur)
         {
-            if(bRemove)
+            if (bRemove)
             {
                 pPrev->Next = pCur->Next;
-                if(pCur == pList->pTail)
+                if (pCur == pList->pTail)
                 {
                     pList->pTail = pPrev;
                 }
@@ -217,15 +226,15 @@ DECLINLINE(PNDIS_PACKET) vboxNetFltWinSearchPacket(PVBOXNETFLT_SINGLE_LIST pList
     PSINGLE_LIST_ENTRY pCur;
     PSINGLE_LIST_ENTRY pPrev;
     PNDIS_PACKET pCurPacket;
-    for(pCur = pHead->Next, pPrev = pHead; pCur; pPrev = pCur, pCur = pCur->Next)
+    for (pCur = pHead->Next, pPrev = pHead; pCur; pPrev = pCur, pCur = pCur->Next)
     {
         pCurPacket = VBOX_SLE_2_SENDPACKET(pCur);
-        if(pCurPacket == pPacket2Search || vboxNetFltWinMatchPackets(pPacket2Search, pCurPacket, cbMatch))
+        if (pCurPacket == pPacket2Search || vboxNetFltWinMatchPackets(pPacket2Search, pCurPacket, cbMatch))
         {
-            if(bRemove)
+            if (bRemove)
             {
                 pPrev->Next = pCur->Next;
-                if(pCur == pList->pTail)
+                if (pCur == pList->pTail)
                 {
                     pList->pTail = pPrev;
                 }
@@ -242,15 +251,15 @@ DECLINLINE(PNDIS_PACKET) vboxNetFltWinSearchPacketBySG(PVBOXNETFLT_SINGLE_LIST p
     PSINGLE_LIST_ENTRY pCur;
     PSINGLE_LIST_ENTRY pPrev;
     PNDIS_PACKET pCurPacket;
-    for(pCur = pHead->Next, pPrev = pHead; pCur; pPrev = pCur, pCur = pCur->Next)
+    for (pCur = pHead->Next, pPrev = pHead; pCur; pPrev = pCur, pCur = pCur->Next)
     {
         pCurPacket = VBOX_SLE_2_SENDPACKET(pCur);
-        if(vboxNetFltWinMatchPacketAndSG(pCurPacket, pSG, cbMatch))
+        if (vboxNetFltWinMatchPacketAndSG(pCurPacket, pSG, cbMatch))
         {
-            if(bRemove)
+            if (bRemove)
             {
                 pPrev->Next = pCur->Next;
-                if(pCur == pList->pTail)
+                if (pCur == pList->pTail)
                 {
                     pList->pTail = pPrev;
                 }
@@ -279,14 +288,14 @@ DECLINLINE(void) vboxNetFltWinPutHead(PVBOXNETFLT_SINGLE_LIST pList, PSINGLE_LIS
 {
     pEntry->Next = pList->Head.Next;
     pList->Head.Next = pEntry;
-    if(!pEntry->Next)
+    if (!pEntry->Next)
         pList->pTail = pEntry;
 }
 
 DECLINLINE(PSINGLE_LIST_ENTRY) vboxNetFltWinGetHead(PVBOXNETFLT_SINGLE_LIST pList)
 {
     PSINGLE_LIST_ENTRY pEntry = pList->Head.Next;
-    if(pEntry && pEntry == pList->pTail)
+    if (pEntry && pEntry == pList->pTail)
     {
         pList->Head.Next = NULL;
         pList->pTail = &pList->Head;
@@ -395,17 +404,17 @@ extern RTMAC g_vboxNetFltWinVerifyMACGuest;
     do { \
         Assert(!vboxNetFltWinCheckMACs(_p, NULL, &g_vboxNetFltWinVerifyMACGuest)); \
         Assert(!vboxNetFltWinCheckMACs(_p, NULL, &(_pnf)->u.s.MacAddr)); \
-    } while(0)
+    } while (0)
 
 # define VBOXNETFLT_LBVERIFYSG(_pnf, _p) \
     do { \
         Assert(!vboxNetFltWinCheckMACsSG(_p, NULL, &g_vboxNetFltWinVerifyMACGuest)); \
         Assert(!vboxNetFltWinCheckMACsSG(_p, NULL, &(_pnf)->u.s.MacAddr)); \
-    } while(0)
+    } while (0)
 
 #else
-# define VBOXNETFLT_LBVERIFY(_pnf, _p) do{}while(0)
-# define VBOXNETFLT_LBVERIFYSG(_pnf, _p) do{}while(0)
+# define VBOXNETFLT_LBVERIFY(_pnf, _p) do { } while (0)
+# define VBOXNETFLT_LBVERIFYSG(_pnf, _p) do { } while (0)
 #endif
 
 /** initializes the list */
@@ -420,14 +429,14 @@ extern RTMAC g_vboxNetFltWinVerifyMACGuest;
     do { \
         INIT_SINGLE_LIST(&(_pList)->List); \
         NdisAllocateSpinLock(&(_pList)->Lock); \
-    } while(0)
+    } while (0)
 
 /** delete the packet queue */
 #define FINI_INTERLOCKED_SINGLE_LIST(_pList) \
     do { \
         Assert(vboxNetFltWinSListIsEmpty(&(_pList)->List)); \
         NdisFreeSpinLock(&(_pList)->Lock) \
-    } while(0)
+    } while (0)
 
 
 /**************************************************************************
@@ -588,27 +597,27 @@ DECLINLINE(bool) vboxNetFltWinReferenceWinIfNetFlt(PVBOXNETFLTINS pNetFlt, bool 
 {
     RTSpinlockAcquire((pNetFlt)->hSpinlock);
 #ifndef VBOXNETADP
-    if(!vboxNetFltWinDoReferenceDevices(&pNetFlt->u.s.WinIf.MpState, &pNetFlt->u.s.WinIf.PtState))
+    if (!vboxNetFltWinDoReferenceDevices(&pNetFlt->u.s.WinIf.MpState, &pNetFlt->u.s.WinIf.PtState))
 #else
-    if(!vboxNetFltWinDoReferenceDevice(&pNetFlt->u.s.WinIf.MpState))
+    if (!vboxNetFltWinDoReferenceDevice(&pNetFlt->u.s.WinIf.MpState))
 #endif
     {
-        RTSpinlockReleaseNoInts((pNetFlt)->hSpinlock);
+        RTSpinlockRelease((pNetFlt)->hSpinlock);
         *pbNetFltActive = false;
         return false;
     }
 
-    if(pNetFlt->enmTrunkState != INTNETTRUNKIFSTATE_ACTIVE)
+    if (pNetFlt->enmTrunkState != INTNETTRUNKIFSTATE_ACTIVE)
     {
         vboxNetFltWinReferenceModePassThru(pNetFlt);
-        RTSpinlockReleaseNoInts((pNetFlt)->hSpinlock);
+        RTSpinlockRelease((pNetFlt)->hSpinlock);
         *pbNetFltActive = false;
         return true;
     }
 
     vboxNetFltRetain((pNetFlt), true /* fBusy */);
     vboxNetFltWinReferenceModeNetFlt(pNetFlt);
-    RTSpinlockReleaseNoInts((pNetFlt)->hSpinlock);
+    RTSpinlockRelease((pNetFlt)->hSpinlock);
 
     *pbNetFltActive = true;
     return true;
@@ -619,7 +628,7 @@ DECLINLINE(bool) vboxNetFltWinIncReferenceWinIfNetFlt(PVBOXNETFLTINS pNetFlt, ui
     uint32_t i;
 
     Assert(v);
-    if(!v)
+    if (!v)
     {
         *pbNetFltActive = false;
         return false;
@@ -627,21 +636,21 @@ DECLINLINE(bool) vboxNetFltWinIncReferenceWinIfNetFlt(PVBOXNETFLTINS pNetFlt, ui
 
     RTSpinlockAcquire((pNetFlt)->hSpinlock);
 #ifndef VBOXNETADP
-    if(!vboxNetFltWinDoIncReferenceDevices(&pNetFlt->u.s.WinIf.MpState, &pNetFlt->u.s.WinIf.PtState, v))
+    if (!vboxNetFltWinDoIncReferenceDevices(&pNetFlt->u.s.WinIf.MpState, &pNetFlt->u.s.WinIf.PtState, v))
 #else
-    if(!vboxNetFltWinDoIncReferenceDevice(&pNetFlt->u.s.WinIf.MpState, v))
+    if (!vboxNetFltWinDoIncReferenceDevice(&pNetFlt->u.s.WinIf.MpState, v))
 #endif
     {
-        RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+        RTSpinlockRelease(pNetFlt->hSpinlock);
         *pbNetFltActive = false;
         return false;
     }
 
-    if(pNetFlt->enmTrunkState != INTNETTRUNKIFSTATE_ACTIVE)
+    if (pNetFlt->enmTrunkState != INTNETTRUNKIFSTATE_ACTIVE)
     {
         vboxNetFltWinIncReferenceModePassThru(pNetFlt, v);
 
-        RTSpinlockReleaseNoInts((pNetFlt)->hSpinlock);
+        RTSpinlockRelease((pNetFlt)->hSpinlock);
         *pbNetFltActive = false;
         return true;
     }
@@ -650,10 +659,10 @@ DECLINLINE(bool) vboxNetFltWinIncReferenceWinIfNetFlt(PVBOXNETFLTINS pNetFlt, ui
 
     vboxNetFltWinIncReferenceModeNetFlt(pNetFlt, v);
 
-    RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+    RTSpinlockRelease(pNetFlt->hSpinlock);
 
     /* we have marked it as busy, so can do the res references outside the lock */
-    for(i = 0; i < v-1; i++)
+    for (i = 0; i < v-1; i++)
     {
         vboxNetFltRetain(pNetFlt, true /* fBusy */);
     }
@@ -666,7 +675,7 @@ DECLINLINE(bool) vboxNetFltWinIncReferenceWinIfNetFlt(PVBOXNETFLTINS pNetFlt, ui
 DECLINLINE(void) vboxNetFltWinDecReferenceNetFlt(PVBOXNETFLTINS pNetFlt, uint32_t n)
 {
     uint32_t i;
-    for(i = 0; i < n; i++)
+    for (i = 0; i < n; i++)
     {
         vboxNetFltRelease(pNetFlt, true);
     }
@@ -702,23 +711,23 @@ DECLINLINE(void) vboxNetFltWinDereferenceWinIf(PVBOXNETFLTINS pNetFlt)
 DECLINLINE(bool) vboxNetFltWinIncReferenceWinIf(PVBOXNETFLTINS pNetFlt, uint32_t v)
 {
     Assert(v);
-    if(!v)
+    if (!v)
     {
         return false;
     }
 
     RTSpinlockAcquire(pNetFlt->hSpinlock);
 #ifdef VBOXNETADP
-    if(vboxNetFltWinDoIncReferenceDevice(&pNetFlt->u.s.WinIf.MpState, v))
+    if (vboxNetFltWinDoIncReferenceDevice(&pNetFlt->u.s.WinIf.MpState, v))
 #else
-    if(vboxNetFltWinDoIncReferenceDevices(&pNetFlt->u.s.WinIf.MpState, &pNetFlt->u.s.WinIf.PtState, v))
+    if (vboxNetFltWinDoIncReferenceDevices(&pNetFlt->u.s.WinIf.MpState, &pNetFlt->u.s.WinIf.PtState, v))
 #endif
     {
-        RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+        RTSpinlockRelease(pNetFlt->hSpinlock);
         return true;
     }
 
-    RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+    RTSpinlockRelease(pNetFlt->hSpinlock);
     return false;
 }
 
@@ -726,16 +735,16 @@ DECLINLINE(bool) vboxNetFltWinReferenceWinIf(PVBOXNETFLTINS pNetFlt)
 {
     RTSpinlockAcquire(pNetFlt->hSpinlock);
 #ifdef VBOXNETADP
-    if(vboxNetFltWinDoReferenceDevice(&pNetFlt->u.s.WinIf.MpState))
+    if (vboxNetFltWinDoReferenceDevice(&pNetFlt->u.s.WinIf.MpState))
 #else
-    if(vboxNetFltWinDoReferenceDevices(&pNetFlt->u.s.WinIf.MpState, &pNetFlt->u.s.WinIf.PtState))
+    if (vboxNetFltWinDoReferenceDevices(&pNetFlt->u.s.WinIf.MpState, &pNetFlt->u.s.WinIf.PtState))
 #endif
     {
-        RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+        RTSpinlockRelease(pNetFlt->hSpinlock);
         return true;
     }
 
-    RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+    RTSpinlockRelease(pNetFlt->hSpinlock);
     return false;
 }
 

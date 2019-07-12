@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Define NO_PORT_RESET to skip the slow and broken linux port reset.
  * Resetting will break PalmOne. */
 #define NO_PORT_RESET
@@ -25,9 +26,9 @@
 #define NO_LOGICAL_RECONNECT
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_USBPROXY
 
 #include <iprt/stdint.h>
@@ -99,17 +100,26 @@ static inline bool rtcsTrue() { return true; }
 #include <iprt/time.h>
 #include "../USBProxyDevice.h"
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Wrapper around the linux urb request structure.
  * This is required to track in-flight and landed URBs.
  */
 typedef struct USBPROXYURBLNX
 {
-    /** The kernel URB data */
+    /** The kernel URB data. */
+#if RT_GNUC_PREREQ(6, 0)
+    /* gcc 6.2 complains about the [] member of KUrb */
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wpedantic"
+#endif
     struct usbdevfs_urb             KUrb;
+#if RT_GNUC_PREREQ(6, 0)
+# pragma GCC diagnostic pop
+#endif
     /** Space filler for the isochronous packets. */
     struct usbdevfs_iso_packet_desc aIsocPktsDonUseTheseUseTheOnesInKUrb[8];
     /** Node to link the URB in of the existing lists. */
@@ -119,11 +129,13 @@ typedef struct USBPROXYURBLNX
     /** The next linux URB if split up. */
     struct USBPROXYURBLNX           *pSplitNext;
     /** Don't report these back. */
-    bool                             fCanceledBySubmit;
+    bool                            fCanceledBySubmit;
     /** This split element is reaped. */
-    bool                             fSplitElementReaped;
+    bool                            fSplitElementReaped;
+    /** This URB was discarded. */
+    bool                            fDiscarded;
     /** Size to transfer in remaining fragments of a split URB */
-    uint32_t                         cbSplitRemaining;
+    uint32_t                        cbSplitRemaining;
 } USBPROXYURBLNX, *PUSBPROXYURBLNX;
 
 /**
@@ -141,9 +153,6 @@ typedef struct USBPROXYDEVLNX
      * We must maintain this so we can properly reap URBs of a detached device.
      * Only the split head will appear in this list. (USBPROXYURBLNX) */
     RTLISTANCHOR        ListInFlight;
-    /** The list of landed linux URBs. Doubly linked.
-     * Only the split head will appear in this list. (USBPROXYURBLNX) */
-    RTLISTANCHOR        ListTaxing;
     /** Are we using sysfs to find the active configuration? */
     bool                fUsingSysfs;
     /** Pipe handle for waiking up - writing end. */
@@ -156,9 +165,9 @@ typedef struct USBPROXYDEVLNX
 } USBPROXYDEVLNX, *PUSBPROXYDEVLNX;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int usbProxyLinuxDoIoCtl(PUSBPROXYDEV pProxyDev, unsigned long iCmd, void *pvArg, bool fHandleNoDev, uint32_t cTries);
 static void usbProxLinuxUrbUnplugged(PUSBPROXYDEV pProxyDev);
 static void usbProxyLinuxSetConnected(PUSBPROXYDEV pProyxDev, int iIf, bool fConnect, bool fQuiet);
@@ -227,19 +236,16 @@ static void usbProxLinuxUrbUnplugged(PUSBPROXYDEV pProxyDev)
 
     PUSBPROXYURBLNX pUrbLnx;
     PUSBPROXYURBLNX pUrbLnxNext;
-
     RTListForEachSafe(&pDevLnx->ListInFlight, pUrbLnx, pUrbLnxNext, USBPROXYURBLNX, NodeList)
     {
-        RTListNodeRemove(&pUrbLnx->NodeList);
-
-        ioctl(RTFileToNative(pDevLnx->hFile), USBDEVFS_DISCARDURB, &pUrbLnx->KUrb); /* not sure if this is required.. */
-        if (!pUrbLnx->KUrb.status)
-            pUrbLnx->KUrb.status = -ENODEV;
-
-        /* insert into the taxing list. */
-        if (    !pUrbLnx->pSplitHead
-            ||  pUrbLnx == pUrbLnx->pSplitHead)
-            RTListAppend(&pDevLnx->ListTaxing, &pUrbLnx->NodeList);
+        if (!pUrbLnx->fDiscarded)
+        {
+            pUrbLnx->fDiscarded = true;
+            /* Cancel the URB. It will be reaped normally. */
+            ioctl(RTFileToNative(pDevLnx->hFile), USBDEVFS_DISCARDURB, &pUrbLnx->KUrb);
+            if (!pUrbLnx->KUrb.status)
+                pUrbLnx->KUrb.status = -ENODEV;
+        }
     }
 
     RTCritSectLeave(&pDevLnx->CritSect);
@@ -344,6 +350,7 @@ static PUSBPROXYURBLNX usbProxyLinuxUrbAlloc(PUSBPROXYDEV pProxyDev, PUSBPROXYUR
     pUrbLnx->pSplitNext = NULL;
     pUrbLnx->fCanceledBySubmit = false;
     pUrbLnx->fSplitElementReaped = false;
+    pUrbLnx->fDiscarded = false;
     LogFlowFunc(("returns pUrbLnx=%p\n", pUrbLnx));
     return pUrbLnx;
 }
@@ -405,14 +412,17 @@ static void usbProxyLinuxUrbFreeSplitList(PUSBPROXYDEV pProxyDev, PUSBPROXYURBLN
  *
  * @returns The Cfg#.
  * @returns -1 if no active config.
+ * @param   pProxyDev       The proxy device instance.
  * @param   pszDevNode      The path to the device. We infere the location of
  *                          the devices file, which bus and device number we're
  *                          looking for.
- * @param   iFirstCfg       The first configuration. (optional)
+ * @param   piFirstCfg      The first configuration. (optional)
  * @internal
  */
 static int usbProxyLinuxFindActiveConfigUsbfs(PUSBPROXYDEV pProxyDev, const char *pszDevNode, int *piFirstCfg)
 {
+    RT_NOREF(pProxyDev);
+
     /*
      * Set return defaults.
      */
@@ -538,6 +548,7 @@ static int usbProxyLinuxFindActiveConfigUsbfs(PUSBPROXYDEV pProxyDev, const char
  *
  * @returns The Cfg#.
  * @returns -1 if no active config.
+ * @param   pProxyDev       The proxy device instance.
  * @param   pszPath         The sysfs path for the device.
  * @param   piFirstCfg      The first configuration. (optional)
  * @internal
@@ -549,7 +560,11 @@ static int usbProxyLinuxFindActiveConfigSysfs(PUSBPROXYDEV pProxyDev, const char
         *piFirstCfg = pProxyDev->paCfgDescs != NULL
                     ? pProxyDev->paCfgDescs[0].Core.bConfigurationValue
                     : 1;
-    return RTLinuxSysFsReadIntFile(10, "%s/bConfigurationValue", pszPath); /* returns -1 on failure */
+    int64_t bCfg = 0;
+    int rc = RTLinuxSysFsReadIntFile(10, &bCfg, "%s/bConfigurationValue", pszPath);
+    if (RT_FAILURE(rc))
+        bCfg = -1;
+    return (int)bCfg;
 #else  /* !VBOX_USB_WITH_SYSFS */
     return -1;
 #endif /* !VBOX_USB_WITH_SYSFS */
@@ -561,9 +576,10 @@ static int usbProxyLinuxFindActiveConfigSysfs(PUSBPROXYDEV pProxyDev, const char
  *
  * @returns The Cfg#.
  * @returns -1 if no active config.
+ * @param   pProxyDev       The proxy device instance.
  * @param   pszPath         The sysfs path for the device, or the usbfs device
  *                          node path.
- * @param   iFirstCfg       The first configuration. (optional)
+ * @param   piFirstCfg      The first configuration. (optional)
  * @internal
  */
 static int usbProxyLinuxFindActiveConfig(PUSBPROXYDEV pProxyDev, const char *pszPath, int *piFirstCfg)
@@ -651,7 +667,6 @@ static DECLCALLBACK(int) usbProxyLinuxOpen(PUSBPROXYDEV pProxyDev, const char *p
 
         RTListInit(&pDevLnx->ListFree);
         RTListInit(&pDevLnx->ListInFlight);
-        RTListInit(&pDevLnx->ListTaxing);
         pDevLnx->pszPath = RTStrDupN(pszPath, cchPath);
         if (pDevLnx->pszPath)
         {
@@ -1003,12 +1018,7 @@ static int usb_reset_logical_reconnect(PUSBPROXYDEV pDev)
 #endif /* !NO_PORT_RESET && !NO_LOGICAL_RECONNECT */
 
 
-/**
- * Reset a device.
- *
- * @returns VBox status code.
- * @param   pDev    The device to reset.
- */
+/** @interface_method_impl{USBPROXYBACK,pfnReset} */
 static DECLCALLBACK(int) usbProxyLinuxReset(PUSBPROXYDEV pProxyDev, bool fResetOnLinux)
 {
 #ifdef NO_PORT_RESET
@@ -1144,7 +1154,7 @@ static DECLCALLBACK(int) usbProxyLinuxClaimInterface(PUSBPROXYDEV pProxyDev, int
  * Releases an interface.
  * @returns success indicator.
  */
-static int usbProxyLinuxReleaseInterface(PUSBPROXYDEV pProxyDev, int iIf)
+static DECLCALLBACK(int) usbProxyLinuxReleaseInterface(PUSBPROXYDEV pProxyDev, int iIf)
 {
     LogFlow(("usbProxyLinuxReleaseInterface: pProxyDev=%s ifnum=%#x\n", usbProxyGetName(pProxyDev), iIf));
 
@@ -1162,7 +1172,7 @@ static int usbProxyLinuxReleaseInterface(PUSBPROXYDEV pProxyDev, int iIf)
  *
  * @returns success indicator.
  */
-static int usbProxyLinuxSetInterface(PUSBPROXYDEV pProxyDev, int iIf, int iAlt)
+static DECLCALLBACK(int) usbProxyLinuxSetInterface(PUSBPROXYDEV pProxyDev, int iIf, int iAlt)
 {
     struct usbdevfs_setinterface SetIf;
     LogFlow(("usbProxyLinuxSetInterface: pProxyDev=%p iIf=%#x iAlt=%#x\n", pProxyDev, iIf, iAlt));
@@ -1181,7 +1191,7 @@ static int usbProxyLinuxSetInterface(PUSBPROXYDEV pProxyDev, int iIf, int iAlt)
 /**
  * Clears the halted endpoint 'EndPt'.
  */
-static int usbProxyLinuxClearHaltedEp(PUSBPROXYDEV pProxyDev, unsigned int EndPt)
+static DECLCALLBACK(int) usbProxyLinuxClearHaltedEp(PUSBPROXYDEV pProxyDev, unsigned int EndPt)
 {
     LogFlow(("usbProxyLinuxClearHaltedEp: pProxyDev=%s EndPt=%u\n", usbProxyGetName(pProxyDev), EndPt));
 
@@ -1271,7 +1281,7 @@ static void usbProxyLinuxCleanupFailedSubmit(PUSBPROXYDEV pProxyDev, PUSBPROXYUR
  */
 static int usbProxyLinuxSubmitURB(PUSBPROXYDEV pProxyDev, PUSBPROXYURBLNX pCur, PVUSBURB pUrb, bool *pfUnplugged)
 {
-    int rc = VINF_SUCCESS;
+    RT_NOREF(pUrb);
     PUSBPROXYDEVLNX pDevLnx = USBPROXYDEV_2_DATA(pProxyDev, PUSBPROXYDEVLNX);
     unsigned        cTries = 0;
 
@@ -1370,7 +1380,7 @@ static int usbProxyLinuxUrbQueueSplit(PUSBPROXYDEV pProxyDev, PUSBPROXYURBLNX pU
         case VUSBXFERTYPE_ISOC:
             AssertMsgFailed(("We can't split isochronous URBs!\n"));
             usbProxyLinuxUrbFree(pProxyDev, pUrbLnx);
-            return VERR_INVALID_PARAMETER; /** @todo: Better status code. */
+            return VERR_INVALID_PARAMETER; /** @todo Better status code. */
     }
     pUrbLnx->KUrb.endpoint          = pUrb->EndPt;
     if (pUrb->enmDir == VUSBDIRECTION_IN)
@@ -1425,7 +1435,6 @@ static int usbProxyLinuxUrbQueueSplit(PUSBPROXYDEV pProxyDev, PUSBPROXYURBLNX pU
             rc = usbProxyLinuxSubmitURB(pProxyDev, pCur, pUrb, &fUnplugged);
             if (RT_FAILURE(rc))
                 break;
-            usbProxyLinuxUrbLinkInFlight(USBPROXYDEV_2_DATA(pProxyDev, PUSBPROXYDEVLNX), pCur);
         }
     }
 
@@ -1443,7 +1452,7 @@ static int usbProxyLinuxUrbQueueSplit(PUSBPROXYDEV pProxyDev, PUSBPROXYURBLNX pU
 
 
 /**
- * @copydoc USBPROXYBACK::pfnUrbQueue
+ * @interface_method_impl{USBPROXYBACK,pfnUrbQueue}
  */
 static DECLCALLBACK(int) usbProxyLinuxUrbQueue(PUSBPROXYDEV pProxyDev, PVUSBURB pUrb)
 {
@@ -1496,16 +1505,23 @@ static DECLCALLBACK(int) usbProxyLinuxUrbQueue(PUSBPROXYDEV pProxyDev, PVUSBURB 
             unsigned i;
             for (i = 0; i < pUrb->cIsocPkts; i++)
             {
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
                 pUrbLnx->KUrb.iso_frame_desc[i].length = pUrb->aIsocPkts[i].cb;
                 pUrbLnx->KUrb.iso_frame_desc[i].actual_length = 0;
                 pUrbLnx->KUrb.iso_frame_desc[i].status = 0x7fff;
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic pop
+#endif
             }
             break;
         case VUSBXFERTYPE_INTR:
             pUrbLnx->KUrb.type = USBDEVFS_URB_TYPE_INTERRUPT;
             break;
         default:
-            rc = VERR_INVALID_PARAMETER; /** @todo: better status code. */
+            rc = VERR_INVALID_PARAMETER; /** @todo better status code. */
     }
 
     /*
@@ -1613,8 +1629,9 @@ static VUSBSTATUS vusbProxyLinuxStatusToVUsbStatus(int iStatus)
         //case -ENOSR:
         //    return VUSBSTATUS_BUFFER_UNDERRUN;
 
-        //case -EPROTO:
-        //    return VUSBSTATUS_BIT_STUFFING;
+        case -EPROTO:
+            Log(("vusbProxyLinuxStatusToVUsbStatus: DNR/EPPROTO!!\n"));
+            return VUSBSTATUS_DNR;
 
         case -EPIPE:
             Log(("vusbProxyLinuxStatusToVUsbStatus: STALL/EPIPE!!\n"));
@@ -1653,130 +1670,110 @@ static DECLCALLBACK(PVUSBURB) usbProxyLinuxUrbReap(PUSBPROXYDEV pProxyDev, RTMSI
     PUSBPROXYURBLNX pUrbLnx = NULL;
     PUSBPROXYDEVLNX pDevLnx = USBPROXYDEV_2_DATA(pProxyDev, PUSBPROXYDEVLNX);
 
-    /*
-     * Any URBs pending delivery?
+     /*
+     * Block for requested period.
+     *
+     * It seems to me that the path of poll() is shorter and
+     * involves less semaphores than ioctl() on usbfs. So, we'll
+     * do a poll regardless of whether cMillies == 0 or not.
      */
-    if (!RTListIsEmpty(&pDevLnx->ListTaxing))
+    if (cMillies)
     {
-        RTCritSectEnter(&pDevLnx->CritSect);
-        pUrbLnx = RTListGetFirst(&pDevLnx->ListTaxing, USBPROXYURBLNX, NodeList);
-        if (pUrbLnx)
-        {
-            /* unlink from the pending delivery list */
-            RTListNodeRemove(&pUrbLnx->NodeList);
+        int cMilliesWait = cMillies == RT_INDEFINITE_WAIT ? -1 : cMillies;
 
-            /* temporarily into the active list, so free works right. */
-            RTListAppend(&pDevLnx->ListInFlight, &pUrbLnx->NodeList);
-        }
-        RTCritSectLeave(&pDevLnx->CritSect);
-    }
-    if (!pUrbLnx)
-    {
-        /*
-         * Block for requested period.
-         *
-         * It seems to me that the path of poll() is shorter and
-         * involves less semaphores than ioctl() on usbfs. So, we'll
-         * do a poll regardless of whether cMillies == 0 or not.
-         */
-        if (cMillies)
-        {
-            int cMilliesWait = cMillies == RT_INDEFINITE_WAIT ? -1 : cMillies;
-
-            for (;;)
-            {
-                struct pollfd pfd[2];
-                pfd[0].fd = RTFileToNative(pDevLnx->hFile);
-                pfd[0].events = POLLOUT | POLLWRNORM /* completed async */
-                              | POLLERR | POLLHUP    /* disconnected */;
-                pfd[0].revents = 0;
-
-                pfd[1].fd = RTPipeToNative(pDevLnx->hPipeWakeupR);
-                pfd[1].events = POLLIN | POLLHUP;
-                pfd[1].revents = 0;
-
-                int rc = poll(&pfd[0], 2, cMilliesWait);
-                Log(("usbProxyLinuxUrbReap: poll rc = %d\n", rc));
-                if (rc >= 1)
-                {
-                    /* If the pipe caused the return drain it. */
-                    if (pfd[1].revents & POLLIN)
-                    {
-                        uint8_t bRead;
-                        size_t cbIgnored = 0;
-                        RTPipeRead(pDevLnx->hPipeWakeupR, &bRead, 1, &cbIgnored);
-                    }
-                    break;
-                }
-                if (rc >= 0)
-                    return NULL;
-
-                if (errno != EAGAIN)
-                {
-                    Log(("usb-linux: Reap URB - poll -> %d errno=%d pProxyDev=%s\n", rc, errno, usbProxyGetName(pProxyDev)));
-                    return NULL;
-                }
-                Log(("usbProxyLinuxUrbReap: poll again - weird!!!\n"));
-            }
-        }
-
-        /*
-         * Reap URBs, non-blocking.
-         */
         for (;;)
         {
-            struct usbdevfs_urb *pKUrb;
-            while (ioctl(RTFileToNative(pDevLnx->hFile), USBDEVFS_REAPURBNDELAY, &pKUrb))
-                if (errno != EINTR)
+            struct pollfd pfd[2];
+            pfd[0].fd = RTFileToNative(pDevLnx->hFile);
+            pfd[0].events = POLLOUT | POLLWRNORM /* completed async */
+                          | POLLERR | POLLHUP    /* disconnected */;
+            pfd[0].revents = 0;
+
+            pfd[1].fd = RTPipeToNative(pDevLnx->hPipeWakeupR);
+            pfd[1].events = POLLIN | POLLHUP;
+            pfd[1].revents = 0;
+
+            int rc = poll(&pfd[0], 2, cMilliesWait);
+            Log(("usbProxyLinuxUrbReap: poll rc = %d\n", rc));
+            if (rc >= 1)
+            {
+                /* If the pipe caused the return drain it. */
+                if (pfd[1].revents & POLLIN)
                 {
-                    if (errno == ENODEV)
-                        usbProxLinuxUrbUnplugged(pProxyDev);
-                    else
-                        Log(("usb-linux: Reap URB. errno=%d pProxyDev=%s\n", errno, usbProxyGetName(pProxyDev)));
+                    uint8_t bRead;
+                    size_t cbIgnored = 0;
+                    RTPipeRead(pDevLnx->hPipeWakeupR, &bRead, 1, &cbIgnored);
+                }
+                break;
+            }
+            if (rc >= 0)
+                return NULL;
+
+            if (errno != EAGAIN)
+            {
+                Log(("usb-linux: Reap URB - poll -> %d errno=%d pProxyDev=%s\n", rc, errno, usbProxyGetName(pProxyDev)));
+                return NULL;
+            }
+            Log(("usbProxyLinuxUrbReap: poll again - weird!!!\n"));
+        }
+    }
+
+    /*
+     * Reap URBs, non-blocking.
+     */
+    for (;;)
+    {
+        struct usbdevfs_urb *pKUrb;
+        while (ioctl(RTFileToNative(pDevLnx->hFile), USBDEVFS_REAPURBNDELAY, &pKUrb))
+            if (errno != EINTR)
+            {
+                if (errno == ENODEV)
+                    usbProxLinuxUrbUnplugged(pProxyDev);
+                else
+                    Log(("usb-linux: Reap URB. errno=%d pProxyDev=%s\n", errno, usbProxyGetName(pProxyDev)));
+                return NULL;
+            }
+        pUrbLnx = (PUSBPROXYURBLNX)pKUrb;
+
+        /* split list: Is the entire split list done yet? */
+        if (pUrbLnx->pSplitHead)
+        {
+            pUrbLnx->fSplitElementReaped = true;
+
+            /* for variable size URBs, we may need to queue more if the just-reaped URB was completely filled */
+            if (pUrbLnx->cbSplitRemaining && (pKUrb->actual_length == pKUrb->buffer_length) && !pUrbLnx->pSplitNext)
+            {
+                bool fUnplugged = false;
+                bool fSucceeded;
+
+                Assert(pUrbLnx->pSplitHead);
+                Assert((pKUrb->endpoint & 0x80) && !(pKUrb->flags & USBDEVFS_URB_SHORT_NOT_OK));
+                PUSBPROXYURBLNX pNew = usbProxyLinuxSplitURBFragment(pProxyDev, pUrbLnx->pSplitHead, pUrbLnx);
+                if (!pNew)
+                {
+                    Log(("usb-linux: Allocating URB fragment failed. errno=%d pProxyDev=%s\n", errno, usbProxyGetName(pProxyDev)));
                     return NULL;
                 }
-            pUrbLnx = (PUSBPROXYURBLNX)pKUrb;
-
-            /* split list: Is the entire split list done yet? */
-            if (pUrbLnx->pSplitHead)
-            {
-                pUrbLnx->fSplitElementReaped = true;
-
-                /* for variable size URBs, we may need to queue more if the just-reaped URB was completely filled */
-                if (pUrbLnx->cbSplitRemaining && (pKUrb->actual_length == pKUrb->buffer_length) && !pUrbLnx->pSplitNext)
-                {
-                    bool fUnplugged = false;
-                    bool fSucceeded;
-
-                    Assert(pUrbLnx->pSplitHead);
-                    Assert((pKUrb->endpoint & 0x80) && (!pKUrb->flags & USBDEVFS_URB_SHORT_NOT_OK));
-                    PUSBPROXYURBLNX pNew = usbProxyLinuxSplitURBFragment(pProxyDev, pUrbLnx->pSplitHead, pUrbLnx);
-                    if (!pNew)
-                    {
-                        Log(("usb-linux: Allocating URB fragment failed. errno=%d pProxyDev=%s\n", errno, usbProxyGetName(pProxyDev)));
-                        return NULL;
-                    }
-                    PVUSBURB pUrb = (PVUSBURB)pUrbLnx->KUrb.usercontext;
-                    fSucceeded = usbProxyLinuxSubmitURB(pProxyDev, pNew, pUrb, &fUnplugged);
-                    if (fUnplugged)
-                        usbProxLinuxUrbUnplugged(pProxyDev);
-                    if (!fSucceeded)
-                        return NULL;
-                    continue;   /* try reaping another URB */
-                }
-                PUSBPROXYURBLNX pCur;
-                for (pCur = pUrbLnx->pSplitHead; pCur; pCur = pCur->pSplitNext)
-                    if (!pCur->fSplitElementReaped)
-                    {
-                        pUrbLnx = NULL;
-                        break;
-                    }
-                if (!pUrbLnx)
-                    continue;
-                pUrbLnx = pUrbLnx->pSplitHead;
+                PVUSBURB pUrb = (PVUSBURB)pUrbLnx->KUrb.usercontext;
+                fSucceeded = usbProxyLinuxSubmitURB(pProxyDev, pNew, pUrb, &fUnplugged);
+                if (fUnplugged)
+                    usbProxLinuxUrbUnplugged(pProxyDev);
+                if (!fSucceeded)
+                    return NULL;
+                continue;   /* try reaping another URB */
             }
-            break;
+            PUSBPROXYURBLNX pCur;
+            for (pCur = pUrbLnx->pSplitHead; pCur; pCur = pCur->pSplitNext)
+                if (!pCur->fSplitElementReaped)
+                {
+                    pUrbLnx = NULL;
+                    break;
+                }
+            if (!pUrbLnx)
+                continue;
+            pUrbLnx = pUrbLnx->pSplitHead;
         }
+        break;
     }
 
     /*
@@ -1814,10 +1811,17 @@ static DECLCALLBACK(PVUSBURB) usbProxyLinuxUrbReap(PUSBPROXYDEV pProxyDev, RTMSI
                 unsigned i, off;
                 for (i = 0, off = 0; i < pUrb->cIsocPkts; i++)
                 {
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
                     pUrb->aIsocPkts[i].enmStatus = vusbProxyLinuxStatusToVUsbStatus(pUrbLnx->KUrb.iso_frame_desc[i].status);
                     Assert(pUrb->aIsocPkts[i].off == off);
                     pUrb->aIsocPkts[i].cb = pUrbLnx->KUrb.iso_frame_desc[i].actual_length;
                     off += pUrbLnx->KUrb.iso_frame_desc[i].length;
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic pop
+#endif
                 }
             }
             usbProxyLinuxUrbUnlinkInFlight(pDevLnx, pUrbLnx);
@@ -1866,7 +1870,7 @@ static DECLCALLBACK(int) usbProxyLinuxUrbCancel(PUSBPROXYDEV pProxyDev, PVUSBURB
                 continue;
             if (errno == ENODEV)
                 break;
-            /** @todo: Think about how to handle errors wrt. to the status code. */
+            /** @todo Think about how to handle errors wrt. to the status code. */
             Log(("usb-linux: Discard URB %p failed, errno=%d. pProxyDev=%s!!! (split)\n",
                  pUrb, errno, usbProxyGetName(pProxyDev)));
         }
@@ -1929,8 +1933,6 @@ const USBPROXYBACK g_USBProxyDeviceHost =
  *  mode: c
  *  c-file-style: "bsd"
  *  c-basic-offset: 4
- *  tab-width: 4
- *  indent-tabs-mode: s
  * End:
  */
 

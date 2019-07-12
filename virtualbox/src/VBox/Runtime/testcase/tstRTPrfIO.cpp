@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/file.h>
 #include <iprt/dir.h>
 #include <iprt/fs.h>
@@ -40,9 +40,9 @@
 #include <iprt/time.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The test instance handle. */
 static RTTEST       g_hTest;
 /** The max number of nanoseconds to benchmark an operation. */
@@ -65,9 +65,9 @@ static char         g_szNotExitingDir[RTPATH_MAX];
 static char         g_szNotExitingDirFile[RTPATH_MAX];
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 /**
  * Benchmark an operation.
@@ -210,7 +210,7 @@ int main(int argc, char **argv)
                 break;
 
             case 'V':
-                RTTestPrintf(g_hTest, RTTESTLVL_ALWAYS, "$Revision: 67140 $\n");
+                RTTestPrintf(g_hTest, RTTESTLVL_ALWAYS, "$Revision: 118412 $\n");
                 return RTTestSummaryAndDestroy(g_hTest);
 
             case 'h':

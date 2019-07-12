@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/asm.h>
 
 #include <iprt/initterm.h>
@@ -162,7 +163,7 @@ int main()
     MAP_CLEAR(p);
     CHECK_GUARD(p);
 
-    /* set */
+    /* bit set */
     MAP_CLEAR(p);
     ASMBitSet(&p->au32[0], 0);
     ASMBitSet(&p->au32[0], 31);
@@ -185,7 +186,7 @@ int main()
     CHECK(ASMAtomicBitTestAndSet(&p->au32[0], 16)  && p->au32[0] == 0x40010001U);
     CHECK(!ASMAtomicBitTestAndSet(&p->au32[0], 80) && p->au32[2] == 0x00010001U);
 
-    /* clear */
+    /* bit clear */
     MAP_SET(p);
     ASMBitClear(&p->au32[0], 0);
     ASMBitClear(&p->au32[0], 31);
@@ -340,6 +341,41 @@ int main()
         }
     }
 
+    /* set range. */
+    MAP_CLEAR(p);
+    ASMBitSetRange(&p->au32[0], 0, 5);
+    ASMBitSetRange(&p->au32[0], 6, 44);
+    ASMBitSetRange(&p->au32[0], 64, 65);
+    CHECK(p->au32[0] == UINT32_C(0xFFFFFFDF));
+    CHECK(p->au32[1] == UINT32_C(0x00000FFF));
+    CHECK(p->au32[2] == UINT32_C(0x00000001));
+
+    MAP_CLEAR(p);
+    ASMBitSetRange(&p->au32[0], 0, 1);
+    ASMBitSetRange(&p->au32[0], 62, 63);
+    ASMBitSetRange(&p->au32[0], 63, 64);
+    ASMBitSetRange(&p->au32[0], 127, 128);
+    CHECK(p->au32[0] == UINT32_C(0x00000001) && p->au32[1] == UINT32_C(0xC0000000));
+    CHECK(p->au32[2] == UINT32_C(0x00000000) && p->au32[3] == UINT32_C(0x80000000));
+
+    MAP_CLEAR(p);
+    ASMBitSetRange(&p->au32, 0, 128);
+    CHECK(!~p->au32[0] && !~p->au32[1] && !~p->au32[2] && !~p->au32[3]);
+    for (i = 0; i < 128; i++)
+    {
+        for (j = i + 1; j <= 128; j++)
+        {
+            MAP_CLEAR(p);
+            ASMBitSetRange(&p->au32, i, j);
+            for (k = 0; k < i; k++)
+                CHECK_BIT3(!ASMBitTest(&p->au32[0], k), i, j, k);
+            for (k = i; k < j; k++)
+                CHECK_BIT3(ASMBitTest(&p->au32[0], k), i, j, k);
+            for (k = j; k < 128; k++)
+                CHECK_BIT3(!ASMBitTest(&p->au32[0], k), i, j, k);
+        }
+    }
+
     /* searching for set bits. */
     MAP_CLEAR(p);
     CHECK(ASMBitFirstSet(&p->au32[0], sizeof(p->au32) * 8) == -1);
@@ -390,6 +426,22 @@ int main()
     CHECK(ASMBitFirstSetU32(RT_BIT(23) | RT_BIT(11)) == 12);
     for (i = 0; i < 32; i++)
         CHECK(ASMBitFirstSetU32(1 << i) == (unsigned)i + 1);
+
+    CHECK(ASMBitLastSetU64(UINT64_C(0)) == 0);
+    CHECK(ASMBitLastSetU64(UINT64_C(1)) == 1);
+    CHECK(ASMBitLastSetU64(UINT64_C(0x80000000)) == 32);
+    CHECK(ASMBitLastSetU64(UINT64_C(0xffffffff)) == 32);
+    CHECK(ASMBitLastSetU64(RT_BIT_64(33) | RT_BIT_64(11)) == 34);
+    for (i = 0; i < 64; i++)
+        CHECK(ASMBitLastSetU64(UINT64_C(1) << i) == (unsigned)i + 1);
+
+    CHECK(ASMBitFirstSetU64(UINT64_C(0)) == 0);
+    CHECK(ASMBitFirstSetU64(UINT64_C(1)) == 1);
+    CHECK(ASMBitFirstSetU64(UINT64_C(0x80000000)) == 32);
+    CHECK(ASMBitFirstSetU64(UINT64_C(0xffffffff)) == 1);
+    CHECK(ASMBitFirstSetU64(RT_BIT_64(33) | RT_BIT_64(11)) == 12);
+    for (i = 0; i < 64; i++)
+        CHECK(ASMBitFirstSetU64(UINT64_C(1) << i) == (unsigned)i + 1);
 
     /*
      * Special tests.

@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,13 +30,13 @@
 #include <VBox/types.h>
 
 RT_C_DECLS_BEGIN
-/** @addgroup grp_dbgf_trace  Tracing
+/** @defgroup grp_dbgf_trace  Tracing
  * @ingroup grp_dbgf
  *
  * @{
  */
 
-#if (defined(RTTRACE_ENABLED) || DBGFTRACE_ENABLED) && !defined(DBGFTRACE_DISABLED)
+#if (defined(RTTRACE_ENABLED) || defined(DBGFTRACE_ENABLED)) && !defined(DBGFTRACE_DISABLED)
 # undef DBGFTRACE_ENABLED
 # undef DBGFTRACE_DISABLED
 # define DBGFTRACE_ENABLED

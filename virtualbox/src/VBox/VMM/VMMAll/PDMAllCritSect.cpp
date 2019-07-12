@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM//_CRITSECT
 #include "PDMInternal.h"
 #include <VBox/vmm/pdmcritsect.h>
@@ -41,9 +41,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The number loops to spin for in ring-3. */
 #define PDMCRITSECT_SPIN_COUNT_R3       20
 /** The number loops to spin for in ring-0. */
@@ -51,6 +51,11 @@
 /** The number loops to spin for in the raw-mode context. */
 #define PDMCRITSECT_SPIN_COUNT_RC       256
 
+
+/** Skips some of the overly paranoid atomic updates.
+ * Makes some assumptions about cache coherence, though not brave enough not to
+ * always end with an atomic update. */
+#define PDMCRITSECT_WITH_LESS_ATOMIC_STUFF
 
 /* Undefine the automatic VBOX_STRICT API mappings. */
 #undef PDMCritSectEnter
@@ -86,13 +91,18 @@ DECL_FORCE_INLINE(RTNATIVETHREAD) pdmCritSectGetNativeSelf(PCPDMCRITSECT pCritSe
  *
  * @param   pCritSect       The critical section.
  * @param   hNativeSelf     The native handle of this thread.
+ * @param   pSrcPos         The source position of the lock operation.
  */
 DECL_FORCE_INLINE(int) pdmCritSectEnterFirst(PPDMCRITSECT pCritSect, RTNATIVETHREAD hNativeSelf, PCRTLOCKVALSRCPOS pSrcPos)
 {
     AssertMsg(pCritSect->s.Core.NativeThreadOwner == NIL_RTNATIVETHREAD, ("NativeThreadOwner=%p\n", pCritSect->s.Core.NativeThreadOwner));
     Assert(!(pCritSect->s.Core.fFlags & PDMCRITSECT_FLAGS_PENDING_UNLOCK));
 
+# ifdef PDMCRITSECT_WITH_LESS_ATOMIC_STUFF
+    pCritSect->s.Core.cNestings = 1;
+# else
     ASMAtomicWriteS32(&pCritSect->s.Core.cNestings, 1);
+# endif
     Assert(pCritSect->s.Core.cNestings == 1);
     ASMAtomicWriteHandle(&pCritSect->s.Core.NativeThreadOwner, hNativeSelf);
 
@@ -116,6 +126,7 @@ DECL_FORCE_INLINE(int) pdmCritSectEnterFirst(PPDMCRITSECT pCritSect, RTNATIVETHR
  *
  * @param   pCritSect           The critsect.
  * @param   hNativeSelf         The native thread handle.
+ * @param   pSrcPos             The source position of the lock operation.
  */
 static int pdmR3R0CritSectEnterContended(PPDMCRITSECT pCritSect, RTNATIVETHREAD hNativeSelf, PCRTLOCKVALSRCPOS pSrcPos)
 {
@@ -210,7 +221,7 @@ static int pdmR3R0CritSectEnterContended(PPDMCRITSECT pCritSect, RTNATIVETHREAD 
  *
  * @param   pCritSect           The PDM critical section to enter.
  * @param   rcBusy              The status code to return when we're in GC or R0
- *                              and the section is busy.
+ * @param   pSrcPos             The source position of the lock operation.
  */
 DECL_FORCE_INLINE(int) pdmCritSectEnter(PPDMCRITSECT pCritSect, int rcBusy, PCRTLOCKVALSRCPOS pSrcPos)
 {
@@ -228,7 +239,9 @@ DECL_FORCE_INLINE(int) pdmCritSectEnter(PPDMCRITSECT pCritSect, int rcBusy, PCRT
      * See if we're lucky.
      */
     /* NOP ... */
-    if (pCritSect->s.Core.fFlags & RTCRITSECT_FLAGS_NOP)
+    if (!(pCritSect->s.Core.fFlags & RTCRITSECT_FLAGS_NOP))
+    { /* We're more likely to end up here with real critsects than a NOP one. */ }
+    else
         return VINF_SUCCESS;
 
     RTNATIVETHREAD hNativeSelf = pdmCritSectGetNativeSelf(pCritSect);
@@ -239,9 +252,13 @@ DECL_FORCE_INLINE(int) pdmCritSectEnter(PPDMCRITSECT pCritSect, int rcBusy, PCRT
     /* ... or nested. */
     if (pCritSect->s.Core.NativeThreadOwner == hNativeSelf)
     {
-        ASMAtomicIncS32(&pCritSect->s.Core.cLockers);
+        Assert(pCritSect->s.Core.cNestings >= 1);
+# ifdef PDMCRITSECT_WITH_LESS_ATOMIC_STUFF
+        pCritSect->s.Core.cNestings += 1;
+# else
         ASMAtomicIncS32(&pCritSect->s.Core.cNestings);
-        Assert(pCritSect->s.Core.cNestings > 1);
+# endif
+        ASMAtomicIncS32(&pCritSect->s.Core.cLockers);
         return VINF_SUCCESS;
     }
 
@@ -298,11 +315,11 @@ DECL_FORCE_INLINE(int) pdmCritSectEnter(PPDMCRITSECT pCritSect, int rcBusy, PCRT
             PVM     pVM   = pCritSect->s.CTX_SUFF(pVM);
             PVMCPU  pVCpu = VMMGetCpu(pVM);
             HMR0Leave(pVM, pVCpu);
-            RTThreadPreemptRestore(NIL_RTTHREAD, ????);
+            RTThreadPreemptRestore(NIL_RTTHREAD, XXX);
 
             rc = pdmR3R0CritSectEnterContended(pCritSect, hNativeSelf, pSrcPos);
 
-            RTThreadPreemptDisable(NIL_RTTHREAD, ????);
+            RTThreadPreemptDisable(NIL_RTTHREAD, XXX);
             HMR0Enter(pVM, pVCpu);
         }
         return rc;
@@ -378,11 +395,8 @@ VMMDECL(int) PDMCritSectEnter(PPDMCRITSECT pCritSect, int rcBusy)
  *                              call if necessary.
  * @param   uId                 Some kind of locking location ID.  Typically a
  *                              return address up the stack.  Optional (0).
- * @param   pszFile             The file where the lock is being acquired from.
- *                              Optional.
- * @param   iLine               The line number in that file.  Optional (0).
- * @param   pszFunction         The function where the lock is being acquired
- *                              from.  Optional.
+ * @param   SRC_POS             The source position where to lock is being
+ *                              acquired from.  Optional.
  */
 VMMDECL(int) PDMCritSectEnterDebug(PPDMCRITSECT pCritSect, int rcBusy, RTHCUINTPTR uId, RT_SRC_POS_DECL)
 {
@@ -406,6 +420,7 @@ VMMDECL(int) PDMCritSectEnterDebug(PPDMCRITSECT pCritSect, int rcBusy, RTHCUINTP
  *          during the operation.
  *
  * @param   pCritSect   The critical section.
+ * @param   pSrcPos     The source position of the lock operation.
  */
 static int pdmCritSectTryEnter(PPDMCRITSECT pCritSect, PCRTLOCKVALSRCPOS pSrcPos)
 {
@@ -420,7 +435,9 @@ static int pdmCritSectTryEnter(PPDMCRITSECT pCritSect, PCRTLOCKVALSRCPOS pSrcPos
      * See if we're lucky.
      */
     /* NOP ... */
-    if (pCritSect->s.Core.fFlags & RTCRITSECT_FLAGS_NOP)
+    if (!(pCritSect->s.Core.fFlags & RTCRITSECT_FLAGS_NOP))
+    { /* We're more likely to end up here with real critsects than a NOP one. */ }
+    else
         return VINF_SUCCESS;
 
     RTNATIVETHREAD hNativeSelf = pdmCritSectGetNativeSelf(pCritSect);
@@ -431,9 +448,13 @@ static int pdmCritSectTryEnter(PPDMCRITSECT pCritSect, PCRTLOCKVALSRCPOS pSrcPos
     /* ... or nested. */
     if (pCritSect->s.Core.NativeThreadOwner == hNativeSelf)
     {
-        ASMAtomicIncS32(&pCritSect->s.Core.cLockers);
+        Assert(pCritSect->s.Core.cNestings >= 1);
+# ifdef PDMCRITSECT_WITH_LESS_ATOMIC_STUFF
+        pCritSect->s.Core.cNestings += 1;
+# else
         ASMAtomicIncS32(&pCritSect->s.Core.cNestings);
-        Assert(pCritSect->s.Core.cNestings > 1);
+# endif
+        ASMAtomicIncS32(&pCritSect->s.Core.cLockers);
         return VINF_SUCCESS;
     }
 
@@ -486,11 +507,8 @@ VMMDECL(int) PDMCritSectTryEnter(PPDMCRITSECT pCritSect)
  * @param   pCritSect           The critical section.
  * @param   uId                 Some kind of locking location ID.  Typically a
  *                              return address up the stack.  Optional (0).
- * @param   pszFile             The file where the lock is being acquired from.
- *                              Optional.
- * @param   iLine               The line number in that file.  Optional (0).
- * @param   pszFunction         The function where the lock is being acquired
- *                              from.  Optional.
+ * @param   SRC_POS             The source position where to lock is being
+ *                              acquired from.  Optional.
  */
 VMMDECL(int) PDMCritSectTryEnterDebug(PPDMCRITSECT pCritSect, RTHCUINTPTR uId, RT_SRC_POS_DECL)
 {
@@ -545,7 +563,9 @@ VMMDECL(int) PDMCritSectLeave(PPDMCRITSECT pCritSect)
     Assert(pCritSect->s.Core.u32Magic == RTCRITSECT_MAGIC);
 
     /* Check for NOP sections before asserting ownership. */
-    if (pCritSect->s.Core.fFlags & RTCRITSECT_FLAGS_NOP)
+    if (!(pCritSect->s.Core.fFlags & RTCRITSECT_FLAGS_NOP))
+    { /* We're more likely to end up here with real critsects than a NOP one. */ }
+    else
         return VINF_SUCCESS;
 
     /*
@@ -557,15 +577,19 @@ VMMDECL(int) PDMCritSectLeave(PPDMCRITSECT pCritSect)
                             pCritSect->s.Core.NativeThreadOwner, hNativeSelf,
                             pCritSect->s.Core.cLockers, pCritSect->s.Core.cNestings),
                            VERR_NOT_OWNER);
-    Assert(pCritSect->s.Core.cNestings >= 1);
 
     /*
      * Nested leave.
      */
-    if (pCritSect->s.Core.cNestings > 1)
+    int32_t const cNestings = pCritSect->s.Core.cNestings;
+    Assert(cNestings >= 1);
+    if (cNestings > 1)
     {
-        ASMAtomicDecS32(&pCritSect->s.Core.cNestings);
-        Assert(pCritSect->s.Core.cNestings >= 1);
+# ifdef PDMCRITSECT_WITH_LESS_ATOMIC_STUFF
+        pCritSect->s.Core.cNestings = cNestings - 1;
+# else
+        ASMAtomicWriteS32(&pCritSect->s.Core.cNestings, cNestings - 1);
+# endif
         ASMAtomicDecS32(&pCritSect->s.Core.cLockers);
         Assert(pCritSect->s.Core.cLockers >= 0);
         return VINF_SEM_NESTED;
@@ -584,24 +608,30 @@ VMMDECL(int) PDMCritSectLeave(PPDMCRITSECT pCritSect)
          * Leave for real.
          */
         /* update members. */
+        SUPSEMEVENT hEventToSignal  = pCritSect->s.hEventToSignal;
+        pCritSect->s.hEventToSignal = NIL_SUPSEMEVENT;
 # ifdef IN_RING3
-        RTSEMEVENT hEventToSignal    = pCritSect->s.EventToSignal;
-        pCritSect->s.EventToSignal   = NIL_RTSEMEVENT;
 #  if defined(PDMCRITSECT_STRICT)
         if (pCritSect->s.Core.pValidatorRec->hThread != NIL_RTTHREAD)
             RTLockValidatorRecExclReleaseOwnerUnchecked(pCritSect->s.Core.pValidatorRec);
 #  endif
         Assert(!pCritSect->s.Core.pValidatorRec || pCritSect->s.Core.pValidatorRec->hThread == NIL_RTTHREAD);
 # endif
-        ASMAtomicAndU32(&pCritSect->s.Core.fFlags, ~PDMCRITSECT_FLAGS_PENDING_UNLOCK);
+# ifdef PDMCRITSECT_WITH_LESS_ATOMIC_STUFF
+        //pCritSect->s.Core.cNestings = 0; /* not really needed */
+        pCritSect->s.Core.NativeThreadOwner = NIL_RTNATIVETHREAD;
+# else
+        ASMAtomicWriteS32(&pCritSect->s.Core.cNestings, 0);
         ASMAtomicWriteHandle(&pCritSect->s.Core.NativeThreadOwner, NIL_RTNATIVETHREAD);
-        ASMAtomicDecS32(&pCritSect->s.Core.cNestings);
-        Assert(pCritSect->s.Core.cNestings == 0);
+# endif
+        ASMAtomicAndU32(&pCritSect->s.Core.fFlags, ~PDMCRITSECT_FLAGS_PENDING_UNLOCK);
 
         /* stop and decrement lockers. */
         STAM_PROFILE_ADV_STOP(&pCritSect->s.StatLocked, l);
         ASMCompilerBarrier();
-        if (ASMAtomicDecS32(&pCritSect->s.Core.cLockers) >= 0)
+        if (ASMAtomicDecS32(&pCritSect->s.Core.cLockers) < 0)
+        { /* hopefully likely */ }
+        else
         {
             /* Someone is waiting, wake up one of them. */
             SUPSEMEVENT     hEvent   = (SUPSEMEVENT)pCritSect->s.Core.EventSem;
@@ -610,15 +640,15 @@ VMMDECL(int) PDMCritSectLeave(PPDMCRITSECT pCritSect)
             AssertRC(rc);
         }
 
-# ifdef IN_RING3
         /* Signal exit event. */
-        if (hEventToSignal != NIL_RTSEMEVENT)
+        if (RT_LIKELY(hEventToSignal == NIL_SUPSEMEVENT))
+        { /* likely */ }
+        else
         {
-            LogBird(("Signalling %#x\n", hEventToSignal));
-            int rc = RTSemEventSignal(hEventToSignal);
+            Log8(("Signalling %#p\n", hEventToSignal));
+            int rc = SUPSemEventSignal(pCritSect->s.CTX_SUFF(pVM)->pSession, hEventToSignal);
             AssertRC(rc);
         }
-# endif
 
 # if defined(DEBUG_bird) && defined(IN_RING0)
         VMMTrashVolatileXMMRegs();
@@ -635,7 +665,11 @@ VMMDECL(int) PDMCritSectLeave(PPDMCRITSECT pCritSect)
          */
         if (pCritSect->s.Core.cLockers == 0)
         {
+# ifdef PDMCRITSECT_WITH_LESS_ATOMIC_STUFF
+            //pCritSect->s.Core.cNestings = 0; /* not really needed */
+# else
             ASMAtomicWriteS32(&pCritSect->s.Core.cNestings, 0);
+# endif
             RTNATIVETHREAD hNativeThread = pCritSect->s.Core.NativeThreadOwner;
             ASMAtomicAndU32(&pCritSect->s.Core.fFlags, ~PDMCRITSECT_FLAGS_PENDING_UNLOCK);
             STAM_PROFILE_ADV_STOP(&pCritSect->s.StatLocked, l);
@@ -647,8 +681,13 @@ VMMDECL(int) PDMCritSectLeave(PPDMCRITSECT pCritSect)
             /* darn, someone raced in on us. */
             ASMAtomicWriteHandle(&pCritSect->s.Core.NativeThreadOwner, hNativeThread);
             STAM_PROFILE_ADV_START(&pCritSect->s.StatLocked, l);
-            Assert(pCritSect->s.Core.cNestings == 0);
+# ifdef PDMCRITSECT_WITH_LESS_ATOMIC_STUFF
+            //pCritSect->s.Core.cNestings = 1;
+            Assert(pCritSect->s.Core.cNestings == 1);
+# else
+            //Assert(pCritSect->s.Core.cNestings == 0);
             ASMAtomicWriteS32(&pCritSect->s.Core.cNestings, 1);
+# endif
         }
         ASMAtomicOrU32(&pCritSect->s.Core.fFlags, PDMCRITSECT_FLAGS_PENDING_UNLOCK);
 
@@ -670,6 +709,39 @@ VMMDECL(int) PDMCritSectLeave(PPDMCRITSECT pCritSect)
 
     return VINF_SUCCESS;
 }
+
+
+#if defined(IN_RING0) || defined(IN_RING3)
+/**
+ * Schedule a event semaphore for signalling upon critsect exit.
+ *
+ * @returns VINF_SUCCESS on success.
+ * @returns VERR_TOO_MANY_SEMAPHORES if an event was already scheduled.
+ * @returns VERR_NOT_OWNER if we're not the critsect owner (ring-3 only).
+ * @returns VERR_SEM_DESTROYED if RTCritSectDelete was called while waiting.
+ *
+ * @param   pCritSect       The critical section.
+ * @param   hEventToSignal  The support driver event semaphore that should be
+ *                          signalled.
+ */
+VMMDECL(int) PDMHCCritSectScheduleExitEvent(PPDMCRITSECT pCritSect, SUPSEMEVENT hEventToSignal)
+{
+    AssertPtr(pCritSect);
+    Assert(!(pCritSect->s.Core.fFlags & RTCRITSECT_FLAGS_NOP));
+    Assert(hEventToSignal != NIL_SUPSEMEVENT);
+# ifdef IN_RING3
+    if (RT_UNLIKELY(!RTCritSectIsOwner(&pCritSect->s.Core)))
+        return VERR_NOT_OWNER;
+# endif
+    if (RT_LIKELY(   pCritSect->s.hEventToSignal == NIL_RTSEMEVENT
+                  || pCritSect->s.hEventToSignal == hEventToSignal))
+    {
+        pCritSect->s.hEventToSignal = hEventToSignal;
+        return VINF_SUCCESS;
+    }
+    return VERR_TOO_MANY_SEMAPHORES;
+}
+#endif /* IN_RING0 || IN_RING3 */
 
 
 /**
@@ -700,7 +772,7 @@ VMMDECL(bool) PDMCritSectIsOwner(PCPDMCRITSECT pCritSect)
  * @returns true if owner.
  * @returns false if not owner.
  * @param   pCritSect   The critical section.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  */
 VMMDECL(bool) PDMCritSectIsOwnerEx(PCPDMCRITSECT pCritSect, PVMCPU pVCpu)
 {

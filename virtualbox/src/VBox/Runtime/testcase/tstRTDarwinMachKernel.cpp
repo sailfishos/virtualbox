@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,14 +25,19 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/dbg.h>
 #include <iprt/err.h>
 #include <iprt/string.h>
 #include <iprt/test.h>
 
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+const char *g_pszTestKernel = "/no-such-file";
 
 
 static void dotest(void)
@@ -72,6 +77,14 @@ int main(int argc, char **argv)
     if (rcExit != RTEXITCODE_SUCCESS)
         return rcExit;
     RTTestBanner(hTest);
+
+    /* Optional kernel path as argument. */
+    if (argc == 2)
+        g_pszTestKernel = argv[1];
+#ifndef RT_OS_DARWIN
+    else
+        return RTTestSkipAndDestroy(hTest, "not on darwin");
+#endif
 
     dotest();
 

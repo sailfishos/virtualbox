@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -14,9 +14,10 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
+
+
 #define LOG_GROUP LOG_GROUP_DEV_PCI
-/* Hack to get PCIDEVICEINT declare at the right point - include "PCIInternal.h". */
-#define PCI_INCLUDE_PRIVATE
+#define PDMPCIDEV_INCLUDE_PRIVATE  /* Hack to get pdmpcidevint.h included at the right point. */
 #include <VBox/pci.h>
 #include <VBox/msi.h>
 #include <VBox/vmm/pdmdev.h>
@@ -26,8 +27,8 @@
 #include <iprt/assert.h>
 
 #include "MsiCommon.h"
+#include "PciInline.h"
 
-#pragma pack(1)
 typedef struct
 {
     uint32_t  u32MsgAddressLo;
@@ -36,128 +37,138 @@ typedef struct
     uint32_t  u32VectorControl;
 } MsixTableRecord;
 AssertCompileSize(MsixTableRecord, VBOX_MSIX_ENTRY_SIZE);
-#pragma pack()
 
-/** @todo: use accessors so that raw PCI devices work correctly with MSI-X. */
-DECLINLINE(uint16_t)  msixGetMessageControl(PPCIDEVICE pDev)
+
+/** @todo use accessors so that raw PCI devices work correctly with MSI-X. */
+DECLINLINE(uint16_t)  msixGetMessageControl(PPDMPCIDEV pDev)
 {
     return PCIDevGetWord(pDev, pDev->Int.s.u8MsixCapOffset + VBOX_MSIX_CAP_MESSAGE_CONTROL);
 }
 
-DECLINLINE(bool)      msixIsEnabled(PPCIDEVICE pDev)
+DECLINLINE(bool)      msixIsEnabled(PPDMPCIDEV pDev)
 {
     return (msixGetMessageControl(pDev) & VBOX_PCI_MSIX_FLAGS_ENABLE) != 0;
 }
 
-DECLINLINE(bool)      msixIsMasked(PPCIDEVICE pDev)
+DECLINLINE(bool)      msixIsMasked(PPDMPCIDEV pDev)
 {
     return (msixGetMessageControl(pDev) & VBOX_PCI_MSIX_FLAGS_FUNCMASK) != 0;
 }
 
-DECLINLINE(uint16_t)  msixTableSize(PPCIDEVICE pDev)
+#ifdef IN_RING3
+DECLINLINE(uint16_t)  msixTableSize(PPDMPCIDEV pDev)
 {
     return (msixGetMessageControl(pDev) & 0x3ff) + 1;
 }
+#endif
 
-DECLINLINE(uint8_t*)  msixGetPageOffset(PPCIDEVICE pDev, uint32_t off)
+DECLINLINE(uint8_t *) msixGetPageOffset(PPDMPCIDEV pDev, uint32_t off)
 {
-    return (uint8_t*)pDev->Int.s.CTX_SUFF(pMsixPage) + off;
+    return (uint8_t *)pDev->Int.s.CTX_SUFF(pMsixPage) + off;
 }
 
-DECLINLINE(MsixTableRecord*) msixGetVectorRecord(PPCIDEVICE pDev, uint32_t iVector)
+DECLINLINE(MsixTableRecord *) msixGetVectorRecord(PPDMPCIDEV pDev, uint32_t iVector)
 {
-    return (MsixTableRecord*)msixGetPageOffset(pDev, iVector * VBOX_MSIX_ENTRY_SIZE);
+    return (MsixTableRecord *)msixGetPageOffset(pDev, iVector * VBOX_MSIX_ENTRY_SIZE);
 }
 
-DECLINLINE(RTGCPHYS)  msixGetMsiAddress(PPCIDEVICE pDev, uint32_t iVector)
+DECLINLINE(RTGCPHYS)  msixGetMsiAddress(PPDMPCIDEV pDev, uint32_t iVector)
 {
-    MsixTableRecord* pRec = msixGetVectorRecord(pDev, iVector);
+    MsixTableRecord *pRec = msixGetVectorRecord(pDev, iVector);
     return RT_MAKE_U64(pRec->u32MsgAddressLo & ~UINT32_C(0x3), pRec->u32MsgAddressHi);
 }
 
-DECLINLINE(uint32_t)  msixGetMsiData(PPCIDEVICE pDev, uint32_t iVector)
+DECLINLINE(uint32_t)  msixGetMsiData(PPDMPCIDEV pDev, uint32_t iVector)
 {
     return msixGetVectorRecord(pDev, iVector)->u32MsgData;
 }
 
-DECLINLINE(uint32_t)  msixIsVectorMasked(PPCIDEVICE pDev, uint32_t iVector)
+DECLINLINE(uint32_t)  msixIsVectorMasked(PPDMPCIDEV pDev, uint32_t iVector)
 {
     return (msixGetVectorRecord(pDev, iVector)->u32VectorControl & 0x1) != 0;
 }
 
-DECLINLINE(uint8_t*)  msixPendingByte(PPCIDEVICE pDev, uint32_t iVector)
+DECLINLINE(uint8_t *) msixPendingByte(PPDMPCIDEV pDev, uint32_t iVector)
 {
-    return msixGetPageOffset(pDev, 0x800 + iVector / 8);
+    return msixGetPageOffset(pDev, pDev->Int.s.offMsixPba + iVector / 8);
 }
 
-DECLINLINE(void)      msixSetPending(PPCIDEVICE pDev, uint32_t iVector)
+DECLINLINE(void)      msixSetPending(PPDMPCIDEV pDev, uint32_t iVector)
 {
     *msixPendingByte(pDev, iVector) |= (1 << (iVector & 0x7));
 }
 
-DECLINLINE(void)      msixClearPending(PPCIDEVICE pDev, uint32_t iVector)
+DECLINLINE(void)      msixClearPending(PPDMPCIDEV pDev, uint32_t iVector)
 {
     *msixPendingByte(pDev, iVector) &= ~(1 << (iVector & 0x7));
 }
 
-DECLINLINE(bool)      msixIsPending(PPCIDEVICE pDev, uint32_t iVector)
+#ifdef IN_RING3
+
+DECLINLINE(bool)      msixR3IsPending(PPDMPCIDEV pDev, uint32_t iVector)
 {
     return (*msixPendingByte(pDev, iVector) & (1 << (iVector & 0x7))) != 0;
 }
 
-static void msixCheckPendingVector(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev, uint32_t iVector)
+static void msixR3CheckPendingVector(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPDMPCIDEV pDev, uint32_t iVector)
 {
-    if (msixIsPending(pDev, iVector) && !msixIsVectorMasked(pDev, iVector))
+    if (msixR3IsPending(pDev, iVector) && !msixIsVectorMasked(pDev, iVector))
         MsixNotify(pDevIns, pPciHlp, pDev, iVector, 1 /* iLevel */, 0 /*uTagSrc*/);
 }
 
-#ifdef IN_RING3
 
-PDMBOTHCBDECL(int) msixMMIORead(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhysAddr, void *pv, unsigned cb)
+PDMBOTHCBDECL(int) msixR3MMIORead(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhysAddr, void *pv, unsigned cb)
 {
+    LogFlowFunc(("\n"));
+
+    uint32_t off = (uint32_t)(GCPhysAddr & 0xffff);
+    PPDMPCIDEV pPciDev = (PPDMPCIDEV)pvUser;
+
     /// @todo qword accesses?
-    NOREF(pDevIns);
+    RT_NOREF(pDevIns);
     AssertMsgReturn(cb == 4,
                     ("MSI-X must be accessed with 4-byte reads"),
                     VERR_INTERNAL_ERROR);
+    AssertMsgReturn(off + cb <= pPciDev->Int.s.cbMsixRegion,
+                    ("Out of bounds access for the MSI-X region\n"),
+                    VINF_IOM_MMIO_UNUSED_FF);
 
-    uint32_t off = (uint32_t)(GCPhysAddr & 0xfff);
-    PPCIDEVICE pPciDev = (PPCIDEVICE)pvUser;
-
-    *(uint32_t*)pv = *(uint32_t*)msixGetPageOffset(pPciDev, off);
-
+    *(uint32_t *)pv = *(uint32_t *)msixGetPageOffset(pPciDev, off);
     return VINF_SUCCESS;
 }
 
-PDMBOTHCBDECL(int) msixMMIOWrite(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhysAddr, void const *pv, unsigned cb)
+PDMBOTHCBDECL(int) msixR3MMIOWrite(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhysAddr, void const *pv, unsigned cb)
 {
-    /// @todo: qword accesses?
+    LogFlowFunc(("\n"));
+
+    PPDMPCIDEV pPciDev = (PPDMPCIDEV)pvUser;
+    uint32_t off = (uint32_t)(GCPhysAddr & 0xffff);
+
+    /// @todo qword accesses?
     AssertMsgReturn(cb == 4,
                     ("MSI-X must be accessed with 4-byte reads"),
                     VERR_INTERNAL_ERROR);
-    PPCIDEVICE pPciDev = (PPCIDEVICE)pvUser;
+    AssertMsgReturn(off + cb <= pPciDev->Int.s.offMsixPba,
+                    ("Trying to write to PBA\n"), VINF_SUCCESS);
 
-    uint32_t off = (uint32_t)(GCPhysAddr & 0xfff);
+    *(uint32_t *)msixGetPageOffset(pPciDev, off) = *(uint32_t *)pv;
 
-    AssertMsgReturn(off < 0x800, ("Trying to write to PBA\n"), VINF_SUCCESS);
-
-    *(uint32_t*)msixGetPageOffset(pPciDev, off) = *(uint32_t*)pv;
-
-    msixCheckPendingVector(pDevIns, (PCPDMPCIHLP)pPciDev->Int.s.pPciBusPtrR3, pPciDev, off / VBOX_MSIX_ENTRY_SIZE);
-
+    msixR3CheckPendingVector(pDevIns, (PCPDMPCIHLP)pPciDev->Int.s.pPciBusPtrR3, pPciDev, off / VBOX_MSIX_ENTRY_SIZE);
     return VINF_SUCCESS;
 }
 
-static DECLCALLBACK(int) msixMap (PPCIDEVICE pPciDev, int iRegion,
-                                  RTGCPHYS GCPhysAddress, uint32_t cb,
-                                  PCIADDRESSSPACE enmType)
+/**
+ * @callback_method_impl{FNPCIIOREGIONMAP}
+ */
+static DECLCALLBACK(int) msixR3Map(PPDMDEVINS pDevIns, PPDMPCIDEV pPciDev, uint32_t iRegion,
+                                   RTGCPHYS GCPhysAddress, RTGCPHYS cb, PCIADDRESSSPACE enmType)
 {
     Assert(enmType == PCI_ADDRESS_SPACE_MEM);
     NOREF(iRegion); NOREF(enmType);
 
-    int rc = PDMDevHlpMMIORegister(pPciDev->pDevIns, GCPhysAddress, cb, pPciDev,
+    int rc = PDMDevHlpMMIORegister(pDevIns, GCPhysAddress, cb, pPciDev,
                                    IOMMMIO_FLAGS_READ_PASSTHRU | IOMMMIO_FLAGS_WRITE_PASSTHRU,
-                                   msixMMIOWrite, msixMMIORead, "MSI-X tables");
+                                   msixR3MMIOWrite, msixR3MMIORead, "MSI-X tables");
 
     if (RT_FAILURE(rc))
         return rc;
@@ -165,10 +176,13 @@ static DECLCALLBACK(int) msixMap (PPCIDEVICE pPciDev, int iRegion,
     return VINF_SUCCESS;
 }
 
-int MsixInit(PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev, PPDMMSIREG pMsiReg)
+/**
+ * Initalizes MSI-X support for the given PCI device.
+ */
+int MsixR3Init(PCPDMPCIHLP pPciHlp, PPDMPCIDEV pDev, PPDMMSIREG pMsiReg)
 {
     if (pMsiReg->cMsixVectors == 0)
-         return VINF_SUCCESS;
+        return VINF_SUCCESS;
 
      /* We cannot init MSI-X on raw devices yet. */
     Assert(!pciDevIsPassthrough(pDev));
@@ -178,40 +192,44 @@ int MsixInit(PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev, PPDMMSIREG pMsiReg)
     uint8_t    iNextOffset = pMsiReg->iMsixNextOffset;
     uint8_t    iBar        = pMsiReg->iMsixBar;
 
-    if (cVectors > VBOX_MSIX_MAX_ENTRIES)
-    {
-        AssertMsgFailed(("Too many MSI-X vectors: %d\n", cVectors));
-        return VERR_TOO_MUCH_DATA;
-    }
-
-    if (iBar > 5)
-    {
-        AssertMsgFailed(("Using wrong BAR for MSI-X: %d\n", iBar));
-        return VERR_INVALID_PARAMETER;
-    }
+    AssertMsgReturn(cVectors <= VBOX_MSIX_MAX_ENTRIES,
+                    ("Too many MSI-X vectors: %d\n", cVectors),
+                    VERR_TOO_MUCH_DATA);
+    AssertMsgReturn(iBar <= 5,
+                    ("Using wrong BAR for MSI-X: %d\n", iBar),
+                    VERR_INVALID_PARAMETER);
 
     Assert(iCapOffset != 0 && iCapOffset < 0xff && iNextOffset < 0xff);
 
     int rc = VINF_SUCCESS;
+    uint16_t cbPba = cVectors / 8;
+    if (cVectors % 8)
+        cbPba++;
+    uint16_t cbMsixRegion = RT_ALIGN_T(cVectors * sizeof(MsixTableRecord) + cbPba, _4K, uint16_t);
 
     /* If device is passthrough, BAR is registered using common mechanism. */
     if (!pciDevIsPassthrough(pDev))
     {
-        rc = PDMDevHlpPCIIORegionRegister (pDev->pDevIns, iBar, 0x1000, PCI_ADDRESS_SPACE_MEM, msixMap);
+        rc = PDMDevHlpPCIIORegionRegister(pDev->Int.s.CTX_SUFF(pDevIns), iBar, cbMsixRegion, PCI_ADDRESS_SPACE_MEM, msixR3Map);
         if (RT_FAILURE (rc))
             return rc;
     }
 
+    uint16_t offTable = 0;
+    uint16_t offPBA   = cVectors * sizeof(MsixTableRecord);
+
     pDev->Int.s.u8MsixCapOffset = iCapOffset;
     pDev->Int.s.u8MsixCapSize   = VBOX_MSIX_CAP_SIZE;
-    PVM pVM = PDMDevHlpGetVM(pDev->pDevIns);
+    pDev->Int.s.cbMsixRegion    = cbMsixRegion;
+    pDev->Int.s.offMsixPba      = offPBA;
+    PVM pVM = PDMDevHlpGetVM(pDev->Int.s.CTX_SUFF(pDevIns));
 
     pDev->Int.s.pMsixPageR3     = NULL;
 
-    rc = MMHyperAlloc(pVM, 0x1000, 1, MM_TAG_PDM_DEVICE_USER, (void **)&pDev->Int.s.pMsixPageR3);
+    rc = MMHyperAlloc(pVM, cbMsixRegion, 1, MM_TAG_PDM_DEVICE_USER, (void **)&pDev->Int.s.pMsixPageR3);
     if (RT_FAILURE(rc) || (pDev->Int.s.pMsixPageR3 == NULL))
         return VERR_NO_VM_MEMORY;
-    RT_BZERO(pDev->Int.s.pMsixPageR3, 0x1000);
+    RT_BZERO(pDev->Int.s.pMsixPageR3, cbMsixRegion);
     pDev->Int.s.pMsixPageR0     = MMHyperR3ToR0(pVM, pDev->Int.s.pMsixPageR3);
     pDev->Int.s.pMsixPageRC     = MMHyperR3ToRC(pVM, pDev->Int.s.pMsixPageR3);
 
@@ -222,8 +240,6 @@ int MsixInit(PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev, PPDMMSIREG pMsiReg)
     PCIDevSetByte(pDev,  iCapOffset + 1, iNextOffset); /* next */
     PCIDevSetWord(pDev,  iCapOffset + VBOX_MSIX_CAP_MESSAGE_CONTROL, cVectors - 1);
 
-    uint32_t offTable = 0, offPBA = 0x800;
-
     PCIDevSetDWord(pDev,  iCapOffset + VBOX_MSIX_TABLE_BIROFFSET, offTable | iBar);
     PCIDevSetDWord(pDev,  iCapOffset + VBOX_MSIX_PBA_BIROFFSET,   offPBA   | iBar);
 
@@ -231,14 +247,23 @@ int MsixInit(PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev, PPDMMSIREG pMsiReg)
 
     return VINF_SUCCESS;
 }
-#endif
 
-bool     MsixIsEnabled(PPCIDEVICE pDev)
+#endif /* IN_RING3 */
+
+/**
+ * Checks if MSI-X is enabled for the tiven PCI device.
+ *
+ * (Must use MSIXNotify() for notifications when true.)
+ */
+bool MsixIsEnabled(PPDMPCIDEV pDev)
 {
     return pciDevIsMsixCapable(pDev) && msixIsEnabled(pDev);
 }
 
-void MsixNotify(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev, int iVector, int iLevel, uint32_t uTagSrc)
+/**
+ * Device notification (aka interrupt).
+ */
+void MsixNotify(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPDMPCIDEV pDev, int iVector, int iLevel, uint32_t uTagSrc)
 {
     AssertMsg(msixIsEnabled(pDev), ("Must be enabled to use that"));
 
@@ -267,26 +292,29 @@ void MsixNotify(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev, int iV
     pPciHlp->pfnIoApicSendMsi(pDevIns, GCAddr, u32Value, uTagSrc);
 }
 
-DECLINLINE(bool) msixBitJustCleared(uint32_t uOldValue,
-                                    uint32_t uNewValue,
-                                    uint32_t uMask)
+#ifdef IN_RING3
+
+DECLINLINE(bool) msixR3BitJustCleared(uint32_t uOldValue, uint32_t uNewValue, uint32_t uMask)
 {
-    return (!!(uOldValue & uMask) && !(uNewValue & uMask));
+    return !!(uOldValue & uMask) && !(uNewValue & uMask);
 }
 
-static void msixCheckPendingVectors(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev)
+
+static void msixR3CheckPendingVectors(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPDMPCIDEV pDev)
 {
     for (uint32_t i = 0; i < msixTableSize(pDev); i++)
-        msixCheckPendingVector(pDevIns, pPciHlp, pDev, i);
+        msixR3CheckPendingVector(pDevIns, pPciHlp, pDev, i);
 }
 
-
-void MsixPciConfigWrite(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev, uint32_t u32Address, uint32_t val, unsigned len)
+/**
+ * PCI config space accessors for MSI-X.
+ */
+void MsixR3PciConfigWrite(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPDMPCIDEV pDev, uint32_t u32Address, uint32_t val, unsigned len)
 {
     int32_t iOff = u32Address - pDev->Int.s.u8MsixCapOffset;
     Assert(iOff >= 0 && (pciDevIsMsixCapable(pDev) && iOff < pDev->Int.s.u8MsixCapSize));
 
-    Log2(("MsixPciConfigWrite: %d <- %x (%d)\n", iOff, val, len));
+    Log2(("MsixR3PciConfigWrite: %d <- %x (%d)\n", iOff, val, len));
 
     uint32_t uAddr = u32Address;
     uint8_t u8NewVal;
@@ -307,11 +335,11 @@ void MsixPciConfigWrite(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev
             case VBOX_MSIX_CAP_MESSAGE_CONTROL + 1:
             {
                 /* don't change read-only bits 8-13 */
-                u8NewVal = (u8Val & UINT8_C(~0x3f)) | (pDev->config[uAddr] & UINT8_C(0x3f));
+                u8NewVal = (u8Val & UINT8_C(~0x3f)) | (pDev->abConfig[uAddr] & UINT8_C(0x3f));
                 /* If just enabled globally - check pending vectors */
-                fJustEnabled |= msixBitJustCleared(pDev->config[uAddr], u8NewVal, VBOX_PCI_MSIX_FLAGS_ENABLE >> 8);
-                fJustEnabled |= msixBitJustCleared(pDev->config[uAddr], u8NewVal, VBOX_PCI_MSIX_FLAGS_FUNCMASK >> 8);
-                pDev->config[uAddr] = u8NewVal;
+                fJustEnabled |= msixR3BitJustCleared(pDev->abConfig[uAddr], u8NewVal, VBOX_PCI_MSIX_FLAGS_ENABLE >> 8);
+                fJustEnabled |= msixR3BitJustCleared(pDev->abConfig[uAddr], u8NewVal, VBOX_PCI_MSIX_FLAGS_FUNCMASK >> 8);
+                pDev->abConfig[uAddr] = u8NewVal;
                 break;
         }
             default:
@@ -323,34 +351,7 @@ void MsixPciConfigWrite(PPDMDEVINS pDevIns, PCPDMPCIHLP pPciHlp, PPCIDEVICE pDev
     }
 
     if (fJustEnabled)
-        msixCheckPendingVectors(pDevIns, pPciHlp, pDev);
+        msixR3CheckPendingVectors(pDevIns, pPciHlp, pDev);
 }
 
-
-uint32_t MsixPciConfigRead(PPDMDEVINS pDevIns, PPCIDEVICE pDev, uint32_t u32Address, unsigned len)
-{
-    int32_t iOff = u32Address - pDev->Int.s.u8MsixCapOffset;
-    NOREF(pDevIns);
-
-    Assert(iOff >= 0 && (pciDevIsMsixCapable(pDev) && iOff < pDev->Int.s.u8MsixCapSize));
-    uint32_t rv = 0;
-
-    switch (len)
-    {
-        case 1:
-            rv = PCIDevGetByte(pDev,  u32Address);
-            break;
-        case 2:
-            rv = PCIDevGetWord(pDev,  u32Address);
-            break;
-        case 4:
-            rv = PCIDevGetDWord(pDev, u32Address);
-            break;
-        default:
-            Assert(false);
-    }
-
-    Log2(("MsixPciConfigRead: %d (%d) -> %x\n", iOff, len, rv));
-
-    return rv;
-}
+#endif /* IN_RING3 */

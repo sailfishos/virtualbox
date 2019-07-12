@@ -4,7 +4,7 @@
 ;
 
 ;
-; Copyright (C) 2006-2013 Oracle Corporation
+; Copyright (C) 2006-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -31,11 +31,8 @@
 BEGINCODE
 GLOBALNAME Start
 
-%ifndef VBOX_WITH_HYBRID_32BIT_KERNEL
-BITS 64
-%else
 BITS 32
-%endif
+
 BEGINPROC vmmR0ToRawMode
     mov     eax, VERR_VMM_SWITCHER_STUB
     ret

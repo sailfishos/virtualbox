@@ -1,11 +1,10 @@
 /* $Id: d3d8_main.c $ */
-
 /** @file
  * VBox D3D8 dll switcher
  */
 
 /*
- * Copyright (C) 2009 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,7 +15,7 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include "d3d8.h"
+#include "iprt/win/d3d8.h"
 #include "switcher.h"
 
 typedef HRESULT (WINAPI *D3D8GetSWInfoProc)(void);
@@ -82,7 +81,7 @@ HRESULT WINAPI D3D8GetSWInfo(void)
 void WINAPI DebugSetMute(void)
 {
     SW_CHECKCALL(g_swd3d8, DebugSetMute);
-    g_swd3d8.pDebugSetMute();    
+    g_swd3d8.pDebugSetMute();
 }
 
 IDirect3D8* WINAPI Direct3DCreate8(UINT SDKVersion)

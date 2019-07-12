@@ -1,12 +1,10 @@
 /* $Id: UIWizardNewVMPageBasic2.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardNewVMPageBasic2 class implementation
+ * VBox Qt GUI - UIWizardNewVMPageBasic2 class implementation.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,20 +15,27 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QIntValidator>
-#include <QVBoxLayout>
-#include <QGridLayout>
-#include <QSpacerItem>
-#include <QLabel>
-#include <QSpinBox>
+# include <QIntValidator>
+# include <QVBoxLayout>
+# include <QGridLayout>
+# include <QSpacerItem>
+# include <QLabel>
+# include <QSpinBox>
 
 /* GUI includes: */
-#include "UIWizardNewVMPageBasic2.h"
-#include "UIWizardNewVM.h"
-#include "VBoxGlobal.h"
-#include "VBoxGuestRAMSlider.h"
-#include "QIRichTextLabel.h"
+# include "UIWizardNewVMPageBasic2.h"
+# include "UIWizardNewVM.h"
+# include "VBoxGlobal.h"
+# include "VBoxGuestRAMSlider.h"
+# include "QIRichTextLabel.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardNewVMPage2::UIWizardNewVMPage2()
 {

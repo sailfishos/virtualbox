@@ -1,6 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="id_ID">
+<TS version="2.1" language="id_ID">
+<context>
+    <name>AudioOutput</name>
+    <message>
+        <source>&lt;html&gt;The audio playback device &lt;b&gt;%1&lt;/b&gt; does not work.&lt;br/&gt;Falling back to &lt;b&gt;%2&lt;/b&gt;.&lt;/html&gt;</source>
+        <translation>&lt;html&gt;Perangkat pemutar audio &lt;b&gt;%1&lt;/b&gt; tak bekerja.&lt;br/&gt;Beralih ke cadangan &lt;b&gt;%2&lt;/b&gt;.&lt;/html&gt;</translation>
+    </message>
+    <message>
+        <source>&lt;html&gt;Switching to the audio playback device &lt;b&gt;%1&lt;/b&gt;&lt;br/&gt;which just became available and has higher preference.&lt;/html&gt;</source>
+        <translation>&lt;html&gt;Bertukar ke perangkat pemutar audio &lt;b&gt;%1&lt;/b&gt;&lt;br/&gt;yang baru saja jadi tersedia dan memiliki preferensi lebih tinggi.&lt;/html&gt;</translation>
+    </message>
+    <message>
+        <source>Revert back to device &apos;%1&apos;</source>
+        <translation>Kembali ke perangkat &apos;%1&apos;</translation>
+    </message>
+</context>
+<context>
+    <name>CloseButton</name>
+    <message>
+        <source>Close Tab</source>
+        <translation>Tutup Tab</translation>
+    </message>
+</context>
 <context>
     <name>MAC_APPLICATION_MENU</name>
     <message>
@@ -30,21 +52,6 @@
     <message>
         <source>About %1</source>
         <translation>Tentang %1</translation>
-    </message>
-</context>
-<context>
-    <name>AudioOutput</name>
-    <message>
-        <source>&lt;html&gt;The audio playback device &lt;b&gt;%1&lt;/b&gt; does not work.&lt;br/&gt;Falling back to &lt;b&gt;%2&lt;/b&gt;.&lt;/html&gt;</source>
-        <translation>&lt;html&gt;Perangkat pemutar audio &lt;b&gt;%1&lt;/b&gt; tak bekerja.&lt;br/&gt;Beralih ke cadangan &lt;b&gt;%2&lt;/b&gt;.&lt;/html&gt;</translation>
-    </message>
-    <message>
-        <source>&lt;html&gt;Switching to the audio playback device &lt;b&gt;%1&lt;/b&gt;&lt;br/&gt;which just became available and has higher preference.&lt;/html&gt;</source>
-        <translation>&lt;html&gt;Bertukar ke perangkat pemutar audio &lt;b&gt;%1&lt;/b&gt;&lt;br/&gt;yang baru saja jadi tersedia dan memiliki preferensi lebih tinggi.&lt;/html&gt;</translation>
-    </message>
-    <message>
-        <source>Revert back to device &apos;%1&apos;</source>
-        <translation>Kembali ke perangkat &apos;%1&apos;</translation>
     </message>
 </context>
 <context>
@@ -680,6 +687,22 @@ menjadi
         <source>Socket is not connected</source>
         <translation>Soket tak terhubung</translation>
     </message>
+    <message>
+        <source>Operation on socket is not supported</source>
+        <translation>Operasi pada soket tidak didukung</translation>
+    </message>
+    <message>
+        <source>Connection timed out</source>
+        <translation>Koneksi habis waktu</translation>
+    </message>
+    <message>
+        <source>Trying to connect while connection is in progress</source>
+        <translation>Mencoba menyambung saat koneksi tengah berlangsung</translation>
+    </message>
+    <message>
+        <source>Network unreachable</source>
+        <translation>Jaringan tak dapat dicapai</translation>
+    </message>
 </context>
 <context>
     <name>QAbstractSpinBox</name>
@@ -694,6 +717,124 @@ menjadi
     <message>
         <source>&amp;Select All</source>
         <translation>Pilih &amp;Semua</translation>
+    </message>
+</context>
+<context>
+    <name>QAccessibleActionInterface</name>
+    <message>
+        <source>Press</source>
+        <translation>Tekan</translation>
+    </message>
+    <message>
+        <source>Increase</source>
+        <translation>Naikkan</translation>
+    </message>
+    <message>
+        <source>Decrease</source>
+        <translation>Turunkan</translation>
+    </message>
+    <message>
+        <source>ShowMenu</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>SetFocus</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Toggle</source>
+        <translation>Jungkitkan</translation>
+    </message>
+    <message>
+        <source>Scroll Left</source>
+        <translation>Gulung Kiri</translation>
+    </message>
+    <message>
+        <source>Scroll Right</source>
+        <translation>Gulung Kanan</translation>
+    </message>
+    <message>
+        <source>Scroll Up</source>
+        <translation>Gulung Atas</translation>
+    </message>
+    <message>
+        <source>Scroll Down</source>
+        <translation>Gulung Bawah</translation>
+    </message>
+    <message>
+        <source>Previous Page</source>
+        <translation>Halaman Sebelumnya</translation>
+    </message>
+    <message>
+        <source>Next Page</source>
+        <translation>Halaman Berikutnya</translation>
+    </message>
+    <message>
+        <source>Triggers the action</source>
+        <translation>Picu aksi</translation>
+    </message>
+    <message>
+        <source>Increase the value</source>
+        <translation>Naikkan nilai</translation>
+    </message>
+    <message>
+        <source>Decrease the value</source>
+        <translation>Turunkan nilai</translation>
+    </message>
+    <message>
+        <source>Shows the menu</source>
+        <translation>Tampilkan menu</translation>
+    </message>
+    <message>
+        <source>Sets the focus</source>
+        <translation>Menata fokus</translation>
+    </message>
+    <message>
+        <source>Toggles the state</source>
+        <translation>Menjungkitkan keadaan</translation>
+    </message>
+    <message>
+        <source>Scrolls to the left</source>
+        <translation>Menggulung ke kiri</translation>
+    </message>
+    <message>
+        <source>Scrolls to the right</source>
+        <translation>Menggulung ke kanan</translation>
+    </message>
+    <message>
+        <source>Scrolls up</source>
+        <translation>Menggulung ke atas</translation>
+    </message>
+    <message>
+        <source>Scrolls down</source>
+        <translation>Menggulung ke bawah</translation>
+    </message>
+    <message>
+        <source>Goes back a page</source>
+        <translation>Mundur satu halaman</translation>
+    </message>
+    <message>
+        <source>Goes to the next page</source>
+        <translation>Menuju ke halaman selanjutnya</translation>
+    </message>
+</context>
+<context>
+    <name>QAndroidPlatformTheme</name>
+    <message>
+        <source>Yes</source>
+        <translation>Ya</translation>
+    </message>
+    <message>
+        <source>Yes to All</source>
+        <translation>Ya untuk Semua</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>Tidak</translation>
+    </message>
+    <message>
+        <source>No to All</source>
+        <translation>Tidak untuk Semua</translation>
     </message>
 </context>
 <context>
@@ -733,6 +874,68 @@ menjadi
     <message>
         <source>Toggle</source>
         <translation>Jungkitkan</translation>
+    </message>
+</context>
+<context>
+    <name>QCocoaMenuItem</name>
+    <message>
+        <source>About Qt</source>
+        <translation>Tentang Qt</translation>
+    </message>
+    <message>
+        <source>About</source>
+        <translation>Tentang</translation>
+    </message>
+    <message>
+        <source>Config</source>
+        <translation>Konfig</translation>
+    </message>
+    <message>
+        <source>Preference</source>
+        <translation>Preferensi</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>Opsi</translation>
+    </message>
+    <message>
+        <source>Setting</source>
+        <translation>Setelan</translation>
+    </message>
+    <message>
+        <source>Setup</source>
+        <translation>Penyiapan</translation>
+    </message>
+    <message>
+        <source>Quit</source>
+        <translation>Keluar</translation>
+    </message>
+    <message>
+        <source>Exit</source>
+        <translation>Keluar</translation>
+    </message>
+    <message>
+        <source>Cut</source>
+        <translation>Potong</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Salin</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>Tempel</translation>
+    </message>
+    <message>
+        <source>Select All</source>
+        <translation>Pilih Semua</translation>
+    </message>
+</context>
+<context>
+    <name>QCocoaTheme</name>
+    <message>
+        <source>Don&apos;t Save</source>
+        <translation>Jangan Simpan</translation>
     </message>
 </context>
 <context>
@@ -781,6 +984,24 @@ menjadi
         <source>Select color</source>
         <translation>Pilih warna</translation>
     </message>
+    <message>
+        <source>&amp;HTML:</source>
+        <translation>&amp;HTML:</translation>
+    </message>
+    <message>
+        <source>Cursor at %1, %2
+Press ESC to cancel</source>
+        <translation>Kursor di %1, %2
+Tekan ESC untuk membatalkan</translation>
+    </message>
+    <message>
+        <source>Select Color</source>
+        <translation>Pilih Warna</translation>
+    </message>
+    <message>
+        <source>&amp;Pick Screen Color</source>
+        <translation>&amp;Pilih Warna Layar</translation>
+    </message>
 </context>
 <context>
     <name>QComboBox</name>
@@ -799,6 +1020,53 @@ menjadi
     <message>
         <source>Close</source>
         <translation>Tutup</translation>
+    </message>
+    <message>
+        <source>Open the combo box selection popup</source>
+        <translation>Buka popup pemilihan kotak kombo</translation>
+    </message>
+</context>
+<context>
+    <name>QCommandLineParser</name>
+    <message>
+        <source>Displays version information.</source>
+        <translation>Tampilkan informasi versi.</translation>
+    </message>
+    <message>
+        <source>Displays this help.</source>
+        <translation>Tampilkan bantuan ini.</translation>
+    </message>
+    <message>
+        <source>Unknown option &apos;%1&apos;.</source>
+        <translation>Opsi &apos;%1&apos; tidak dikenal.</translation>
+    </message>
+    <message>
+        <source>Unknown options: %1.</source>
+        <translation>Opsi tidak dikenal: %1.</translation>
+    </message>
+    <message>
+        <source>Missing value after &apos;%1&apos;.</source>
+        <translation>Kurang nilai setelah &apos;%1&apos;.</translation>
+    </message>
+    <message>
+        <source>Unexpected value after &apos;%1&apos;.</source>
+        <translation>Nilai yang tidak diharapkan setelah &apos;%1&apos;.</translation>
+    </message>
+    <message>
+        <source>[options]</source>
+        <translation>[opsi]</translation>
+    </message>
+    <message>
+        <source>Usage: %1</source>
+        <translation>Cara pakai: %1</translation>
+    </message>
+    <message>
+        <source>Options:</source>
+        <translation>Opsi:</translation>
+    </message>
+    <message>
+        <source>Arguments:</source>
+        <translation>Argumen:</translation>
     </message>
 </context>
 <context>
@@ -842,6 +1110,110 @@ menjadi
         <source>%1: ftok failed</source>
         <comment>QSystemSemaphore</comment>
         <translation>%1: ftok gagal</translation>
+    </message>
+</context>
+<context>
+    <name>QCupsJobWidget</name>
+    <message>
+        <source>Job</source>
+        <translation>Tugas</translation>
+    </message>
+    <message>
+        <source>Job Control</source>
+        <translation>Kendali Tugas</translation>
+    </message>
+    <message>
+        <source>Scheduled printing:</source>
+        <translation>Pencetakan terjadwal:</translation>
+    </message>
+    <message>
+        <source>Billing information:</source>
+        <translation>Informasi tagihan:</translation>
+    </message>
+    <message>
+        <source>Job priority:</source>
+        <translation>Prioritas tugas:</translation>
+    </message>
+    <message>
+        <source>Banner Pages</source>
+        <translation>Halaman Banner</translation>
+    </message>
+    <message>
+        <source>End:</source>
+        <comment>Banner page at end</comment>
+        <translation>Akhir:</translation>
+    </message>
+    <message>
+        <source>Start:</source>
+        <comment>Banner page at start</comment>
+        <translation>Awal:</translation>
+    </message>
+    <message>
+        <source>Print Immediately</source>
+        <translation>Cetak Sekarang Juga</translation>
+    </message>
+    <message>
+        <source>Hold Indefinitely</source>
+        <translation>Tahan Selamanya</translation>
+    </message>
+    <message>
+        <source>Day (06:00 to 17:59)</source>
+        <translation>Siang (06:00 sampai 17:59)</translation>
+    </message>
+    <message>
+        <source>Night (18:00 to 05:59)</source>
+        <translation>Malam (18:00 sampai 05:59)</translation>
+    </message>
+    <message>
+        <source>Second Shift (16:00 to 23:59)</source>
+        <translation type="unfinished">Shift Ke Dua (16:00 sampai 23:59)</translation>
+    </message>
+    <message>
+        <source>Third Shift (00:00 to 07:59)</source>
+        <translation type="unfinished">Shift Ke Tiga (00:00 sampai 07:59)</translation>
+    </message>
+    <message>
+        <source>Weekend (Saturday to Sunday)</source>
+        <translation type="unfinished">Akhir Pekan (Sabtu sampai Minggu)</translation>
+    </message>
+    <message>
+        <source>Specific Time</source>
+        <translation>Waktu Tertentu</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <comment>CUPS Banner page</comment>
+        <translation>Nihil</translation>
+    </message>
+    <message>
+        <source>Standard</source>
+        <comment>CUPS Banner page</comment>
+        <translation>Standar</translation>
+    </message>
+    <message>
+        <source>Unclassified</source>
+        <comment>CUPS Banner page</comment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Confidential</source>
+        <comment>CUPS Banner page</comment>
+        <translation>Konfidensial</translation>
+    </message>
+    <message>
+        <source>Classified</source>
+        <comment>CUPS Banner page</comment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Secret</source>
+        <comment>CUPS Banner page</comment>
+        <translation>Rahasia</translation>
+    </message>
+    <message>
+        <source>Top Secret</source>
+        <comment>CUPS Banner page</comment>
+        <translation>Sangat Rahasia</translation>
     </message>
 </context>
 <context>
@@ -891,7 +1263,33 @@ menjadi
     </message>
 </context>
 <context>
+    <name>QDBusTrayIcon</name>
+    <message>
+        <source>OK</source>
+        <translation>OK</translation>
+    </message>
+</context>
+<context>
     <name>QDateTimeEdit</name>
+    <message>
+        <source>AM</source>
+        <translation>AM</translation>
+    </message>
+    <message>
+        <source>am</source>
+        <translation>am</translation>
+    </message>
+    <message>
+        <source>PM</source>
+        <translation>PM</translation>
+    </message>
+    <message>
+        <source>pm</source>
+        <translation>pm</translation>
+    </message>
+</context>
+<context>
+    <name>QDateTimeParser</name>
     <message>
         <source>AM</source>
         <translation>AM</translation>
@@ -1048,9 +1446,116 @@ menjadi
     </message>
 </context>
 <context>
+    <name>QDnsLookup</name>
+    <message>
+        <source>Operation cancelled</source>
+        <translation>Operasi dibatalkan</translation>
+    </message>
+</context>
+<context>
+    <name>QDnsLookupRunnable</name>
+    <message>
+        <source>IPv6 addresses for nameservers are currently not supported</source>
+        <translation>Alamat IPv6 untuk server DNS saat ini tidak didukung</translation>
+    </message>
+    <message>
+        <source>Invalid domain name</source>
+        <translation>Nama domain tidak valid</translation>
+    </message>
+    <message>
+        <source>Not yet supported on Android</source>
+        <translation>Belum didukung pada Android</translation>
+    </message>
+    <message>
+        <source>Resolver functions not found</source>
+        <translation>Fungsi resolver tidak ditemukan</translation>
+    </message>
+    <message>
+        <source>Resolver initialization failed</source>
+        <translation>Inisialisasi resolver gagal</translation>
+    </message>
+    <message>
+        <source>Server could not process query</source>
+        <translation>Server tidak bisa memroses kueri</translation>
+    </message>
+    <message>
+        <source>Server failure</source>
+        <translation>Kegagalan server</translation>
+    </message>
+    <message>
+        <source>Non existent domain</source>
+        <translation>Domain tidak ada</translation>
+    </message>
+    <message>
+        <source>Server refused to answer</source>
+        <translation>Server menolak menjawab</translation>
+    </message>
+    <message>
+        <source>Invalid reply received</source>
+        <translation>Jawaban yang diterima tidak valid</translation>
+    </message>
+    <message>
+        <source>Could not expand domain name</source>
+        <translation>Tidak bisa mengekspansi nama domain</translation>
+    </message>
+    <message>
+        <source>Invalid IPv4 address record</source>
+        <translation>Record alamat IPv4 tidak valid</translation>
+    </message>
+    <message>
+        <source>Invalid IPv6 address record</source>
+        <translation>Record alamat IPv6 tidak valid</translation>
+    </message>
+    <message>
+        <source>Invalid canonical name record</source>
+        <translation>Record nama kanonik tidak valid</translation>
+    </message>
+    <message>
+        <source>Invalid name server record</source>
+        <translation>Record server DNS tidak valid</translation>
+    </message>
+    <message>
+        <source>Invalid pointer record</source>
+        <translation>Record pointer tidak valid</translation>
+    </message>
+    <message>
+        <source>Invalid mail exchange record</source>
+        <translation>Record mail exchange tidak valid</translation>
+    </message>
+    <message>
+        <source>Invalid service record</source>
+        <translation>Record layanan tidak valid</translation>
+    </message>
+    <message>
+        <source>Invalid text record</source>
+        <translation>Record teks tidak valid</translation>
+    </message>
+    <message>
+        <source>Resolver library can&apos;t be loaded: No runtime library loading support</source>
+        <translation>Pustaka resolver tak bisa dimuat: Tidak ada dukungan pemuatan pustaka saat runtime</translation>
+    </message>
+    <message>
+        <source>No hostname given</source>
+        <translation>Tidak ada nama host yang diberikan</translation>
+    </message>
+    <message>
+        <source>Invalid hostname</source>
+        <translation>Nama host tidak valid</translation>
+    </message>
+    <message>
+        <source>Host %1 could not be found.</source>
+        <translation>Host %1 tidak dapat ditemukan.</translation>
+    </message>
+    <message>
+        <source>Unknown error</source>
+        <translation>Kesalahan tak dikenal</translation>
+    </message>
+</context>
+<context>
     <name>QDockWidget</name>
     <message>
         <source>Close</source>
+        <extracomment>Accessible name for button closing a dock widget</extracomment>
         <translation>Tutup</translation>
     </message>
     <message>
@@ -1059,7 +1564,16 @@ menjadi
     </message>
     <message>
         <source>Float</source>
+        <extracomment>Accessible name for button undocking a dock widget (floating state)</extracomment>
         <translation>Ambangkan</translation>
+    </message>
+    <message>
+        <source>Undocks and re-attaches the dock widget</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Closes the dock widget</source>
+        <translation>Menutup widget dok</translation>
     </message>
 </context>
 <context>
@@ -1094,6 +1608,60 @@ menjadi
     <message>
         <source>&amp;OK</source>
         <translation>&amp;OK</translation>
+    </message>
+</context>
+<context>
+    <name>QFile</name>
+    <message>
+        <source>Destination file is the same file.</source>
+        <translation>Berkas tujuan adalah berkas yang sama.</translation>
+    </message>
+    <message>
+        <source>Source file does not exist.</source>
+        <translation>Berkas sumber tidak ada.</translation>
+    </message>
+    <message>
+        <source>Destination file exists</source>
+        <translation>Berkas tujuan sudah ada</translation>
+    </message>
+    <message>
+        <source>Error while renaming.</source>
+        <translation>Kesalahan saat mengubah nama.</translation>
+    </message>
+    <message>
+        <source>Unable to restore from %1: %2</source>
+        <translation>Tidak bisa memulihkan dari %1: %2</translation>
+    </message>
+    <message>
+        <source>Will not rename sequential file using block copy</source>
+        <translation>Tidak akan mengubah nama berkas sekuensial memakai penyalinan blok</translation>
+    </message>
+    <message>
+        <source>Cannot remove source file</source>
+        <translation>Tidak bisa menghapus berkas sumber</translation>
+    </message>
+    <message>
+        <source>Cannot open %1 for input</source>
+        <translation>Tidak bisa membuka %1 untuk masukan</translation>
+    </message>
+    <message>
+        <source>Cannot open for output</source>
+        <translation>Tidak bisa membuka untuk keluaran</translation>
+    </message>
+    <message>
+        <source>Failure to write block</source>
+        <translation>Kegagalan menulis blok</translation>
+    </message>
+    <message>
+        <source>Cannot create %1 for output</source>
+        <translation>Tidak bisa membuat %1 untuk keluaran</translation>
+    </message>
+</context>
+<context>
+    <name>QFileDevice</name>
+    <message>
+        <source>No file engine available or engine does not support UnMapExtension</source>
+        <translation>Tidak ada mesin berkas yang tersedia atau mesin tidak mendukung UnMapExtension</translation>
     </message>
 </context>
 <context>
@@ -1250,6 +1818,95 @@ Anda tetap ingin menghapusnya?</translation>
         <source>Create New Folder</source>
         <translation>Buat Folder Baru</translation>
     </message>
+    <message>
+        <source>Go back</source>
+        <translation>Mundur</translation>
+    </message>
+    <message>
+        <source>Alt+Left</source>
+        <translation>Alt+Kiri</translation>
+    </message>
+    <message>
+        <source>Go forward</source>
+        <translation>Maju</translation>
+    </message>
+    <message>
+        <source>Alt+Right</source>
+        <translation>Alt+Kanan</translation>
+    </message>
+    <message>
+        <source>Go to the parent directory</source>
+        <translation>Ke direktori induk</translation>
+    </message>
+    <message>
+        <source>Alt+Up</source>
+        <translation>Alt+Naik</translation>
+    </message>
+    <message>
+        <source>Create a New Folder</source>
+        <translation>Buat Folder Baru</translation>
+    </message>
+    <message>
+        <source>Change to list view mode</source>
+        <translation>Ubah ke mode tilikan daftar</translation>
+    </message>
+    <message>
+        <source>Change to detail view mode</source>
+        <translation>Ubah ke mode tilikan rinci</translation>
+    </message>
+    <message>
+        <source>Sidebar</source>
+        <translation>Bilah sisi</translation>
+    </message>
+    <message>
+        <source>List of places and bookmarks</source>
+        <translation>Daftar tempat dan markah</translation>
+    </message>
+    <message>
+        <source>Files</source>
+        <translation>Berkas</translation>
+    </message>
+    <message>
+        <source>All files (*)</source>
+        <translation>Semua berkas (*.*)</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>Hapus</translation>
+    </message>
+    <message>
+        <source>Are you sure you want to delete &apos;%1&apos;?</source>
+        <translation>Anda yakin hendak menghapus &apos;%1&apos;?</translation>
+    </message>
+    <message>
+        <source>Recent Places</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 File</source>
+        <extracomment>%1 is a file name suffix, for example txt</extracomment>
+        <translation>Berkas %1</translation>
+    </message>
+    <message>
+        <source>File Folder</source>
+        <comment>Match Windows Explorer</comment>
+        <translation>Folder Berkas</translation>
+    </message>
+    <message>
+        <source>Folder</source>
+        <comment>All other platforms</comment>
+        <translation>Folder</translation>
+    </message>
+    <message>
+        <source>Alias</source>
+        <comment>OS X Finder</comment>
+        <translation>Alias</translation>
+    </message>
+    <message>
+        <source>Shortcut</source>
+        <comment>All other platforms</comment>
+        <translation>Pintasan</translation>
+    </message>
 </context>
 <context>
     <name>QFileSystemModel</name>
@@ -1311,6 +1968,10 @@ Anda tetap ingin menghapusnya?</translation>
         <source>%1 bytes</source>
         <translation>%1 byte</translation>
     </message>
+    <message>
+        <source>%1 byte(s)</source>
+        <translation>%1 byte</translation>
+    </message>
 </context>
 <context>
     <name>QFontDatabase</name>
@@ -1332,6 +1993,7 @@ Anda tetap ingin menghapusnya?</translation>
     </message>
     <message>
         <source>Demi</source>
+        <extracomment>The word for &quot;Demi&quot; as in &quot;Demi Bold&quot; used as a pattern for string searches</extracomment>
         <translation>Demi</translation>
     </message>
     <message>
@@ -1478,6 +2140,37 @@ Anda tetap ingin menghapusnya?</translation>
         <source>Runic</source>
         <translation>Runik</translation>
     </message>
+    <message>
+        <source>Normal</source>
+        <comment>The Normal or Regular font weight</comment>
+        <translation>Normal</translation>
+    </message>
+    <message>
+        <source>Medium</source>
+        <comment>The Medium font weight</comment>
+        <translation>Sedang</translation>
+    </message>
+    <message>
+        <source>Thin</source>
+        <translation>Tipis</translation>
+    </message>
+    <message>
+        <source>Extra Light</source>
+        <translation>Ekstra Ringan</translation>
+    </message>
+    <message>
+        <source>Extra Bold</source>
+        <translation>Ekstra Tebal</translation>
+    </message>
+    <message>
+        <source>Extra</source>
+        <extracomment>The word for &quot;Extra&quot; as in &quot;Extra Bold, Extra Thin&quot; used as a pattern for string searches</extracomment>
+        <translation>Ekstra</translation>
+    </message>
+    <message>
+        <source>N&apos;Ko</source>
+        <translation>N&apos;Ko</translation>
+    </message>
 </context>
 <context>
     <name>QFontDialog</name>
@@ -1617,12 +2310,55 @@ Anda tetap ingin menghapusnya?</translation>
         <source>Connected to host</source>
         <translation>Tersambung ke host</translation>
     </message>
+    <message>
+        <source>Connection timed out to host %1</source>
+        <translation>Sambungan habis waktu ke host %1</translation>
+    </message>
+    <message>
+        <source>Data Connection refused</source>
+        <translation>Koneksi data ditolak</translation>
+    </message>
+</context>
+<context>
+    <name>QGnomeTheme</name>
+    <message>
+        <source>&amp;OK</source>
+        <translation>&amp;OK</translation>
+    </message>
+    <message>
+        <source>&amp;Save</source>
+        <translation>&amp;Simpan</translation>
+    </message>
+    <message>
+        <source>&amp;Cancel</source>
+        <translation>&amp;Batal</translation>
+    </message>
+    <message>
+        <source>&amp;Close</source>
+        <translation>Tutu&amp;p</translation>
+    </message>
+    <message>
+        <source>Close without Saving</source>
+        <translation>Tutup tanpa Menyimpan</translation>
+    </message>
+</context>
+<context>
+    <name>QGuiApplication</name>
+    <message>
+        <source>QT_LAYOUT_DIRECTION</source>
+        <comment>Translate this string to the string &apos;LTR&apos; in left-to-right languages or to &apos;RTL&apos; in right-to-left languages (such as Hebrew and Arabic) to get proper widget layout.</comment>
+        <translation>LTR</translation>
+    </message>
 </context>
 <context>
     <name>QHostInfo</name>
     <message>
         <source>Unknown error</source>
         <translation>Kesalahan tak dikenal</translation>
+    </message>
+    <message>
+        <source>No host name given</source>
+        <translation>Tidak ada nama host yang diberikan</translation>
     </message>
 </context>
 <context>
@@ -1638,6 +2374,18 @@ Anda tetap ingin menghapusnya?</translation>
     <message>
         <source>Unknown error</source>
         <translation>Kesalahan tak dikenal</translation>
+    </message>
+    <message>
+        <source>No host name given</source>
+        <translation>Tidak ada nama host yang diberikan</translation>
+    </message>
+    <message>
+        <source>Invalid hostname</source>
+        <translation>Nama host tidak valid</translation>
+    </message>
+    <message>
+        <source>Unknown error (%1)</source>
+        <translation>Kesalahan tak dikenal (%1)</translation>
     </message>
 </context>
 <context>
@@ -1742,12 +2490,52 @@ Anda tetap ingin menghapusnya?</translation>
         <source>SSL handshake failed</source>
         <translation>Handshake SSL gagal</translation>
     </message>
+    <message>
+        <source>Too many redirects</source>
+        <translation>Terlalu banyak pengalihan</translation>
+    </message>
+    <message>
+        <source>Insecure redirect</source>
+        <translation>Pengalihan tidak aman</translation>
+    </message>
 </context>
 <context>
     <name>QHttpSocketEngine</name>
     <message>
         <source>Authentication required</source>
         <translation>Otentikasi diperlukan</translation>
+    </message>
+    <message>
+        <source>Did not receive HTTP response from proxy</source>
+        <translation>Tidak menerima respon HTTP dari proksi</translation>
+    </message>
+    <message>
+        <source>Error parsing authentication request from proxy</source>
+        <translation>Kesalahan saat mengurai permintaan otentikasi dari proksi</translation>
+    </message>
+    <message>
+        <source>Proxy denied connection</source>
+        <translation>Proksi menolak koneksi</translation>
+    </message>
+    <message>
+        <source>Error communicating with HTTP proxy</source>
+        <translation>Kesalahan saat berkomunikasi dengan proksi HTTP</translation>
+    </message>
+    <message>
+        <source>Proxy server not found</source>
+        <translation>Server proksi tidak ditemukan</translation>
+    </message>
+    <message>
+        <source>Proxy connection refused</source>
+        <translation>Koneksi proksi ditolak</translation>
+    </message>
+    <message>
+        <source>Proxy server connection timed out</source>
+        <translation>Koneksi server proksi habis waktu</translation>
+    </message>
+    <message>
+        <source>Proxy connection closed prematurely</source>
+        <translation>Koneksi proksi ditutup secara prematur</translation>
     </message>
 </context>
 <context>
@@ -1862,6 +2650,52 @@ Anda tetap ingin menghapusnya?</translation>
         <source>Unknown error</source>
         <translation>Kesalahan tak dikenal</translation>
     </message>
+    <message>
+        <source>file to open is a directory</source>
+        <translation>Berkas yang akan dibuka adalah sebuah direktori</translation>
+    </message>
+</context>
+<context>
+    <name>QImageReader</name>
+    <message>
+        <source>Invalid device</source>
+        <translation>Peranti tidak valid</translation>
+    </message>
+    <message>
+        <source>File not found</source>
+        <translation>Berkas tidak ditemukan</translation>
+    </message>
+    <message>
+        <source>Unsupported image format</source>
+        <translation>Format citra tidak didukung</translation>
+    </message>
+    <message>
+        <source>Unable to read image data</source>
+        <translation>Tidak bisa membaca data citra</translation>
+    </message>
+    <message>
+        <source>Unknown error</source>
+        <translation>Kesalahan tak dikenal</translation>
+    </message>
+</context>
+<context>
+    <name>QImageWriter</name>
+    <message>
+        <source>Unknown error</source>
+        <translation>Kesalahan tak dikenal</translation>
+    </message>
+    <message>
+        <source>Device is not set</source>
+        <translation>Peranti tidak ditata</translation>
+    </message>
+    <message>
+        <source>Device not writable</source>
+        <translation>Peranti tidak dapat ditulisi</translation>
+    </message>
+    <message>
+        <source>Unsupported image format</source>
+        <translation>Format citra tidak didukung</translation>
+    </message>
 </context>
 <context>
     <name>QInputContext</name>
@@ -1880,6 +2714,88 @@ Anda tetap ingin menghapusnya?</translation>
     <message>
         <source>Mac OS X input method</source>
         <translation>Metoda masuka Mac OS X</translation>
+    </message>
+</context>
+<context>
+    <name>QInputDialog</name>
+    <message>
+        <source>Enter a value:</source>
+        <translation>Masukkan suatu nilai:</translation>
+    </message>
+</context>
+<context>
+    <name>QJsonParseError</name>
+    <message>
+        <source>no error occurred</source>
+        <translation>tak terjadi kesalahan</translation>
+    </message>
+    <message>
+        <source>unterminated object</source>
+        <translation>objek tak diterminasi</translation>
+    </message>
+    <message>
+        <source>missing name separator</source>
+        <translation>kurang pemisah nama</translation>
+    </message>
+    <message>
+        <source>unterminated array</source>
+        <translation>larik tak diterminasi</translation>
+    </message>
+    <message>
+        <source>missing value separator</source>
+        <translation>kurang pemisah nilai</translation>
+    </message>
+    <message>
+        <source>illegal value</source>
+        <translation>nilai tidak legal</translation>
+    </message>
+    <message>
+        <source>invalid termination by number</source>
+        <translation>terminasi dengan angka yang tidak valid</translation>
+    </message>
+    <message>
+        <source>illegal number</source>
+        <translation>angka tidak legal</translation>
+    </message>
+    <message>
+        <source>invalid escape sequence</source>
+        <translation>urutan escape yang tidak valid</translation>
+    </message>
+    <message>
+        <source>invalid UTF8 string</source>
+        <translation>string UTF8 yang tidak valid</translation>
+    </message>
+    <message>
+        <source>unterminated string</source>
+        <translation>string tidak diterminasi</translation>
+    </message>
+    <message>
+        <source>object is missing after a comma</source>
+        <translation>kurang objek setelah koma</translation>
+    </message>
+    <message>
+        <source>too deeply nested document</source>
+        <translation>dokumen bersarang terlalu dalam</translation>
+    </message>
+    <message>
+        <source>too large document</source>
+        <translation>dokumen terlalu besar</translation>
+    </message>
+    <message>
+        <source>garbage at the end of the document</source>
+        <translation>sampah di ujung dokumen</translation>
+    </message>
+</context>
+<context>
+    <name>QKeySequenceEdit</name>
+    <message>
+        <source>Press shortcut</source>
+        <translation>Tekan pintasan</translation>
+    </message>
+    <message>
+        <source>%1, ...</source>
+        <extracomment>This text is an &quot;unfinished&quot; shortcut, expands like &quot;Ctrl+A, ...&quot;</extracomment>
+        <translation>%1, ...</translation>
     </message>
 </context>
 <context>
@@ -1931,6 +2847,66 @@ Anda tetap ingin menghapusnya?</translation>
     <message>
         <source>The plugin &apos;%1&apos; uses incompatible Qt library. (Cannot mix debug and release libraries.)</source>
         <translation>Plugin &apos;%1&apos; memakai pustaka Qt yang tak kompatibel. (Tak bisa mencampur pustaka debug dan rilis.)</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is not an ELF object (%2)</source>
+        <translation>&apos;%1&apos; bukan suatu objek ELF (%2)</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is not an ELF object</source>
+        <translation>&apos;%1&apos; bukan suatu objek ELF</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is an invalid ELF object (%2)</source>
+        <translation>&apos;%1&apos; bukan objek ELF yang valid (%2)</translation>
+    </message>
+    <message>
+        <source>Failed to extract plugin meta data from &apos;%1&apos;</source>
+        <translation>Gagal mengekstrak meta data plugin dari &apos;%1&apos;</translation>
+    </message>
+    <message>
+        <source>Cannot load library %1: %2</source>
+        <translation>Tak bisa memuat pustaka %1: %2</translation>
+    </message>
+    <message>
+        <source>Cannot unload library %1: %2</source>
+        <translation>Tak bisa membongkar muat pustaka %1: %2</translation>
+    </message>
+    <message>
+        <source>Cannot resolve symbol &quot;%1&quot; in %2: %3</source>
+        <translation>Tak bisa mengurai simbol &quot;%1&quot; dalam %2: %3</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is not a valid Mach-O binary (%2)</source>
+        <translation>&apos;%1&apos; bukan biner Mach-O yang valid (%2)</translation>
+    </message>
+    <message>
+        <source>file is corrupt</source>
+        <translation>berkas terkorupsi</translation>
+    </message>
+    <message>
+        <source>file too small</source>
+        <translation>berkas terlalu kecil</translation>
+    </message>
+    <message>
+        <source>no suitable architecture in fat binary</source>
+        <translation>tak ada arsitektur yang cocok dalam biner fat</translation>
+    </message>
+    <message>
+        <source>invalid magic %1</source>
+        <translation>magic %1 tak valid</translation>
+    </message>
+    <message>
+        <source>wrong architecture</source>
+        <translation>salah arsitektur</translation>
+    </message>
+    <message>
+        <source>not a dynamic library</source>
+        <translation>bukan suatu pustaka dinamis</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is not a Qt plugin</source>
+        <translation>&apos;%1&apos; bukanlah suatu plugin Qt</translation>
     </message>
 </context>
 <context>
@@ -2025,6 +3001,22 @@ Anda tetap ingin menghapusnya?</translation>
         <source>%1: Unknown error %2</source>
         <translation>%1: Kesalahan tak dikenal %2</translation>
     </message>
+    <message>
+        <source>%1: Operation not permitted when socket is in this state</source>
+        <translation>%1: Operasi tak diizinkan ketika soket dalam keadaan ini</translation>
+    </message>
+    <message>
+        <source>%1: Unknown error</source>
+        <translation>%1: Kesalahan tak dikenal</translation>
+    </message>
+    <message>
+        <source>Trying to connect while connection is in progress</source>
+        <translation>Mencoba menyambung saat koneksi tengah berlangsung</translation>
+    </message>
+    <message>
+        <source>%1: Access denied</source>
+        <translation>%1: Akses ditolak</translation>
+    </message>
 </context>
 <context>
     <name>QMYSQLDriver</name>
@@ -2047,6 +3039,15 @@ Anda tetap ingin menghapusnya?</translation>
     <message>
         <source>Unable to rollback transaction</source>
         <translation>Tak bisa rollback transaksi</translation>
+    </message>
+    <message>
+        <source>Unable to allocate a MYSQL object</source>
+        <translatorcomment>Tak bisa mengalokasikan sebuah objek MySQL</translatorcomment>
+        <translation></translation>
+    </message>
+    <message>
+        <source>Unable to open database &apos;%1&apos;</source>
+        <translation>Tak bisa membuka database &apos;%1&apos;</translation>
     </message>
 </context>
 <context>
@@ -2227,6 +3228,14 @@ Anda tetap ingin menghapusnya?</translation>
         <source>&lt;h3&gt;About Qt&lt;/h3&gt;%1&lt;p&gt;Qt is a C++ toolkit for cross-platform application development.&lt;/p&gt;&lt;p&gt;Qt provides single-source portability across MS&amp;nbsp;Windows, Mac&amp;nbsp;OS&amp;nbsp;X, Linux, and all major commercial Unix variants. Qt is also available for embedded devices as Qt for Embedded Linux and Qt for Windows CE.&lt;/p&gt;&lt;p&gt;Qt is a Nokia product. See &lt;a href=&quot;http://www.trolltech.com/qt/&quot;&gt;www.trolltech.com/qt/&lt;/a&gt; for more information.&lt;/p&gt;</source>
         <translation>&lt;h3&gt;Tentang Qt&lt;/h3&gt;%1&lt;p&gt;Qt adalah toolkit C++ untuk pengembangan aplikasi lintas platform.&lt;/p&gt;&lt;p&gt;Qt menyediakan portabilitas sumber tunggal mencakup MS&amp;nbsp;Windows, Mac&amp;nbsp;OS&amp;nbsp;X, Linux, dan semua varian Unix komersial utama. Qt juga tersedia bagi device embedded sebagai Qt for Embedded Linux dan Qt for Windows CE.&lt;/p&gt;&lt;p&gt;Qt adalah sebuah produk Nokia. Lihat &lt;a href=&quot;http://www.trolltech.com/qt/&quot;&gt;www.trolltech.com/qt/&lt;/a&gt; untuk informasi lebih lanjut.&lt;/p&gt;</translation>
     </message>
+    <message>
+        <source>&lt;h3&gt;About Qt&lt;/h3&gt;&lt;p&gt;This program uses Qt version %1.&lt;/p&gt;</source>
+        <translation>&lt;h3&gt;Tentang Qt&lt;/h3&gt;&lt;p&gt;Program ini memakai Qt versi %1.&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <source>&lt;p&gt;Qt is a C++ toolkit for cross-platform application development.&lt;/p&gt;&lt;p&gt;Qt provides single-source portability across all major desktop operating systems. It is also available for embedded Linux and other embedded and mobile operating systems.&lt;/p&gt;&lt;p&gt;Qt is available under three different licensing options designed to accommodate the needs of our various users.&lt;/p&gt;&lt;p&gt;Qt licensed under our commercial license agreement is appropriate for development of proprietary/commercial software where you do not want to share any source code with third parties or otherwise cannot comply with the terms of the GNU LGPL version 3 or GNU LGPL version 2.1.&lt;/p&gt;&lt;p&gt;Qt licensed under the GNU LGPL version 3 is appropriate for the development of Qt&amp;nbsp;applications provided you can comply with the terms and conditions of the GNU LGPL version 3.&lt;/p&gt;&lt;p&gt;Qt licensed under the GNU LGPL version 2.1 is appropriate for the development of Qt&amp;nbsp;applications provided you can comply with the terms and conditions of the GNU LGPL version 2.1.&lt;/p&gt;&lt;p&gt;Please see &lt;a href=&quot;http://%2/&quot;&gt;%2&lt;/a&gt; for an overview of Qt licensing.&lt;/p&gt;&lt;p&gt;Copyright (C) %1 The Qt Company Ltd and other contributors.&lt;/p&gt;&lt;p&gt;Qt and the Qt logo are trademarks of The Qt Company Ltd.&lt;/p&gt;&lt;p&gt;Qt is The Qt Company Ltd product developed as an open source project. See &lt;a href=&quot;http://%3/&quot;&gt;%3&lt;/a&gt; for more information.&lt;/p&gt;</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>QMultiInputContext</name>
@@ -2352,6 +3361,47 @@ Anda tetap ingin menghapusnya?</translation>
         <source>The proxy type is invalid for this operation</source>
         <translation>Tipe proksi tak valid bagi operasi ini</translation>
     </message>
+    <message>
+        <source>Temporary error</source>
+        <translation>Kesalahan sementara</translation>
+    </message>
+    <message>
+        <source>Network dropped connection on reset</source>
+        <translation>Jaringan memutus koneksi saat reset</translation>
+    </message>
+    <message>
+        <source>Connection reset by peer</source>
+        <translation>Koneksi direset oleh peer</translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkAccessCacheBackend</name>
+    <message>
+        <source>Error opening %1</source>
+        <translation>Kesalahan saat membuka %1</translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkAccessDataBackend</name>
+    <message>
+        <source>Invalid URI: %1</source>
+        <translation>URI tak valid: %1</translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkAccessDebugPipeBackend</name>
+    <message>
+        <source>Write error writing to %1: %2</source>
+        <translation>Kesalahan tulis saat menulis ke %1: %2</translation>
+    </message>
+    <message>
+        <source>Socket error on %1: %2</source>
+        <translation>Kesalahan soket pada %1: %2</translation>
+    </message>
+    <message>
+        <source>Remote host closed the connection prematurely on %1</source>
+        <translation>Host remote menutup koneksi secara dini pada %1</translation>
+    </message>
 </context>
 <context>
     <name>QNetworkAccessFileBackend</name>
@@ -2394,6 +3444,17 @@ Anda tetap ingin menghapusnya?</translation>
         <source>Error while uploading %1: %2</source>
         <translation>Kesalahan ketika mengunggah %1: %2</translation>
     </message>
+    <message>
+        <source>No suitable proxy found</source>
+        <translation>Tidak ditemukan proksi yang cocok</translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkAccessManager</name>
+    <message>
+        <source>Network access is disabled.</source>
+        <translation>Akses jaringan dinonaktifkan.</translation>
+    </message>
 </context>
 <context>
     <name>QNetworkReply</name>
@@ -2405,12 +3466,73 @@ Anda tetap ingin menghapusnya?</translation>
         <source>Protocol &quot;%1&quot; is unknown</source>
         <translation>Protokol &quot;%1&quot; tak dikenal</translation>
     </message>
+    <message>
+        <source>Error transferring %1 - server replied: %2</source>
+        <translation>Kesalahan saat menransfer %1 - server menjawab: %2</translation>
+    </message>
+    <message>
+        <source>Background request not allowed.</source>
+        <translation>Permintaan latar belakang tidak diizinkan.</translation>
+    </message>
+    <message>
+        <source>Network session error.</source>
+        <translation>Kesalahan sesi jaringan.</translation>
+    </message>
+    <message>
+        <source>backend start error.</source>
+        <translation>kesalahan memulai backend.</translation>
+    </message>
+    <message>
+        <source>Temporary network failure.</source>
+        <translation>Kegagalan jaringan temporer.</translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkReplyHttpImpl</name>
+    <message>
+        <source>Operation canceled</source>
+        <translation>Operasi dibatalkan</translation>
+    </message>
+    <message>
+        <source>No suitable proxy found</source>
+        <translation>Tidak ditemukan proksi yang cocok</translation>
+    </message>
 </context>
 <context>
     <name>QNetworkReplyImpl</name>
     <message>
         <source>Operation canceled</source>
         <translation>Operasi dibatalkan</translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkSession</name>
+    <message>
+        <source>Invalid configuration.</source>
+        <translation>Konfigurasi tidak valid.</translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkSessionPrivateImpl</name>
+    <message>
+        <source>Unknown session error.</source>
+        <translation>Kesalahan sesi yang tidak dikenal.</translation>
+    </message>
+    <message>
+        <source>The session was aborted by the user or system.</source>
+        <translation>Sesi digugurkan oleh pengguna atau sistem.</translation>
+    </message>
+    <message>
+        <source>The requested operation is not supported by the system.</source>
+        <translation>Operasi yang diminta tidak didukung oleh sistem.</translation>
+    </message>
+    <message>
+        <source>The specified configuration cannot be used.</source>
+        <translation>Konfigurasi yang dinyatakan tidak dapat dipakai.</translation>
+    </message>
+    <message>
+        <source>Roaming was aborted or is not possible.</source>
+        <translation>Roaming digugurkan atau tidak mungkin.</translation>
     </message>
 </context>
 <context>
@@ -2471,6 +3593,10 @@ Anda tetap ingin menghapusnya?</translation>
         <source>Unable to execute statement</source>
         <translation>Tak bisa mengeksekusi pernyataan</translation>
     </message>
+    <message>
+        <source>Unable to get statement type</source>
+        <translation>Tak bisa mendapat tipe pernyataan</translation>
+    </message>
 </context>
 <context>
     <name>QODBCDriver</name>
@@ -2497,6 +3623,10 @@ Anda tetap ingin menghapusnya?</translation>
     <message>
         <source>Unable to enable autocommit</source>
         <translation>Tak bisa menghidupkan autocommit</translation>
+    </message>
+    <message>
+        <source>Unable to connect - Driver doesn&apos;t support all functionality required</source>
+        <translation>Tak bisa menyambung - Driver tak mendukung semua fungsionalitas yang diperlukan</translation>
     </message>
 </context>
 <context>
@@ -2700,6 +3830,617 @@ Anda tetap ingin menghapusnya?</translation>
         <source>bottom margin</source>
         <translation>batas bawah</translation>
     </message>
+    <message>
+        <source>Page Layout</source>
+        <translation>Tata Letak Halaman</translation>
+    </message>
+    <message>
+        <source>Page order:</source>
+        <translation>Urutan halaman:</translation>
+    </message>
+    <message>
+        <source>Pages per sheet:</source>
+        <translation>Halaman per lembar:</translation>
+    </message>
+    <message>
+        <source>Pica (P̸)</source>
+        <translation>Pica (P̸)</translation>
+    </message>
+    <message>
+        <source>Didot (DD)</source>
+        <translation>Didot (DD)</translation>
+    </message>
+    <message>
+        <source>Cicero (CC)</source>
+        <translation>Cicero (CC)</translation>
+    </message>
+    <message>
+        <source>Custom</source>
+        <translation>Ubahan</translation>
+    </message>
+    <message>
+        <source>mm</source>
+        <extracomment>Unit &apos;Millimeter&apos;</extracomment>
+        <translation>mm</translation>
+    </message>
+    <message>
+        <source>pt</source>
+        <extracomment>Unit &apos;Points&apos;</extracomment>
+        <translation>pt</translation>
+    </message>
+    <message>
+        <source>in</source>
+        <extracomment>Unit &apos;Inch&apos;</extracomment>
+        <translation>in</translation>
+    </message>
+    <message>
+        <source>P̸</source>
+        <extracomment>Unit &apos;Pica&apos;</extracomment>
+        <translation>P̸</translation>
+    </message>
+    <message>
+        <source>DD</source>
+        <extracomment>Unit &apos;Didot&apos;</extracomment>
+        <translation>DD</translation>
+    </message>
+    <message>
+        <source>CC</source>
+        <extracomment>Unit &apos;Cicero&apos;</extracomment>
+        <translation>CC</translation>
+    </message>
+</context>
+<context>
+    <name>QPageSize</name>
+    <message>
+        <source>Custom (%1mm x %2mm)</source>
+        <extracomment>Custom size name in millimeters</extracomment>
+        <translation>Ubahan (%1mm x %2mm)</translation>
+    </message>
+    <message>
+        <source>Custom (%1pt x %2pt)</source>
+        <extracomment>Custom size name in points</extracomment>
+        <translation>Ubahan (%1pt x %2pt)</translation>
+    </message>
+    <message>
+        <source>Custom (%1in x %2in)</source>
+        <extracomment>Custom size name in inches</extracomment>
+        <translation>Ubahan (%1in x %2in)</translation>
+    </message>
+    <message>
+        <source>Custom (%1pc x %2pc)</source>
+        <extracomment>Custom size name in picas</extracomment>
+        <translation>Ubahan (%1pc x %2pc)</translation>
+    </message>
+    <message>
+        <source>Custom (%1DD x %2DD)</source>
+        <extracomment>Custom size name in didots</extracomment>
+        <translation>Ubahan (%1DD x %2DD)</translation>
+    </message>
+    <message>
+        <source>Custom (%1CC x %2CC)</source>
+        <extracomment>Custom size name in ciceros</extracomment>
+        <translation>Ubahan (%1CC x %2CC)</translation>
+    </message>
+    <message>
+        <source>%1 x %2 in</source>
+        <extracomment>Page size in &apos;Inch&apos;.</extracomment>
+        <translation>%1 x %2 in</translation>
+    </message>
+    <message>
+        <source>A0</source>
+        <translation>A0</translation>
+    </message>
+    <message>
+        <source>A1</source>
+        <translation>A1</translation>
+    </message>
+    <message>
+        <source>A2</source>
+        <translation>A2</translation>
+    </message>
+    <message>
+        <source>A3</source>
+        <translation>A3</translation>
+    </message>
+    <message>
+        <source>A4</source>
+        <translation>A4</translation>
+    </message>
+    <message>
+        <source>A5</source>
+        <translation>A5</translation>
+    </message>
+    <message>
+        <source>A6</source>
+        <translation>A6</translation>
+    </message>
+    <message>
+        <source>A7</source>
+        <translation>A7</translation>
+    </message>
+    <message>
+        <source>A8</source>
+        <translation>A8</translation>
+    </message>
+    <message>
+        <source>A9</source>
+        <translation>A9</translation>
+    </message>
+    <message>
+        <source>A10</source>
+        <translation>A10</translation>
+    </message>
+    <message>
+        <source>B0</source>
+        <translation>B0</translation>
+    </message>
+    <message>
+        <source>B1</source>
+        <translation>B1</translation>
+    </message>
+    <message>
+        <source>B2</source>
+        <translation>B2</translation>
+    </message>
+    <message>
+        <source>B3</source>
+        <translation>B3</translation>
+    </message>
+    <message>
+        <source>B4</source>
+        <translation>B4</translation>
+    </message>
+    <message>
+        <source>B5</source>
+        <translation>B5</translation>
+    </message>
+    <message>
+        <source>B6</source>
+        <translation>B6</translation>
+    </message>
+    <message>
+        <source>B7</source>
+        <translation>B7</translation>
+    </message>
+    <message>
+        <source>B8</source>
+        <translation>B8</translation>
+    </message>
+    <message>
+        <source>B9</source>
+        <translation>B9</translation>
+    </message>
+    <message>
+        <source>B10</source>
+        <translation>B10</translation>
+    </message>
+    <message>
+        <source>Executive (7.5 x 10 in)</source>
+        <translation>Executive (7.5 x 10 in)</translation>
+    </message>
+    <message>
+        <source>Executive (7.25 x 10.5 in)</source>
+        <translation>Executive (7.25 x 10.5 in)</translation>
+    </message>
+    <message>
+        <source>Folio (8.27 x 13 in)</source>
+        <translation>Folio (8.27 x 13 in)</translation>
+    </message>
+    <message>
+        <source>Legal</source>
+        <translation>Legal</translation>
+    </message>
+    <message>
+        <source>Letter / ANSI A</source>
+        <translation>Letter / ANSI A</translation>
+    </message>
+    <message>
+        <source>Tabloid / ANSI B</source>
+        <translation>Tabloid / ANSI B</translation>
+    </message>
+    <message>
+        <source>Ledger / ANSI B</source>
+        <translation>Ledger / ANSI B</translation>
+    </message>
+    <message>
+        <source>Custom</source>
+        <translation>Ubahan</translation>
+    </message>
+    <message>
+        <source>A3 Extra</source>
+        <translation>A3 Ekstra</translation>
+    </message>
+    <message>
+        <source>A4 Extra</source>
+        <translation>A4 Ekstra</translation>
+    </message>
+    <message>
+        <source>A4 Plus</source>
+        <translation>A4 Plus</translation>
+    </message>
+    <message>
+        <source>A4 Small</source>
+        <translation>A4 Kecil</translation>
+    </message>
+    <message>
+        <source>A5 Extra</source>
+        <translation>A5 Ekstra</translation>
+    </message>
+    <message>
+        <source>B5 Extra</source>
+        <translation>B5 Ekstra</translation>
+    </message>
+    <message>
+        <source>JIS B0</source>
+        <translation>JIS B0</translation>
+    </message>
+    <message>
+        <source>JIS B1</source>
+        <translation>JIS B1</translation>
+    </message>
+    <message>
+        <source>JIS B2</source>
+        <translation>JIS B2</translation>
+    </message>
+    <message>
+        <source>JIS B3</source>
+        <translation>JIS B3</translation>
+    </message>
+    <message>
+        <source>JIS B4</source>
+        <translation>JIS B4</translation>
+    </message>
+    <message>
+        <source>JIS B5</source>
+        <translation>JIS B5</translation>
+    </message>
+    <message>
+        <source>JIS B6</source>
+        <translation>JIS B6</translation>
+    </message>
+    <message>
+        <source>JIS B7</source>
+        <translation>JIS B7</translation>
+    </message>
+    <message>
+        <source>JIS B8</source>
+        <translation>JIS B8</translation>
+    </message>
+    <message>
+        <source>JIS B9</source>
+        <translation>JIS B9</translation>
+    </message>
+    <message>
+        <source>JIS B10</source>
+        <translation>JIS B10</translation>
+    </message>
+    <message>
+        <source>ANSI C</source>
+        <translation>ANSI C</translation>
+    </message>
+    <message>
+        <source>ANSI D</source>
+        <translation>ANSI D</translation>
+    </message>
+    <message>
+        <source>ANSI E</source>
+        <translation>ANSI E</translation>
+    </message>
+    <message>
+        <source>Legal Extra</source>
+        <translation>Legal Ekstra</translation>
+    </message>
+    <message>
+        <source>Letter Extra</source>
+        <translation>Letter Ekstra</translation>
+    </message>
+    <message>
+        <source>Letter Plus</source>
+        <translation>Letter Plus</translation>
+    </message>
+    <message>
+        <source>Letter Small</source>
+        <translation>Letter Kecil</translation>
+    </message>
+    <message>
+        <source>Tabloid Extra</source>
+        <translation>Tabloid Ekstra</translation>
+    </message>
+    <message>
+        <source>Architect A</source>
+        <translation>Architect A</translation>
+    </message>
+    <message>
+        <source>Architect B</source>
+        <translation>Architect B</translation>
+    </message>
+    <message>
+        <source>Architect C</source>
+        <translation>Architect C</translation>
+    </message>
+    <message>
+        <source>Architect D</source>
+        <translation>Architect D</translation>
+    </message>
+    <message>
+        <source>Architect E</source>
+        <translation>Architect E</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation>Note</translation>
+    </message>
+    <message>
+        <source>Quarto</source>
+        <translation>Kuarto</translation>
+    </message>
+    <message>
+        <source>Statement</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Super A</source>
+        <translation>Super A</translation>
+    </message>
+    <message>
+        <source>Super B</source>
+        <translation>Super B</translation>
+    </message>
+    <message>
+        <source>Postcard</source>
+        <translation>Kartu Pos</translation>
+    </message>
+    <message>
+        <source>Double Postcard</source>
+        <translation>Kartu Pos Ganda</translation>
+    </message>
+    <message>
+        <source>PRC 16K</source>
+        <translation>PRC 16K</translation>
+    </message>
+    <message>
+        <source>PRC 32K</source>
+        <translation>PRC 32K</translation>
+    </message>
+    <message>
+        <source>PRC 32K Big</source>
+        <translation>PRC 32K Besar</translation>
+    </message>
+    <message>
+        <source>Fan-fold US (14.875 x 11 in)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fan-fold German (8.5 x 12 in)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fan-fold German Legal (8.5 x 13 in)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope B4</source>
+        <translation>Amplop B4</translation>
+    </message>
+    <message>
+        <source>Envelope B5</source>
+        <translation>Amplop B5</translation>
+    </message>
+    <message>
+        <source>Envelope B6</source>
+        <translation>Amplop B6</translation>
+    </message>
+    <message>
+        <source>Envelope C0</source>
+        <translation>Amplop C0</translation>
+    </message>
+    <message>
+        <source>Envelope C1</source>
+        <translation>Amplop C1</translation>
+    </message>
+    <message>
+        <source>Envelope C2</source>
+        <translation>Amplop C2</translation>
+    </message>
+    <message>
+        <source>Envelope C3</source>
+        <translation>Amplop C3</translation>
+    </message>
+    <message>
+        <source>Envelope C4</source>
+        <translation>Amplop C4</translation>
+    </message>
+    <message>
+        <source>Envelope C5</source>
+        <translation>Amplop C5</translation>
+    </message>
+    <message>
+        <source>Envelope C6</source>
+        <translation>Amplop C6</translation>
+    </message>
+    <message>
+        <source>Envelope C65</source>
+        <translation>Amplop C65</translation>
+    </message>
+    <message>
+        <source>Envelope C7</source>
+        <translation>Amplop C7</translation>
+    </message>
+    <message>
+        <source>Envelope DL</source>
+        <translation>Amplop DL</translation>
+    </message>
+    <message>
+        <source>Envelope US 9</source>
+        <translation>Amplop US 9</translation>
+    </message>
+    <message>
+        <source>Envelope US 10</source>
+        <translation>Amplop US 10</translation>
+    </message>
+    <message>
+        <source>Envelope US 11</source>
+        <translation>Amplop US 11</translation>
+    </message>
+    <message>
+        <source>Envelope US 12</source>
+        <translation>Amplop US 12</translation>
+    </message>
+    <message>
+        <source>Envelope US 14</source>
+        <translation>Amplop US 14</translation>
+    </message>
+    <message>
+        <source>Envelope Monarch</source>
+        <translation>Amplop Monarch</translation>
+    </message>
+    <message>
+        <source>Envelope Personal</source>
+        <translation>Amplop Personal</translation>
+    </message>
+    <message>
+        <source>Envelope Chou 3</source>
+        <translation>Amplop Chou 3</translation>
+    </message>
+    <message>
+        <source>Envelope Chou 4</source>
+        <translation>Amplop Chou 4</translation>
+    </message>
+    <message>
+        <source>Envelope Invite</source>
+        <translation>Amplop Undangan</translation>
+    </message>
+    <message>
+        <source>Envelope Italian</source>
+        <translation>Amplop Italia</translation>
+    </message>
+    <message>
+        <source>Envelope Kaku 2</source>
+        <translation>Amplop Kaku 2</translation>
+    </message>
+    <message>
+        <source>Envelope Kaku 3</source>
+        <translation>Amplop Kaku 3</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 1</source>
+        <translation>Amplop PRC 1</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 2</source>
+        <translation>Amplop PRC 2</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 3</source>
+        <translation>Amplop PRC 3</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 4</source>
+        <translation>Amplop PRC 4</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 5</source>
+        <translation>Amplop PRC 5</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 6</source>
+        <translation>Amplop PRC 6</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 7</source>
+        <translation>Amplop PRC 7</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 8</source>
+        <translation>Amplop PRC 8</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 9</source>
+        <translation>Amplop PRC 9</translation>
+    </message>
+    <message>
+        <source>Envelope PRC 10</source>
+        <translation>Amplop PRC 10</translation>
+    </message>
+    <message>
+        <source>Envelope You 4</source>
+        <translation>Amplop You 4</translation>
+    </message>
+</context>
+<context>
+    <name>QPlatformTheme</name>
+    <message>
+        <source>OK</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>Save</source>
+        <translation>Simpan</translation>
+    </message>
+    <message>
+        <source>Save All</source>
+        <translation>Simpan Semua</translation>
+    </message>
+    <message>
+        <source>Open</source>
+        <translation>Buka</translation>
+    </message>
+    <message>
+        <source>&amp;Yes</source>
+        <translation>&amp;Ya</translation>
+    </message>
+    <message>
+        <source>Yes to &amp;All</source>
+        <translation>Ya untuk Semu&amp;a</translation>
+    </message>
+    <message>
+        <source>&amp;No</source>
+        <translation>&amp;Tidak</translation>
+    </message>
+    <message>
+        <source>N&amp;o to All</source>
+        <translation>T&amp;idak untuk Semua</translation>
+    </message>
+    <message>
+        <source>Abort</source>
+        <translation>Gugurkan</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Coba Lagi</translation>
+    </message>
+    <message>
+        <source>Ignore</source>
+        <translation>Abaikan</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Tutup</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Batal</translation>
+    </message>
+    <message>
+        <source>Discard</source>
+        <translation>Buang</translation>
+    </message>
+    <message>
+        <source>Help</source>
+        <translation>Bantuan</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Terapkan</translation>
+    </message>
+    <message>
+        <source>Reset</source>
+        <translation>Reset</translation>
+    </message>
+    <message>
+        <source>Restore Defaults</source>
+        <translation>Kembalikan Bawaan</translation>
+    </message>
 </context>
 <context>
     <name>QPluginLoader</name>
@@ -2900,6 +4641,99 @@ Silakan pilih nama file lain.</translation>
         <source>Write %1 file</source>
         <translation>Tulis file %1</translation>
     </message>
+    <message>
+        <source>Print</source>
+        <translation>Cetak</translation>
+    </message>
+    <message>
+        <source>Left to Right, Top to Bottom</source>
+        <translation>Kiri ke Kanan, Puncak ke Dasar</translation>
+    </message>
+    <message>
+        <source>Left to Right, Bottom to Top</source>
+        <translation>Kiri ke Kanan, Dasar ke Puncak</translation>
+    </message>
+    <message>
+        <source>Right to Left, Bottom to Top</source>
+        <translation>Kanan ke Kiri, Dasar ke Puncak</translation>
+    </message>
+    <message>
+        <source>Right to Left, Top to Bottom</source>
+        <translation>Kanan ke Kiri, Puncak ke Dasar</translation>
+    </message>
+    <message>
+        <source>Bottom to Top, Left to Right</source>
+        <translation>Dasar ke Puncak, Kiri ke Kanan</translation>
+    </message>
+    <message>
+        <source>Bottom to Top, Right to Left</source>
+        <translation>Dasar ke Puncak, Kanan ke Kiri</translation>
+    </message>
+    <message>
+        <source>Top to Bottom, Left to Right</source>
+        <translation>Puncak ke Dasar, Kiri ke Kanan</translation>
+    </message>
+    <message>
+        <source>Top to Bottom, Right to Left</source>
+        <translation>Puncak ke Dasar, Kanan ke Kiri</translation>
+    </message>
+    <message>
+        <source>1 (1x1)</source>
+        <translation>1 (1x1)</translation>
+    </message>
+    <message>
+        <source>2 (2x1)</source>
+        <translation>2 (2x1)</translation>
+    </message>
+    <message>
+        <source>4 (2x2)</source>
+        <translation>4 (2x2)</translation>
+    </message>
+    <message>
+        <source>6 (2x3)</source>
+        <translation>6 (2x3)</translation>
+    </message>
+    <message>
+        <source>9 (3x3)</source>
+        <translation>9 (3x3)</translation>
+    </message>
+    <message>
+        <source>16 (4x4)</source>
+        <translation>16 (4x4)</translation>
+    </message>
+    <message>
+        <source>All Pages</source>
+        <translation>Semua Halaman</translation>
+    </message>
+    <message>
+        <source>Odd Pages</source>
+        <translation>Halaman Ganjil</translation>
+    </message>
+    <message>
+        <source>Even Pages</source>
+        <translation>Halaman Genap</translation>
+    </message>
+    <message>
+        <source>Write PDF file</source>
+        <translation>Tulis berkas PDF</translation>
+    </message>
+    <message>
+        <source>Options &apos;Pages Per Sheet&apos; and &apos;Page Set&apos; cannot be used together.
+Please turn one of those options off.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The &apos;From&apos; value cannot be greater than the &apos;To&apos; value.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>Automatic</source>
+        <translation>Otomatis</translation>
+    </message>
 </context>
 <context>
     <name>QPrintPreviewDialog</name>
@@ -2974,6 +4808,25 @@ Silakan pilih nama file lain.</translation>
     <message>
         <source>Close</source>
         <translation>Tutup</translation>
+    </message>
+    <message>
+        <source>%1%</source>
+        <translation>%1%</translation>
+    </message>
+    <message>
+        <source>Export to PDF</source>
+        <translation>Ekspor ke PDF</translation>
+    </message>
+</context>
+<context>
+    <name>QPrintPropertiesDialog</name>
+    <message>
+        <source>Printer Properties</source>
+        <translation>Properti Pencetak</translation>
+    </message>
+    <message>
+        <source>Job Options</source>
+        <translation>Opsi Tugas</translation>
     </message>
 </context>
 <context>
@@ -3069,6 +4922,14 @@ Silakan pilih nama file lain.</translation>
         <source>Short side</source>
         <translation>Sisi pendek</translation>
     </message>
+    <message>
+        <source>Current Page</source>
+        <translation>Halaman Saat Ini</translation>
+    </message>
+    <message>
+        <source>Page Set:</source>
+        <translation>Set Halaman:</translation>
+    </message>
 </context>
 <context>
     <name>QPrintWidget</name>
@@ -3110,6 +4971,49 @@ Silakan pilih nama file lain.</translation>
     </message>
 </context>
 <context>
+    <name>QProcess</name>
+    <message>
+        <source>Process failed to start</source>
+        <translation>Proses gagal mulai</translation>
+    </message>
+    <message>
+        <source>Process crashed</source>
+        <translation>Proses kres</translation>
+    </message>
+    <message>
+        <source>Process operation timed out</source>
+        <translation>Operasi proses habis waktu</translation>
+    </message>
+    <message>
+        <source>Error reading from process</source>
+        <translation>Kesalahan saat membaca dari proses</translation>
+    </message>
+    <message>
+        <source>Error writing to process</source>
+        <translation>Kesalahan saat menulis ke proses</translation>
+    </message>
+    <message>
+        <source>No program defined</source>
+        <translation>Tidak ada program yang didefinisikan</translation>
+    </message>
+    <message>
+        <source>Could not open input redirection for reading</source>
+        <translation>Tidak bisa membuka pengalihan masukan untuk membaca</translation>
+    </message>
+    <message>
+        <source>Resource error (fork failure): %1</source>
+        <translation>Kesalahan sumber daya (kegagalan fork): %1</translation>
+    </message>
+    <message>
+        <source>Could not open output redirection for writing</source>
+        <translation>Tidak bisa membuka pengalihan keluaran untuk menulis</translation>
+    </message>
+    <message>
+        <source>Process failed to start: %1</source>
+        <translation>Proses gagal mulai: %1</translation>
+    </message>
+</context>
+<context>
     <name>QProgressDialog</name>
     <message>
         <source>Cancel</source>
@@ -3121,6 +5025,20 @@ Silakan pilih nama file lain.</translation>
     <message>
         <source>Open</source>
         <translation>Buka</translation>
+    </message>
+</context>
+<context>
+    <name>QQnxFileDialogHelper</name>
+    <message>
+        <source>All files (*.*)</source>
+        <translation>Semua berkas (*.*)</translation>
+    </message>
+</context>
+<context>
+    <name>QQnxFilePicker</name>
+    <message>
+        <source>Pick a file</source>
+        <translation>Pilih suatu berkas</translation>
     </message>
 </context>
 <context>
@@ -3168,6 +5086,353 @@ Silakan pilih nama file lain.</translation>
         <source>met internal limit</source>
         <translation>mencapai batas internal</translation>
     </message>
+    <message>
+        <source>lookbehinds not supported, see QTBUG-2371</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid interval</source>
+        <translation>interval tidak valid</translation>
+    </message>
+    <message>
+        <source>invalid category</source>
+        <translation>kategori tidak valid</translation>
+    </message>
+</context>
+<context>
+    <name>QRegularExpression</name>
+    <message>
+        <source>no error</source>
+        <translation>tidak ada kesalahan</translation>
+    </message>
+    <message>
+        <source>\ at end of pattern</source>
+        <translation>\ di akhir pola</translation>
+    </message>
+    <message>
+        <source>\c at end of pattern</source>
+        <translation>\c di akhir pola</translation>
+    </message>
+    <message>
+        <source>unrecognized character follows \</source>
+        <translation>karakter tak dikenal setelah \</translation>
+    </message>
+    <message>
+        <source>numbers out of order in {} quantifier</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>number too big in {} quantifier</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing terminating ] for character class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid escape sequence in character class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>range out of order in character class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>nothing to repeat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: unexpected repeat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unrecognized character after (? or (?-</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>POSIX named classes are supported only within a class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing )</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>reference to non-existent subpattern</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>erroffset passed as NULL</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unknown option bit(s) set</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing ) after comment</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>regular expression is too large</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>failed to get memory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unmatched parentheses</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: code overflow</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unrecognized character after (?&lt;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>lookbehind assertion is not fixed length</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>malformed number or name after (?(</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>conditional group contains more than two branches</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>assertion expected after (?(</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>(?R or (?[+-]digits must be followed by )</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unknown POSIX class name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>POSIX collating elements are not supported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>this version of PCRE is not compiled with PCRE_UTF8 support</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>character value in \x{...} sequence is too large</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid condition (?(0)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\C not allowed in lookbehind assertion</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>PCRE does not support \L, \l, \N{name}, \U, or \u</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>number after (?C is &gt; 255</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>closing ) for (?C expected</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>recursive call could loop indefinitely</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unrecognized character after (?P</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>syntax error in subpattern name (missing terminator)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>two named subpatterns have the same name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid UTF-8 string</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>support for \P, \p, and \X has not been compiled</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>malformed \P or \p sequence</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unknown property name after \P or \p</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>subpattern name is too long (maximum 32 characters)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>too many named subpatterns (maximum 10000)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>octal value is greater than \377 (not in UTF-8 mode)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: overran compiling workspace</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: previously-checked referenced subpattern not found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>DEFINE group contains more than one branch</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>repeating a DEFINE group is not allowed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>inconsistent NEWLINE options</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\g is not followed by a braced, angle-bracketed, or quoted name/number or by a plain number</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>a numbered reference must not be zero</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>an argument is not allowed for (*ACCEPT), (*FAIL), or (*COMMIT)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>(*VERB) not recognized</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>number is too big</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>subpattern name expected</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>digit expected after (?+</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>] is an invalid data character in JavaScript compatibility mode</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>different names for subpatterns of the same number are not allowed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>(*MARK) must have an argument</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>this version of PCRE is not compiled with PCRE_UCP support</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\c must be followed by an ASCII character</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\k is not followed by a braced, angle-bracketed, or quoted name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: unknown opcode in find_fixedlength()</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\N is not supported in a class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>too many forward references</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>disallowed Unicode code point (&gt;= 0xd800 &amp;&amp; &lt;= 0xdfff)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid UTF-16 string</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>name is too long in (*MARK), (*PRUNE), (*SKIP), or (*THEN)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>character value in \u.... sequence is too large</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid UTF-32 string</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>setting UTF is disabled by the application</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>non-hex character in \x{} (closing brace missing?)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>non-octal character in \o{} (closing brace missing?)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing opening brace after \o</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>parentheses are too deeply nested</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid range in character class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>group name must start with a non-digit</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>parentheses are too deeply nested (stack check)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>digits missing in \x{} or \o{}</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>QSQLite2Driver</name>
@@ -3185,6 +5450,14 @@ Silakan pilih nama file lain.</translation>
     </message>
     <message>
         <source>Unable to rollback Transaction</source>
+        <translation>Tak bisa rollback transaksi</translation>
+    </message>
+    <message>
+        <source>Error opening database</source>
+        <translation>Kesalahan membuka database</translation>
+    </message>
+    <message>
+        <source>Unable to rollback transaction</source>
         <translation>Tak bisa rollback transaksi</translation>
     </message>
 </context>
@@ -3247,6 +5520,25 @@ Silakan pilih nama file lain.</translation>
     <message>
         <source>No query</source>
         <translation>Tak ada query</translation>
+    </message>
+    <message>
+        <source>Unable to execute multiple statements at a time</source>
+        <translation>Tak bisa mengeksekusi beberapa pernyataan pada satu saat</translation>
+    </message>
+</context>
+<context>
+    <name>QSaveFile</name>
+    <message>
+        <source>Existing file %1 is not writable</source>
+        <translation>Berkas %1 yang ada tidak dapat ditulisi</translation>
+    </message>
+    <message>
+        <source>Filename refers to a directory</source>
+        <translation>Nama berkas mengacu ke suatu direktori</translation>
+    </message>
+    <message>
+        <source>Writing canceled by application</source>
+        <translation>Penulisan dibatalkan oleh aplikasi</translation>
     </message>
 </context>
 <context>
@@ -3378,11 +5670,36 @@ Silakan pilih nama file lain.</translation>
         <source>%1: not attached</source>
         <translation>%1: tak tercantol</translation>
     </message>
+    <message>
+        <source>%1: bad name</source>
+        <translation>%1: nama buruk</translation>
+    </message>
+    <message>
+        <source>%1: UNIX key file doesn&apos;t exist</source>
+        <translation>%1: berkas kunci UNIX tidak ada</translation>
+    </message>
+    <message>
+        <source>%1: doesn&apos;t exist</source>
+        <translation>%1: tidak ada</translation>
+    </message>
+    <message>
+        <source>%1: invalid size</source>
+        <translation>%1: ukuran tak valid</translation>
+    </message>
+    <message>
+        <source>%1: key error</source>
+        <translation>%1: kesalahan kunci</translation>
+    </message>
+    <message>
+        <source>%1: size query failed</source>
+        <translation>%1: kueri ukuran gagal</translation>
+    </message>
 </context>
 <context>
     <name>QShortcut</name>
     <message>
         <source>Space</source>
+        <extracomment>This and all following &quot;incomprehensible&quot; strings in QShortcut context are key names. Please use the localized names appearing on actual keyboards or whatever is commonly used.</extracomment>
         <translation>Spasi</translation>
     </message>
     <message>
@@ -3711,10 +6028,12 @@ Silakan pilih nama file lain.</translation>
     </message>
     <message>
         <source>Call</source>
+        <extracomment>Button to start a call (note: a separate button is used to end the call)</extracomment>
         <translation>Panggil</translation>
     </message>
     <message>
         <source>Hangup</source>
+        <extracomment>Button to end a call (note: a separate button is used to start the call)</extracomment>
         <translation>Putuskan</translation>
     </message>
     <message>
@@ -3749,6 +6068,629 @@ Silakan pilih nama file lain.</translation>
         <source>Home Page</source>
         <translation>Halaman Rumah</translation>
     </message>
+    <message>
+        <source>Media Pause</source>
+        <extracomment>Media player pause button</extracomment>
+        <translation>Media Jeda</translation>
+    </message>
+    <message>
+        <source>Toggle Media Play/Pause</source>
+        <extracomment>Media player button to toggle between playing and paused</extracomment>
+        <translation>Jungkitkan Media Putar/Jeda</translation>
+    </message>
+    <message>
+        <source>Monitor Brightness Up</source>
+        <translation>Kecerahan Layar Naik</translation>
+    </message>
+    <message>
+        <source>Monitor Brightness Down</source>
+        <translation>Kecerahan Layar Turun</translation>
+    </message>
+    <message>
+        <source>Keyboard Light On/Off</source>
+        <translation>Cahaya Latar Papan Ketik Nyala/Mati</translation>
+    </message>
+    <message>
+        <source>Keyboard Brightness Up</source>
+        <translation>Kecerahan Cahaya Papan Ketik Naik</translation>
+    </message>
+    <message>
+        <source>Keyboard Brightness Down</source>
+        <translation>Kecerahan Cahaya Papan Ketik Turun</translation>
+    </message>
+    <message>
+        <source>Power Off</source>
+        <translation>Matikan Daya</translation>
+    </message>
+    <message>
+        <source>Wake Up</source>
+        <translation>Bangunkan</translation>
+    </message>
+    <message>
+        <source>Eject</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Screensaver</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WWW</source>
+        <translation>WWW</translation>
+    </message>
+    <message>
+        <source>Sleep</source>
+        <translation>Tidur</translation>
+    </message>
+    <message>
+        <source>LightBulb</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shop</source>
+        <translation>Toko</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>Riwayat</translation>
+    </message>
+    <message>
+        <source>Add Favorite</source>
+        <translation>Tambah Favorit</translation>
+    </message>
+    <message>
+        <source>Hot Links</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Adjust Brightness</source>
+        <translation>Atur Kecerahan</translation>
+    </message>
+    <message>
+        <source>Finance</source>
+        <translation>Keuangan</translation>
+    </message>
+    <message>
+        <source>Community</source>
+        <translation>Komunitas</translation>
+    </message>
+    <message>
+        <source>Media Rewind</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Back Forward</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Application Left</source>
+        <translation>Kiri Aplikasi</translation>
+    </message>
+    <message>
+        <source>Application Right</source>
+        <translation>Kanan Aplikasi</translation>
+    </message>
+    <message>
+        <source>Book</source>
+        <translation>Buku</translation>
+    </message>
+    <message>
+        <source>CD</source>
+        <translation>CD</translation>
+    </message>
+    <message>
+        <source>Calculator</source>
+        <translation>Kalkulator</translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation>Bersihkan</translation>
+    </message>
+    <message>
+        <source>Clear Grab</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Tutup</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>Salin</translation>
+    </message>
+    <message>
+        <source>Cut</source>
+        <translation>Potong</translation>
+    </message>
+    <message>
+        <source>Display</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>DOS</source>
+        <translation>DOS</translation>
+    </message>
+    <message>
+        <source>Documents</source>
+        <translation>Dokumen</translation>
+    </message>
+    <message>
+        <source>Spreadsheet</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Browser</source>
+        <translation>Peramban</translation>
+    </message>
+    <message>
+        <source>Game</source>
+        <translation>Permainan</translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>iTouch</source>
+        <translation>iTouch</translation>
+    </message>
+    <message>
+        <source>Logoff</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Market</source>
+        <translation>Pasar</translation>
+    </message>
+    <message>
+        <source>Meeting</source>
+        <translation>Rapat</translation>
+    </message>
+    <message>
+        <source>Keyboard Menu</source>
+        <translation>Menu Papan Ketik</translation>
+    </message>
+    <message>
+        <source>Menu PB</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>My Sites</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>News</source>
+        <translation>Berita</translation>
+    </message>
+    <message>
+        <source>Home Office</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Option</source>
+        <translation>Opsi</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>Tempel</translation>
+    </message>
+    <message>
+        <source>Phone</source>
+        <translation>Telepon</translation>
+    </message>
+    <message>
+        <source>Reply</source>
+        <translation>Jawab</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation>Muat Ulang</translation>
+    </message>
+    <message>
+        <source>Rotate Windows</source>
+        <translation>Putar Jendela</translation>
+    </message>
+    <message>
+        <source>Rotation PB</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rotation KB</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save</source>
+        <translation>Simpan</translation>
+    </message>
+    <message>
+        <source>Send</source>
+        <translation>Kirim</translation>
+    </message>
+    <message>
+        <source>Spellchecker</source>
+        <translation>Pemeriksa Ejaan</translation>
+    </message>
+    <message>
+        <source>Split Screen</source>
+        <translation>Belah Layar</translation>
+    </message>
+    <message>
+        <source>Support</source>
+        <translation>Dukungan</translation>
+    </message>
+    <message>
+        <source>Task Panel</source>
+        <translation>Panel Tugas</translation>
+    </message>
+    <message>
+        <source>Terminal</source>
+        <translation>Terminal</translation>
+    </message>
+    <message>
+        <source>Tools</source>
+        <translation>Perkakas</translation>
+    </message>
+    <message>
+        <source>Travel</source>
+        <translation>Perjalanan</translation>
+    </message>
+    <message>
+        <source>Video</source>
+        <translation>Video</translation>
+    </message>
+    <message>
+        <source>Word Processor</source>
+        <translation>Pengolah Kata</translation>
+    </message>
+    <message>
+        <source>XFer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zoom In</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zoom Out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Away</source>
+        <translation>Pergi</translation>
+    </message>
+    <message>
+        <source>Messenger</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebCam</source>
+        <translation>WebCam</translation>
+    </message>
+    <message>
+        <source>Mail Forward</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pictures</source>
+        <translation>Gambar</translation>
+    </message>
+    <message>
+        <source>Music</source>
+        <translation>Musik</translation>
+    </message>
+    <message>
+        <source>Battery</source>
+        <translation>Baterai</translation>
+    </message>
+    <message>
+        <source>Bluetooth</source>
+        <translation>Bluetooth</translation>
+    </message>
+    <message>
+        <source>Wireless</source>
+        <translation>Nirkabel</translation>
+    </message>
+    <message>
+        <source>Ultra Wide Band</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Media Fast Forward</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio Repeat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio Random Play</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Subtitle</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio Cycle Track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Time</source>
+        <translation>Waktu</translation>
+    </message>
+    <message>
+        <source>Hibernate</source>
+        <translation>Hibernasi</translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>Tilik</translation>
+    </message>
+    <message>
+        <source>Top Menu</source>
+        <translation>Menu Puncak</translation>
+    </message>
+    <message>
+        <source>Power Down</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Suspend</source>
+        <translation>Suspensi</translation>
+    </message>
+    <message>
+        <source>Microphone Mute</source>
+        <translation>Mikrofon Bisu</translation>
+    </message>
+    <message>
+        <source>Red</source>
+        <translation>Merah</translation>
+    </message>
+    <message>
+        <source>Green</source>
+        <translation>Hijau</translation>
+    </message>
+    <message>
+        <source>Yellow</source>
+        <translation>Kuning</translation>
+    </message>
+    <message>
+        <source>Blue</source>
+        <translation>Biru</translation>
+    </message>
+    <message>
+        <source>Channel Up</source>
+        <translation>Kanal Naik</translation>
+    </message>
+    <message>
+        <source>Channel Down</source>
+        <translation>Kanal Turun</translation>
+    </message>
+    <message>
+        <source>Guide</source>
+        <translation>Panduan</translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>Info</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>Setelan</translation>
+    </message>
+    <message>
+        <source>Microphone Volume Up</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Microphone Volume Down</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>New</source>
+        <translation>Baru</translation>
+    </message>
+    <message>
+        <source>Open</source>
+        <translation>Buka</translation>
+    </message>
+    <message>
+        <source>Find</source>
+        <translation>Cari</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation type="unfinished">Batalkan</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation type="unfinished">Jadi lagi</translation>
+    </message>
+    <message>
+        <source>Toggle Call/Hangup</source>
+        <extracomment>Button that will hang up if we&apos;re in call, or make a call if we&apos;re not.</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Voice Dial</source>
+        <extracomment>Button to trigger voice dialing</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Last Number Redial</source>
+        <extracomment>Button to redial the last number called</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Camera Shutter</source>
+        <extracomment>Button to trigger the camera shutter (take a picture)</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Camera Focus</source>
+        <extracomment>Button to focus the camera</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Kanji</source>
+        <translation>Kanji</translation>
+    </message>
+    <message>
+        <source>Muhenkan</source>
+        <translation>Muhenkan</translation>
+    </message>
+    <message>
+        <source>Henkan</source>
+        <translation>Henkan</translation>
+    </message>
+    <message>
+        <source>Romaji</source>
+        <translation>Romaji</translation>
+    </message>
+    <message>
+        <source>Hiragana</source>
+        <translation>Hiragana</translation>
+    </message>
+    <message>
+        <source>Katakana</source>
+        <translation>Katakana</translation>
+    </message>
+    <message>
+        <source>Hiragana Katakana</source>
+        <translation>Hiragana Katakana</translation>
+    </message>
+    <message>
+        <source>Zenkaku</source>
+        <translation></translation>
+    </message>
+    <message>
+        <source>Hankaku</source>
+        <translation>Hankaku</translation>
+    </message>
+    <message>
+        <source>Zenkaku Hankaku</source>
+        <translation>Zenkaku Hankaku</translation>
+    </message>
+    <message>
+        <source>Touroku</source>
+        <translation>Touroku</translation>
+    </message>
+    <message>
+        <source>Massyo</source>
+        <translation>Massyo</translation>
+    </message>
+    <message>
+        <source>Kana Lock</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Kana Shift</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Eisu Shift</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Eisu toggle</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Code input</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Multiple Candidate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Previous Candidate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul</source>
+        <translation>Hangul</translation>
+    </message>
+    <message>
+        <source>Hangul Start</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul End</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul Hanja</source>
+        <translation>Hangul Hanja</translation>
+    </message>
+    <message>
+        <source>Hangul Jamo</source>
+        <translation>Hangul Jamo</translation>
+    </message>
+    <message>
+        <source>Hangul Romaja</source>
+        <translation>Hangul Romaja</translation>
+    </message>
+    <message>
+        <source>Hangul Jeonja</source>
+        <translation>Hangul Jeonja</translation>
+    </message>
+    <message>
+        <source>Hangul Banja</source>
+        <translation>Hangul Banja</translation>
+    </message>
+    <message>
+        <source>Hangul PreHanja</source>
+        <translation>Hangul PreHanja</translation>
+    </message>
+    <message>
+        <source>Hangul PostHanja</source>
+        <translation>Hangul PostHanja</translation>
+    </message>
+    <message>
+        <source>Hangul Special</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Batal</translation>
+    </message>
+    <message>
+        <source>Printer</source>
+        <translation type="unfinished">Printer</translation>
+    </message>
+    <message>
+        <source>Execute</source>
+        <translation type="unfinished">Jalankan</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exit</source>
+        <translation>Keluar</translation>
+    </message>
+    <message>
+        <source>Touchpad Toggle</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Touchpad On</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Touchpad Off</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Num</source>
+        <translation>Num</translation>
+    </message>
 </context>
 <context>
     <name>QSlider</name>
@@ -3782,6 +6724,418 @@ Silakan pilih nama file lain.</translation>
     <message>
         <source>Network operation timed out</source>
         <translation>Operasi jaringan habis waktu</translation>
+    </message>
+    <message>
+        <source>Connection to proxy refused</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connection to proxy closed prematurely</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy host not found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connection to proxy timed out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy authentication failed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy authentication failed: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>SOCKS version 5 protocol error</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>General SOCKSv5 server failure</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connection not allowed by SOCKSv5 server</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>TTL expired</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>SOCKSv5 command not supported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Address type not supported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unknown SOCKSv5 proxy error code 0x%1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QSpiAccessibleBridge</name>
+    <message>
+        <source>invalid role</source>
+        <extracomment>Role of an accessible object - the object is in an invalid state or could not be constructed</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>title bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>menu bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>scroll bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>grip</source>
+        <extracomment>Role of an accessible object - the grip is usually used for resizing another object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>sound</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>cursor</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>text caret</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>alert message</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>frame</source>
+        <extracomment>Role of an accessible object: a window with frame and title
+----------
+Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>filler</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>popup menu</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>menu item</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>tool tip</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>application</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>document</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>panel</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>chart</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>dialog</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>separator</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>tool bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>status bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>table</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>column header</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>row header</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>column</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>row</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>cell</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>link</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>help balloon</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>assistant</source>
+        <extracomment>Role of an accessible object - a helper dialog</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>list</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>list item</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>tree</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>tree item</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>page tab</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>property page</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>indicator</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>graphic</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>label</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>text</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>push button</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>check box</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>radio button</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>combo box</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>progress bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>dial</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>hotkey field</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>slider</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>spin box</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>canvas</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>animation</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>equation</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>button with drop down</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>button menu</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>button with drop down grid</source>
+        <extracomment>Role of an accessible object - a button that expands a grid.</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>space</source>
+        <extracomment>Role of an accessible object - blank space between other objects.</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>page tab list</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>clock</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>splitter</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>layered pane</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>web document</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>paragraph</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>section</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>color chooser</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>footer</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>form</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>heading</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>note</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>complementary content</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished">tak dikenal</translation>
     </message>
 </context>
 <context>
@@ -3884,6 +7238,247 @@ Silakan pilih nama file lain.</translation>
         <source>Private key does not certificate public key, %1</source>
         <translation>Kunci privat tak mensertifikasi kunci publik, %1</translation>
     </message>
+    <message>
+        <source>Error when setting the elliptic curves (%1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unsupported protocol</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Private key does not certify public key, %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>OpenSSL version too old, need at least v1.0.2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No error</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The issuer certificate could not be found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate signature could not be decrypted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The public key in the certificate could not be read</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The signature of the certificate is invalid</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate is not yet valid</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate has expired</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate&apos;s notBefore field contains an invalid time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate&apos;s notAfter field contains an invalid time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate is self-signed, and untrusted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The root certificate of the certificate chain is self-signed, and untrusted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The issuer certificate of a locally looked up certificate could not be found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No certificates could be verified</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>One of the CA certificates is invalid</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The basicConstraints path length parameter has been exceeded</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The supplied certificate is unsuitable for this purpose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The root CA certificate is not trusted for this purpose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The root CA certificate is marked to reject the specified purpose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The current candidate issuer certificate was rejected because its subject name did not match the issuer name of the current certificate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The current candidate issuer certificate was rejected because its issuer name and serial number was present and did not match the authority key identifier of the current certificate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The peer did not present any certificate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The host name did not match any of the valid hosts for this certificate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The peer certificate is blacklisted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unknown error</source>
+        <translation type="unfinished">Kesalahan tak dikenal</translation>
+    </message>
+    <message>
+        <source>The TLS/SSL connection has been closed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unable to init SSL Context: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unable to decrypt data: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QStandardPaths</name>
+    <message>
+        <source>Desktop</source>
+        <translation>Desktop</translation>
+    </message>
+    <message>
+        <source>Documents</source>
+        <translation>Dokumen</translation>
+    </message>
+    <message>
+        <source>Fonts</source>
+        <translation>Font</translation>
+    </message>
+    <message>
+        <source>Applications</source>
+        <translation>Aplikasi</translation>
+    </message>
+    <message>
+        <source>Music</source>
+        <translation>Musik</translation>
+    </message>
+    <message>
+        <source>Movies</source>
+        <translation>Film</translation>
+    </message>
+    <message>
+        <source>Pictures</source>
+        <translation>Gambar</translation>
+    </message>
+    <message>
+        <source>Temporary Directory</source>
+        <translation>Direktori Sementara</translation>
+    </message>
+    <message>
+        <source>Home</source>
+        <translation type="unfinished">Home</translation>
+    </message>
+    <message>
+        <source>Cache</source>
+        <translation>Singgahan</translation>
+    </message>
+    <message>
+        <source>Shared Data</source>
+        <translation>Data Bersama</translation>
+    </message>
+    <message>
+        <source>Runtime</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Configuration</source>
+        <translation>Konfigurasi</translation>
+    </message>
+    <message>
+        <source>Shared Configuration</source>
+        <translation>Konfigurasi Bersama</translation>
+    </message>
+    <message>
+        <source>Shared Cache</source>
+        <translation>Singgahan Bersama</translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>Unduh</translation>
+    </message>
+    <message>
+        <source>Application Data</source>
+        <translation>Data Aplikasi</translation>
+    </message>
+    <message>
+        <source>Application Configuration</source>
+        <translation>Konfigurasi Aplikasi</translation>
+    </message>
+</context>
+<context>
+    <name>QStateMachine</name>
+    <message>
+        <source>Missing initial state in compound state &apos;%1&apos;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing default state in history state &apos;%1&apos;</source>
+        <translation>Kurang keadaan baku dalam keadaan riwayat &apos;%1&apos;</translation>
+    </message>
+    <message>
+        <source>No common ancestor for targets and source of transition from state &apos;%1&apos;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unknown error</source>
+        <translation>Kesalahan tak dikenal</translation>
+    </message>
+</context>
+<context>
+    <name>QSystemSemaphore</name>
+    <message>
+        <source>%1: permission denied</source>
+        <translation>%1: izin ditolak</translation>
+    </message>
+    <message>
+        <source>%1: already exists</source>
+        <translation>%1: telah ada</translation>
+    </message>
+    <message>
+        <source>%1: does not exist</source>
+        <translation>%1: tidak ada</translation>
+    </message>
+    <message>
+        <source>%1: out of resources</source>
+        <translation>%1: kehabisan sumber daya</translation>
+    </message>
+    <message>
+        <source>%1: unknown error %2</source>
+        <translation>%1: kesalahan tak dikenal %2</translation>
+    </message>
 </context>
 <context>
     <name>QTDSDriver</name>
@@ -3905,6 +7500,13 @@ Silakan pilih nama file lain.</translation>
     <message>
         <source>Scroll Right</source>
         <translation>Gulung Kanan</translation>
+    </message>
+</context>
+<context>
+    <name>QTcpServer</name>
+    <message>
+        <source>Operation on socket is not supported</source>
+        <translation>Operasi pada soket tidak didukung</translation>
     </message>
 </context>
 <context>
@@ -3970,6 +7572,24 @@ Silakan pilih nama file lain.</translation>
         <source>Redo</source>
         <translation>Jadi lagi</translation>
     </message>
+    <message>
+        <source>Undo %1</source>
+        <translation>Batalkan %1</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <comment>Default text for undo action</comment>
+        <translation>Batalkan</translation>
+    </message>
+    <message>
+        <source>Redo %1</source>
+        <translation>Jadi lagi %1</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <comment>Default text for redo action</comment>
+        <translation>Jadi lagi</translation>
+    </message>
 </context>
 <context>
     <name>QUndoModel</name>
@@ -3986,6 +7606,24 @@ Silakan pilih nama file lain.</translation>
     </message>
     <message>
         <source>Redo</source>
+        <translation>Jadi lagi</translation>
+    </message>
+    <message>
+        <source>Undo %1</source>
+        <translation>Batalkan %1</translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <comment>Default text for undo action</comment>
+        <translation>Batalkan</translation>
+    </message>
+    <message>
+        <source>Redo %1</source>
+        <translation>Jadi lagi %1</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <comment>Default text for redo action</comment>
         <translation>Jadi lagi</translation>
     </message>
 </context>
@@ -4034,6 +7672,22 @@ Silakan pilih nama file lain.</translation>
     <message>
         <source>Insert Unicode control character</source>
         <translation>Sisipkan karakter kendali Unicode</translation>
+    </message>
+    <message>
+        <source>LRI Left-to-right isolate</source>
+        <translation>LRI Left-to-right isolate</translation>
+    </message>
+    <message>
+        <source>RLI Right-to-left isolate</source>
+        <translation>RLI Right-to-left isolate</translation>
+    </message>
+    <message>
+        <source>FSI First strong isolate</source>
+        <translation>FSI First strong isolate</translation>
+    </message>
+    <message>
+        <source>PDI Pop directional isolate</source>
+        <translation>PDI Pop directional isolate</translation>
     </message>
 </context>
 <context>
@@ -4326,6 +7980,56 @@ Silakan pilih nama file lain.</translation>
     <message>
         <source>*</source>
         <translation>*</translation>
+    </message>
+</context>
+<context>
+    <name>QWidgetTextControl</name>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>&amp;Batalkan</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>&amp;Jadi Lagi</translation>
+    </message>
+    <message>
+        <source>Cu&amp;t</source>
+        <translation>Po&amp;tong</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>&amp;Salin</translation>
+    </message>
+    <message>
+        <source>Copy &amp;Link Location</source>
+        <translation>Salin &amp;Lokasi Taut</translation>
+    </message>
+    <message>
+        <source>&amp;Paste</source>
+        <translation>Tem&amp;pel</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>Hapus</translation>
+    </message>
+    <message>
+        <source>Select All</source>
+        <translation>Pilih Semua</translation>
+    </message>
+</context>
+<context>
+    <name>QWindowsDirect2DIntegration</name>
+    <message>
+        <source>Qt cannot load the direct2d platform plugin because the Direct2D version on this system is too old. The minimum system requirement for this platform plugin is Windows 7 SP1 with Platform Update.
+
+The minimum Direct2D version required is %1.%2.%3.%4. The Direct2D version on this system is %5.%6.%7.%8.</source>
+        <translation type="unfinished">Qt tidak bisa memuat plugin platform direct2d karena versi Direct2D pada sistem ini terlalu tua. Persyaratan minimum sistem bagi plugin platform ini adalah Windows 7 SP1 dengan Pembaruan Platform.
+
+</translation>
+    </message>
+    <message>
+        <source>Cannot load direct2d platform plugin</source>
+        <translation>Tidak bisa memuat plugin platform direct2d</translation>
     </message>
 </context>
 <context>
@@ -4670,6 +8374,10 @@ Silakan pilih nama file lain.</translation>
     <message>
         <source>%1 is an invalid PUBLIC identifier.</source>
         <translation>%1 adalah identifier PUBLIC yang tak valid.</translation>
+    </message>
+    <message>
+        <source>Attribute &apos;%1&apos; redefined.</source>
+        <translation>Atribut &apos;%1&apos; didefinisikan ulang.</translation>
     </message>
 </context>
 <context>

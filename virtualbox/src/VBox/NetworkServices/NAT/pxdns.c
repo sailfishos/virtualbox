@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2014 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -42,10 +42,13 @@
 
 #include "proxy.h"
 #include "proxy_pollmgr.h"
+#include "pxtcp.h"
 
 #include "lwip/sys.h"
 #include "lwip/tcpip.h"
+#include "lwip/ip_addr.h"
 #include "lwip/udp.h"
+#include "lwip/tcp.h"
 
 #ifndef RT_OS_WINDOWS
 #include <sys/poll.h>
@@ -82,6 +85,8 @@ struct pxdns {
 
     struct udp_pcb *pcb4;
     struct udp_pcb *pcb6;
+
+    struct tcp_pcb *ltcp;
 
     size_t generation;
     size_t nresolvers;
@@ -177,6 +182,8 @@ struct request {
 static void pxdns_create_resolver_sockaddrs(struct pxdns *pxdns,
                                             const char **nameservers);
 
+static err_t pxdns_accept_syn(void *arg, struct tcp_pcb *newpcb, struct pbuf *syn);
+
 static void pxdns_recv4(void *arg, struct udp_pcb *pcb, struct pbuf *p,
                         ip_addr_t *addr, u16_t port);
 static void pxdns_recv6(void *arg, struct udp_pcb *pcb, struct pbuf *p,
@@ -209,6 +216,16 @@ pxdns_init(struct netif *proxy_netif)
     err_t error;
 
     LWIP_UNUSED_ARG(proxy_netif);
+
+    pxdns->ltcp = tcp_new();
+    if (pxdns->ltcp != NULL) {
+        tcp_bind_ip6(pxdns->ltcp, IP6_ADDR_ANY, 53);
+        pxdns->ltcp = tcp_listen_dual(pxdns->ltcp);
+        if (pxdns->ltcp != NULL) {
+            tcp_arg(pxdns->ltcp, pxdns);
+            tcp_accept_syn(pxdns->ltcp, pxdns_accept_syn);
+        }
+    }
 
     pxdns->pmhdl4.callback = pxdns_pmgr_pump;
     pxdns->pmhdl4.data = (void *)pxdns;
@@ -295,7 +312,7 @@ pxdns_set_nameservers(void *arg)
     const char **nameservers = (const char **)arg;
 
     if (g_proxy_options->nameservers != NULL) {
-        RTMemFree(g_proxy_options->nameservers);
+        RTMemFree((void *)g_proxy_options->nameservers);
     }
     g_proxy_options->nameservers = nameservers;
 
@@ -685,6 +702,14 @@ pxdns_forward_outbound(struct pxdns *pxdns, struct request *req)
 {
     union sockaddr_inet *resolver;
     ssize_t nsent;
+#ifdef RT_OS_WINDOWS
+    const char *pSendData = (const char *)&req->data[0];
+    int         cbSendData = (int)req->size;
+    Assert((size_t)cbSendData == req->size);
+#else
+    const void *pSendData = &req->data[0];
+    size_t      cbSendData = req->size;
+#endif
 
     DPRINTF2(("%s: req %p: sending to resolver #%lu\n",
               __func__, (void *)req, (unsigned long)req->residx));
@@ -694,13 +719,13 @@ pxdns_forward_outbound(struct pxdns *pxdns, struct request *req)
     resolver = &pxdns->resolvers[req->residx];
 
     if (resolver->sa.sa_family == AF_INET) {
-        nsent = sendto(pxdns->sock4, req->data, req->size, 0,
+        nsent = sendto(pxdns->sock4, pSendData, cbSendData, 0,
                        &resolver->sa, sizeof(resolver->sin));
-        
+
     }
     else if (resolver->sa.sa_family == AF_INET6) {
         if (pxdns->sock6 != INVALID_SOCKET) {
-            nsent = sendto(pxdns->sock6, req->data, req->size, 0,
+            nsent = sendto(pxdns->sock6, pSendData, cbSendData, 0,
                            &resolver->sa, sizeof(resolver->sin6));
         }
         else {
@@ -798,7 +823,11 @@ pxdns_pmgr_pump(struct pollmgr_handler *handler, SOCKET fd, int revents)
     }
 
 
+#ifdef RT_OS_WINDOWS
+    nread = recv(fd, (char *)pollmgr_udpbuf, sizeof(pollmgr_udpbuf), 0);
+#else
     nread = recv(fd, pollmgr_udpbuf, sizeof(pollmgr_udpbuf), 0);
+#endif
     if (nread < 0) {
         DPRINTF(("%s: %R[sockerr]\n", __func__, SOCKERRNO()));
         return POLLIN;
@@ -861,4 +890,43 @@ pxdns_pcb_reply(void *ctx)
     }
 
     pxdns_request_free(req);
+}
+
+
+/**
+ * TCP DNS proxy.  This kicks in for large replies that don't fit into
+ * 512 bytes of UDP payload.  Client will retry with TCP to get
+ * complete reply.
+ */
+static err_t
+pxdns_accept_syn(void *arg, struct tcp_pcb *newpcb, struct pbuf *syn)
+{
+    struct pxdns *pxdns = (struct pxdns *)arg;
+    union sockaddr_inet *si;
+    ipX_addr_t *dst;
+    u16_t dst_port;
+
+    tcp_accepted(pxdns->ltcp);
+
+    if (pxdns->nresolvers == 0) {
+        return ERR_CONN;
+    }
+
+    si = &pxdns->resolvers[0];
+
+    if (si->sa.sa_family == AF_INET6) {
+        dst = (ipX_addr_t *)&si->sin6.sin6_addr;
+        dst_port = ntohs(si->sin6.sin6_port);
+    }
+    else {
+        dst = (ipX_addr_t *)&si->sin.sin_addr;
+        dst_port = ntohs(si->sin.sin_port);
+    }
+
+    /*
+     * XXX: TODO: need to implement protocol hooks.  E.g. here if
+     * connect fails, we should try connecting to a different server.
+     */
+    return pxtcp_pcb_accept_outbound(newpcb, syn,
+               si->sa.sa_family == AF_INET6, dst, dst_port);
 }

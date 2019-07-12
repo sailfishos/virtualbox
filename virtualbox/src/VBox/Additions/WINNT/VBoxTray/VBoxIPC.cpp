@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2010-2014 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,7 +16,12 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-#include <windows.h>
+
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
 #include "VBoxTray.h"
 #include "VBoxTrayMsg.h"
 #include "VBoxHelpers.h"
@@ -30,10 +35,18 @@
 #include <iprt/list.h>
 #include <iprt/localipc.h>
 #include <iprt/mem.h>
-#include <VBoxGuestInternal.h>
+#include <iprt/process.h>
+
+#ifdef DEBUG /** @todo r=bird: these are all default settings...  */
+# define LOG_ENABLED
+# define LOG_GROUP LOG_GROUP_DEFAULT
+#endif
+#include <VBox/log.h>
 
 
-
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * IPC context data.
  */
@@ -50,7 +63,6 @@ typedef struct VBOXIPCCONTEXT
     RTLISTANCHOR               SessionList;
 
 } VBOXIPCCONTEXT, *PVBOXIPCCONTEXT;
-static VBOXIPCCONTEXT gCtx = {0};
 
 /** Function pointer for GetLastInputInfo(). */
 typedef BOOL (WINAPI *PFNGETLASTINPUTINFO)(PLASTINPUTINFO);
@@ -74,10 +86,20 @@ typedef struct VBOXIPCSESSION
 
 } VBOXIPCSESSION, *PVBOXIPCSESSION;
 
-/** Static pointer to GetLastInputInfo() function. */
-static PFNGETLASTINPUTINFO s_pfnGetLastInputInfo = NULL;
 
-int vboxIPCSessionStop(PVBOXIPCSESSION pSession);
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+static VBOXIPCCONTEXT       g_Ctx = { NULL, NIL_RTLOCALIPCSERVER };
+static PFNGETLASTINPUTINFO  g_pfnGetLastInputInfo = NULL;
+
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
+static int vboxIPCSessionStop(PVBOXIPCSESSION pSession);
+
+
 
 static int vboxIPCHandleVBoxTrayRestart(PVBOXIPCSESSION pSession, PVBOXTRAYIPCHEADER pHdr)
 {
@@ -100,12 +122,13 @@ static int vboxIPCHandleShowBalloonMsg(PVBOXIPCSESSION pSession, PVBOXTRAYIPCHEA
     if (RT_SUCCESS(rc))
     {
         /* Showing the balloon tooltip is not critical. */
-        int rc2 = hlpShowBalloonTip(ghInstance, ghwndToolWindow, ID_TRAYICON,
+        int rc2 = hlpShowBalloonTip(g_hInstance, g_hwndToolWindow, ID_TRAYICON,
                                     ipcMsg.szMsgContent, ipcMsg.szMsgTitle,
                                     ipcMsg.uShowMS, ipcMsg.uType);
         LogFlowFunc(("Showing \"%s\" - \"%s\" (type %RU32, %RU32ms), rc=%Rrc\n",
                      ipcMsg.szMsgTitle, ipcMsg.szMsgContent,
                      ipcMsg.uType, ipcMsg.uShowMS, rc2));
+        NOREF(rc2);
     }
 
     return rc;
@@ -121,13 +144,13 @@ static int vboxIPCHandleUserLastInput(PVBOXIPCSESSION pSession, PVBOXTRAYIPCHEAD
 
     bool fLastInputAvailable = false;
     VBOXTRAYIPCRES_USERLASTINPUT ipcRes;
-    if (s_pfnGetLastInputInfo)
+    if (g_pfnGetLastInputInfo)
     {
         /* Note: This only works up to 49.7 days (= 2^32, 32-bit counter)
            since Windows was started. */
         LASTINPUTINFO lastInput;
         lastInput.cbSize = sizeof(LASTINPUTINFO);
-        BOOL fRc = s_pfnGetLastInputInfo(&lastInput);
+        BOOL fRc = g_pfnGetLastInputInfo(&lastInput);
         if (fRc)
         {
             ipcRes.uLastInput = (GetTickCount() - lastInput.dwTime) / 1000;
@@ -155,80 +178,64 @@ static int vboxIPCHandleUserLastInput(PVBOXIPCSESSION pSession, PVBOXTRAYIPCHEAD
  *
  * @return  IPRT status code.
  * @param   pEnv                        The IPC service's environment.
- * @param   ppInstance                  The instance pointer which refer to this object.
- * @param   pfStartThread               Pointer to flag whether the IPC service can be started or not.
+ * @param   ppInstance                  The instance pointer which refers to this object.
  */
-int VBoxIPCInit(const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread)
+DECLCALLBACK(int) VBoxIPCInit(const PVBOXSERVICEENV pEnv, void **ppInstance)
 {
     AssertPtrReturn(pEnv, VERR_INVALID_POINTER);
-    /** ppInstance not used here. */
-    AssertPtrReturn(pfStartThread, VERR_INVALID_POINTER);
+    AssertPtrReturn(ppInstance, VERR_INVALID_POINTER);
 
     LogFlowFuncEnter();
 
-    *pfStartThread = false;
+    PVBOXIPCCONTEXT pCtx = &g_Ctx; /* Only one instance at the moment. */
+    AssertPtr(pCtx);
 
-    int rc = RTCritSectInit(&gCtx.CritSect);
+    int rc = RTCritSectInit(&pCtx->CritSect);
     if (RT_SUCCESS(rc))
     {
-        RTUTF16 wszUserName[255];
-        DWORD cchUserName = sizeof(wszUserName) / sizeof(RTUTF16);
-        BOOL fRc = GetUserNameW(wszUserName, &cchUserName);
-        if (!fRc)
-            rc = RTErrConvertFromWin32(GetLastError());
-
+        char szPipeName[512 + sizeof(VBOXTRAY_IPC_PIPE_PREFIX)];
+        memcpy(szPipeName, VBOXTRAY_IPC_PIPE_PREFIX, sizeof(VBOXTRAY_IPC_PIPE_PREFIX));
+        rc = RTProcQueryUsername(NIL_RTPROCESS,
+                                 &szPipeName[sizeof(VBOXTRAY_IPC_PIPE_PREFIX) - 1],
+                                 sizeof(szPipeName) - sizeof(VBOXTRAY_IPC_PIPE_PREFIX) + 1,
+                                 NULL /*pcbUser*/);
+        AssertRC(rc);
         if (RT_SUCCESS(rc))
         {
-            char *pszUserName;
-            rc = RTUtf16ToUtf8(wszUserName, &pszUserName);
+            rc = RTLocalIpcServerCreate(&pCtx->hServer, szPipeName, RTLOCALIPC_FLAGS_NATIVE_NAME);
+            AssertRC(rc);
             if (RT_SUCCESS(rc))
             {
-                char szPipeName[255];
-                if (RTStrPrintf(szPipeName, sizeof(szPipeName), "%s%s",
-                                VBOXTRAY_IPC_PIPE_PREFIX, pszUserName))
-                {
-                    rc = RTLocalIpcServerCreate(&gCtx.hServer, szPipeName,
-                                                RTLOCALIPC_FLAGS_MULTI_SESSION);
-                    if (RT_SUCCESS(rc))
-                    {
-                        RTStrFree(pszUserName);
+                pCtx->pEnv = pEnv;
+                RTListInit(&pCtx->SessionList);
 
-                        gCtx.pEnv = pEnv;
-                        RTListInit(&gCtx.SessionList);
+                *ppInstance = pCtx;
 
-                        *ppInstance = &gCtx;
-                        *pfStartThread = true;
+                /* GetLastInputInfo only is available starting at Windows 2000 -- might fail. */
+                g_pfnGetLastInputInfo = (PFNGETLASTINPUTINFO)
+                    RTLdrGetSystemSymbol("User32.dll", "GetLastInputInfo");
 
-                        /* GetLastInputInfo only is available starting at Windows 2000. */
-                        s_pfnGetLastInputInfo = (PFNGETLASTINPUTINFO)
-                            RTLdrGetSystemSymbol("User32.dll", "GetLastInputInfo");
-
-                        LogRelFunc(("Local IPC server now running at \"%s\"\n",
-                                    szPipeName));
-                        return VINF_SUCCESS;
-                    }
-
-                }
-                else
-                    rc = VERR_NO_MEMORY;
-
-                RTStrFree(pszUserName);
+                LogRelFunc(("Local IPC server now running at \"%s\"\n", szPipeName));
+                return VINF_SUCCESS;
             }
+
         }
 
-        RTCritSectDelete(&gCtx.CritSect);
+        RTCritSectDelete(&pCtx->CritSect);
     }
 
     LogRelFunc(("Creating local IPC server failed with rc=%Rrc\n", rc));
     return rc;
 }
 
-void VBoxIPCStop(const VBOXSERVICEENV *pEnv, void *pInstance)
+DECLCALLBACK(void) VBoxIPCStop(void *pInstance)
 {
-    AssertPtrReturnVoid(pEnv);
+    /* Can be NULL if VBoxIPCInit failed. */
+    if (!pInstance)
+        return;
     AssertPtrReturnVoid(pInstance);
 
-    LogFunc(("Stopping pInstance=%p\n", pInstance));
+    LogFlowFunc(("Stopping pInstance=%p\n", pInstance));
 
     /* Shut down local IPC server. */
     PVBOXIPCCONTEXT pCtx = (PVBOXIPCCONTEXT)pInstance;
@@ -238,7 +245,7 @@ void VBoxIPCStop(const VBOXSERVICEENV *pEnv, void *pInstance)
     {
         int rc2 = RTLocalIpcServerCancel(pCtx->hServer);
         if (RT_FAILURE(rc2))
-            LogFunc(("Cancelling current listening call failed with rc=%Rrc\n", rc2));
+            LogFlowFunc(("Cancelling current listening call failed with rc=%Rrc\n", rc2));
     }
 
     /* Stop all remaining session threads. */
@@ -251,7 +258,7 @@ void VBoxIPCStop(const VBOXSERVICEENV *pEnv, void *pInstance)
             int rc2 = vboxIPCSessionStop(pSession);
             if (RT_FAILURE(rc2))
             {
-                LogFunc(("Stopping IPC session %p failed with rc=%Rrc\n",
+                LogFlowFunc(("Stopping IPC session %p failed with rc=%Rrc\n",
                          pSession, rc2));
                 /* Keep going. */
             }
@@ -259,12 +266,11 @@ void VBoxIPCStop(const VBOXSERVICEENV *pEnv, void *pInstance)
     }
 }
 
-void VBoxIPCDestroy(const VBOXSERVICEENV *pEnv, void *pInstance)
+DECLCALLBACK(void) VBoxIPCDestroy(void *pInstance)
 {
-    AssertPtrReturnVoid(pEnv);
     AssertPtrReturnVoid(pInstance);
 
-    LogFunc(("Destroying pInstance=%p\n", pInstance));
+    LogFlowFunc(("Destroying pInstance=%p\n", pInstance));
 
     PVBOXIPCCONTEXT pCtx = (PVBOXIPCCONTEXT)pInstance;
     AssertPtr(pCtx);
@@ -275,14 +281,14 @@ void VBoxIPCDestroy(const VBOXSERVICEENV *pEnv, void *pInstance)
     {
         rc = RTLocalIpcServerDestroy(pCtx->hServer);
         if (RT_FAILURE(rc))
-            LogFunc(("Unable to destroy IPC server, rc=%Rrc\n", rc));
+            LogFlowFunc(("Unable to destroy IPC server, rc=%Rrc\n", rc));
 
         int rc2 = RTCritSectLeave(&pCtx->CritSect);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
-    LogFunc(("Waiting for remaining IPC sessions to shut down ...\n"));
+    LogFlowFunc(("Waiting for remaining IPC sessions to shut down ...\n"));
 
     /* Wait for all IPC session threads to shut down. */
     bool fListIsEmpty = true;
@@ -306,13 +312,13 @@ void VBoxIPCDestroy(const VBOXSERVICEENV *pEnv, void *pInstance)
     AssertMsg(fListIsEmpty,
               ("Session thread list is not empty when it should\n"));
 
-    LogFunc(("All remaining IPC sessions shut down\n"));
+    LogFlowFunc(("All remaining IPC sessions shut down\n"));
 
     int rc2 = RTCritSectDelete(&pCtx->CritSect);
     if (RT_SUCCESS(rc))
         rc = rc2;
 
-    LogFunc(("Destroyed pInstance=%p, rc=%Rrc\n",
+    LogFlowFunc(("Destroyed pInstance=%p, rc=%Rrc\n",
              pInstance, rc));
 }
 
@@ -320,17 +326,18 @@ void VBoxIPCDestroy(const VBOXSERVICEENV *pEnv, void *pInstance)
  * Services a client session.
  *
  * @returns VINF_SUCCESS.
- * @param   hThread         The thread handle.
+ * @param   hThreadSelf     The thread handle.
  * @param   pvSession       Pointer to the session instance data.
  */
-static DECLCALLBACK(int) vboxIPCSessionThread(RTTHREAD hThread, void *pvSession)
+static DECLCALLBACK(int) vboxIPCSessionThread(RTTHREAD hThreadSelf, void *pvSession)
 {
+    RT_NOREF(hThreadSelf);
     PVBOXIPCSESSION pThis = (PVBOXIPCSESSION)pvSession;
     AssertPtrReturn(pThis, VERR_INVALID_POINTER);
     RTLOCALIPCSESSION hSession = pThis->hSession;
     AssertReturn(hSession != NIL_RTLOCALIPCSESSION, VERR_INVALID_PARAMETER);
 
-    LogFunc(("pThis=%p\n", pThis));
+    LogFlowFunc(("pThis=%p\n", pThis));
 
     int rc = VINF_SUCCESS;
 
@@ -346,12 +353,12 @@ static DECLCALLBACK(int) vboxIPCSessionThread(RTTHREAD hThread, void *pvSession)
         {
             if (rc == VERR_CANCELLED)
             {
-                LogFunc(("Session %p: Waiting for data cancelled\n", pThis));
+                LogFlowFunc(("Session %p: Waiting for data cancelled\n", pThis));
                 rc = VINF_SUCCESS;
                 break;
             }
             else
-                LogFunc(("Session %p: Waiting for session data failed with rc=%Rrc\n",
+                LogFlowFunc(("Session %p: Waiting for session data failed with rc=%Rrc\n",
                          pThis, rc));
         }
         else
@@ -390,7 +397,7 @@ static DECLCALLBACK(int) vboxIPCSessionThread(RTTHREAD hThread, void *pvSession)
                 }
 
                 if (RT_FAILURE(rc))
-                    LogFunc(("Session %p: Handling command %RU32 failed with rc=%Rrc\n",
+                    LogFlowFunc(("Session %p: Handling command %RU32 failed with rc=%Rrc\n",
                              pThis, ipcHdr.uMsgType, rc));
             }
 
@@ -422,7 +429,7 @@ static DECLCALLBACK(int) vboxIPCSessionThread(RTTHREAD hThread, void *pvSession)
         }
     }
 
-    LogFunc(("Session %p: Handler ended with rc=%Rrc\n",
+    LogFlowFunc(("Session %p: Handler ended with rc=%Rrc\n",
              pThis, rc));
 
     /*
@@ -430,7 +437,7 @@ static DECLCALLBACK(int) vboxIPCSessionThread(RTTHREAD hThread, void *pvSession)
      */
     int rc2 = RTLocalIpcSessionClose(hSession);
     if (RT_FAILURE(rc2))
-        LogFunc(("Session %p: Failed closing session %p, rc=%Rrc\n", pThis, rc2));
+        LogFlowFunc(("Session %p: Failed closing session %p, rc=%Rrc\n", pThis, rc2));
 
     /*
      * Clean up the session.
@@ -448,7 +455,7 @@ static DECLCALLBACK(int) vboxIPCSessionThread(RTTHREAD hThread, void *pvSession)
             rc = rc2;
     }
 
-    LogFunc(("Session %p: Terminated with rc=%Rrc, freeing ...\n",
+    LogFlowFunc(("Session %p: Terminated with rc=%Rrc, freeing ...\n",
              pThis, rc));
 
     RTMemFree(pThis);
@@ -468,16 +475,16 @@ static int vboxIPCSessionCreate(PVBOXIPCCONTEXT pCtx, RTLOCALIPCSESSION hSession
         PVBOXIPCSESSION pSession = (PVBOXIPCSESSION)RTMemAllocZ(sizeof(VBOXIPCSESSION));
         if (pSession)
         {
-            pSession->pCtx = pCtx;
-            pSession->hSession = hSession;
+            pSession->pCtx      = pCtx;
+            pSession->hSession   = hSession;
             pSession->fTerminate = false;
-            pSession->hThread = NIL_RTTHREAD;
+            pSession->hThread    = NIL_RTTHREAD;
 
             /* Start IPC session thread. */
             LogFlowFunc(("Creating thread for session %p ...\n", pSession));
             rc = RTThreadCreate(&pSession->hThread, vboxIPCSessionThread,
                                 pSession /* pvUser */, 0 /* Default stack size */,
-                                RTTHREADTYPE_DEFAULT, 0 /* Flags */, "VBXTRYIPCSESS");
+                                RTTHREADTYPE_DEFAULT, 0 /* Flags */, "IPCSESSION");
             if (RT_SUCCESS(rc))
             {
                 /* Add session thread to session IPC list. */
@@ -487,9 +494,9 @@ static int vboxIPCSessionCreate(PVBOXIPCCONTEXT pCtx, RTLOCALIPCSESSION hSession
             {
                 int rc2 = RTLocalIpcSessionClose(hSession);
                 if (RT_FAILURE(rc2))
-                    LogFunc(("Failed closing session %p, rc=%Rrc\n", pSession, rc2));
+                    LogFlowFunc(("Failed closing session %p, rc=%Rrc\n", pSession, rc2));
 
-                LogFunc(("Failed to create thread for session %p, rc=%Rrc\n", pSession, rc));
+                LogFlowFunc(("Failed to create thread for session %p, rc=%Rrc\n", pSession, rc));
                 RTMemFree(pSession);
             }
         }
@@ -521,18 +528,29 @@ static int vboxIPCSessionStop(PVBOXIPCSESSION pSession)
  * Thread function to wait for and process seamless mode change
  * requests
  */
-unsigned __stdcall VBoxIPCThread(void *pInstance)
+DECLCALLBACK(int) VBoxIPCWorker(void *pInstance, bool volatile *pfShutdown)
 {
+    AssertPtr(pInstance);
+    LogFlowFunc(("pInstance=%p\n", pInstance));
+
     LogFlowFuncEnter();
+
+    /*
+     * Tell the control thread that it can continue
+     * spawning services.
+     */
+    RTThreadUserSignal(RTThreadSelf());
 
     PVBOXIPCCONTEXT pCtx = (PVBOXIPCCONTEXT)pInstance;
     AssertPtr(pCtx);
+
+    int rc;
 
     bool fShutdown = false;
     for (;;)
     {
         RTLOCALIPCSESSION hClientSession = NIL_RTLOCALIPCSESSION;
-        int rc = RTLocalIpcServerListen(pCtx->hServer, &hClientSession);
+        rc = RTLocalIpcServerListen(pCtx->hServer, &hClientSession);
         if (RT_FAILURE(rc))
         {
             if (rc == VERR_CANCELLED)
@@ -553,12 +571,27 @@ unsigned __stdcall VBoxIPCThread(void *pInstance)
             /* Keep going. */
         }
 
-        AssertPtr(pCtx->pEnv);
-        if (WaitForSingleObject(pCtx->pEnv->hStopEvent, 0 /* No waiting */) == WAIT_OBJECT_0)
+        if (*pfShutdown)
             break;
     }
 
-    LogFlowFuncLeave();
-    return 0;
+    LogFlowFuncLeaveRC(rc);
+    return rc;
 }
+
+/**
+ * The service description.
+ */
+VBOXSERVICEDESC g_SvcDescIPC =
+{
+    /* pszName. */
+    "IPC",
+    /* pszDescription. */
+    "Inter-Process Communication",
+    /* methods */
+    VBoxIPCInit,
+    VBoxIPCWorker,
+    NULL /* pfnStop */,
+    VBoxIPCDestroy
+};
 

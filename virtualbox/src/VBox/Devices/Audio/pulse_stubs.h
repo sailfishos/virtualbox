@@ -1,10 +1,10 @@
+/* $Id: pulse_stubs.h $ */
 /** @file
- *
  * Stubs for libpulse.
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2019 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,7 +15,11 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#ifndef AUDIO_PULSE_STUBS_H
-#define AUDIO_PULSE_STUBS_H
-extern int audioLoadPulseLib(void);
+#ifndef VBOX_INCLUDED_SRC_Audio_pulse_stubs_h
+#define VBOX_INCLUDED_SRC_Audio_pulse_stubs_h
+#ifndef RT_WITHOUT_PRAGMA_ONCE
+# pragma once
 #endif
+extern int audioLoadPulseLib(void);
+#endif /* !VBOX_INCLUDED_SRC_Audio_pulse_stubs_h */
+

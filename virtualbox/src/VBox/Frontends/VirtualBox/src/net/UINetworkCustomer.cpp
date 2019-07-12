@@ -1,12 +1,10 @@
 /* $Id: UINetworkCustomer.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UINetworkCustomer class implementation
+ * VBox Qt GUI - UINetworkCustomer class implementation.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,12 +15,19 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/* Global includes: */
-#include <QNetworkRequest>
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+/* Qt includes: */
+# include <QUrl>
 
 /* Local includes: */
-#include "UINetworkCustomer.h"
-#include "UINetworkManager.h"
+# include "UINetworkCustomer.h"
+# include "UINetworkManager.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UINetworkCustomer::UINetworkCustomer()
     : QObject(0)
@@ -36,13 +41,9 @@ UINetworkCustomer::UINetworkCustomer(QObject *pParent, bool fForceCall)
 {
 }
 
-void UINetworkCustomer::createNetworkRequest(const QNetworkRequest &request, UINetworkRequestType type, const QString &strDescription)
+void UINetworkCustomer::createNetworkRequest(UINetworkRequestType type, const QList<QUrl> urls,
+                                             const UserDictionary requestHeaders /* = UserDictionary() */)
 {
-    gNetworkManager->createNetworkRequest(request, type, strDescription, this);
-}
-
-void UINetworkCustomer::createNetworkRequest(const QList<QNetworkRequest> &requests, UINetworkRequestType type, const QString &strDescription)
-{
-    gNetworkManager->createNetworkRequest(requests, type, strDescription, this);
+    gNetworkManager->createNetworkRequest(type, urls, requestHeaders, this);
 }
 

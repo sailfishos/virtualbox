@@ -1,11 +1,10 @@
 /* $Id: VBoxUhgsmiKmt.cpp $ */
-
 /** @file
  * VBoxVideo Display D3D User mode dll
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -122,7 +121,9 @@ DECLCALLBACK(int) vboxUhgsmiKmtBufferCreate(PVBOXUHGSMI pHgsmi, uint32_t cbBuf, 
     Assert(cPages);
 
     PVBOXUHGSMI_PRIVATE_KMT pPrivate = VBOXUHGSMIKMT_GET(pHgsmi);
-    PVBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE pBuf = (PVBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE)RTMemAllocZ(RT_OFFSETOF(VBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE, aLockPageIndices[cPages]));
+    PVBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE pBuf;
+    pBuf = (PVBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE)RTMemAllocZ(RT_UOFFSETOF_DYN(VBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE,
+                                                                                  aLockPageIndices[cPages]));
     if (!pBuf)
     {
         WARN(("RTMemAllocZ failed"));

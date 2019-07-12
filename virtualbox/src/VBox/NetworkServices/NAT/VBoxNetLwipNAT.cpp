@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,7 +16,7 @@
  */
 
 /* Must be included before winutils.h (lwip/def.h), otherwise Windows build breaks. */
-#include <iprt/cpp/mem.h>
+#define LOG_GROUP LOG_GROUP_NAT_SERVICE
 
 #include "winutils.h"
 
@@ -52,7 +52,6 @@
 #include <iprt/file.h>
 #include <iprt/semaphore.h>
 #include <iprt/cpp/utils.h>
-#define LOG_GROUP LOG_GROUP_NAT_SERVICE
 #include <VBox/log.h>
 
 #include <VBox/sup.h>
@@ -141,7 +140,7 @@ class VBoxNetLwipNAT: public VBoxNetBaseService, public NATNetworkEventAdapter
   public:
     VBoxNetLwipNAT(SOCKET icmpsock4, SOCKET icmpsock6);
     virtual ~VBoxNetLwipNAT();
-    void usage(){                /* @todo: should be implemented */ };
+    void usage(){                /** @todo should be implemented */ };
     int run();
     virtual int init(void);
     virtual int parseOpt(int rc, const RTGETOPTUNION& getOptVal);
@@ -166,10 +165,11 @@ class VBoxNetLwipNAT: public VBoxNetBaseService, public NATNetworkEventAdapter
 
     /* Our NAT network descriptor in Main */
     ComPtr<INATNetwork> m_net;
-    ComNatListenerPtr m_listener;
-
     ComPtr<IHost> m_host;
-    ComNatListenerPtr m_vboxListener;
+
+    ComNatListenerPtr m_NatListener;
+    ComNatListenerPtr m_VBoxListener;
+    ComNatListenerPtr m_VBoxClientListener;
     static INTNETSEG aXmitSeg[64];
 
     HRESULT HandleEvent(VBoxEventType_T aEventType, IEvent *pEvent);
@@ -180,11 +180,11 @@ class VBoxNetLwipNAT: public VBoxNetBaseService, public NATNetworkEventAdapter
      * on startup, and then on sync them on events.
      */
     bool fDontLoadRulesOnStartup;
-    static void onLwipTcpIpInit(void *arg);
-    static void onLwipTcpIpFini(void *arg);
+    static DECLCALLBACK(void) onLwipTcpIpInit(void *arg);
+    static DECLCALLBACK(void) onLwipTcpIpFini(void *arg);
     static err_t netifInit(netif *pNetif);
     static err_t netifLinkoutput(netif *pNetif, pbuf *pBuf);
-    static int intNetThreadRecv(RTTHREAD, void *);
+    /* static int intNetThreadRecv(RTTHREAD, void *); - unused */
 
     VECNATSERVICEPF m_vecPortForwardRule4;
     VECNATSERVICEPF m_vecPortForwardRule6;
@@ -200,74 +200,81 @@ INTNETSEG VBoxNetLwipNAT::aXmitSeg[64];
 /**
  * @note: this work on Event thread.
  */
-HRESULT VBoxNetLwipNAT::HandleEvent(VBoxEventType_T aEventType,
-                                                  IEvent *pEvent)
+HRESULT VBoxNetLwipNAT::HandleEvent(VBoxEventType_T aEventType, IEvent *pEvent)
 {
     HRESULT hrc = S_OK;
     switch (aEventType)
     {
         case VBoxEventType_OnNATNetworkSetting:
         {
-            ComPtr<INATNetworkSettingEvent> evSettings(pEvent);
-            // XXX: only handle IPv6 default route for now
+            ComPtr<INATNetworkSettingEvent> pSettingsEvent(pEvent);
 
+            com::Bstr networkName;
+            hrc = pSettingsEvent->COMGETTER(NetworkName)(networkName.asOutParam());
+            AssertComRCReturn(hrc, hrc);
+            if (networkName.compare(getNetworkName().c_str()))
+                break; /* change not for our network */
+
+            // XXX: only handle IPv6 default route for now
             if (!m_ProxyOptions.ipv6_enabled)
-            {
                 break;
-            }
 
             BOOL fIPv6DefaultRoute = FALSE;
-            hrc = evSettings->COMGETTER(AdvertiseDefaultIPv6RouteEnabled)(&fIPv6DefaultRoute);
-            AssertReturn(SUCCEEDED(hrc), hrc);
+            hrc = pSettingsEvent->COMGETTER(AdvertiseDefaultIPv6RouteEnabled)(&fIPv6DefaultRoute);
+            AssertComRCReturn(hrc, hrc);
 
             if (m_ProxyOptions.ipv6_defroute == fIPv6DefaultRoute)
-            {
                 break;
-            }
 
             m_ProxyOptions.ipv6_defroute = fIPv6DefaultRoute;
             tcpip_callback_with_block(proxy_rtadvd_do_quick, &m_LwipNetIf, 0);
-
             break;
         }
 
         case VBoxEventType_OnNATNetworkPortForward:
         {
-            com::Bstr name, strHostAddr, strGuestAddr;
-            LONG lHostPort, lGuestPort;
-            BOOL fCreateFW, fIPv6FW;
+            ComPtr<INATNetworkPortForwardEvent> pForwardEvent = pEvent;
+
+            com::Bstr networkName;
+            hrc = pForwardEvent->COMGETTER(NetworkName)(networkName.asOutParam());
+            AssertComRCReturn(hrc, hrc);
+            if (networkName.compare(getNetworkName().c_str()))
+                break; /* change not for our network */
+
+            BOOL fCreateFW;
+            hrc = pForwardEvent->COMGETTER(Create)(&fCreateFW);
+            AssertComRCReturn(hrc, hrc);
+
+            BOOL  fIPv6FW;
+            hrc = pForwardEvent->COMGETTER(Ipv6)(&fIPv6FW);
+            AssertComRCReturn(hrc, hrc);
+
+            com::Bstr name;
+            hrc = pForwardEvent->COMGETTER(Name)(name.asOutParam());
+            AssertComRCReturn(hrc, hrc);
+
             NATProtocol_T proto = NATProtocol_TCP;
+            hrc = pForwardEvent->COMGETTER(Proto)(&proto);
+            AssertComRCReturn(hrc, hrc);
 
+            com::Bstr strHostAddr;
+            hrc = pForwardEvent->COMGETTER(HostIp)(strHostAddr.asOutParam());
+            AssertComRCReturn(hrc, hrc);
 
-            ComPtr<INATNetworkPortForwardEvent> pfEvt = pEvent;
+            LONG lHostPort;
+            hrc = pForwardEvent->COMGETTER(HostPort)(&lHostPort);
+            AssertComRCReturn(hrc, hrc);
 
-            hrc = pfEvt->COMGETTER(Create)(&fCreateFW);
-            AssertReturn(SUCCEEDED(hrc), hrc);
+            com::Bstr strGuestAddr;
+            hrc = pForwardEvent->COMGETTER(GuestIp)(strGuestAddr.asOutParam());
+            AssertComRCReturn(hrc, hrc);
 
-            hrc = pfEvt->COMGETTER(Ipv6)(&fIPv6FW);
-            AssertReturn(SUCCEEDED(hrc), hrc);
+            LONG lGuestPort;
+            hrc = pForwardEvent->COMGETTER(GuestPort)(&lGuestPort);
+            AssertComRCReturn(hrc, hrc);
 
-            hrc = pfEvt->COMGETTER(Name)(name.asOutParam());
-            AssertReturn(SUCCEEDED(hrc), hrc);
-
-            hrc = pfEvt->COMGETTER(Proto)(&proto);
-            AssertReturn(SUCCEEDED(hrc), hrc);
-
-            hrc = pfEvt->COMGETTER(HostIp)(strHostAddr.asOutParam());
-            AssertReturn(SUCCEEDED(hrc), hrc);
-
-            hrc = pfEvt->COMGETTER(HostPort)(&lHostPort);
-            AssertReturn(SUCCEEDED(hrc), hrc);
-
-            hrc = pfEvt->COMGETTER(GuestIp)(strGuestAddr.asOutParam());
-            AssertReturn(SUCCEEDED(hrc), hrc);
-
-            hrc = pfEvt->COMGETTER(GuestPort)(&lGuestPort);
-            AssertReturn(SUCCEEDED(hrc), hrc);
-
-            VECNATSERVICEPF& rules = (fIPv6FW ?
-                                      m_vecPortForwardRule6 :
-                                      m_vecPortForwardRule4);
+            VECNATSERVICEPF& rules = fIPv6FW ? m_vecPortForwardRule6
+                                             : m_vecPortForwardRule4;
 
             NATSEVICEPORTFORWARDRULE r;
             RT_ZERO(r);
@@ -284,8 +291,7 @@ HRESULT VBoxNetLwipNAT::HandleEvent(VBoxEventType_T aEventType,
                     break;
 
                 default:
-                    LogRel(("Event: %s %s port-forwarding rule \"%s\":"
-                            " invalid protocol %d\n",
+                    LogRel(("Event: %s %s port-forwarding rule \"%s\": invalid protocol %d\n",
                             fCreateFW ? "Add" : "Remove",
                             fIPv6FW ? "IPv6" : "IPv4",
                             com::Utf8Str(name).c_str(),
@@ -293,8 +299,7 @@ HRESULT VBoxNetLwipNAT::HandleEvent(VBoxEventType_T aEventType,
                     goto port_forward_done;
             }
 
-            LogRel(("Event: %s %s port-forwarding rule \"%s\":"
-                    " %s %s%s%s:%d -> %s%s%s:%d\n",
+            LogRel(("Event: %s %s port-forwarding rule \"%s\": %s %s%s%s:%d -> %s%s%s:%d\n",
                     fCreateFW ? "Add" : "Remove",
                     fIPv6FW ? "IPv6" : "IPv4",
                     com::Utf8Str(name).c_str(),
@@ -317,16 +322,16 @@ HRESULT VBoxNetLwipNAT::HandleEvent(VBoxEventType_T aEventType,
             }
 
             RTStrPrintf(r.Pfr.szPfrName, sizeof(r.Pfr.szPfrName),
-                      "%s", com::Utf8Str(name).c_str());
+                        "%s", com::Utf8Str(name).c_str());
 
             RTStrPrintf(r.Pfr.szPfrHostAddr, sizeof(r.Pfr.szPfrHostAddr),
-                      "%s", com::Utf8Str(strHostAddr).c_str());
+                        "%s", com::Utf8Str(strHostAddr).c_str());
 
             /* XXX: limits should be checked */
             r.Pfr.u16PfrHostPort = (uint16_t)lHostPort;
 
             RTStrPrintf(r.Pfr.szPfrGuestAddr, sizeof(r.Pfr.szPfrGuestAddr),
-                      "%s", com::Utf8Str(strGuestAddr).c_str());
+                        "%s", com::Utf8Str(strGuestAddr).c_str());
 
             /* XXX: limits should be checked */
             r.Pfr.u16PfrGuestPort = (uint16_t)lGuestPort;
@@ -343,25 +348,22 @@ HRESULT VBoxNetLwipNAT::HandleEvent(VBoxEventType_T aEventType,
                 for (it = rules.begin(); it != rules.end(); ++it)
                 {
                     /* compare */
-                    NATSEVICEPORTFORWARDRULE& natFw = *it;
+                    NATSEVICEPORTFORWARDRULE &natFw = *it;
                     if (   natFw.Pfr.iPfrProto == r.Pfr.iPfrProto
                         && natFw.Pfr.u16PfrHostPort == r.Pfr.u16PfrHostPort
-                        && (strncmp(natFw.Pfr.szPfrHostAddr, r.Pfr.szPfrHostAddr, INET6_ADDRSTRLEN) == 0)
+                        && strncmp(natFw.Pfr.szPfrHostAddr, r.Pfr.szPfrHostAddr, INET6_ADDRSTRLEN) == 0
                         && natFw.Pfr.u16PfrGuestPort == r.Pfr.u16PfrGuestPort
-                        && (strncmp(natFw.Pfr.szPfrGuestAddr, r.Pfr.szPfrGuestAddr, INET6_ADDRSTRLEN) == 0))
+                        && strncmp(natFw.Pfr.szPfrGuestAddr, r.Pfr.szPfrGuestAddr, INET6_ADDRSTRLEN) == 0)
                     {
-                        RTCMemAutoPtr<fwspec> pFwCopy;
-                        if (RT_UNLIKELY(!pFwCopy.alloc()))
-                            break;
-
-                        memcpy(pFwCopy.get(), &natFw.FWSpec, sizeof(natFw.FWSpec));
-
-                        int status = portfwd_rule_del(pFwCopy.get());
-                        if (status != 0)
-                            break;
-
-                        pFwCopy.release(); /* owned by lwip thread now */
-                        rules.erase(it);
+                        fwspec *pFwCopy = (fwspec *)RTMemDup(&natFw.FWSpec, sizeof(natFw.FWSpec));
+                        if (pFwCopy)
+                        {
+                            int status = portfwd_rule_del(pFwCopy);
+                            if (status == 0)
+                                rules.erase(it);   /* (pFwCopy is owned by lwip thread now.) */
+                            else
+                                RTMemFree(pFwCopy);
+                        }
                         break;
                     }
                 } /* loop over vector elements */
@@ -383,23 +385,49 @@ HRESULT VBoxNetLwipNAT::HandleEvent(VBoxEventType_T aEventType,
                                               ppcszNameServers,
                                               /* :block */ 0);
             if (error != ERR_OK && ppcszNameServers != NULL)
-            {
                 RTMemFree(ppcszNameServers);
-            }
             break;
         }
+
+        case VBoxEventType_OnNATNetworkStartStop:
+        {
+            ComPtr <INATNetworkStartStopEvent> pStartStopEvent = pEvent;
+
+            com::Bstr networkName;
+            hrc = pStartStopEvent->COMGETTER(NetworkName)(networkName.asOutParam());
+            AssertComRCReturn(hrc, hrc);
+            if (networkName.compare(getNetworkName().c_str()))
+                break; /* change not for our network */
+
+            BOOL fStart = TRUE;
+            hrc = pStartStopEvent->COMGETTER(StartEvent)(&fStart);
+            AssertComRCReturn(hrc, hrc);
+
+            if (!fStart)
+                shutdown();
+            break;
+        }
+
+        case VBoxEventType_OnVBoxSVCAvailabilityChanged:
+        {
+            LogRel(("VBoxSVC became unavailable, exiting.\n"));
+            shutdown();
+            break;
+        }
+
+        default: break; /* Shut up MSC. */
     }
     return hrc;
 }
 
 
-void VBoxNetLwipNAT::onLwipTcpIpInit(void* arg)
+/*static*/ DECLCALLBACK(void) VBoxNetLwipNAT::onLwipTcpIpInit(void *arg)
 {
     AssertPtrReturnVoid(arg);
     VBoxNetLwipNAT *pNat = static_cast<VBoxNetLwipNAT *>(arg);
 
     HRESULT hrc = com::Initialize();
-    Assert(!FAILED(hrc));
+    Assert(!FAILED(hrc)); NOREF(hrc);
 
     proxy_arp_hook = pxremap_proxy_arp;
     proxy_ip4_divert_hook = pxremap_ip4_divert;
@@ -486,10 +514,9 @@ void VBoxNetLwipNAT::onLwipTcpIpInit(void* arg)
 }
 
 
-void VBoxNetLwipNAT::onLwipTcpIpFini(void* arg)
+/*static*/ DECLCALLBACK(void) VBoxNetLwipNAT::onLwipTcpIpFini(void* arg)
 {
     AssertPtrReturnVoid(arg);
-    VBoxNetLwipNAT *pThis = (VBoxNetLwipNAT *)arg;
 
     /* XXX: proxy finalization */
     netif_set_link_down(&g_pLwipNat->m_LwipNetIf);
@@ -501,7 +528,7 @@ void VBoxNetLwipNAT::onLwipTcpIpFini(void* arg)
 /*
  * Callback for netif_add() to initialize the interface.
  */
-err_t VBoxNetLwipNAT::netifInit(netif *pNetif)
+/*static*/ err_t VBoxNetLwipNAT::netifInit(netif *pNetif)
 {
     err_t rcLwip = ERR_OK;
 
@@ -563,7 +590,7 @@ err_t VBoxNetLwipNAT::netifInit(netif *pNetif)
 }
 
 
-err_t VBoxNetLwipNAT::netifLinkoutput(netif *pNetif, pbuf *pPBuf)
+/*static*/ err_t VBoxNetLwipNAT::netifLinkoutput(netif *pNetif, pbuf *pPBuf)
 {
     AssertPtrReturn(pNetif, ERR_ARG);
     AssertPtrReturn(pPBuf, ERR_ARG);
@@ -621,8 +648,8 @@ VBoxNetLwipNAT::VBoxNetLwipNAT(SOCKET icmpsock4, SOCKET icmpsock6) : VBoxNetBase
     m_ProxyOptions.tftp_root = NULL;
     m_ProxyOptions.src4 = NULL;
     m_ProxyOptions.src6 = NULL;
-    memset(&m_src4, 0, sizeof(m_src4));
-    memset(&m_src6, 0, sizeof(m_src6));
+    RT_ZERO(m_src4);
+    RT_ZERO(m_src6);
     m_src4.sin_family = AF_INET;
     m_src6.sin6_family = AF_INET6;
 #if HAVE_SA_LEN
@@ -661,14 +688,26 @@ VBoxNetLwipNAT::VBoxNetLwipNAT(SOCKET icmpsock4, SOCKET icmpsock6) : VBoxNetBase
 
 VBoxNetLwipNAT::~VBoxNetLwipNAT()
 {
-    if (m_ProxyOptions.tftp_root != NULL)
+    if (m_ProxyOptions.tftp_root)
     {
         RTStrFree((char *)m_ProxyOptions.tftp_root);
+        m_ProxyOptions.tftp_root = NULL;
+    }
+    if (m_ProxyOptions.nameservers)
+    {
+        const char **pv = m_ProxyOptions.nameservers;
+        while (*pv)
+        {
+            RTStrFree((char*)*pv);
+            pv++;
+        }
+        RTMemFree(m_ProxyOptions.nameservers);
+        m_ProxyOptions.nameservers = NULL;
     }
 }
 
 
-int VBoxNetLwipNAT::natServicePfRegister(NATSEVICEPORTFORWARDRULE& natPf)
+/*static*/ int VBoxNetLwipNAT::natServicePfRegister(NATSEVICEPORTFORWARDRULE& natPf)
 {
     int lrc;
 
@@ -705,27 +744,23 @@ int VBoxNetLwipNAT::natServicePfRegister(NATSEVICEPORTFORWARDRULE& natPf)
     if (lrc != 0)
         return VERR_IGNORED;
 
-    RTCMemAutoPtr<fwspec> pFwCopy;
-    if (RT_UNLIKELY(!pFwCopy.alloc()))
+    fwspec *pFwCopy = (fwspec *)RTMemDup(&natPf.FWSpec, sizeof(natPf.FWSpec));
+    if (pFwCopy)
     {
+        lrc = portfwd_rule_add(pFwCopy);
+        if (lrc == 0)
+            return VINF_SUCCESS; /* (pFwCopy is owned by lwip thread now.) */
+        RTMemFree(pFwCopy);
+    }
+    else
         LogRel(("Unable to allocate memory for %s rule \"%s\"\n",
                 natPf.Pfr.fPfrIPv6 ? "IPv6" : "IPv4",
                 natPf.Pfr.szPfrName));
-        return VERR_IGNORED;
-    }
-
-    memcpy(pFwCopy.get(), &natPf.FWSpec, sizeof(natPf.FWSpec));
-
-    lrc = portfwd_rule_add(pFwCopy.get());
-    if (lrc != 0)
-        return VERR_IGNORED;
-
-    pFwCopy.release();          /* owned by lwip thread now */
-    return VINF_SUCCESS;
+    return VERR_IGNORED;
 }
 
 
-int VBoxNetLwipNAT::natServiceProcessRegisteredPf(VECNATSERVICEPF& vecRules)
+/*static*/ int VBoxNetLwipNAT::natServiceProcessRegisteredPf(VECNATSERVICEPF& vecRules)
 {
     ITERATORNATSERVICEPF it;
     for (it = vecRules.begin(); it != vecRules.end(); ++it)
@@ -754,8 +789,8 @@ int VBoxNetLwipNAT::natServiceProcessRegisteredPf(VECNATSERVICEPF& vecRules)
 }
 
 
-/** This method executed on main thread, only at the end threr're one threads started explcitly (LWIP and later in ::run()
- * RECV)
+/**
+ * Main thread. Starts also the LWIP thread.
  */
 int VBoxNetLwipNAT::init()
 {
@@ -765,15 +800,17 @@ int VBoxNetLwipNAT::init()
     int rc = ::VBoxNetBaseService::init();
     AssertRCReturn(rc, rc);
 
-    std::string networkName = getNetwork();
+    std::string networkName = getNetworkName();
     rc = findNatNetwork(virtualbox, networkName, m_net);
     AssertRCReturn(rc, rc);
 
-    ComEventTypeArray aNetEvents;
-    aNetEvents.push_back(VBoxEventType_OnNATNetworkPortForward);
-    aNetEvents.push_back(VBoxEventType_OnNATNetworkSetting);
-    rc = createNatListener(m_listener, virtualbox, this, aNetEvents);
-    AssertRCReturn(rc, rc);
+    {
+        ComEventTypeArray eventTypes;
+        eventTypes.push_back(VBoxEventType_OnNATNetworkPortForward);
+        eventTypes.push_back(VBoxEventType_OnNATNetworkSetting);
+        rc = createNatListener(m_NatListener, virtualbox, this, eventTypes);
+        AssertRCReturn(rc, rc);
+    }
 
 
     // resolver changes are reported on vbox but are retrieved from
@@ -781,10 +818,20 @@ int VBoxNetLwipNAT::init()
     HRESULT hrc = virtualbox->COMGETTER(Host)(m_host.asOutParam());
     AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
 
-    ComEventTypeArray aVBoxEvents;
-    aVBoxEvents.push_back(VBoxEventType_OnHostNameResolutionConfigurationChange);
-    rc = createNatListener(m_vboxListener, virtualbox, this, aVBoxEvents);
-    AssertRCReturn(rc, rc);
+    {
+        ComEventTypeArray eventTypes;
+        eventTypes.push_back(VBoxEventType_OnHostNameResolutionConfigurationChange);
+        eventTypes.push_back(VBoxEventType_OnNATNetworkStartStop);
+        rc = createNatListener(m_VBoxListener, virtualbox, this, eventTypes);
+        AssertRCReturn(rc, rc);
+    }
+
+    {
+        ComEventTypeArray eventTypes;
+        eventTypes.push_back(VBoxEventType_OnVBoxSVCAvailabilityChanged);
+        rc = createClientListener(m_VBoxClientListener, virtualboxClient, this, eventTypes);
+        AssertRCReturn(rc, rc);
+    }
 
     BOOL fIPv6Enabled = FALSE;
     hrc = m_net->COMGETTER(IPv6Enabled)(&fIPv6Enabled);
@@ -801,23 +848,60 @@ int VBoxNetLwipNAT::init()
     m_ProxyOptions.ipv6_defroute = fIPv6DefaultRoute;
 
 
-    com::Bstr bstrSourceIp4Key = com::BstrFmt("NAT/%s/SourceIp4", networkName.c_str());
+    /*
+     * Bind outgoing connections to the specified IP.
+     */
     com::Bstr bstrSourceIpX;
+
+    /* IPv4 */
+    com::Bstr bstrSourceIp4Key = com::BstrFmt("NAT/%s/SourceIp4", networkName.c_str());
     hrc = virtualbox->GetExtraData(bstrSourceIp4Key.raw(), bstrSourceIpX.asOutParam());
-    if (SUCCEEDED(hrc))
+    if (SUCCEEDED(hrc) && bstrSourceIpX.isNotEmpty())
     {
         RTNETADDRIPV4 addr;
         rc = RTNetStrToIPv4Addr(com::Utf8Str(bstrSourceIpX).c_str(), &addr);
         if (RT_SUCCESS(rc))
         {
-            RT_ZERO(m_src4);
-
             m_src4.sin_addr.s_addr = addr.u;
             m_ProxyOptions.src4 = &m_src4;
 
-            bstrSourceIpX.setNull();
+            LogRel(("Will use %RTnaipv4 as IPv4 source address\n",
+                    m_src4.sin_addr.s_addr));
         }
+        else
+        {
+            LogRel(("Failed to parse \"%s\" IPv4 source address specification\n",
+                    com::Utf8Str(bstrSourceIpX).c_str()));
+        }
+
+        bstrSourceIpX.setNull();
     }
+
+    /* IPv6 */
+    com::Bstr bstrSourceIp6Key = com::BstrFmt("NAT/%s/SourceIp6", networkName.c_str());
+    hrc = virtualbox->GetExtraData(bstrSourceIp6Key.raw(), bstrSourceIpX.asOutParam());
+    if (SUCCEEDED(hrc) && bstrSourceIpX.isNotEmpty())
+    {
+        RTNETADDRIPV6 addr;
+        char *pszZone = NULL;
+        rc = RTNetStrToIPv6Addr(com::Utf8Str(bstrSourceIpX).c_str(), &addr, &pszZone);
+        if (RT_SUCCESS(rc))
+        {
+            memcpy(&m_src6.sin6_addr, &addr, sizeof(addr));
+            m_ProxyOptions.src6 = &m_src6;
+
+            LogRel(("Will use %RTnaipv6 as IPv6 source address\n",
+                    &m_src6.sin6_addr));
+        }
+        else
+        {
+            LogRel(("Failed to parse \"%s\" IPv6 source address specification\n",
+                    com::Utf8Str(bstrSourceIpX).c_str()));
+        }
+
+        bstrSourceIpX.setNull();
+    }
+
 
     if (!fDontLoadRulesOnStartup)
     {
@@ -827,7 +911,7 @@ int VBoxNetLwipNAT::init()
 
     AddressToOffsetMapping tmp;
     rc = localMappings(m_net, tmp);
-    if (RT_SUCCESS(rc) && tmp.size() != 0)
+    if (RT_SUCCESS(rc) && !tmp.empty())
     {
         unsigned long i = 0;
         for (AddressToOffsetMapping::iterator it = tmp.begin();
@@ -862,9 +946,7 @@ int VBoxNetLwipNAT::init()
 
     rc = g_pLwipNat->tryGoOnline();
     if (RT_FAILURE(rc))
-    {
         return rc;
-    }
 
     /* this starts LWIP thread */
     vboxLwipCoreInitialize(VBoxNetLwipNAT::onLwipTcpIpInit, this);
@@ -876,32 +958,22 @@ int VBoxNetLwipNAT::init()
 
 const char **VBoxNetLwipNAT::getHostNameservers()
 {
-    HRESULT hrc;
-
     if (m_host.isNull())
-    {
         return NULL;
-    }
 
     com::SafeArray<BSTR> aNameServers;
-    hrc = m_host->COMGETTER(NameServers)(ComSafeArrayAsOutParam(aNameServers));
+    HRESULT hrc = m_host->COMGETTER(NameServers)(ComSafeArrayAsOutParam(aNameServers));
     if (FAILED(hrc))
-    {
         return NULL;
-    }
 
     const size_t cNameServers = aNameServers.size();
     if (cNameServers == 0)
-    {
         return NULL;
-    }
 
     const char **ppcszNameServers =
         (const char **)RTMemAllocZ(sizeof(char *) * (cNameServers + 1));
     if (ppcszNameServers == NULL)
-    {
         return NULL;
-    }
 
     size_t idxLast = 0;
     for (size_t i = 0; i < cNameServers; ++i)
@@ -909,9 +981,7 @@ const char **VBoxNetLwipNAT::getHostNameservers()
         com::Utf8Str strNameServer(aNameServers[i]);
         ppcszNameServers[idxLast] = RTStrDup(strNameServer.c_str());
         if (ppcszNameServers[idxLast] != NULL)
-        {
             ++idxLast;
-        }
     }
 
     if (idxLast == 0)
@@ -940,7 +1010,8 @@ int VBoxNetLwipNAT::parseOpt(int rc, const RTGETOPTUNION& Val)
 
             RT_ZERO(Rule);
 
-            int irc = netPfStrToPf(Val.psz, (rc == 'P'), &Rule.Pfr);
+            int rc2 = netPfStrToPf(Val.psz, (rc == 'P'), &Rule.Pfr);
+            RT_NOREF_PV(rc2);
             rules.push_back(Rule);
             return VINF_SUCCESS;
         }
@@ -955,11 +1026,9 @@ int VBoxNetLwipNAT::processFrame(void *pvFrame, size_t cbFrame)
     AssertPtrReturn(pvFrame, VERR_INVALID_PARAMETER);
     AssertReturn(cbFrame != 0, VERR_INVALID_PARAMETER);
 
-    struct pbuf *p = pbuf_alloc(PBUF_RAW, cbFrame + ETH_PAD_SIZE, PBUF_POOL);
+    struct pbuf *p = pbuf_alloc(PBUF_RAW, (u16_t)cbFrame + ETH_PAD_SIZE, PBUF_POOL);
     if (RT_UNLIKELY(p == NULL))
-    {
         return VERR_NO_MEMORY;
-    }
 
     /*
      * The code below is inlined version of:
@@ -993,25 +1062,23 @@ int VBoxNetLwipNAT::processFrame(void *pvFrame, size_t cbFrame)
 
 int VBoxNetLwipNAT::processGSO(PCPDMNETWORKGSO pGso, size_t cbFrame)
 {
-    if (!PDMNetGsoIsValid(pGso, cbFrame,
-                          cbFrame - sizeof(PDMNETWORKGSO)))
+    if (!PDMNetGsoIsValid(pGso, cbFrame, cbFrame - sizeof(PDMNETWORKGSO)))
         return VERR_INVALID_PARAMETER;
 
     cbFrame -= sizeof(PDMNETWORKGSO);
     uint8_t         abHdrScratch[256];
     uint32_t const  cSegs = PDMNetGsoCalcSegmentCount(pGso,
                                                       cbFrame);
-    for (size_t iSeg = 0; iSeg < cSegs; iSeg++)
+    for (uint32_t iSeg = 0; iSeg < cSegs; iSeg++)
     {
         uint32_t cbSegFrame;
-        void    *pvSegFrame =
-          PDMNetGsoCarveSegmentQD(pGso,
-                                  (uint8_t *)(pGso + 1),
-                                  cbFrame,
-                                  abHdrScratch,
-                                  iSeg,
-                                  cSegs,
-                                  &cbSegFrame);
+        void    *pvSegFrame = PDMNetGsoCarveSegmentQD(pGso,
+                                                      (uint8_t *)(pGso + 1),
+                                                      cbFrame,
+                                                      abHdrScratch,
+                                                      iSeg,
+                                                      cSegs,
+                                                      &cbSegFrame);
 
         int rc = processFrame(pvSegFrame, cbSegFrame);
         if (RT_FAILURE(rc))
@@ -1033,6 +1100,10 @@ int VBoxNetLwipNAT::run()
 
     m_vecPortForwardRule4.clear();
     m_vecPortForwardRule6.clear();
+
+    destroyNatListener(m_NatListener, virtualbox);
+    destroyNatListener(m_VBoxListener, virtualbox);
+    destroyClientListener(m_VBoxClientListener, virtualboxClient);
 
     return VINF_SUCCESS;
 }
@@ -1144,12 +1215,16 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
             int vrc = com::GetVBoxUserHomeDirectory(szHome, sizeof(szHome), false);
             if (RT_SUCCESS(vrc))
             {
+                closesocket(icmpsock4);
+                closesocket(icmpsock6);
                 return RTMsgErrorExit(RTEXITCODE_FAILURE,
                                       "Failed to initialize COM: %s: %Rhrf",
                                       szHome, hrc);
             }
         }
 #endif  // VBOX_WITH_XPCOM
+        closesocket(icmpsock4);
+        closesocket(icmpsock6);
         return RTMsgErrorExit(RTEXITCODE_FAILURE,
                               "Failed to initialize COM: %Rhrf", hrc);
     }
@@ -1164,14 +1239,10 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
     rc = (rc == 0) ? VINF_SUCCESS : VERR_GENERAL_FAILURE; /* XXX: FIXME */
 
     if (RT_SUCCESS(rc))
-    {
         rc = g_pLwipNat->init();
-    }
 
     if (RT_SUCCESS(rc))
-    {
         g_pLwipNat->run();
-    }
 
     delete g_pLwipNat;
     return 0;
@@ -1213,24 +1284,18 @@ static int vboxNetNATLogInit(int argc, char **argv)
     }
 
     if (pcszNetwork == NULL)
-    {
         return VERR_MISSING;
-    }
 
     char szNetwork[RTPATH_MAX];
     rc = RTStrCopy(szNetwork, sizeof(szNetwork), pcszNetwork);
     if (RT_FAILURE(rc))
-    {
         return rc;
-    }
 
     // sanitize network name to be usable as a path component
     for (char *p = szNetwork; *p != '\0'; ++p)
     {
         if (RTPATH_IS_SEP(*p))
-        {
             *p = '_';
-        }
     }
 
     char szLogFile[RTPATH_MAX];
@@ -1257,11 +1322,8 @@ static int vboxNetNATLogInit(int argc, char **argv)
     cch = RTStrPrintf(szEnvVarBase, sizeof(szEnvVarBase),
                       "VBOXNET_%s_RELEASE_LOG", szNetwork);
     if (cch >= sizeof(szEnvVarBase))
-    {
         return VERR_BUFFER_OVERFLOW;
-    }
 
-    char szError[RTPATH_MAX + 128];
     rc = com::VBoxLogRelCreate("NAT Network",
                                szLogFile,
                                RTLOGFLAGS_PREFIX_TIME_PROG,
@@ -1272,7 +1334,28 @@ static int vboxNetNATLogInit(int argc, char **argv)
                                0 /* cHistory */,
                                0 /* uHistoryFileTime */,
                                0 /* uHistoryFileSize */,
-                               szError, sizeof(szError));
+                               NULL /*pErrInfo*/);
+
+    /*
+     * Provide immediate feedback if corresponding LogRel level is
+     * enabled.  It's frustrating when you chase some rare event and
+     * discover you didn't actually have the corresponding log level
+     * enabled because of a typo in the environment variable name or
+     * its content.
+     */
+#define LOG_PING(_log) _log((#_log " enabled\n"))
+    LOG_PING(LogRel2);
+    LOG_PING(LogRel3);
+    LOG_PING(LogRel4);
+    LOG_PING(LogRel5);
+    LOG_PING(LogRel6);
+    LOG_PING(LogRel7);
+    LOG_PING(LogRel8);
+    LOG_PING(LogRel9);
+    LOG_PING(LogRel10);
+    LOG_PING(LogRel11);
+    LOG_PING(LogRel12);
+
     return rc;
 }
 
@@ -1285,7 +1368,7 @@ static int fetchNatPortForwardRules(const ComNatPtr& nat, bool fIsIPv6, VECNATSE
         hrc = nat->COMGETTER(PortForwardRules6)(ComSafeArrayAsOutParam(rules));
     else
         hrc = nat->COMGETTER(PortForwardRules4)(ComSafeArrayAsOutParam(rules));
-    AssertReturn(SUCCEEDED(hrc), VERR_INTERNAL_ERROR);
+    AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
 
     NATSEVICEPORTFORWARDRULE Rule;
     for (size_t idxRules = 0; idxRules < rules.size(); ++idxRules)
@@ -1293,8 +1376,8 @@ static int fetchNatPortForwardRules(const ComNatPtr& nat, bool fIsIPv6, VECNATSE
         Log(("%d-%s rule: %ls\n", idxRules, (fIsIPv6 ? "IPv6" : "IPv4"), rules[idxRules]));
         RT_ZERO(Rule);
 
-        int rc = netPfStrToPf(com::Utf8Str(rules[idxRules]).c_str(),
-                              fIsIPv6, &Rule.Pfr);
+        int rc = netPfStrToPf(com::Utf8Str(rules[idxRules]).c_str(), fIsIPv6,
+                              &Rule.Pfr);
         if (RT_FAILURE(rc))
             continue;
 
@@ -1318,6 +1401,7 @@ int main(int argc, char **argv, char **envp)
 
 # if defined(RT_OS_WINDOWS)
 
+#  if 0 /* Some copy and paste from DHCP that nobody explained why was diabled. */
 static LRESULT CALLBACK WindowProc(HWND hwnd,
     UINT uMsg,
     WPARAM wParam,
@@ -1358,10 +1442,9 @@ static DWORD WINAPI MsgThreadProc(__in  LPVOID lpParameter)
      if (atomWindowClass != 0)
      {
          /* Create the window. */
-         hwnd = CreateWindowEx (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_TOPMOST,
-                 g_WndClassName, g_WndClassName,
-                                                   WS_POPUPWINDOW,
-                                                  -200, -200, 100, 100, NULL, NULL, hInstance, NULL);
+         hwnd = CreateWindowEx(WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_TOPMOST,
+                               g_WndClassName, g_WndClassName, WS_POPUPWINDOW,
+                               -200, -200, 100, 100, NULL, NULL, hInstance, NULL);
 
          if (hwnd)
          {
@@ -1391,13 +1474,14 @@ static DWORD WINAPI MsgThreadProc(__in  LPVOID lpParameter)
 
      return 0;
 }
-
+#  endif
 
 
 /** (We don't want a console usually.) */
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
-#if 0
+    RT_NOREF(hInstance, hPrevInstance, lpCmdLine, nCmdShow);
+#  if 0 /* some copy and paste from DHCP that nobody explained why was diabled. */
     NOREF(hInstance); NOREF(hPrevInstance); NOREF(lpCmdLine); NOREF(nCmdShow);
 
     HANDLE hThread = CreateThread(
@@ -1412,7 +1496,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     if(hThread != NULL)
         CloseHandle(hThread);
 
-#endif
+#  endif
     return main(__argc, __argv, environ);
 }
 # endif /* RT_OS_WINDOWS */

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,12 +16,12 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RT_OS_WINDOWS
-# include <Windows.h>
-# include <Shlobj.h>
+# include <iprt/win/windows.h>
+# include <iprt/win/shlobj.h>
 #endif
 
 #include <iprt/initterm.h>

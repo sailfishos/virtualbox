@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,12 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#ifdef DEBUG_ramshankar
-# define LOG_INSTANCE       RTLogRelDefaultInstance()
-#endif
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "Virtio-solaris.h"
 
 #include <iprt/assert.h>
@@ -168,6 +166,7 @@ int VirtioDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd)
  * Allocates a Virtio Queue object and assigns it an index.
  *
  * @param pDevice           Pointer to the Virtio device instance.
+ * @param Index             Queue index.
  *
  * @return A pointer to a Virtio Queue instance.
  */
@@ -192,7 +191,7 @@ PVIRTIOQUEUE VirtioGetQueue(PVIRTIODEVICE pDevice, uint16_t Index)
     AssertReturn(pQueue->pQueue, NULL);
     AssertReturn(pQueue->Ring.cDesc > 0, NULL);
 
-    /* @todo enable interrupt. */
+    /** @todo enable interrupt. */
 
     return pQueue;
 }

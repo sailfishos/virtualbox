@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PGM_SHARED
 #include <VBox/vmm/pgm.h>
 #include <VBox/vmm/stam.h>
@@ -39,9 +39,10 @@
 
 #ifdef VBOX_WITH_PAGE_SHARING
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 # ifdef VBOX_STRICT
 /** Keep a copy of all registered shared modules for the .pgmcheckduppages debugger command. */
 static PGMMREGISTERSHAREDMODULEREQ  g_apSharedModules[512] = {0};
@@ -53,7 +54,7 @@ static unsigned                     g_cSharedModules = 0;
  * Registers a new shared module for the VM
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   enmGuestOS          Guest OS type.
  * @param   pszModuleName       Module name.
  * @param   pszVersion          Module version.
@@ -75,12 +76,14 @@ VMMR3DECL(int) PGMR3SharedModuleRegister(PVM pVM, VBOXOSFAMILY enmGuestOS, char 
      * Sanity check.
      */
     AssertReturn(cRegions <= VMMDEVSHAREDREGIONDESC_MAX, VERR_INVALID_PARAMETER);
+    if (!pVM->pgm.s.fPageFusionAllowed)
+        return VERR_NOT_SUPPORTED;
 
     /*
      * Allocate and initialize a GMM request.
      */
     PGMMREGISTERSHAREDMODULEREQ pReq;
-    pReq = (PGMMREGISTERSHAREDMODULEREQ)RTMemAllocZ(RT_OFFSETOF(GMMREGISTERSHAREDMODULEREQ, aRegions[cRegions]));
+    pReq = (PGMMREGISTERSHAREDMODULEREQ)RTMemAllocZ(RT_UOFFSETOF_DYN(GMMREGISTERSHAREDMODULEREQ, aRegions[cRegions]));
     AssertReturn(pReq, VERR_NO_MEMORY);
 
     pReq->enmGuestOS    = enmGuestOS;
@@ -114,7 +117,7 @@ VMMR3DECL(int) PGMR3SharedModuleRegister(PVM pVM, VBOXOSFAMILY enmGuestOS, char 
                     if (g_apSharedModules[i] == NULL)
                     {
 
-                        size_t const cbSharedModule = RT_OFFSETOF(GMMREGISTERSHAREDMODULEREQ, aRegions[cRegions]);
+                        size_t const cbSharedModule = RT_UOFFSETOF_DYN(GMMREGISTERSHAREDMODULEREQ, aRegions[cRegions]);
                         g_apSharedModules[i] = (PGMMREGISTERSHAREDMODULEREQ)RTMemDup(pReq, cbSharedModule);
                         g_cSharedModules++;
                         break;
@@ -136,7 +139,7 @@ VMMR3DECL(int) PGMR3SharedModuleRegister(PVM pVM, VBOXOSFAMILY enmGuestOS, char 
  * Unregisters a shared module for the VM
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pszModuleName       Module name.
  * @param   pszVersion          Module version.
  * @param   GCBaseAddr          Module base address.
@@ -147,8 +150,10 @@ VMMR3DECL(int) PGMR3SharedModuleRegister(PVM pVM, VBOXOSFAMILY enmGuestOS, char 
 VMMR3DECL(int) PGMR3SharedModuleUnregister(PVM pVM, char *pszModuleName, char *pszVersion, RTGCPTR GCBaseAddr, uint32_t cbModule)
 {
     Log(("PGMR3SharedModuleUnregister name=%s version=%s base=%RGv size=%x\n", pszModuleName, pszVersion, GCBaseAddr, cbModule));
-    AssertMsgReturn(cbModule > 0 && cbModule < _1G, ("%u\n", cbModule), VERR_OUT_OF_RANGE);
 
+    AssertMsgReturn(cbModule > 0 && cbModule < _1G, ("%u\n", cbModule), VERR_OUT_OF_RANGE);
+    if (!pVM->pgm.s.fPageFusionAllowed)
+        return VERR_NOT_SUPPORTED;
 
     /*
      * Forward the request to GMM (ring-0).
@@ -199,8 +204,8 @@ VMMR3DECL(int) PGMR3SharedModuleUnregister(PVM pVM, char *pszModuleName, char *p
  * Rendezvous callback that will be called once.
  *
  * @returns VBox strict status code.
- * @param   pVM                 Pointer to the VM.
- * @param   pVCpu               Pointer to the VMCPU of the calling EMT.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  * @param   pvUser              Pointer to a VMCPUID with the requester's ID.
  */
 static DECLCALLBACK(VBOXSTRICTRC) pgmR3SharedModuleRegRendezvous(PVM pVM, PVMCPU pVCpu, void *pvUser)
@@ -238,8 +243,8 @@ static DECLCALLBACK(VBOXSTRICTRC) pgmR3SharedModuleRegRendezvous(PVM pVM, PVMCPU
 /**
  * Shared module check helper (called on the way out).
  *
- * @param   pVM         Pointer to the VM.
- * @param   VMCPUID     VCPU id
+ * @param   pVM         The cross context VM structure.
+ * @param   idCpu       VCPU id.
  */
 static DECLCALLBACK(void) pgmR3CheckSharedModulesHelper(PVM pVM, VMCPUID idCpu)
 {
@@ -255,10 +260,13 @@ static DECLCALLBACK(void) pgmR3CheckSharedModulesHelper(PVM pVM, VMCPUID idCpu)
  * Check all registered modules for changes.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM
+ * @param   pVM                 The cross context VM structure.
  */
 VMMR3DECL(int) PGMR3SharedModuleCheckAll(PVM pVM)
 {
+    if (!pVM->pgm.s.fPageFusionAllowed)
+        return VERR_NOT_SUPPORTED;
+
     /* Queue the actual registration as we are under the IOM lock right now. Perform this operation on the way out. */
     return VMR3ReqCallNoWait(pVM, VMCPUID_ANY_QUEUE, (PFNRT)pgmR3CheckSharedModulesHelper, 2, pVM, VMMGetCpuId(pVM));
 }
@@ -269,7 +277,7 @@ VMMR3DECL(int) PGMR3SharedModuleCheckAll(PVM pVM)
  * Query the state of a page in a shared module
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   GCPtrPage           Page address.
  * @param   pfShared            Shared status (out).
  * @param   pfPageFlags         Page flags (out).

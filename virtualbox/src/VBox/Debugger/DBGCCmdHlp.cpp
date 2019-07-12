@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGC
 #include <VBox/dbg.h>
 #include <VBox/vmm/dbgf.h>
@@ -77,7 +78,7 @@ static size_t dbgcStringOutputInQuotes(PFNRTSTROUTPUT pfnOutput, void *pvArgOutp
         size_t cchSub = pchQuote - psz + 1;
         cchOutput += pfnOutput(pvArgOutput, psz, cchSub);
         cchOutput += pfnOutput(pvArgOutput, &chQuote, 1);
-        cchSub -= cchSub;
+        cch    -= cchSub;
         psz    += cchSub;
     }
 
@@ -253,7 +254,7 @@ static DECLCALLBACK(int) dbgcHlpPrintfV(PDBGCCMDHLP pCmdHlp, size_t *pcbWritten,
 
 
 /**
- * @interface_method_impl{DBGCCMDHLP,pfnStrPrintf}
+ * @interface_method_impl{DBGCCMDHLP,pfnStrPrintfV}
  */
 static DECLCALLBACK(size_t) dbgcHlpStrPrintfV(PDBGCCMDHLP pCmdHlp, char *pszBuf, size_t cbBuf,
                                               const char *pszFormat, va_list va)
@@ -553,7 +554,7 @@ static DECLCALLBACK(int) dbgcHlpMemWrite(PDBGCCMDHLP pCmdHlp, const void *pvBuff
             Var.enmType = DBGCVAR_TYPE_GC_FLAT;
             Var.u.GCFlat = Address.FlatPtr;
         }
-        /* fall thru */
+        RT_FALL_THRU();
         case DBGCVAR_TYPE_GC_FLAT:
             rc = DBGFR3MemWrite(pDbgc->pUVM, pDbgc->idCpu,
                                 DBGFR3AddrFromFlat(pDbgc->pUVM, &Address, Var.u.GCFlat),
@@ -620,7 +621,7 @@ static DECLCALLBACK(int) dbgcHlpMemWrite(PDBGCCMDHLP pCmdHlp, const void *pvBuff
 
 
 /**
- * @interface_method_impl{DBGCCMDHLP,pfnHlpExec}
+ * @interface_method_impl{DBGCCMDHLP,pfnExec}
  */
 static DECLCALLBACK(int) dbgcHlpExec(PDBGCCMDHLP pCmdHlp, const char *pszExpr, ...)
 {
@@ -656,7 +657,7 @@ static DECLCALLBACK(int) dbgcHlpExec(PDBGCCMDHLP pCmdHlp, const char *pszExpr, .
 
 
 /**
- * @copydoc DBGCCMDHLP::pfnEvalV
+ * @interface_method_impl{DBGCCMDHLP,pfnEvalV}
  */
 static DECLCALLBACK(int) dbgcHlpEvalV(PDBGCCMDHLP pCmdHlp, PDBGCVAR pResult, const char *pszExpr, va_list va)
 {
@@ -674,7 +675,7 @@ static DECLCALLBACK(int) dbgcHlpEvalV(PDBGCCMDHLP pCmdHlp, PDBGCVAR pResult, con
 
 
 /**
- * @copydoc DBGCCMDHLP::pfnFailV
+ * @interface_method_impl{DBGCCMDHLP,pfnFailV}
  */
 static DECLCALLBACK(int) dbgcHlpFailV(PDBGCCMDHLP pCmdHlp, PCDBGCCMD pCmd, const char *pszFormat, va_list va)
 {
@@ -697,7 +698,7 @@ static DECLCALLBACK(int) dbgcHlpFailV(PDBGCCMDHLP pCmdHlp, PCDBGCCMD pCmd, const
 
 
 /**
- * @copydoc DBGCCMDHLP::pfnFailV
+ * @interface_method_impl{DBGCCMDHLP,pfnFailRcV}
  */
 static DECLCALLBACK(int) dbgcHlpFailRcV(PDBGCCMDHLP pCmdHlp, PCDBGCCMD pCmd, int rc, const char *pszFormat, va_list va)
 {
@@ -722,7 +723,7 @@ static DECLCALLBACK(int) dbgcHlpFailRcV(PDBGCCMDHLP pCmdHlp, PCDBGCCMD pCmd, int
 
 
 /**
- * @copydoc DBGCCMDHLP::pfnParserError
+ * @interface_method_impl{DBGCCMDHLP,pfnParserError}
  */
 static DECLCALLBACK(int) dbgcHlpParserError(PDBGCCMDHLP pCmdHlp, PCDBGCCMD pCmd, int iArg, const char *pszExpr, unsigned iLine)
 {
@@ -789,6 +790,7 @@ static DECLCALLBACK(int) dbgcHlpVarToDbgfAddr(PDBGCCMDHLP pCmdHlp, PCDBGCVAR pVa
  */
 static DECLCALLBACK(int) dbgcHlpVarFromDbgfAddr(PDBGCCMDHLP pCmdHlp, PCDBGFADDRESS pAddress, PDBGCVAR pResult)
 {
+    RT_NOREF1(pCmdHlp);
     AssertPtrReturn(pAddress, VERR_INVALID_POINTER);
     AssertReturn(DBGFADDRESS_IS_VALID(pAddress), VERR_INVALID_PARAMETER);
     AssertPtrReturn(pResult,  VERR_INVALID_POINTER);
@@ -911,6 +913,7 @@ static DECLCALLBACK(int) dbgcHlpVarToBool(PDBGCCMDHLP pCmdHlp, PCDBGCVAR pVar, b
 static DECLCALLBACK(int) dbgcHlpVarGetRange(PDBGCCMDHLP pCmdHlp, PCDBGCVAR pVar, uint64_t cbElement, uint64_t cbDefault,
                                             uint64_t *pcbRange)
 {
+    RT_NOREF1(pCmdHlp);
 /** @todo implement this properly, strings/symbols are not resolved now. */
     switch (pVar->enmRangeType)
     {
@@ -932,11 +935,11 @@ static DECLCALLBACK(int) dbgcHlpVarGetRange(PDBGCCMDHLP pCmdHlp, PCDBGCVAR pVar,
 /**
  * @interface_method_impl{DBGCCMDHLP,pfnVarConvert}
  */
-static DECLCALLBACK(int) dbgcHlpVarConvert(PDBGCCMDHLP pCmdHlp, PCDBGCVAR pInVar, DBGCVARTYPE enmToType, bool fConvSyms,
+static DECLCALLBACK(int) dbgcHlpVarConvert(PDBGCCMDHLP pCmdHlp, PCDBGCVAR pVar, DBGCVARTYPE enmToType, bool fConvSyms,
                                            PDBGCVAR pResult)
 {
     PDBGC           pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
-    DBGCVAR const   InVar = *pInVar;    /* if pInVar == pResult  */
+    DBGCVAR const   InVar = *pVar;      /* if pVar == pResult  */
     PCDBGCVAR       pArg = &InVar;      /* lazy bird, clean up later */
     DBGFADDRESS     Address;
     int             rc;

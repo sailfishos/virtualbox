@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,13 +13,25 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
+
 #define INITGUID
 #include "VBoxUsbTool.h"
 #include <usbbusif.h>
 
 #include <iprt/assert.h>
+#include <iprt/string.h>
 #include <VBox/log.h>
+#include <VBox/usblib.h>
 
 #include "../../../win/VBoxDbgLog.h"
 
@@ -98,7 +110,7 @@ VBOXUSBTOOL_DECL(NTSTATUS) VBoxUsbToolGetDescriptor(PDEVICE_OBJECT pDevObj, void
     NTSTATUS Status;
     USHORT cbUrb = sizeof (struct _URB_CONTROL_DESCRIPTOR_REQUEST);
     PURB pUrb = VBoxUsbToolUrbAllocZ(URB_FUNCTION_GET_DESCRIPTOR_FROM_DEVICE, cbUrb);
-    if(!pUrb)
+    if (!pUrb)
     {
         WARN(("allocating URB failed"));
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -134,15 +146,16 @@ VBOXUSBTOOL_DECL(VOID) VBoxUsbToolStringDescriptorToUnicodeString(PUSB_STRING_DE
     pUnicode->Length = pUnicode->MaximumLength = pDr->bLength - RT_OFFSETOF(USB_STRING_DESCRIPTOR, bString);
 }
 
-VBOXUSBTOOL_DECL(NTSTATUS) VBoxUsbToolGetStringDescriptorA(PDEVICE_OBJECT pDevObj, char *pResult, ULONG cbResult, int iIndex, int LangId, ULONG dwTimeoutMs)
+VBOXUSBTOOL_DECL(NTSTATUS) VBoxUsbToolGetStringDescriptor(PDEVICE_OBJECT pDevObj, char *pszResult, ULONG cbResult,
+                                                          int iIndex, int LangId, ULONG dwTimeoutMs)
 {
     char aBuf[MAXIMUM_USB_STRING_LENGTH];
     AssertCompile(sizeof (aBuf) <= UINT8_MAX);
     UCHAR cbBuf = (UCHAR)sizeof (aBuf);
     PUSB_STRING_DESCRIPTOR pDr = (PUSB_STRING_DESCRIPTOR)&aBuf;
 
-    Assert(pResult);
-    *pResult = 0;
+    Assert(pszResult);
+    *pszResult = 0;
 
     memset(pDr, 0, cbBuf);
     pDr->bLength = cbBuf;
@@ -153,29 +166,18 @@ VBOXUSBTOOL_DECL(NTSTATUS) VBoxUsbToolGetStringDescriptorA(PDEVICE_OBJECT pDevOb
     {
         if (pDr->bLength >= sizeof (USB_STRING_DESCRIPTOR))
         {
-            UNICODE_STRING Unicode;
-            ANSI_STRING Ansi;
-            /* for some reason the string dr sometimes contains a non-null terminated string
-             * although we zeroed up the complete descriptor buffer
-             * this is why RtlInitUnicodeString won't work*/
-            VBoxUsbToolStringDescriptorToUnicodeString(pDr, &Unicode);
-            Ansi.Buffer = pResult;
-            Ansi.Length = 0;
-            Ansi.MaximumLength = (USHORT)cbResult - 1;
-            memset(pResult, 0, cbResult);
-            Status = RtlUnicodeStringToAnsiString(&Ansi, &Unicode, FALSE);
-            Assert(Status == STATUS_SUCCESS);
-            if (NT_SUCCESS(Status))
+            int rc = RTUtf16ToUtf8Ex(pDr->bString, (pDr->bLength - RT_OFFSETOF(USB_STRING_DESCRIPTOR, bString)) / sizeof(RTUTF16),
+                                     &pszResult, cbResult, NULL /*pcch*/);
+            if (RT_SUCCESS(rc))
             {
-                /* just to make sure the string is null-terminated */
-                Assert(pResult[cbResult-1] == 0);
+                USBLibPurgeEncoding(pszResult);
                 Status = STATUS_SUCCESS;
             }
+            else
+                Status = STATUS_UNSUCCESSFUL;
         }
         else
-        {
             Status = STATUS_INVALID_PARAMETER;
-        }
     }
     return Status;
 }
@@ -341,7 +343,8 @@ VBOXUSBTOOL_DECL(PIRP) VBoxUsbToolIoBuildAsyncInternalCtl(PDEVICE_OBJECT pDevObj
     return pIrp;
 }
 
-VBOXUSBTOOL_DECL(NTSTATUS) VBoxUsbToolIoInternalCtlSendSyncWithTimeout(PDEVICE_OBJECT pDevObj, ULONG uCtl, void *pvArg1, void *pvArg2, ULONG dwTimeoutMs)
+VBOXUSBTOOL_DECL(NTSTATUS) VBoxUsbToolIoInternalCtlSendSyncWithTimeout(PDEVICE_OBJECT pDevObj, ULONG uCtl,
+                                                                       void *pvArg1, void *pvArg2, ULONG dwTimeoutMs)
 {
     /* since we're going to cancel the irp on timeout, we should allocate our own IRP rather than using the threaded one
      * */
@@ -360,13 +363,12 @@ VBOXUSBTOOL_DECL(NTSTATUS) VBoxUsbToolIoInternalCtlSendSyncWithTimeout(PDEVICE_O
 }
 
 VBOXUSBTOOL_DECL(NTSTATUS) VBoxUsbToolIoInternalCtlSendAsync(PDEVICE_OBJECT pDevObj, ULONG uCtl, void *pvArg1, void *pvArg2,
-        PKEVENT pEvent, PIO_STATUS_BLOCK pIoStatus)
+                                                             PKEVENT pEvent, PIO_STATUS_BLOCK pIoStatus)
 {
     NTSTATUS Status;
     PIRP pIrp;
     PIO_STACK_LOCATION pSl;
-    KIRQL Irql = KeGetCurrentIrql();
-    Assert(Irql == PASSIVE_LEVEL);
+    Assert(KeGetCurrentIrql() == PASSIVE_LEVEL);
 
     pIrp = IoBuildDeviceIoControlRequest(uCtl, pDevObj, NULL, 0, NULL, 0, TRUE, pEvent, pIoStatus);
     if (!pIrp)

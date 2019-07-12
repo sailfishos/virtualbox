@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/memsafer.h>
 
@@ -45,16 +45,16 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Allocation size alignment (power of two). */
 #define RTMEMSAFER_ALIGN        16
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Allocators.
  */
@@ -91,9 +91,9 @@ typedef struct RTMEMSAFERNODE
 typedef RTMEMSAFERNODE *PRTMEMSAFERNODE;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Init once structure for this module. */
 static RTONCE       g_MemSaferOnce = RTONCE_INITIALIZER;
 /** Critical section protecting the allocation tree. */
@@ -113,6 +113,8 @@ static uintptr_t    g_cMemSaferPtrScramblerRotate;
  */
 static DECLCALLBACK(int32_t) rtMemSaferOnceInit(void *pvUserIgnore)
 {
+    RT_NOREF_PV(pvUserIgnore);
+
     g_uMemSaferScramblerXor = (uintptr_t)RTRandU64();
     g_uMemSaferPtrScramblerXor = (uintptr_t)RTRandU64();
     g_cMemSaferPtrScramblerRotate = RTRandU32Ex(0, ARCH_BITS - 1);
@@ -125,6 +127,8 @@ static DECLCALLBACK(int32_t) rtMemSaferOnceInit(void *pvUserIgnore)
  */
 static DECLCALLBACK(void) rtMemSaferOnceTerm(void *pvUser, bool fLazyCleanUpOk)
 {
+    RT_NOREF_PV(pvUser);
+
     if (!fLazyCleanUpOk)
     {
         RTCritSectRwDelete(&g_MemSaferCritSect);
@@ -160,7 +164,7 @@ static void rtMemSaferNodeInsert(PRTMEMSAFERNODE pThis)
     pThis->Core.Key = rtMemSaferScramblePointer(pThis->Core.Key);
     bool fRc = RTAvlPVInsert(&g_pMemSaferTree, &pThis->Core);
     RTCritSectRwLeaveExcl(&g_MemSaferCritSect);
-    Assert(fRc);
+    Assert(fRc); NOREF(fRc);
 }
 
 
@@ -313,7 +317,9 @@ static int rtMemSaferSupR3AllocPages(PRTMEMSAFERNODE pThis)
 #endif
     }
     return rc;
+
 #else  /* !IN_SUP_R3 */
+    RT_NOREF_PV(pThis);
     return VERR_NOT_SUPPORTED;
 #endif /* !IN_SUP_R3 */
 }
@@ -359,8 +365,10 @@ static int rtMemSaferMemAllocPages(PRTMEMSAFERNODE pThis)
 }
 
 
-RTDECL(int) RTMemSaferAllocZExTag(void **ppvNew, size_t cb, uint32_t fFlags, const char *pszTag) RT_NO_THROW
+RTDECL(int) RTMemSaferAllocZExTag(void **ppvNew, size_t cb, uint32_t fFlags, const char *pszTag) RT_NO_THROW_DEF
 {
+    RT_NOREF_PV(pszTag);
+
     /*
      * Validate input.
      */
@@ -426,13 +434,16 @@ RTDECL(int) RTMemSaferAllocZExTag(void **ppvNew, size_t cb, uint32_t fFlags, con
 RT_EXPORT_SYMBOL(RTMemSaferAllocZExTag);
 
 
-RTDECL(void) RTMemSaferFree(void *pv, size_t cb) RT_NO_THROW
+RTDECL(void) RTMemSaferFree(void *pv, size_t cb) RT_NO_THROW_DEF
 {
     if (pv)
     {
         PRTMEMSAFERNODE pThis = rtMemSaferNodeRemove(pv);
         AssertReturnVoid(pThis);
-        AssertMsg(cb == pThis->cbUser, ("cb=%#zx != %#zx\n", cb, pThis->cbUser));
+        if (cb == 0) /* for openssl use */
+            cb = pThis->cbUser;
+        else
+            AssertMsg(cb == pThis->cbUser, ("cb=%#zx != %#zx\n", cb, pThis->cbUser));
 
         /*
          * Wipe the user memory first.
@@ -477,6 +488,23 @@ RTDECL(void) RTMemSaferFree(void *pv, size_t cb) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemSaferFree);
 
 
+RTDECL(size_t) RTMemSaferGetSize(void *pv) RT_NO_THROW_DEF
+{
+    size_t cbRet = 0;
+    if (pv)
+    {
+        void *pvKey = rtMemSaferScramblePointer(pv);
+        RTCritSectRwEnterShared(&g_MemSaferCritSect);
+        PRTMEMSAFERNODE pThis = (PRTMEMSAFERNODE)RTAvlPVGet(&g_pMemSaferTree, pvKey);
+        if (pThis)
+            cbRet = pThis->cbUser;
+        RTCritSectRwLeaveShared(&g_MemSaferCritSect);
+    }
+    return cbRet;
+}
+RT_EXPORT_SYMBOL(RTMemSaferGetSize);
+
+
 /**
  * The simplest reallocation method: allocate new block, copy over the data,
  * free old block.
@@ -495,7 +523,7 @@ static int rtMemSaferReallocSimpler(size_t cbOld, void *pvOld, size_t cbNew, voi
 }
 
 
-RTDECL(int) RTMemSaferReallocZExTag(size_t cbOld, void *pvOld, size_t cbNew, void **ppvNew, uint32_t fFlags, const char *pszTag) RT_NO_THROW
+RTDECL(int) RTMemSaferReallocZExTag(size_t cbOld, void *pvOld, size_t cbNew, void **ppvNew, uint32_t fFlags, const char *pszTag) RT_NO_THROW_DEF
 {
     int rc;
     /* Real realloc. */
@@ -619,7 +647,7 @@ RTDECL(int) RTMemSaferReallocZExTag(size_t cbOld, void *pvOld, size_t cbNew, voi
 RT_EXPORT_SYMBOL(RTMemSaferReallocZExTag);
 
 
-RTDECL(void *) RTMemSaferAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemSaferAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     void *pvNew = NULL;
     int rc = RTMemSaferAllocZExTag(&pvNew, cb, 0 /*fFlags*/, pszTag);
@@ -630,7 +658,7 @@ RTDECL(void *) RTMemSaferAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemSaferAllocZTag);
 
 
-RTDECL(void *) RTMemSaferReallocZTag(size_t cbOld, void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemSaferReallocZTag(size_t cbOld, void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW_DEF
 {
     void *pvNew = NULL;
     int rc = RTMemSaferReallocZExTag(cbOld, pvOld, cbNew, &pvNew, 0 /*fFlags*/, pszTag);

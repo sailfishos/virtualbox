@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-darwin-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/thread.h>
@@ -41,9 +41,9 @@
 #include <iprt/mp.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct RTDARWINPREEMPTHACK
 {
     /** The spinlock we exploit for disabling preemption. */
@@ -54,9 +54,9 @@ typedef struct RTDARWINPREEMPTHACK
 typedef RTDARWINPREEMPTHACK *PRTDARWINPREEMPTHACK;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTDARWINPREEMPTHACK  g_aPreemptHacks[RTCPUSET_MAX_CPUS];
 
 
@@ -68,6 +68,7 @@ static RTDARWINPREEMPTHACK  g_aPreemptHacks[RTCPUSET_MAX_CPUS];
 int rtThreadPreemptDarwinInit(void)
 {
     Assert(g_pDarwinLockGroup);
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     for (size_t i = 0; i < RT_ELEMENTS(g_aPreemptHacks); i++)
     {
@@ -75,6 +76,7 @@ int rtThreadPreemptDarwinInit(void)
         if (!g_aPreemptHacks[i].pSpinLock)
             return VERR_NO_MEMORY; /* (The caller will invoke rtThreadPreemptDarwinTerm) */
     }
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -86,17 +88,22 @@ int rtThreadPreemptDarwinInit(void)
  */
 void rtThreadPreemptDarwinTerm(void)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
+
     for (size_t i = 0; i < RT_ELEMENTS(g_aPreemptHacks); i++)
         if (g_aPreemptHacks[i].pSpinLock)
         {
             lck_spin_free(g_aPreemptHacks[i].pSpinLock, g_pDarwinLockGroup);
             g_aPreemptHacks[i].pSpinLock = NULL;
         }
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
 }
 
 
 RTDECL(bool) RTThreadPreemptIsEnabled(RTTHREAD hThread)
 {
+    RT_NOREF(hThread);
     Assert(hThread == NIL_RTTHREAD);
     return preemption_enabled();
 }
@@ -104,12 +111,13 @@ RTDECL(bool) RTThreadPreemptIsEnabled(RTTHREAD hThread)
 
 RTDECL(bool) RTThreadPreemptIsPending(RTTHREAD hThread)
 {
+    RT_NOREF(hThread);
     if (!g_pfnR0DarwinAstPending)
         return false;
     uint32_t volatile *pfAstPending = g_pfnR0DarwinAstPending(); AssertPtr(pfAstPending);
     uint32_t  const    fAstPending = *pfAstPending;
 
-    AssertMsg(!(fAstPending & UINT32_C(0xffff8000)), ("%#x\n", fAstPending));
+    AssertMsg(!(fAstPending & UINT32_C(0xfffe0000)), ("%#x\n", fAstPending));
     return (fAstPending & (AST_PREEMPT | AST_QUANTUM | AST_URGENT)) != 0;
 }
 
@@ -173,7 +181,11 @@ RTDECL(void) RTThreadPreemptRestore(PRTTHREADPREEMPTSTATE pState)
         {
             lck_spin_t *pSpinLock = g_aPreemptHacks[idCpu].pSpinLock;
             if (pSpinLock)
+            {
+                IPRT_DARWIN_SAVE_EFL_AC();
                 lck_spin_unlock(pSpinLock);
+                IPRT_DARWIN_RESTORE_EFL_AC();
+            }
             else
                 AssertFailed();
         }

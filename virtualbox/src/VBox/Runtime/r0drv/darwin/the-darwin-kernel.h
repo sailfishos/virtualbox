@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,7 +27,7 @@
 #ifndef ___the_darwin_kernel_h
 #define ___the_darwin_kernel_h
 
-/* Problematic header(s) containing conflicts with IPRT  first. */
+/* Problematic header(s) containing conflicts with IPRT first. (FreeBSD has fixed these ages ago.) */
 #define __STDC_CONSTANT_MACROS
 #define __STDC_LIMIT_MACROS
 #include <sys/param.h>
@@ -37,6 +37,8 @@
 #undef MAX
 #undef PAGE_SIZE
 #undef PAGE_SHIFT
+#undef PVM
+
 
 /* Include the IPRT definitions of the conflicting #defines & typedefs. */
 #include <iprt/cdefs.h>
@@ -47,6 +49,17 @@
 /* After including cdefs, we can check that this really is Darwin. */
 #ifndef RT_OS_DARWIN
 # error "RT_OS_DARWIN must be defined!"
+#endif
+
+#if defined(__clang__) || RT_GNUC_PREREQ(4, 4)
+# pragma GCC diagnostic push
+#endif
+#if defined(__clang__) || RT_GNUC_PREREQ(4, 2)
+# pragma GCC diagnostic ignored "-Wc++11-extensions"
+# pragma GCC diagnostic ignored "-Wc99-extensions"
+# pragma GCC diagnostic ignored "-Wextra-semi"
+# pragma GCC diagnostic ignored "-Wzero-length-array"
+# pragma GCC diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
 #endif
 
 /* now we're ready for including the rest of the Darwin headers. */
@@ -72,10 +85,14 @@
 #include <sys/vnode.h>
 #include <sys/fcntl.h>
 #include <IOKit/IOTypes.h>
-#include <IOKit/IOLib.h>
+#include <IOKit/IOLib.h> /* Note! Has Assert down as a function. */
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOMapper.h>
+
+#if defined(__clang__) || RT_GNUC_PREREQ(4, 4)
+# pragma GCC diagnostic pop
+#endif
 
 
 /* See osfmk/kern/ast.h. */
@@ -90,6 +107,17 @@
 #if MAC_OS_X_VERSION_MIN_REQUIRED < 1060
 # define kIOMemoryMapperNone UINT32_C(0x800)
 #endif
+
+/** @name Macros for preserving EFLAGS.AC (despair / paranoid)
+ * @remarks Unlike linux, we have to restore it unconditionally on darwin.
+ * @{ */
+#include <iprt/asm-amd64-x86.h>
+#include <iprt/x86.h>
+#define IPRT_DARWIN_SAVE_EFL_AC()                       RTCCUINTREG const fSavedEfl = ASMGetFlags();
+#define IPRT_DARWIN_RESTORE_EFL_AC()                    ASMSetFlags(fSavedEfl)
+#define IPRT_DARWIN_RESTORE_EFL_ONLY_AC()               ASMChangeFlags(~X86_EFL_AC, fSavedEfl & X86_EFL_AC)
+#define IPRT_DARWIN_RESTORE_EFL_ONLY_AC_EX(a_fSavedEfl) ASMChangeFlags(~X86_EFL_AC, (a_fSavedEfl) & X86_EFL_AC)
+/** @} */
 
 
 RT_C_DECLS_BEGIN

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef IN_RING0
 # define IPRT_NT_MAP_TO_ZW
 # include <iprt/nt/nt.h>
@@ -51,9 +52,9 @@
 #include "win/SUPHardenedVerify-win.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Virtual address space region.
  */
@@ -168,9 +169,9 @@ typedef struct SUPHNTVPSTATE
 typedef SUPHNTVPSTATE *PSUPHNTVPSTATE;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * System DLLs allowed to be loaded into the process.
  * @remarks supHardNtVpCheckDlls assumes these are lower case.
@@ -205,7 +206,8 @@ static const char *g_apszSupNtVpAllowedDlls[] =
 
 /**
  * VBox executables allowed to start VMs.
- * @remarks Remember to keep in sync with SUPR3HardenedVerify.cpp.
+ * @remarks Remember to keep in sync with g_aSupInstallFiles in
+ *          SUPR3HardenedVerify.cpp.
  */
 static const char *g_apszSupNtVpAllowedVmExes[] =
 {
@@ -214,6 +216,7 @@ static const char *g_apszSupNtVpAllowedVmExes[] =
     "VBoxSDL.exe",
     "VBoxNetDHCP.exe",
     "VBoxNetNAT.exe",
+    "VBoxVMMPreload.exe",
 
     "tstMicro.exe",
     "tstPDMAsyncCompletion.exe",
@@ -221,9 +224,10 @@ static const char *g_apszSupNtVpAllowedVmExes[] =
     "tstVMM.exe",
     "tstVMREQ.exe",
     "tstCFGM.exe",
+    "tstGIP-2.exe",
     "tstIntNet-1.exe",
     "tstMMHyperHeap.exe",
-    "tstR0ThreadPreemptionDriver.exe",
+    "tstRTR0ThreadPreemptionDriver.exe",
     "tstRTR0MemUserKernelDriver.exe",
     "tstRTR0SemMutexDriver.exe",
     "tstRTR0TimerDriver.exe",
@@ -239,7 +243,7 @@ PFNNTQUERYVIRTUALMEMORY g_pfnNtQueryVirtualMemory = NULL;
 #endif
 
 #ifdef IN_RING3
-/** The number of valid entries in the loader cache.. */
+/** The number of valid entries in the loader cache. */
 static uint32_t                 g_cSupNtVpLdrCacheEntries = 0;
 /** The loader cache entries. */
 static SUPHNTLDRCACHEENTRY      g_aSupNtVpLdrCacheEntries[RT_ELEMENTS(g_apszSupNtVpAllowedDlls) + 1 + 3];
@@ -252,8 +256,6 @@ static SUPHNTLDRCACHEENTRY      g_aSupNtVpLdrCacheEntries[RT_ELEMENTS(g_apszSupN
  * @returns @a rc.
  * @param   pErrInfo            Pointer to the extended error info structure.
  *                              Can be NULL.
- * @param   pszErr              Where to return error details.
- * @param   cbErr               Size of the buffer @a pszErr points to.
  * @param   rc                  The status to return.
  * @param   pszMsg              The format string for the message.
  * @param   ...                 The arguments for the format string.
@@ -276,12 +278,41 @@ static int supHardNtVpSetInfo1(PRTERRINFO pErrInfo, int rc, const char *pszMsg, 
 
 
 /**
+ * Adds error information.
+ *
+ * @returns @a rc.
+ * @param   pErrInfo            Pointer to the extended error info structure
+ *                              which may contain some details already.  Can be
+ *                              NULL.
+ * @param   rc                  The status to return.
+ * @param   pszMsg              The format string for the message.
+ * @param   ...                 The arguments for the format string.
+ */
+static int supHardNtVpAddInfo1(PRTERRINFO pErrInfo, int rc, const char *pszMsg, ...)
+{
+    va_list va;
+#ifdef IN_RING3
+    va_start(va, pszMsg);
+    if (pErrInfo && pErrInfo->pszMsg)
+        supR3HardenedError(rc, false /*fFatal*/, "%N - %s\n", pszMsg, &va, pErrInfo->pszMsg);
+    else
+        supR3HardenedError(rc, false /*fFatal*/, "%N\n", pszMsg, &va);
+    va_end(va);
+#endif
+
+    va_start(va, pszMsg);
+    RTErrInfoAddV(pErrInfo, rc, pszMsg, va);
+    va_end(va);
+
+    return rc;
+}
+
+
+/**
  * Fills in error information.
  *
  * @returns @a rc.
  * @param   pThis               The process validator instance.
- * @param   pszErr              Where to return error details.
- * @param   cbErr               Size of the buffer @a pszErr points to.
  * @param   rc                  The status to return.
  * @param   pszMsg              The format string for the message.
  * @param   ...                 The arguments for the format string.
@@ -327,6 +358,7 @@ static NTSTATUS supHardNtVpReadMem(HANDLE hProcess, uintptr_t uPtr, void *pvBuf,
 {
 #ifdef IN_RING0
     /* ASSUMES hProcess is the current process. */
+    RT_NOREF1(hProcess);
     /** @todo use MmCopyVirtualMemory where available! */
     int rc = RTR0MemUserCopyFrom(pvBuf, uPtr, cbRead);
     if (RT_SUCCESS(rc))
@@ -379,6 +411,9 @@ static int supHardNtVpFileMemCompareSection(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE
                                             int32_t iSh, PSUPHNTVPSKIPAREA paSkipAreas, uint32_t cSkipAreas,
                                             uint32_t fCorrectProtection)
 {
+#ifndef IN_RING3
+    RT_NOREF1(fCorrectProtection);
+#endif
     AssertCompileAdjacentMembers(SUPHNTVPSTATE, abMemory, abFile); /* Use both the memory and file buffers here. Parfait might hate me for this... */
     uint32_t  const cbMemory = sizeof(pThis->abMemory) + sizeof(pThis->abFile);
     uint8_t * const pbMemory = &pThis->abMemory[0];
@@ -408,6 +443,7 @@ static int supHardNtVpFileMemCompareSection(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE
                     else if (uRvaEnd >= uSkipEnd)
                     {
                         cbThis  -= uSkipEnd - uRva;
+                        pbFile  += uSkipEnd - uRva;
                         uRva     = uSkipEnd;
                     }
                     else
@@ -531,7 +567,7 @@ static int supHardNtVpCheckSectionProtection(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAG
 }
 
 
-static DECLINLINE(bool) supHardNtVpIsModuleNameMatch(PSUPHNTVPIMAGE pImage, const char *pszModule)
+DECLINLINE(bool) supHardNtVpIsModuleNameMatch(PSUPHNTVPIMAGE pImage, const char *pszModule)
 {
     if (pImage->fDll)
     {
@@ -603,6 +639,7 @@ static PSUPHNTVPIMAGE supHardNtVpFindModule(PSUPHNTVPSTATE pThis, const char *ps
 static DECLCALLBACK(int) supHardNtVpGetImport(RTLDRMOD hLdrMod, const char *pszModule, const char *pszSymbol, unsigned uSymbol,
                                               PRTLDRADDR pValue, void *pvUser)
 {
+    RT_NOREF1(hLdrMod);
     /*SUP_DPRINTF(("supHardNtVpGetImport: %s / %#x / %s.\n", pszModule, uSymbol, pszSymbol));*/
     PSUPHNTVPSTATE pThis = (PSUPHNTVPSTATE)pvUser;
 
@@ -686,11 +723,10 @@ static DECLCALLBACK(int) supHardNtVpGetImport(RTLDRMOD hLdrMod, const char *pszM
  *                              two scratch buffers).
  * @param   pImage              The image data collected during the address
  *                              space scan.
- * @param   hProcess            Handle to the process.
- * @param   pErrInfo            Pointer to error info structure. Optional.
  */
-static int supHardNtVpVerifyImageMemoryCompare(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage, HANDLE hProcess, PRTERRINFO pErrInfo)
+static int supHardNtVpVerifyImageMemoryCompare(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage)
 {
+
     /*
      * Read and find the file headers.
      */
@@ -1005,10 +1041,8 @@ static int supHardNtVpVerifyImageMemoryCompare(PSUPHNTVPSTATE pThis, PSUPHNTVPIM
  *                              two scratch buffers).
  * @param   pImage              The image data collected during the address
  *                              space scan.
- * @param   hProcess            Handle to the process.
- * @param   hFile               Handle to the image file.
  */
-static int supHardNtVpVerifyImage(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage, HANDLE hProcess)
+static int supHardNtVpVerifyImage(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage)
 {
     /*
      * Validate the file signature first, then do the memory compare.
@@ -1019,7 +1053,7 @@ static int supHardNtVpVerifyImage(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage, H
     {
         rc = supHardNtLdrCacheEntryVerify(pImage->pCacheEntry, pImage->Name.UniStr.Buffer, pThis->pErrInfo);
         if (RT_SUCCESS(rc))
-            rc = supHardNtVpVerifyImageMemoryCompare(pThis, pImage, hProcess, pThis->pErrInfo);
+            rc = supHardNtVpVerifyImageMemoryCompare(pThis, pImage);
     }
     else
         rc = supHardNtVpSetInfo2(pThis, VERR_OPEN_FAILED, "pCacheEntry/hLdrMod is NIL! Impossible!");
@@ -1037,6 +1071,8 @@ static int supHardNtVpVerifyImage(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage, H
  */
 DECLHIDDEN(int) supHardNtVpThread(HANDLE hProcess, HANDLE hThread, PRTERRINFO pErrInfo)
 {
+    RT_NOREF1(hProcess);
+
     /*
      * Use the ThreadAmILastThread request to check that there is only one
      * thread in the process.
@@ -1052,7 +1088,7 @@ DECLHIDDEN(int) supHardNtVpThread(HANDLE hProcess, HANDLE hThread, PRTERRINFO pE
         return supHardNtVpSetInfo1(pErrInfo, VERR_SUP_VP_THREAD_NOT_ALONE,
                                    "More than one thread in process");
 
-    /** @todo Would be nice to verify the relation ship between hProcess and hThread
+    /** @todo Would be nice to verify the relationship between hProcess and hThread
      *        as well... */
     return VINF_SUCCESS;
 }
@@ -1083,6 +1119,8 @@ DECLHIDDEN(int) supHardNtVpDebugger(HANDLE hProcess, PRTERRINFO pErrInfo)
     if (uPtr != 0)
         return supHardNtVpSetInfo1(pErrInfo, VERR_SUP_VP_DEBUGGED,
                                    "Debugger attached (%#zx)", uPtr);
+#else
+    RT_NOREF2(hProcess, pErrInfo);
 #endif /* !VBOX_WITHOUT_DEBUGGER_CHECKS */
     return VINF_SUCCESS;
 }
@@ -1132,39 +1170,69 @@ static bool supHardNtVpAreNamesEqual(const char *pszName1, PCRTUTF16 pwszName2)
 /**
  * Records an additional memory region for an image.
  *
+ * May trash pThis->abMemory.
+ *
  * @returns VBox status code.
  * @retval  VINF_OBJECT_DESTROYED if we've unmapped the image (child
  *          purification only).
  * @param   pThis               The process scanning state structure.
  * @param   pImage              The new image structure.  Only the unicode name
- *                              buffer is valid.
+ *                              buffer is valid (it's zero-terminated).
  * @param   pMemInfo            The memory information for the image.
  */
 static int supHardNtVpNewImage(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage, PMEMORY_BASIC_INFORMATION pMemInfo)
 {
     /*
+     * If the filename or path contains short names, we have to get the long
+     * path so that we will recognize the DLLs and their location.
+     */
+    int rc83Exp = VERR_IGNORED;
+    PUNICODE_STRING pLongName = &pImage->Name.UniStr;
+    if (RTNtPathFindPossible8dot3Name(pLongName->Buffer))
+    {
+        AssertCompile(sizeof(pThis->abMemory) > sizeof(pImage->Name));
+        PUNICODE_STRING pTmp = (PUNICODE_STRING)pThis->abMemory;
+        pTmp->MaximumLength = (USHORT)RT_MIN(_64K - 1, sizeof(pThis->abMemory) - sizeof(*pTmp)) - sizeof(RTUTF16);
+        pTmp->Length = pImage->Name.UniStr.Length;
+        pTmp->Buffer = (PRTUTF16)(pTmp + 1);
+        memcpy(pTmp->Buffer, pLongName->Buffer, pLongName->Length + sizeof(RTUTF16));
+
+        rc83Exp = RTNtPathExpand8dot3Path(pTmp, false /*fPathOnly*/);
+        Assert(rc83Exp == VINF_SUCCESS);
+        Assert(pTmp->Buffer[pTmp->Length / sizeof(RTUTF16)] == '\0');
+        if (rc83Exp == VINF_SUCCESS)
+            SUP_DPRINTF(("supHardNtVpNewImage: 8dot3 -> long: '%ls' -> '%ls'\n", pLongName->Buffer, pTmp->Buffer));
+        else
+            SUP_DPRINTF(("supHardNtVpNewImage: RTNtPathExpand8dot3Path returns %Rrc for '%ls' (-> '%ls')\n",
+                         rc83Exp, pLongName->Buffer, pTmp->Buffer));
+
+        pLongName = pTmp;
+    }
+
+    /*
      * Extract the final component.
      */
-    unsigned  cwcDirName   = pImage->Name.UniStr.Length / sizeof(WCHAR);
-    PCRTUTF16 pwszFilename = &pImage->Name.UniStr.Buffer[cwcDirName];
+    RTUTF16   wc;
+    unsigned  cwcDirName   = pLongName->Length / sizeof(WCHAR);
+    PCRTUTF16 pwszFilename = &pLongName->Buffer[cwcDirName];
     while (   cwcDirName > 0
-           && pwszFilename[-1] != '\\'
-           && pwszFilename[-1] != '/'
-           && pwszFilename[-1] != ':')
+           && (wc = pwszFilename[-1]) != '\\'
+           && wc != '/'
+           && wc != ':')
     {
         pwszFilename--;
         cwcDirName--;
     }
     if (!*pwszFilename)
         return supHardNtVpSetInfo2(pThis, VERR_SUP_VP_NO_IMAGE_MAPPING_NAME,
-                                   "Empty filename (len=%u) for image at %p.", pImage->Name.UniStr.Length, pMemInfo->BaseAddress);
+                                   "Empty filename (len=%u) for image at %p.", pLongName->Length, pMemInfo->BaseAddress);
 
     /*
      * Drop trailing slashes from the directory name.
      */
     while (   cwcDirName > 0
-           && (   pImage->Name.UniStr.Buffer[cwcDirName - 1] == '\\'
-               || pImage->Name.UniStr.Buffer[cwcDirName - 1] == '/'))
+           && (   pLongName->Buffer[cwcDirName - 1] == '\\'
+               || pLongName->Buffer[cwcDirName - 1] == '/'))
         cwcDirName--;
 
     /*
@@ -1180,18 +1248,16 @@ static int supHardNtVpNewImage(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage, PMEM
 #ifndef VBOX_PERMIT_VISUAL_STUDIO_PROFILING
             /* The directory name must match the one we've got for System32. */
             if (   (   cwcDirName * sizeof(WCHAR) != g_System32NtPath.UniStr.Length
-                    || suplibHardenedMemComp(pImage->Name.UniStr.Buffer,
-                                            g_System32NtPath.UniStr.Buffer,
-                                            cwcDirName * sizeof(WCHAR)) )
+                    || suplibHardenedMemComp(pLongName->Buffer, g_System32NtPath.UniStr.Buffer, cwcDirName * sizeof(WCHAR)) )
 # ifdef VBOX_PERMIT_MORE
                 && (   pImage->pszName[0] != 'a'
                     || pImage->pszName[1] != 'c'
-                    || !supHardViIsAppPatchDir(pImage->Name.UniStr.Buffer, pImage->Name.UniStr.Length / sizeof(WCHAR)) )
+                    || !supHardViIsAppPatchDir(pLongName->Buffer, pLongName->Length / sizeof(WCHAR)) )
 # endif
                 )
                 return supHardNtVpSetInfo2(pThis, VERR_SUP_VP_NON_SYSTEM32_DLL,
                                            "Expected %ls to be loaded from %ls.",
-                                           pImage->Name.UniStr.Buffer, g_System32NtPath.UniStr.Buffer);
+                                           pLongName->Buffer, g_System32NtPath.UniStr.Buffer);
 # ifdef VBOX_PERMIT_MORE
             if (g_uNtVerCombined < SUP_NT_VER_W70 && i >= VBOX_PERMIT_MORE_FIRST_IDX)
                 pImage->pszName = NULL; /* hard limit: user32.dll is unwanted prior to w7. */
@@ -1227,7 +1293,7 @@ static int supHardNtVpNewImage(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage, PMEM
             && pThis->enmKind == SUPHARDNTVPKIND_CHILD_PURIFICATION)
         {
             SUP_DPRINTF(("supHardNtVpScanVirtualMemory: Unmapping image mem at %p (%p LB %#zx) - '%ls'\n",
-                         pMemInfo->AllocationBase, pMemInfo->BaseAddress, pMemInfo->RegionSize));
+                         pMemInfo->AllocationBase, pMemInfo->BaseAddress, pMemInfo->RegionSize, pwszFilename));
             NTSTATUS rcNt = NtUnmapViewOfSection(pThis->hProcess, pMemInfo->AllocationBase);
             if (NT_SUCCESS(rcNt))
                 return VINF_OBJECT_DESTROYED;
@@ -1249,11 +1315,12 @@ static int supHardNtVpNewImage(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage, PMEM
                                 "You or your admin need to add and exception to the Application and Device Control (ADC) "
                                 "component (or disable it) to prevent ADC from injecting itself into the VirtualBox VM processes. "
                                 "See http://www.symantec.com/connect/articles/creating-application-control-exclusions-symantec-endpoint-protection-121"
-                                , pImage->Name.UniStr.Buffer, pMemInfo->BaseAddress);
+                                , pLongName->Buffer, pMemInfo->BaseAddress);
             return pThis->rcResult = VERR_SUP_VP_SYSFER_DLL; /* Try make sure this is what the user sees first! */
         }
         return supHardNtVpSetInfo2(pThis, VERR_SUP_VP_NOT_KNOWN_DLL_OR_EXE,
-                                   "Unknown image file %ls at %p.", pImage->Name.UniStr.Buffer, pMemInfo->BaseAddress);
+                                   "Unknown image file %ls at %p. (rc83Exp=%Rrc)",
+                                   pLongName->Buffer, pMemInfo->BaseAddress, rc83Exp);
     }
 
     /*
@@ -1354,11 +1421,233 @@ static int supHardNtVpAddRegion(PSUPHNTVPSTATE pThis, PSUPHNTVPIMAGE pImage, PME
 }
 
 
+#ifdef IN_RING3
+/**
+ * Frees (or replaces) executable memory of allocation type private.
+ *
+ * @returns True if nothing really bad happen, false if to quit ASAP because we
+ *          killed the process being scanned.
+ * @param   pThis               The process scanning state structure. Details
+ *                              about images are added to this.
+ * @param   hProcess            The process to verify.
+ * @param   pMemInfo            The information we've got on this private
+ *                              executable memory.
+ */
+static bool supHardNtVpFreeOrReplacePrivateExecMemory(PSUPHNTVPSTATE pThis, HANDLE hProcess,
+                                                      MEMORY_BASIC_INFORMATION const *pMemInfo)
+{
+    NTSTATUS rcNt;
+
+    /*
+     * Try figure the entire allocation size. Free/Alloc may fail otherwise.
+     */
+    PVOID   pvFree = pMemInfo->AllocationBase;
+    SIZE_T  cbFree = pMemInfo->RegionSize + ((uintptr_t)pMemInfo->BaseAddress - (uintptr_t)pMemInfo->AllocationBase);
+    for (;;)
+    {
+        SIZE_T                      cbActual = 0;
+        MEMORY_BASIC_INFORMATION    MemInfo2 = { 0, 0, 0, 0, 0, 0, 0 };
+        uintptr_t                   uPtrNext = (uintptr_t)pvFree + cbFree;
+        rcNt = g_pfnNtQueryVirtualMemory(hProcess,
+                                         (void const *)uPtrNext,
+                                         MemoryBasicInformation,
+                                         &MemInfo2,
+                                         sizeof(MemInfo2),
+                                         &cbActual);
+        if (!NT_SUCCESS(rcNt))
+            break;
+        if (pMemInfo->AllocationBase != MemInfo2.AllocationBase)
+            break;
+        if (MemInfo2.RegionSize == 0)
+            break;
+        cbFree += MemInfo2.RegionSize;
+    }
+    SUP_DPRINTF(("supHardNtVpFreeOrReplacePrivateExecMemory: %s exec mem at %p (LB %#zx, %p LB %#zx)\n",
+                 pThis->fFlags & SUPHARDNTVP_F_EXEC_ALLOC_REPLACE_WITH_RW ? "Replacing" : "Freeing",
+                 pvFree, cbFree, pMemInfo->BaseAddress, pMemInfo->RegionSize));
+
+    /*
+     * In the BSOD workaround mode, we need to make a copy of the memory before
+     * freeing it.
+     */
+    uintptr_t   uCopySrc  = (uintptr_t)pvFree;
+    size_t      cbCopy    = 0;
+    void       *pvCopy    = NULL;
+    if (pThis->fFlags & SUPHARDNTVP_F_EXEC_ALLOC_REPLACE_WITH_RW)
+    {
+        cbCopy = cbFree;
+        pvCopy = RTMemAllocZ(cbCopy);
+        if (!pvCopy)
+        {
+            supHardNtVpSetInfo2(pThis, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED, "RTMemAllocZ(%#zx) failed", cbCopy);
+            return true;
+        }
+
+        rcNt = supHardNtVpReadMem(hProcess, uCopySrc, pvCopy, cbCopy);
+        if (!NT_SUCCESS(rcNt))
+            supHardNtVpSetInfo2(pThis, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED,
+                                "Error reading data from original alloc: %#x (%p LB %#zx)", rcNt, uCopySrc, cbCopy, rcNt);
+        supR3HardenedLogFlush();
+    }
+
+    /*
+     * Free the memory.
+     */
+    for (uint32_t i = 0; i < 10; i++)
+    {
+        PVOID  pvFreeInOut = pvFree;
+        SIZE_T cbFreeInOut = 0;
+        rcNt = NtFreeVirtualMemory(hProcess, &pvFreeInOut, &cbFreeInOut, MEM_RELEASE);
+        if (NT_SUCCESS(rcNt))
+        {
+            SUP_DPRINTF(("supHardNtVpFreeOrReplacePrivateExecMemory: Free attempt #1 succeeded: %#x [%p/%p LB 0/%#zx]\n",
+                         rcNt, pvFree, pvFreeInOut, cbFreeInOut));
+            supR3HardenedLogFlush();
+        }
+        else
+        {
+            SUP_DPRINTF(("supHardNtVpFreeOrReplacePrivateExecMemory: Free attempt #1 failed: %#x [%p LB 0]\n", rcNt, pvFree));
+            supR3HardenedLogFlush();
+            pvFreeInOut = pvFree;
+            cbFreeInOut = cbFree;
+            rcNt = NtFreeVirtualMemory(hProcess, &pvFreeInOut, &cbFreeInOut, MEM_RELEASE);
+            if (NT_SUCCESS(rcNt))
+            {
+                SUP_DPRINTF(("supHardNtVpFreeOrReplacePrivateExecMemory: Free attempt #2 succeeded: %#x [%p/%p LB %#zx/%#zx]\n",
+                             rcNt, pvFree, pvFreeInOut, cbFree, cbFreeInOut));
+                supR3HardenedLogFlush();
+            }
+            else
+            {
+                SUP_DPRINTF(("supHardNtVpFreeOrReplacePrivateExecMemory: Free attempt #2 failed: %#x [%p LB %#zx]\n",
+                             rcNt, pvFree, cbFree));
+                supR3HardenedLogFlush();
+                pvFreeInOut = pMemInfo->BaseAddress;
+                cbFreeInOut = pMemInfo->RegionSize;
+                rcNt = NtFreeVirtualMemory(hProcess, &pvFreeInOut, &cbFreeInOut, MEM_RELEASE);
+                if (NT_SUCCESS(rcNt))
+                {
+                    pvFree = pMemInfo->BaseAddress;
+                    cbFree = pMemInfo->RegionSize;
+                    SUP_DPRINTF(("supHardNtVpFreeOrReplacePrivateExecMemory: Free attempt #3 succeeded [%p LB %#zx]\n",
+                                 pvFree, cbFree));
+                    supR3HardenedLogFlush();
+                }
+                else
+                    supHardNtVpSetInfo2(pThis, VERR_SUP_VP_FREE_VIRTUAL_MEMORY_FAILED,
+                                        "NtFreeVirtualMemory [%p LB %#zx and %p LB %#zx] failed: %#x",
+                                        pvFree, cbFree, pMemInfo->BaseAddress, pMemInfo->RegionSize, rcNt);
+            }
+        }
+
+        /*
+         * Query the region again, redo the free operation if there's still memory there.
+         */
+        if (!NT_SUCCESS(rcNt))
+            break;
+        SIZE_T                      cbActual = 0;
+        MEMORY_BASIC_INFORMATION    MemInfo3 = { 0, 0, 0, 0, 0, 0, 0 };
+        NTSTATUS rcNt2 = g_pfnNtQueryVirtualMemory(hProcess, pvFree, MemoryBasicInformation,
+                                                   &MemInfo3, sizeof(MemInfo3), &cbActual);
+        if (!NT_SUCCESS(rcNt2))
+            break;
+        SUP_DPRINTF(("supHardNtVpFreeOrReplacePrivateExecMemory: QVM after free %u: [%p]/%p LB %#zx s=%#x ap=%#x rp=%#p\n",
+                     i, MemInfo3.AllocationBase, MemInfo3.BaseAddress, MemInfo3.RegionSize, MemInfo3.State,
+                     MemInfo3.AllocationProtect, MemInfo3.Protect));
+        supR3HardenedLogFlush();
+        if (MemInfo3.State == MEM_FREE || !(pThis->fFlags & SUPHARDNTVP_F_EXEC_ALLOC_REPLACE_WITH_RW))
+            break;
+        NtYieldExecution();
+        SUP_DPRINTF(("supHardNtVpFreeOrReplacePrivateExecMemory: Retrying free...\n"));
+        supR3HardenedLogFlush();
+    }
+
+    /*
+     * Restore memory as non-executable - Kludge for Trend Micro sakfile.sys
+     * and Digital Guardian dgmaster.sys BSODs.
+     */
+    if (NT_SUCCESS(rcNt) && (pThis->fFlags & SUPHARDNTVP_F_EXEC_ALLOC_REPLACE_WITH_RW))
+    {
+        PVOID  pvAlloc = pvFree;
+        SIZE_T cbAlloc = cbFree;
+        rcNt = NtAllocateVirtualMemory(hProcess, &pvAlloc, 0, &cbAlloc, MEM_COMMIT, PAGE_READWRITE);
+        if (!NT_SUCCESS(rcNt))
+        {
+            supHardNtVpSetInfo2(pThis, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED,
+                                "NtAllocateVirtualMemory (%p LB %#zx) failed with rcNt=%#x allocating "
+                                "replacement memory for working around buggy protection software. "
+                                "See VBoxStartup.log for more details",
+                                pvAlloc, cbFree, rcNt);
+            supR3HardenedLogFlush();
+            NtTerminateProcess(hProcess, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED);
+            return false;
+        }
+
+        if (   (uintptr_t)pvFree < (uintptr_t)pvAlloc
+            || (uintptr_t)pvFree + cbFree > (uintptr_t)pvAlloc + cbFree)
+        {
+            supHardNtVpSetInfo2(pThis, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED,
+                                "We wanted NtAllocateVirtualMemory to get us %p LB %#zx, but it returned %p LB %#zx.",
+                                pMemInfo->BaseAddress, pMemInfo->RegionSize, pvFree, cbFree, rcNt);
+            supR3HardenedLogFlush();
+            NtTerminateProcess(hProcess, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED);
+            return false;
+        }
+
+        /*
+         * Copy what we can, considering the 2nd free attempt.
+         */
+        uint8_t *pbDst = (uint8_t *)pvFree;
+        size_t   cbDst = cbFree;
+        uint8_t *pbSrc = (uint8_t *)pvCopy;
+        size_t   cbSrc = cbCopy;
+        if ((uintptr_t)pbDst != uCopySrc)
+        {
+            if ((uintptr_t)pbDst > uCopySrc)
+            {
+                uintptr_t cbAdj = (uintptr_t)pbDst - uCopySrc;
+                pbSrc += cbAdj;
+                cbSrc -= cbAdj;
+            }
+            else
+            {
+                uintptr_t cbAdj = uCopySrc - (uintptr_t)pbDst;
+                pbDst += cbAdj;
+                cbDst -= cbAdj;
+            }
+        }
+        if (cbSrc > cbDst)
+            cbSrc = cbDst;
+
+        SIZE_T cbWritten;
+        rcNt = NtWriteVirtualMemory(hProcess, pbDst, pbSrc, cbSrc, &cbWritten);
+        if (NT_SUCCESS(rcNt))
+        {
+            SUP_DPRINTF(("supHardNtVpFreeOrReplacePrivateExecMemory: Restored the exec memory as non-exec.\n"));
+            supR3HardenedLogFlush();
+        }
+        else
+        {
+            supHardNtVpSetInfo2(pThis, VERR_SUP_VP_FREE_VIRTUAL_MEMORY_FAILED,
+                                "NtWriteVirtualMemory (%p LB %#zx) failed: %#x",
+                                pMemInfo->BaseAddress, pMemInfo->RegionSize, rcNt);
+            supR3HardenedLogFlush();
+            NtTerminateProcess(hProcess, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED);
+            return false;
+        }
+    }
+    if (pvCopy)
+        RTMemFree(pvCopy);
+    return true;
+}
+#endif /* IN_RING3 */
+
+
 /**
  * Scans the virtual memory of the process.
  *
  * This collects the locations of DLLs and the EXE, and verifies that executable
- * memory is only associated with these.
+ * memory is only associated with these.  May trash pThis->abMemory.
  *
  * @returns VBox status code.
  * @param   pThis               The process scanning state structure. Details
@@ -1417,7 +1706,7 @@ static int supHardNtVpScanVirtualMemory(PSUPHNTVPSTATE pThis, HANDLE hProcess)
             SUP_DPRINTF((MemInfo.AllocationBase == MemInfo.BaseAddress
                          ? " *%p-%p %#06x/%#06x %#09x  %ls\n"
                          : "  %p-%p %#06x/%#06x %#09x  %ls\n",
-                         MemInfo.BaseAddress, (uintptr_t)MemInfo.BaseAddress - MemInfo.RegionSize - 1, MemInfo.Protect,
+                         MemInfo.BaseAddress, (uintptr_t)MemInfo.BaseAddress + MemInfo.RegionSize - 1, MemInfo.Protect,
                          MemInfo.AllocationProtect, MemInfo.Type, pThis->aImages[iImg].Name.UniStr.Buffer));
 
             /* New or existing image? */
@@ -1470,7 +1759,7 @@ static int supHardNtVpScanVirtualMemory(PSUPHNTVPSTATE pThis, HANDLE hProcess)
         {
             cXpExceptions++;
             SUP_DPRINTF(("  %p-%p %#06x/%#06x %#09x  XP CSRSS read-only region\n", MemInfo.BaseAddress,
-                         (uintptr_t)MemInfo.BaseAddress - MemInfo.RegionSize - 1, MemInfo.Protect,
+                         (uintptr_t)MemInfo.BaseAddress + MemInfo.RegionSize - 1, MemInfo.Protect,
                          MemInfo.AllocationProtect, MemInfo.Type));
         }
         /*
@@ -1482,7 +1771,7 @@ static int supHardNtVpScanVirtualMemory(PSUPHNTVPSTATE pThis, HANDLE hProcess)
             SUP_DPRINTF((MemInfo.AllocationBase == MemInfo.BaseAddress
                          ? " *%p-%p %#06x/%#06x %#09x !!\n"
                          : "  %p-%p %#06x/%#06x %#09x !!\n",
-                         MemInfo.BaseAddress, (uintptr_t)MemInfo.BaseAddress - MemInfo.RegionSize - 1,
+                         MemInfo.BaseAddress, (uintptr_t)MemInfo.BaseAddress + MemInfo.RegionSize - 1,
                          MemInfo.Protect, MemInfo.AllocationProtect, MemInfo.Type));
 # ifdef IN_RING3
             if (pThis->enmKind == SUPHARDNTVPKIND_CHILD_PURIFICATION)
@@ -1492,73 +1781,8 @@ static int supHardNtVpScanVirtualMemory(PSUPHNTVPSTATE pThis, HANDLE hProcess)
                  */
                 if (MemInfo.Type == MEM_PRIVATE)
                 {
-                    PVOID   pvFree = MemInfo.BaseAddress;
-                    SIZE_T  cbFree = MemInfo.RegionSize;
-                    if (!(pThis->fFlags & SUPHARDNTVP_F_EXEC_ALLOC_REPLACE_WITH_RW))
-                    {
-                        SUP_DPRINTF(("supHardNtVpScanVirtualMemory: Freeing exec mem at %p (%p LB %#zx)\n",
-                                     uPtrWhere, MemInfo.BaseAddress, MemInfo.RegionSize));
-
-                        rcNt = NtFreeVirtualMemory(pThis->hProcess, &pvFree, &cbFree, MEM_RELEASE);
-                        if (!NT_SUCCESS(rcNt))
-                            supHardNtVpSetInfo2(pThis, VERR_SUP_VP_FREE_VIRTUAL_MEMORY_FAILED,
-                                                "NtFreeVirtualMemory (%p LB %#zx) failed: %#x",
-                                                MemInfo.BaseAddress, MemInfo.RegionSize, rcNt);
-                    }
-                    else
-                    {
-                        /* The Trend Micro sakfile.sys and Digital Guardian dgmaster.sys BSOD kludge. */
-                        SUP_DPRINTF(("supHardNtVpScanVirtualMemory: Replacing exec mem at %p (%p LB %#zx)\n",
-                                     uPtrWhere, MemInfo.BaseAddress, MemInfo.RegionSize));
-                        void *pvCopy = RTMemAllocZ(cbFree);
-                        if (pvCopy)
-                        {
-                            rcNt = supHardNtVpReadMem(pThis->hProcess, (uintptr_t)pvFree, pvCopy, cbFree);
-                            if (!NT_SUCCESS(rcNt))
-                                supHardNtVpSetInfo2(pThis, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED,
-                                                    "Error reading data from original alloc: %#x (%p LB %#zx)",
-                                                    rcNt, MemInfo.BaseAddress, MemInfo.RegionSize, rcNt);
-
-                            rcNt = NtFreeVirtualMemory(pThis->hProcess, &pvFree, &cbFree, MEM_RELEASE);
-                            if (NT_SUCCESS(rcNt))
-                            {
-                                pvFree = MemInfo.BaseAddress; cbFree = MemInfo.RegionSize;              /* fudge */
-                                NtFreeVirtualMemory(pThis->hProcess, &pvFree, &cbFree, MEM_RELEASE);    /* fudge */
-
-                                pvFree = MemInfo.BaseAddress;
-                                cbFree = MemInfo.RegionSize;
-                                rcNt = NtAllocateVirtualMemory(pThis->hProcess, &pvFree, 0, &cbFree, MEM_COMMIT, PAGE_READWRITE);
-                                if (!NT_SUCCESS(rcNt))
-                                    supHardNtVpSetInfo2(pThis, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED,
-                                                        "NtAllocateVirtualMemory (%p LB %#zx) failed with rcNt=%#x allocating "
-                                                        "replacement memory for working around buggy protection software. "
-                                                        "See VBoxStartup.log for more details",
-                                                        MemInfo.BaseAddress, MemInfo.RegionSize, rcNt);
-                                else if (pvFree != MemInfo.BaseAddress)
-                                    supHardNtVpSetInfo2(pThis, VERR_SUP_VP_REPLACE_VIRTUAL_MEMORY_FAILED,
-                                                        "We wanted NtAllocateVirtualMemory to get us %p LB %#zx, but it returned %p LB %#zx.",
-                                                        MemInfo.BaseAddress, MemInfo.RegionSize, pvFree, cbFree, rcNt);
-                                else
-                                {
-                                    SIZE_T cbWritten;
-                                    rcNt = NtWriteVirtualMemory(pThis->hProcess, MemInfo.BaseAddress, pvCopy, MemInfo.RegionSize,
-                                                                &cbWritten);
-                                    if (!NT_SUCCESS(rcNt))
-                                        supHardNtVpSetInfo2(pThis, VERR_SUP_VP_FREE_VIRTUAL_MEMORY_FAILED,
-                                                            "NtWriteVirtualMemory (%p LB %#zx) failed: %#x",
-                                                            MemInfo.BaseAddress, MemInfo.RegionSize, rcNt);
-                                }
-                            }
-                            else
-                                supHardNtVpSetInfo2(pThis, VERR_SUP_VP_FREE_VIRTUAL_MEMORY_FAILED,
-                                                    "NtFreeVirtualMemory (%p LB %#zx) failed: %#x",
-                                                    MemInfo.BaseAddress, MemInfo.RegionSize, rcNt);
-                            RTMemFree(pvCopy);
-                        }
-                        else
-                            supHardNtVpSetInfo2(pThis, VERR_SUP_VP_FREE_VIRTUAL_MEMORY_FAILED,
-                                                "RTMemAllocZ(%#zx) failed", MemInfo.RegionSize);
-                    }
+                    if (!supHardNtVpFreeOrReplacePrivateExecMemory(pThis, hProcess, &MemInfo))
+                        break;
                 }
                 /*
                  * Unmap mapped memory, failing that, drop exec privileges.
@@ -1567,14 +1791,14 @@ static int supHardNtVpScanVirtualMemory(PSUPHNTVPSTATE pThis, HANDLE hProcess)
                 {
                     SUP_DPRINTF(("supHardNtVpScanVirtualMemory: Unmapping exec mem at %p (%p/%p LB %#zx)\n",
                                  uPtrWhere, MemInfo.AllocationBase, MemInfo.BaseAddress, MemInfo.RegionSize));
-                    rcNt = NtUnmapViewOfSection(pThis->hProcess, MemInfo.AllocationBase);
+                    rcNt = NtUnmapViewOfSection(hProcess, MemInfo.AllocationBase);
                     if (!NT_SUCCESS(rcNt))
                     {
                         PVOID  pvCopy = MemInfo.BaseAddress;
                         SIZE_T cbCopy = MemInfo.RegionSize;
-                        NTSTATUS rcNt2 = NtProtectVirtualMemory(pThis->hProcess, &pvCopy, &cbCopy, PAGE_NOACCESS, NULL);
+                        NTSTATUS rcNt2 = NtProtectVirtualMemory(hProcess, &pvCopy, &cbCopy, PAGE_NOACCESS, NULL);
                         if (!NT_SUCCESS(rcNt2))
-                            rcNt2 = NtProtectVirtualMemory(pThis->hProcess, &pvCopy, &cbCopy, PAGE_READONLY, NULL);
+                            rcNt2 = NtProtectVirtualMemory(hProcess, &pvCopy, &cbCopy, PAGE_READONLY, NULL);
                         if (!NT_SUCCESS(rcNt2))
                             supHardNtVpSetInfo2(pThis, VERR_SUP_VP_UNMAP_AND_PROTECT_FAILED,
                                                 "NtUnmapViewOfSection (%p/%p LB %#zx) failed: %#x (%#x)",
@@ -1605,7 +1829,7 @@ static int supHardNtVpScanVirtualMemory(PSUPHNTVPSTATE pThis, HANDLE hProcess)
             SUP_DPRINTF((MemInfo.AllocationBase == MemInfo.BaseAddress
                          ? " *%p-%p %#06x/%#06x %#09x\n"
                          : "  %p-%p %#06x/%#06x %#09x\n",
-                         MemInfo.BaseAddress, (uintptr_t)MemInfo.BaseAddress - MemInfo.RegionSize - 1,
+                         MemInfo.BaseAddress, (uintptr_t)MemInfo.BaseAddress + MemInfo.RegionSize - 1,
                          MemInfo.Protect, MemInfo.AllocationProtect, MemInfo.Type));
 
         /*
@@ -1629,7 +1853,7 @@ static int supHardNtVpScanVirtualMemory(PSUPHNTVPSTATE pThis, HANDLE hProcess)
  * @returns VBox status code.
  * @param   pEntry              The loader cache entry.
  * @param   pwszName            The filename to use in error messages.
- * @param   pErRInfo            Where to return extened error information.
+ * @param   pErrInfo            Where to return extened error information.
  */
 DECLHIDDEN(int) supHardNtLdrCacheEntryVerify(PSUPHNTLDRCACHEENTRY pEntry, PCRTUTF16 pwszName, PRTERRINFO pErrInfo)
 {
@@ -1853,7 +2077,7 @@ static int supHardNtLdrCacheNewEntry(PSUPHNTLDRCACHEENTRY pEntry, const char *ps
         enmArch = RTLDRARCH_WHATEVER;
     rc = RTLdrOpenWithReader(&pNtViRdr->Core, RTLDR_O_FOR_VALIDATION, enmArch, &hLdrMod, pErrInfo);
     if (RT_FAILURE(rc))
-        return supHardNtVpSetInfo1(pErrInfo, rc, "RTLdrOpenWithReader failed: %Rrc (Image='%ls').",
+        return supHardNtVpAddInfo1(pErrInfo, rc, "RTLdrOpenWithReader failed: %Rrc (Image='%ls').",
                                    rc, pUniStrPath->Buffer);
 
     /*
@@ -1890,8 +2114,10 @@ static int supHardNtLdrCacheNewEntry(PSUPHNTLDRCACHEENTRY pEntry, const char *ps
  * @param   pszName             The DLL name.  Must be one from the
  *                              g_apszSupNtVpAllowedDlls array.
  * @param   ppEntry             Where to return the entry we've opened/found.
+ * @param   pErrInfo            Optional buffer where to return additional error
+ *                              information.
  */
-DECLHIDDEN(int) supHardNtLdrCacheOpen(const char *pszName, PSUPHNTLDRCACHEENTRY *ppEntry)
+DECLHIDDEN(int) supHardNtLdrCacheOpen(const char *pszName, PSUPHNTLDRCACHEENTRY *ppEntry, PRTERRINFO pErrInfo)
 {
     /*
      * Locate the dll.
@@ -1929,7 +2155,7 @@ DECLHIDDEN(int) supHardNtLdrCacheOpen(const char *pszName, PSUPHNTLDRCACHEENTRY 
     UniStr.MaximumLength = UniStr.Length + sizeof(WCHAR);
 
     int rc = supHardNtLdrCacheNewEntry(&g_aSupNtVpLdrCacheEntries[g_cSupNtVpLdrCacheEntries], pszName, &UniStr,
-                                       true /*fDll*/, false /*f32bitResourceDll*/, NULL /*pErrInfo*/);
+                                       true /*fDll*/, false /*f32bitResourceDll*/, pErrInfo);
     if (RT_SUCCESS(rc))
     {
         *ppEntry = &g_aSupNtVpLdrCacheEntries[g_cSupNtVpLdrCacheEntries];
@@ -1995,10 +2221,11 @@ static int supHardNtVpOpenImages(PSUPHNTVPSTATE pThis)
  *
  * @returns VBox status code.
  * @param   pThis               The process scanning state structure. Details
- *                              about images are added to this.
- * @param   hProcess            The process to verify.
+ *                              about images are added to this.  The hProcess
+ *                              member holds the handle to the process that is
+ *                              to be verified.
  */
-static int supHardNtVpCheckExe(PSUPHNTVPSTATE pThis, HANDLE hProcess)
+static int supHardNtVpCheckExe(PSUPHNTVPSTATE pThis)
 {
     /*
      * Make sure there is exactly one executable image.
@@ -2032,7 +2259,7 @@ static int supHardNtVpCheckExe(PSUPHNTVPSTATE pThis, HANDLE hProcess)
         return supHardNtVpSetInfo2(pThis, VERR_SUP_VP_NO_MEMORY,
                                   "Error allocating %zu bytes for process name.", cbUniStr);
     ULONG    cbIgn = 0;
-    NTSTATUS rcNt = NtQueryInformationProcess(hProcess, ProcessImageFileName, pUniStr, cbUniStr - sizeof(WCHAR), &cbIgn);
+    NTSTATUS rcNt = NtQueryInformationProcess(pThis->hProcess, ProcessImageFileName, pUniStr, cbUniStr - sizeof(WCHAR), &cbIgn);
     if (NT_SUCCESS(rcNt))
     {
         if (supHardNtVpAreUniStringsEqual(pUniStr, &pImage->Name.UniStr))
@@ -2056,7 +2283,7 @@ static int supHardNtVpCheckExe(PSUPHNTVPSTATE pThis, HANDLE hProcess)
      * Validate the signing of the executable image.
      * This will load the fDllCharecteristics and fImageCharecteristics members we use below.
      */
-    rc = supHardNtVpVerifyImage(pThis, pImage, hProcess);
+    rc = supHardNtVpVerifyImage(pThis, pImage);
     if (RT_FAILURE(rc))
         return rc;
 
@@ -2066,15 +2293,16 @@ static int supHardNtVpCheckExe(PSUPHNTVPSTATE pThis, HANDLE hProcess)
      * older windows versions.  The cut-off seems to be Vista.
      */
     SECTION_IMAGE_INFORMATION ImageInfo;
-    rcNt = NtQueryInformationProcess(hProcess, ProcessImageInformation, &ImageInfo, sizeof(ImageInfo), NULL);
+    rcNt = NtQueryInformationProcess(pThis->hProcess, ProcessImageInformation, &ImageInfo, sizeof(ImageInfo), NULL);
     if (!NT_SUCCESS(rcNt))
     {
         if (   rcNt == STATUS_INVALID_PARAMETER
             && g_uNtVerCombined < SUP_NT_VER_VISTA
-            && hProcess != NtCurrentProcess() )
+            && pThis->hProcess != NtCurrentProcess() )
             return VINF_SUCCESS;
         return supHardNtVpSetInfo2(pThis, VERR_SUP_VP_NT_QI_PROCESS_IMG_INFO_ERROR,
-                                   "NtQueryInformationProcess/ProcessImageInformation failed: %#x hProcess=%#x", rcNt, hProcess);
+                                   "NtQueryInformationProcess/ProcessImageInformation failed: %#x hProcess=%#x",
+                                   rcNt, pThis->hProcess);
     }
     if ( !(ImageInfo.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY))
         return supHardNtVpSetInfo2(pThis, VERR_SUP_VP_EXE_MISSING_FORCE_INTEGRITY,
@@ -2108,10 +2336,11 @@ static int supHardNtVpCheckExe(PSUPHNTVPSTATE pThis, HANDLE hProcess)
  *
  * @returns VBox status code.
  * @param   pThis               The process scanning state structure. Details
- *                              about images are added to this.
- * @param   hProcess            The process to verify.
+ *                              about images are added to this.  The hProcess
+ *                              member holds the handle to the process that is
+ *                              to be verified.
  */
-static int supHardNtVpCheckDlls(PSUPHNTVPSTATE pThis, HANDLE hProcess)
+static int supHardNtVpCheckDlls(PSUPHNTVPSTATE pThis)
 {
     /*
      * Check for duplicate entries (paranoia).
@@ -2156,7 +2385,7 @@ static int supHardNtVpCheckDlls(PSUPHNTVPSTATE pThis, HANDLE hProcess)
     i = pThis->cImages;
     while (i-- > 0)
     {
-        int rc = supHardNtVpVerifyImage(pThis, &pThis->aImages[i], hProcess);
+        int rc = supHardNtVpVerifyImage(pThis, &pThis->aImages[i]);
         if (RT_FAILURE(rc))
             return rc;
     }
@@ -2224,9 +2453,9 @@ DECLHIDDEN(int) supHardenedWinVerifyProcess(HANDLE hProcess, HANDLE hThread, SUP
             if (RT_SUCCESS(rc))
                 rc = supHardNtVpOpenImages(pThis);
             if (RT_SUCCESS(rc))
-                rc = supHardNtVpCheckExe(pThis, hProcess);
+                rc = supHardNtVpCheckExe(pThis);
             if (RT_SUCCESS(rc))
-                rc = supHardNtVpCheckDlls(pThis, hProcess);
+                rc = supHardNtVpCheckDlls(pThis);
 
             if (pcFixes)
                 *pcFixes = pThis->cFixes;

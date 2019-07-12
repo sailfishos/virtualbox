@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,17 +28,15 @@
 #ifdef RT_OS_WINDOWS
 # include <Winnls.h>
 # define _WINSOCK2API_
-# include <IPHlpApi.h>
+# include <iprt/win/iphlpapi.h>
 
-static int get_dns_addr_domain(PNATState pData,
-                               const char **ppszDomain)
+static int get_dns_addr_domain(PNATState pData)
 {
-    ULONG flags = GAA_FLAG_INCLUDE_PREFIX; /*GAA_FLAG_INCLUDE_ALL_INTERFACES;*/ /* all interfaces registered in NDIS */
+    /*ULONG flags = GAA_FLAG_INCLUDE_PREFIX;*/ /*GAA_FLAG_INCLUDE_ALL_INTERFACES;*/ /* all interfaces registered in NDIS */
     PIP_ADAPTER_ADDRESSES pAdapterAddr = NULL;
     PIP_ADAPTER_ADDRESSES pAddr = NULL;
     PIP_ADAPTER_DNS_SERVER_ADDRESS pDnsAddr = NULL;
     ULONG size;
-    int wlen = 0;
     char *pszSuffix;
     struct dns_domain_entry *pDomain = NULL;
     ULONG ret = ERROR_SUCCESS;
@@ -47,7 +45,7 @@ static int get_dns_addr_domain(PNATState pData,
 
     /* determine size of buffer */
     size = 0;
-    ret = pData->pfGetAdaptersAddresses(AF_INET, 0, NULL /* reserved */, pAdapterAddr, &size);
+    ret = pData->pfnGetAdaptersAddresses(AF_INET, 0, NULL /* reserved */, pAdapterAddr, &size);
     if (ret != ERROR_BUFFER_OVERFLOW)
     {
         Log(("NAT: error %lu occurred on capacity detection operation\n", ret));
@@ -65,7 +63,7 @@ static int get_dns_addr_domain(PNATState pData,
         Log(("NAT: No memory available\n"));
         return -1;
     }
-    ret = pData->pfGetAdaptersAddresses(AF_INET, 0, NULL /* reserved */, pAdapterAddr, &size);
+    ret = pData->pfnGetAdaptersAddresses(AF_INET, 0, NULL /* reserved */, pAdapterAddr, &size);
     if (ret != ERROR_SUCCESS)
     {
         Log(("NAT: error %lu occurred on fetching adapters info\n", ret));
@@ -153,7 +151,7 @@ static int get_dns_addr_domain(PNATState pData,
 
 #include "resolv_conf_parser.h"
 
-static int get_dns_addr_domain(PNATState pData, const char **ppszDomain)
+static int get_dns_addr_domain(PNATState pData)
 {
     struct rcp_state st;
     int rc;
@@ -180,6 +178,17 @@ static int get_dns_addr_domain(PNATState pData, const char **ppszDomain)
     {
         struct dns_entry *pDns;
         RTNETADDRU *address = &st.rcps_nameserver[i].uAddr;
+
+        if (address->IPv4.u == INADDR_ANY)
+        {
+            /*
+             * This doesn't seem to be very well documented except for
+             * RTFS of res_init.c, but INADDR_ANY is a valid value for
+             * for "nameserver".
+             */
+            address->IPv4.u = RT_H2N_U32_C(INADDR_LOOPBACK);
+        }
+
         if (  (address->IPv4.u & RT_H2N_U32_C(IN_CLASSA_NET))
            == RT_N2H_U32_C(INADDR_LOOPBACK & IN_CLASSA_NET))
         {
@@ -217,12 +226,9 @@ static int get_dns_addr_domain(PNATState pData, const char **ppszDomain)
         }
 
         pDomain->dd_pszDomain = RTStrDup(st.rcps_domain);
-        LogRel(("NAT: adding domain name %s\n", pDomain->dd_pszDomain));
+        LogRel(("NAT: Adding domain name %s\n", pDomain->dd_pszDomain));
         LIST_INSERT_HEAD(&pData->pDomainList, pDomain, dd_list);
     }
-
-    if (ppszDomain && st.rcps_domain != 0)
-        *ppszDomain = RTStrDup(st.rcps_domain);
 
     return 0;
 }
@@ -243,18 +249,10 @@ int slirpInitializeDnsSettings(PNATState pData)
          * Some distributions haven't got /etc/resolv.conf
          * so we should other way to configure DNS settings.
          */
-        if (get_dns_addr_domain(pData, NULL) < 0)
-        {
-            /* Load the DNS handler if host resolver mode was not used before. */
-            if (!pData->fUseHostResolver)
-                dns_alias_load(pData);
+        if (get_dns_addr_domain(pData) < 0)
             pData->fUseHostResolver = true;
-        }
         else
         {
-            /* Unload to not intercept in the future. */
-            if (pData->fUseHostResolver)
-                dns_alias_unload(pData);
             pData->fUseHostResolver = false;
             dnsproxy_init(pData);
         }

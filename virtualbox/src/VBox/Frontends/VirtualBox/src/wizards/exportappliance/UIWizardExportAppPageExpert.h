@@ -1,11 +1,10 @@
+/* $Id: UIWizardExportAppPageExpert.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardExportAppPageExpert class declaration
+ * VBox Qt GUI - UIWizardExportAppPageExpert class declaration.
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -71,7 +70,7 @@ private slots:
     void sltStorageTypeChangeHandler();
 
     /* Format combo change handler: */
-    void sltUpdateFormatComboToolTip() { updateFormatComboToolTip(); }
+    void sltHandleFormatComboChange();
 
 private:
 

@@ -1,11 +1,10 @@
+/* $Id: UISpecialControls.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VBoxSpecialButtons declarations
+ * VBox Qt GUI - VBoxSpecialButtons declarations.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -111,7 +110,7 @@ class UIRoundRectSegmentedButton: public UICocoaSegmentedButton
     Q_OBJECT;
 
 public:
-    UIRoundRectSegmentedButton(int cCount, QWidget *pParent = 0);
+    UIRoundRectSegmentedButton(QWidget *pParent, int cCount);
 };
 
 class UITexturedSegmentedButton: public UICocoaSegmentedButton
@@ -119,7 +118,7 @@ class UITexturedSegmentedButton: public UICocoaSegmentedButton
     Q_OBJECT;
 
 public:
-    UITexturedSegmentedButton(int cCount, QWidget *pParent = 0);
+    UITexturedSegmentedButton(QWidget *pParent, int cCount);
 };
 
 /********************************************************************************
@@ -132,7 +131,7 @@ class UISearchField: public UICocoaSearchField
     Q_OBJECT;
 
 public:
-    UISearchField(QWidget *pParent = 0);
+    UISearchField(QWidget *pParent);
 };
 
 #else /* VBOX_DARWIN_USE_NATIVE_CONTROLS */
@@ -187,17 +186,17 @@ class UIHelpButton: public QIWithRetranslateUI<QPushButton>
 
 public:
     UIHelpButton(QWidget *pParent = 0);
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     ~UIHelpButton();
     QSize sizeHint() const;
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 
     void initFrom(QPushButton *pOther);
 
 protected:
     void retranslateUi();
 
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     void paintEvent(QPaintEvent *pEvent);
 
     bool hitButton(const QPoint &pos) const;
@@ -215,7 +214,7 @@ private:
     QPixmap *m_pPressedPixmap;
     QImage *m_pMask;
     QRect m_BRect;
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 };
 
 /********************************************************************************
@@ -228,14 +227,17 @@ class UIRoundRectSegmentedButton: public QWidget
     Q_OBJECT;
 
 public:
-    UIRoundRectSegmentedButton(int aCount, QWidget *pParent = 0);
+    UIRoundRectSegmentedButton(QWidget *pParent, int aCount);
     ~UIRoundRectSegmentedButton();
+
+    int count() const;
 
     void setTitle(int iSegment, const QString &aTitle);
     void setToolTip(int iSegment, const QString &strTip);
     void setIcon(int iSegment, const QIcon &icon);
     void setEnabled(int iSegment, bool fEnabled);
 
+    void setSelected(int iSegment);
     void animateClick(int iSegment);
 
 signals:
@@ -252,7 +254,7 @@ class UITexturedSegmentedButton: public UIRoundRectSegmentedButton
     Q_OBJECT;
 
 public:
-    UITexturedSegmentedButton(int cCount, QWidget *pParent = 0);
+    UITexturedSegmentedButton(QWidget *pParent, int cCount);
 };
 
 /********************************************************************************
@@ -265,7 +267,7 @@ class UISearchField: public QLineEdit
     Q_OBJECT;
 
 public:
-    UISearchField(QWidget *pParent = 0);
+    UISearchField(QWidget *pParent);
 
     void markError();
     void unmarkError();

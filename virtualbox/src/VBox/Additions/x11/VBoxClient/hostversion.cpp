@@ -1,9 +1,10 @@
+/* $Id: hostversion.cpp $ */
 /** @file
  * X11 guest client - host version check.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -37,13 +38,13 @@ static const char *getPidFilePath()
     return ".vboxclient-hostversion.pid";
 }
 
-static int showNotify(const char *pcHeader, const char *pcBody)
+static int showNotify(const char *pszHeader, const char *pszBody)
 {
     int rc;
 # ifdef VBOX_WITH_DBUS
     DBusConnection *conn;
     DBusMessage* msg = NULL;
-    conn = dbus_bus_get (DBUS_BUS_SESSON, NULL);
+    conn = dbus_bus_get (DBUS_BUS_SESSION, NULL);
     if (conn == NULL)
     {
         LogRelFlowFunc(("Could not retrieve D-BUS session bus!\n"));
@@ -68,16 +69,16 @@ static int showNotify(const char *pcHeader, const char *pcBody)
         uint32_t msg_replace_id = 0;
         const char *msg_app = "VBoxClient";
         const char *msg_icon = "";
-        const char *msg_summary = pcHeader;
-        const char *msg_body = pcBody;
+        const char *msg_summary = pszHeader;
+        const char *msg_body = pszBody;
         int32_t msg_timeout = -1;           /* Let the notification server decide */
 
         DBusMessageIter iter;
         DBusMessageIter array;
-        DBusMessageIter dict;
-        DBusMessageIter value;
-        DBusMessageIter variant;
-        DBusMessageIter data;
+        /*DBusMessageIter dict; - unused */
+        /*DBusMessageIter value; - unused */
+        /*DBusMessageIter variant; - unused */
+        /*DBusMessageIter data; - unused */
 
         /* Format: UINT32 org.freedesktop.Notifications.Notify
          *         (STRING app_name, UINT32 replaces_id, STRING app_icon, STRING summary, STRING body,
@@ -99,12 +100,9 @@ static int showNotify(const char *pcHeader, const char *pcBody)
         dbus_error_init(&err);
 
         DBusMessage *reply;
-        reply = dbus_connection_send_with_reply_and_block(conn, msg,
-            30 * 1000 /* 30 seconds timeout */, &err);
+        reply = dbus_connection_send_with_reply_and_block(conn, msg, 30 * 1000 /* 30 seconds timeout */, &err);
         if (dbus_error_is_set(&err))
-        {
             LogRel(("D-BUS returned an error while sending the notification: %s", err.message));
-        }
         else if (reply)
         {
             dbus_connection_flush(conn);
@@ -116,7 +114,8 @@ static int showNotify(const char *pcHeader, const char *pcBody)
     if (msg != NULL)
         dbus_message_unref(msg);
 # else
-    /* TODO: Implement me */
+    /** @todo Implement me */
+    RT_NOREF(pszHeader, pszBody);
     rc = VINF_SUCCESS;
 # endif /* VBOX_WITH_DBUS */
     return rc;
@@ -206,9 +205,7 @@ struct VBCLSERVICE vbclHostVersionInterface =
     getPidFilePath,
     VBClServiceDefaultHandler, /* init */
     run,
-    VBClServiceDefaultHandler, /* pause */
-    VBClServiceDefaultHandler, /* resume */
-    VBClServiceDefaultCleanup    
+    VBClServiceDefaultCleanup
 };
 
 struct HOSTVERSIONSERVICE

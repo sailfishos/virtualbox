@@ -1,10 +1,10 @@
-/* $Id $ */
+/* $Id: VBoxPci.c $ */
 /** @file
  * VBoxPci - PCI card passthrough support (Host), Common Code.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 /** @page pg_rawpci     VBoxPci - host PCI support
@@ -89,7 +98,7 @@ DECLINLINE(int) vboxPciDevLock(PVBOXRAWPCIINS pThis)
 DECLINLINE(void) vboxPciDevUnlock(PVBOXRAWPCIINS pThis)
 {
 #ifdef VBOX_WITH_SHARED_PCI_INTERRUPTS
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 #else
     RTSemFastMutexRelease(pThis->hFastMtx);
 #endif
@@ -173,7 +182,7 @@ DECLHIDDEN(void) vboxPciDevCleanup(PVBOXRAWPCIINS pThis)
 
 
 /**
- * @copydoc RAWPCIDEVPORT:: pfnInit
+ * @interface_method_impl{RAWPCIDEVPORT,pfnInit}
  */
 static DECLCALLBACK(int) vboxPciDevInit(PRAWPCIDEVPORT pPort, uint32_t fFlags)
 {
@@ -190,7 +199,7 @@ static DECLCALLBACK(int) vboxPciDevInit(PRAWPCIDEVPORT pPort, uint32_t fFlags)
 }
 
 /**
- * @copydoc RAWPCIDEVPORT:: pfnDeinit
+ * @interface_method_impl{RAWPCIDEVPORT,pfnDeinit}
  */
 static DECLCALLBACK(int) vboxPciDevDeinit(PRAWPCIDEVPORT pPort, uint32_t fFlags)
 {
@@ -215,7 +224,7 @@ static DECLCALLBACK(int) vboxPciDevDeinit(PRAWPCIDEVPORT pPort, uint32_t fFlags)
 
 
 /**
- * @copydoc RAWPCIDEVPORT:: pfnDestroy
+ * @interface_method_impl{RAWPCIDEVPORT,pfnDestroy}
  */
 static DECLCALLBACK(int) vboxPciDevDestroy(PRAWPCIDEVPORT pPort)
 {
@@ -247,7 +256,7 @@ static DECLCALLBACK(int) vboxPciDevDestroy(PRAWPCIDEVPORT pPort)
     return rc;
 }
 /**
- * @copydoc RAWPCIDEVPORT:: pfnGetRegionInfo
+ * @interface_method_impl{RAWPCIDEVPORT,pfnGetRegionInfo}
  */
 static DECLCALLBACK(int) vboxPciDevGetRegionInfo(PRAWPCIDEVPORT pPort,
                                                  int32_t        iRegion,
@@ -270,21 +279,21 @@ static DECLCALLBACK(int) vboxPciDevGetRegionInfo(PRAWPCIDEVPORT pPort,
 }
 
 /**
- * @copydoc RAWPCIDEVPORT:: pfnMapRegion
+ * @interface_method_impl{RAWPCIDEVPORT,pfnMapRegion}
  */
 static DECLCALLBACK(int) vboxPciDevMapRegion(PRAWPCIDEVPORT pPort,
                                              int32_t        iRegion,
                                              RTHCPHYS       RegionStart,
                                              uint64_t       u64RegionSize,
                                              int32_t        fFlags,
-                                             RTR0PTR        *pRegionBase)
+                                             RTR0PTR        *pRegionBaseR0)
 {
     PVBOXRAWPCIINS pThis = DEVPORT_2_VBOXRAWPCIINS(pPort);
     int            rc;
 
     vboxPciDevLock(pThis);
 
-    rc = vboxPciOsDevMapRegion(pThis, iRegion, RegionStart, u64RegionSize, fFlags, pRegionBase);
+    rc = vboxPciOsDevMapRegion(pThis, iRegion, RegionStart, u64RegionSize, fFlags, pRegionBaseR0);
 
     vboxPciDevUnlock(pThis);
 
@@ -292,7 +301,7 @@ static DECLCALLBACK(int) vboxPciDevMapRegion(PRAWPCIDEVPORT pPort,
 }
 
 /**
- * @copydoc RAWPCIDEVPORT:: pfnUnapRegion
+ * @interface_method_impl{RAWPCIDEVPORT,pfnUnmapRegion}
  */
 static DECLCALLBACK(int) vboxPciDevUnmapRegion(PRAWPCIDEVPORT pPort,
                                                int32_t        iRegion,
@@ -313,7 +322,7 @@ static DECLCALLBACK(int) vboxPciDevUnmapRegion(PRAWPCIDEVPORT pPort,
 }
 
 /**
- * @copydoc RAWPCIDEVPORT:: pfnPciCfgRead
+ * @interface_method_impl{RAWPCIDEVPORT,pfnPciCfgRead}
  */
 static DECLCALLBACK(int) vboxPciDevPciCfgRead(PRAWPCIDEVPORT pPort,
                                               uint32_t       Register,
@@ -332,7 +341,7 @@ static DECLCALLBACK(int) vboxPciDevPciCfgRead(PRAWPCIDEVPORT pPort,
 }
 
 /**
- * @copydoc RAWPCIDEVPORT:: pfnPciCfgWrite
+ * @interface_method_impl{RAWPCIDEVPORT,pfnPciCfgWrite}
  */
 static DECLCALLBACK(int) vboxPciDevPciCfgWrite(PRAWPCIDEVPORT pPort,
                                                uint32_t       Register,
@@ -443,8 +452,11 @@ static DECLCALLBACK(int) vboxPciDevPowerStateChange(PRAWPCIDEVPORT    pPort,
  *
  * @returns VBox status code.
  * @param   pGlobals            The globals.
- * @param   pszName             The instance name.
+ * @param   u32HostAddress      Host address.
+ * @param   fFlags              Flags.
+ * @param   pVmCtx              VM context.
  * @param   ppDevPort           Where to store the pointer to our port interface.
+ * @param   pfDevFlags          The device flags.
  */
 static int vboxPciNewInstance(PVBOXRAWPCIGLOBALS pGlobals,
                               uint32_t           u32HostAddress,
@@ -509,7 +521,7 @@ static int vboxPciNewInstance(PVBOXRAWPCIGLOBALS pGlobals,
 }
 
 /**
- * @copydoc RAWPCIFACTORY::pfnCreateAndConnect
+ * @interface_method_impl{RAWPCIFACTORY,pfnCreateAndConnect}
  */
 static DECLCALLBACK(int) vboxPciFactoryCreateAndConnect(PRAWPCIFACTORY       pFactory,
                                                         uint32_t             u32HostAddress,
@@ -544,7 +556,7 @@ unlock:
 }
 
 /**
- * @copydoc RAWPCIFACTORY::pfnRelease
+ * @interface_method_impl{RAWPCIFACTORY,pfnRelease}
  */
 static DECLCALLBACK(void) vboxPciFactoryRelease(PRAWPCIFACTORY pFactory)
 {
@@ -556,7 +568,7 @@ static DECLCALLBACK(void) vboxPciFactoryRelease(PRAWPCIFACTORY pFactory)
 }
 
 /**
- * @copydoc RAWPCIFACTORY::pfnInitVm
+ * @interface_method_impl{RAWPCIFACTORY,pfnInitVm}
  */
 static DECLCALLBACK(int)  vboxPciFactoryInitVm(PRAWPCIFACTORY       pFactory,
                                                PVM                  pVM,
@@ -595,15 +607,15 @@ static DECLCALLBACK(int)  vboxPciFactoryInitVm(PRAWPCIFACTORY       pFactory,
 }
 
 /**
- * @copydoc RAWPCIFACTORY::pfnDeinitVm
+ * @interface_method_impl{RAWPCIFACTORY,pfnDeinitVm}
  */
 static DECLCALLBACK(void)  vboxPciFactoryDeinitVm(PRAWPCIFACTORY       pFactory,
                                                   PVM                  pVM,
-                                                  PRAWPCIPERVM         pPciData)
+                                                  PRAWPCIPERVM         pVmData)
 {
-    if (pPciData->pDriverData)
+    if (pVmData->pDriverData)
     {
-        PVBOXRAWPCIDRVVM pThis = (PVBOXRAWPCIDRVVM)pPciData->pDriverData;
+        PVBOXRAWPCIDRVVM pThis = (PVBOXRAWPCIDRVVM)pVmData->pDriverData;
 
 #ifdef VBOX_WITH_IOMMU
         /* If we have IOMMU, need to unmap all guest's physical pages from IOMMU on VM termination. */
@@ -618,7 +630,7 @@ static DECLCALLBACK(void)  vboxPciFactoryDeinitVm(PRAWPCIFACTORY       pFactory,
         }
 
         RTMemFree(pThis);
-        pPciData->pDriverData = NULL;
+        pVmData->pDriverData = NULL;
     }
 }
 
@@ -774,3 +786,4 @@ void vboxPciShutdown(PVBOXRAWPCIGLOBALS pGlobals)
     if (RT_SUCCESS(rc))
         vboxPciDeleteGlobals(pGlobals);
 }
+

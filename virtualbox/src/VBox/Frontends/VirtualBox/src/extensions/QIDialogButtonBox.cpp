@@ -1,12 +1,10 @@
 /* $Id: QIDialogButtonBox.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: QIDialogButtonBox class implementation
+ * VBox Qt GUI - VirtualBox Qt extensions: QIDialogButtonBox class implementation.
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,16 +14,23 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
-#include "QIDialogButtonBox.h"
-#include "UISpecialControls.h"
 
-#include <iprt/assert.h>
+# include "QIDialogButtonBox.h"
+# include "UISpecialControls.h"
+
+# include <iprt/assert.h>
 
 /* Qt includes */
-#include <QPushButton>
-#include <QEvent>
-#include <QBoxLayout>
+# include <QPushButton>
+# include <QEvent>
+# include <QBoxLayout>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 QIDialogButtonBox::QIDialogButtonBox (StandardButtons aButtons, Qt::Orientation aOrientation, QWidget *aParent)
    : QIWithRetranslateUI<QDialogButtonBox> (aParent)

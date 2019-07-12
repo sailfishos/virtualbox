@@ -1,10 +1,10 @@
-/* $Rev: 98176 $ */
+/* $Rev: 129379 $ */
 /** @file
  * VBoxDrv - The VirtualBox Support Driver - Linux specifics.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,14 +24,16 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SUP_DRV
 #include "../SUPDrvInternal.h"
 #include "the-linux-kernel.h"
 #include "version-generated.h"
 #include "product-generated.h"
+#include "revision-generated.h"
 
 #include <iprt/assert.h>
 #include <iprt/spinlock.h>
@@ -48,28 +50,25 @@
 # include <iprt/power.h>
 # define VBOX_WITH_SUSPEND_NOTIFICATION
 #endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
-# include <asm/smap.h>
-#else
-static inline void clac(void) { }
-static inline void stac(void) { }
-#endif
 
 #include <linux/sched.h>
-#ifdef CONFIG_DEVFS_FS
-# include <linux/devfs_fs_kernel.h>
-#endif
-#ifdef CONFIG_VBOXDRV_AS_MISC
-# include <linux/miscdevice.h>
-#endif
+#include <linux/miscdevice.h>
 #ifdef VBOX_WITH_SUSPEND_NOTIFICATION
 # include <linux/platform_device.h>
 #endif
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 28)) && defined(SUPDRV_WITH_MSR_PROBER)
+# define SUPDRV_LINUX_HAS_SAFE_MSR_API
+# include <asm/msr.h>
+#endif
+
+#include <asm/desc.h>
+
+#include <iprt/asm-amd64-x86.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /* check kernel version */
 # ifndef SUPDRV_AGNOSTIC
 #  if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 0)
@@ -77,30 +76,29 @@ static inline void stac(void) { }
 #  endif
 # endif
 
-/* devfs defines */
-#if defined(CONFIG_DEVFS_FS) && !defined(CONFIG_VBOXDRV_AS_MISC)
-# ifdef VBOX_WITH_HARDENING
-#  define VBOX_DEV_FMASK     (S_IWUSR | S_IRUSR)
-# else
-#  define VBOX_DEV_FMASK     (S_IRUGO | S_IWUGO)
-# endif
-#endif /* CONFIG_DEV_FS && !CONFIG_VBOXDEV_AS_MISC */
-
 #ifdef CONFIG_X86_HIGH_ENTRY
 # error "CONFIG_X86_HIGH_ENTRY is not supported by VBoxDrv at this time."
 #endif
 
-/* to include the version number of VirtualBox into kernel backtraces */
+/* We cannot include x86.h, so we copy the defines we need here: */
+#define X86_EFL_IF          RT_BIT(9)
+#define X86_EFL_AC          RT_BIT(18)
+#define X86_EFL_DF          RT_BIT(10)
+#define X86_EFL_IOPL        (RT_BIT(12) | RT_BIT(13))
+
+/* To include the version number of VirtualBox into kernel backtraces: */
 #define VBoxDrvLinuxVersion RT_CONCAT3(RT_CONCAT(VBOX_VERSION_MAJOR, _), \
                                        RT_CONCAT(VBOX_VERSION_MINOR, _), \
                                        VBOX_VERSION_BUILD)
 #define VBoxDrvLinuxIOCtl RT_CONCAT(VBoxDrvLinuxIOCtl_,VBoxDrvLinuxVersion)
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-static int  VBoxDrvLinuxInit(void);
-static void VBoxDrvLinuxUnload(void);
+
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
+static int  __init VBoxDrvLinuxInit(void);
+static void __exit VBoxDrvLinuxUnload(void);
 static int  VBoxDrvLinuxCreateSys(struct inode *pInode, struct file *pFilp);
 static int  VBoxDrvLinuxCreateUsr(struct inode *pInode, struct file *pFilp);
 static int  VBoxDrvLinuxClose(struct inode *pInode, struct file *pFilp);
@@ -124,24 +122,13 @@ static void VBoxDevRelease(struct device *pDev);
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Device extention & session data association structure.
  */
 static SUPDRVDEVEXT         g_DevExt;
-
-#ifndef CONFIG_VBOXDRV_AS_MISC
-/** Module major number for vboxdrv. */
-#define DEVICE_MAJOR_SYS    234
-/** Saved major device number for vboxdrv. */
-static int                  g_iModuleMajorSys;
-/** Module major number for vboxdrvu. */
-#define DEVICE_MAJOR_USR    235
-/** Saved major device number for vboxdrvu. */
-static int                  g_iModuleMajorUsr;
-#endif /* !CONFIG_VBOXDRV_AS_MISC */
 
 /** Module parameter.
  * Not prefixed because the name is used by macros and the end of this file. */
@@ -152,19 +139,35 @@ static int force_async_tsc = 0;
 /** The user device name. */
 #define DEVICE_NAME_USR     "vboxdrvu"
 
-#if defined(RT_ARCH_AMD64) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 23)
+#if (defined(RT_ARCH_AMD64) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 23)) || defined(VBOX_WITH_TEXT_MODMEM_HACK)
 /**
  * Memory for the executable memory heap (in IPRT).
  */
-extern uint8_t g_abExecMemory[1572864]; /* 1.5 MB */
+# ifdef DEBUG
+#  define EXEC_MEMORY_SIZE   6291456    /* 6 MB */
+# else
+#  define EXEC_MEMORY_SIZE   1572864    /* 1.5 MB */
+# endif
+extern uint8_t g_abExecMemory[EXEC_MEMORY_SIZE];
+# ifndef VBOX_WITH_TEXT_MODMEM_HACK
 __asm__(".section execmemory, \"awx\", @progbits\n\t"
         ".align 32\n\t"
         ".globl g_abExecMemory\n"
         "g_abExecMemory:\n\t"
-        ".zero 1572864\n\t"
+        ".zero " RT_XSTR(EXEC_MEMORY_SIZE) "\n\t"
         ".type g_abExecMemory, @object\n\t"
-        ".size g_abExecMemory, 1572864\n\t"
+        ".size g_abExecMemory, " RT_XSTR(EXEC_MEMORY_SIZE) "\n\t"
         ".text\n\t");
+# else
+__asm__(".text\n\t"
+        ".align 4096\n\t"
+        ".globl g_abExecMemory\n"
+        "g_abExecMemory:\n\t"
+        ".zero " RT_XSTR(EXEC_MEMORY_SIZE) "\n\t"
+        ".type g_abExecMemory, @object\n\t"
+        ".size g_abExecMemory, " RT_XSTR(EXEC_MEMORY_SIZE) "\n\t"
+        ".text\n\t");
+# endif
 #endif
 
 /** The file_operations structure. */
@@ -193,7 +196,6 @@ static struct file_operations gFileOpsVBoxDrvUsr =
 #endif
 };
 
-#ifdef CONFIG_VBOXDRV_AS_MISC
 /** The miscdevice structure for vboxdrv. */
 static struct miscdevice gMiscDeviceSys =
 {
@@ -214,7 +216,6 @@ static struct miscdevice gMiscDeviceUsr =
     devfs_name: DEVICE_NAME_USR,
 # endif
 };
-#endif
 
 
 #ifdef VBOX_WITH_SUSPEND_NOTIFICATION
@@ -307,8 +308,7 @@ static int __init VBoxDrvLinuxInit(void)
     /*
      * Check for synchronous/asynchronous TSC mode.
      */
-    printk(KERN_DEBUG "vboxdrv: Found %u processor cores.\n", (unsigned)RTMpGetOnlineCount());
-#ifdef CONFIG_VBOXDRV_AS_MISC
+    printk(KERN_DEBUG "vboxdrv: Found %u processor cores\n", (unsigned)RTMpGetOnlineCount());
     rc = misc_register(&gMiscDeviceSys);
     if (rc)
     {
@@ -322,51 +322,6 @@ static int __init VBoxDrvLinuxInit(void)
         misc_deregister(&gMiscDeviceSys);
         return rc;
     }
-#else  /* !CONFIG_VBOXDRV_AS_MISC */
-    /*
-     * Register character devices and save the returned major numbers.
-     */
-    /* /dev/vboxdrv */
-    g_iModuleMajorSys = DEVICE_MAJOR_SYS;
-    rc = register_chrdev((dev_t)g_iModuleMajorSys, DEVICE_NAME_SYS, &gFileOpsVBoxDrvSys);
-    if (rc < 0)
-    {
-        Log(("register_chrdev() failed with rc=%#x for vboxdrv!\n", rc));
-        return rc;
-    }
-    if (DEVICE_MAJOR_SYS != 0)
-        g_iModuleMajorSys = DEVICE_MAJOR_SYS;
-    else
-        g_iModuleMajorSys = rc;
-
-    /* /dev/vboxdrvu */
-    /** @todo Use a minor number of this bugger (not sure if this code is used
-     *        though, so not bothering right now.) */
-    g_iModuleMajorUsr = DEVICE_MAJOR_USR;
-    rc = register_chrdev((dev_t)g_iModuleMajorUsr, DEVICE_NAME_USR, &gFileOpsVBoxDrvUsr);
-    if (rc < 0)
-    {
-        Log(("register_chrdev() failed with rc=%#x for vboxdrv!\n", rc));
-        return rc;
-    }
-    if (DEVICE_MAJOR_USR != 0)
-        g_iModuleMajorUsr = DEVICE_MAJOR_USR;
-    else
-        g_iModuleMajorUsr = rc;
-    rc = 0;
-
-# ifdef CONFIG_DEVFS_FS
-    /*
-     * Register a device entry
-     */
-    if (   devfs_mk_cdev(MKDEV(DEVICE_MAJOR_SYS, 0), S_IFCHR | VBOX_DEV_FMASK, DEVICE_NAME_SYS) != 0
-        || devfs_mk_cdev(MKDEV(DEVICE_MAJOR_USR, 0), S_IFCHR | VBOX_DEV_FMASK, DEVICE_NAME_USR) != 0)
-    {
-        Log(("devfs_register failed!\n"));
-        rc = -EINVAL;
-    }
-# endif
-#endif /* !CONFIG_VBOXDRV_AS_MISC */
     if (!rc)
     {
         /*
@@ -376,7 +331,11 @@ static int __init VBoxDrvLinuxInit(void)
         rc = RTR0Init(0);
         if (RT_SUCCESS(rc))
         {
-#if defined(RT_ARCH_AMD64) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 23)
+#if (defined(RT_ARCH_AMD64) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 23)) || defined(VBOX_WITH_TEXT_MODMEM_HACK)
+# ifdef VBOX_WITH_TEXT_MODMEM_HACK
+            set_memory_x(&g_abExecMemory[0], sizeof(g_abExecMemory) / PAGE_SIZE);
+            set_memory_rw(&g_abExecMemory[0], sizeof(g_abExecMemory) / PAGE_SIZE);
+# endif
             rc = RTR0MemExecDonate(&g_abExecMemory[0], sizeof(g_abExecMemory));
             printk(KERN_DEBUG "VBoxDrv: dbg - g_abExecMemory=%p\n", (void *)&g_abExecMemory[0]);
 #endif
@@ -397,11 +356,11 @@ static int __init VBoxDrvLinuxInit(void)
                     if (rc == 0)
 #endif
                     {
-                        printk(KERN_INFO "vboxdrv: TSC mode is %s, kernel timer mode is 'normal'.\n",
-                               g_DevExt.pGip->u32Mode == SUPGIPMODE_SYNC_TSC ? "'synchronous'" : "'asynchronous'");
+                        printk(KERN_INFO "vboxdrv: TSC mode is %s, tentative frequency %llu Hz\n",
+                               SUPGetGIPModeName(g_DevExt.pGip), g_DevExt.pGip->u64CpuHz);
                         LogFlow(("VBoxDrv::ModuleInit returning %#x\n", rc));
                         printk(KERN_DEBUG "vboxdrv: Successfully loaded version "
-                                VBOX_VERSION_STRING " (interface " RT_XSTR(SUPDRV_IOC_VERSION) ").\n");
+                                VBOX_VERSION_STRING " (interface " RT_XSTR(SUPDRV_IOC_VERSION) ")\n");
                         return rc;
                     }
 #ifdef VBOX_WITH_SUSPEND_NOTIFICATION
@@ -420,20 +379,10 @@ static int __init VBoxDrvLinuxInit(void)
         /*
          * Failed, cleanup and return the error code.
          */
-#if defined(CONFIG_DEVFS_FS) && !defined(CONFIG_VBOXDRV_AS_MISC)
-        devfs_remove(DEVICE_NAME_SYS);
-        devfs_remove(DEVICE_NAME_USR);
-#endif
     }
-#ifdef CONFIG_VBOXDRV_AS_MISC
     misc_deregister(&gMiscDeviceSys);
     misc_deregister(&gMiscDeviceUsr);
     Log(("VBoxDrv::ModuleInit returning %#x (minor:%d & %d)\n", rc, gMiscDeviceSys.minor, gMiscDeviceUsr.minor));
-#else
-    unregister_chrdev(g_iModuleMajorUsr, DEVICE_NAME_USR);
-    unregister_chrdev(g_iModuleMajorSys, DEVICE_NAME_SYS);
-    Log(("VBoxDrv::ModuleInit returning %#x (major:%d & %d)\n", rc, g_iModuleMajorSys, g_iModuleMajorUsr));
-#endif
     return rc;
 }
 
@@ -443,9 +392,7 @@ static int __init VBoxDrvLinuxInit(void)
  */
 static void __exit VBoxDrvLinuxUnload(void)
 {
-    int                 rc;
     Log(("VBoxDrvLinuxUnload\n"));
-    NOREF(rc);
 
 #ifdef VBOX_WITH_SUSPEND_NOTIFICATION
     platform_device_unregister(&gPlatformDevice);
@@ -456,28 +403,8 @@ static void __exit VBoxDrvLinuxUnload(void)
      * I Don't think it's possible to unload a driver which processes have
      * opened, at least we'll blindly assume that here.
      */
-#ifdef CONFIG_VBOXDRV_AS_MISC
-    rc = misc_deregister(&gMiscDeviceUsr);
-    if (rc < 0)
-    {
-        Log(("misc_deregister failed with rc=%#x on vboxdrvu\n", rc));
-    }
-    rc = misc_deregister(&gMiscDeviceSys);
-    if (rc < 0)
-    {
-        Log(("misc_deregister failed with rc=%#x on vboxdrv\n", rc));
-    }
-#else  /* !CONFIG_VBOXDRV_AS_MISC */
-# ifdef CONFIG_DEVFS_FS
-    /*
-     * Unregister a device entry
-     */
-    devfs_remove(DEVICE_NAME_USR);
-    devfs_remove(DEVICE_NAME_SYS);
-# endif /* devfs */
-    unregister_chrdev(g_iModuleMajorUsr, DEVICE_NAME_USR);
-    unregister_chrdev(g_iModuleMajorSys, DEVICE_NAME_SYS);
-#endif /* !CONFIG_VBOXDRV_AS_MISC */
+    misc_deregister(&gMiscDeviceUsr);
+    misc_deregister(&gMiscDeviceSys);
 
     /*
      * Destroy GIP, delete the device extension and terminate IPRT.
@@ -585,9 +512,10 @@ static int VBoxDrvProbe(struct platform_device *pDev)
 /**
  * Suspend callback.
  * @param   pDev        Pointer to the platform device.
- * @param   State       message type, see Documentation/power/devices.txt.
+ * @param   State       Message type, see Documentation/power/devices.txt.
+ *                      Ignored.
  */
-# if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 30)
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 30) && !defined(DOXYGEN_RUNNING)
 static int VBoxDrvSuspend(struct device *pDev)
 # else
 static int VBoxDrvSuspend(struct platform_device *pDev, pm_message_t State)
@@ -621,7 +549,7 @@ static int VBoxDrvResume(struct platform_device *pDev)
  * @param   uCmd        The function specified to ioctl().
  * @param   ulArg       The argument specified to ioctl().
  */
-#ifdef HAVE_UNLOCKED_IOCTL
+#if defined(HAVE_UNLOCKED_IOCTL) || defined(DOXYGEN_RUNNING)
 static long VBoxDrvLinuxIOCtl(struct file *pFilp, unsigned int uCmd, unsigned long ulArg)
 #else
 static int VBoxDrvLinuxIOCtl(struct inode *pInode, struct file *pFilp, unsigned int uCmd, unsigned long ulArg)
@@ -629,6 +557,25 @@ static int VBoxDrvLinuxIOCtl(struct inode *pInode, struct file *pFilp, unsigned 
 {
     PSUPDRVSESSION pSession = (PSUPDRVSESSION)pFilp->private_data;
     int rc;
+#if defined(VBOX_STRICT) || defined(VBOX_WITH_EFLAGS_AC_SET_IN_VBOXDRV)
+    RTCCUINTREG fSavedEfl;
+
+    /*
+     * Refuse all I/O control calls if we've ever detected EFLAGS.AC being cleared.
+     *
+     * This isn't a problem, as there is absolutely nothing in the kernel context that
+     * depend on user context triggering cleanups.  That would be pretty wild, right?
+     */
+    if (RT_UNLIKELY(g_DevExt.cBadContextCalls > 0))
+    {
+        SUPR0Printf("VBoxDrvLinuxIOCtl: EFLAGS.AC=0 detected %u times, refusing all I/O controls!\n", g_DevExt.cBadContextCalls);
+        return ESPIPE;
+    }
+
+    fSavedEfl = ASMAddFlags(X86_EFL_AC);
+# else
+    stac();
+# endif
 
     /*
      * Deal with the two high-speed IOCtl that takes it's arguments from
@@ -639,14 +586,9 @@ static int VBoxDrvLinuxIOCtl(struct inode *pInode, struct file *pFilp, unsigned 
                       || uCmd == SUP_IOCTL_FAST_DO_HM_RUN
                       || uCmd == SUP_IOCTL_FAST_DO_NOP)
                   && pSession->fUnrestricted == true))
-    {
-        stac();
         rc = supdrvIOCtlFast(uCmd, ulArg, &g_DevExt, pSession);
-        clac();
-        return rc;
-    }
-    return VBoxDrvLinuxIOCtlSlow(pFilp, uCmd, ulArg, pSession);
-
+    else
+        rc = VBoxDrvLinuxIOCtlSlow(pFilp, uCmd, ulArg, pSession);
 #else   /* !HAVE_UNLOCKED_IOCTL */
     unlock_kernel();
     if (RT_LIKELY(   (   uCmd == SUP_IOCTL_FAST_DO_RAW_RUN
@@ -657,8 +599,25 @@ static int VBoxDrvLinuxIOCtl(struct inode *pInode, struct file *pFilp, unsigned 
     else
         rc = VBoxDrvLinuxIOCtlSlow(pFilp, uCmd, ulArg, pSession);
     lock_kernel();
-    return rc;
 #endif  /* !HAVE_UNLOCKED_IOCTL */
+
+#if defined(VBOX_STRICT) || defined(VBOX_WITH_EFLAGS_AC_SET_IN_VBOXDRV)
+    /*
+     * Before we restore AC and the rest of EFLAGS, check if the IOCtl handler code
+     * accidentially modified it or some other important flag.
+     */
+    if (RT_UNLIKELY(   (ASMGetFlags() & (X86_EFL_AC | X86_EFL_IF | X86_EFL_DF))
+                    != ((fSavedEfl    & (X86_EFL_AC | X86_EFL_IF | X86_EFL_DF)) | X86_EFL_AC) ))
+    {
+        char szTmp[48];
+        RTStrPrintf(szTmp, sizeof(szTmp), "uCmd=%#x: %#x->%#x!", _IOC_NR(uCmd), (uint32_t)fSavedEfl, (uint32_t)ASMGetFlags());
+        supdrvBadContext(&g_DevExt, "SUPDrv-linux.c",  __LINE__, szTmp);
+    }
+    ASMSetFlags(fSavedEfl);
+#else
+    clac();
+#endif
+    return rc;
 }
 
 
@@ -682,9 +641,9 @@ static int VBoxDrvLinuxIOCtlSlow(struct file *pFilp, unsigned int uCmd, unsigned
     /*
      * Read the header.
      */
-    if (RT_UNLIKELY(copy_from_user(&Hdr, (void *)ulArg, sizeof(Hdr))))
+    if (RT_FAILURE(RTR0MemUserCopyFrom(&Hdr, ulArg, sizeof(Hdr))))
     {
-        Log(("VBoxDrvLinuxIOCtl: copy_from_user(,%#lx,) failed; uCmd=%#x.\n", ulArg, uCmd));
+        Log(("VBoxDrvLinuxIOCtl: copy_from_user(,%#lx,) failed; uCmd=%#x\n", ulArg, uCmd));
         return -EFAULT;
     }
     if (RT_UNLIKELY((Hdr.fFlags & SUPREQHDR_FLAGS_MAGIC_MASK) != SUPREQHDR_FLAGS_MAGIC))
@@ -704,18 +663,18 @@ static int VBoxDrvLinuxIOCtlSlow(struct file *pFilp, unsigned int uCmd, unsigned
     }
     if (RT_UNLIKELY(_IOC_SIZE(uCmd) ? cbBuf != _IOC_SIZE(uCmd) : Hdr.cbIn < sizeof(Hdr)))
     {
-        Log(("VBoxDrvLinuxIOCtl: bad ioctl cbBuf=%#x _IOC_SIZE=%#x; uCmd=%#x.\n", cbBuf, _IOC_SIZE(uCmd), uCmd));
+        Log(("VBoxDrvLinuxIOCtl: bad ioctl cbBuf=%#x _IOC_SIZE=%#x; uCmd=%#x\n", cbBuf, _IOC_SIZE(uCmd), uCmd));
         return -EINVAL;
     }
     pHdr = RTMemAlloc(cbBuf);
     if (RT_UNLIKELY(!pHdr))
     {
-        OSDBGPRINT(("VBoxDrvLinuxIOCtl: failed to allocate buffer of %d bytes for uCmd=%#x.\n", cbBuf, uCmd));
+        OSDBGPRINT(("VBoxDrvLinuxIOCtl: failed to allocate buffer of %d bytes for uCmd=%#x\n", cbBuf, uCmd));
         return -ENOMEM;
     }
-    if (RT_UNLIKELY(copy_from_user(pHdr, (void *)ulArg, Hdr.cbIn)))
+    if (RT_FAILURE(RTR0MemUserCopyFrom(pHdr, ulArg, Hdr.cbIn)))
     {
-        Log(("VBoxDrvLinuxIOCtl: copy_from_user(,%#lx, %#x) failed; uCmd=%#x.\n", ulArg, Hdr.cbIn, uCmd));
+        Log(("VBoxDrvLinuxIOCtl: copy_from_user(,%#lx, %#x) failed; uCmd=%#x\n", ulArg, Hdr.cbIn, uCmd));
         RTMemFree(pHdr);
         return -EFAULT;
     }
@@ -725,9 +684,7 @@ static int VBoxDrvLinuxIOCtlSlow(struct file *pFilp, unsigned int uCmd, unsigned
     /*
      * Process the IOCtl.
      */
-    stac();
     rc = supdrvIOCtl(uCmd, &g_DevExt, pSession, pHdr, cbBuf);
-    clac();
 
     /*
      * Copy ioctl data and output buffer back to user space.
@@ -740,7 +697,7 @@ static int VBoxDrvLinuxIOCtlSlow(struct file *pFilp, unsigned int uCmd, unsigned
             OSDBGPRINT(("VBoxDrvLinuxIOCtl: too much output! %#x > %#x; uCmd=%#x!\n", cbOut, cbBuf, uCmd));
             cbOut = cbBuf;
         }
-        if (RT_UNLIKELY(copy_to_user((void *)ulArg, pHdr, cbOut)))
+        if (RT_FAILURE(RTR0MemUserCopyTo(ulArg, pHdr, cbOut)))
         {
             /* this is really bad! */
             OSDBGPRINT(("VBoxDrvLinuxIOCtl: copy_to_user(%#lx,,%#x); uCmd=%#x!\n", ulArg, cbOut, uCmd));
@@ -763,7 +720,7 @@ static int VBoxDrvLinuxIOCtlSlow(struct file *pFilp, unsigned int uCmd, unsigned
  * The SUPDRV IDC entry point.
  *
  * @returns VBox status code, see supdrvIDC.
- * @param   iReq        The request code.
+ * @param   uReq        The request code.
  * @param   pReq        The request.
  */
 int VBOXCALL SUPDrvLinuxIDC(uint32_t uReq, PSUPDRVIDCREQHDR pReq)
@@ -794,6 +751,26 @@ int VBOXCALL SUPDrvLinuxIDC(uint32_t uReq, PSUPDRVIDCREQHDR pReq)
 }
 
 EXPORT_SYMBOL(SUPDrvLinuxIDC);
+
+
+RTCCUINTREG VBOXCALL supdrvOSChangeCR4(RTCCUINTREG fOrMask, RTCCUINTREG fAndMask)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 20, 0)
+    RTCCUINTREG uOld = this_cpu_read(cpu_tlbstate.cr4);
+    RTCCUINTREG uNew = (uOld & fAndMask) | fOrMask;
+    if (uNew != uOld)
+    {
+        this_cpu_write(cpu_tlbstate.cr4, uNew);
+        __write_cr4(uNew);
+    }
+#else
+    RTCCUINTREG uOld = ASMGetCR4();
+    RTCCUINTREG uNew = (uOld & fAndMask) | fOrMask;
+    if (uNew != uOld)
+        ASMSetCR4(uNew);
+#endif
+    return uOld;
+}
 
 
 void VBOXCALL supdrvOSCleanupSession(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession)
@@ -852,6 +829,18 @@ bool VBOXCALL supdrvOSGetForcedAsyncTscMode(PSUPDRVDEVEXT pDevExt)
 }
 
 
+bool VBOXCALL supdrvOSAreCpusOfflinedOnSuspend(void)
+{
+    return true;
+}
+
+
+bool VBOXCALL supdrvOSAreTscDeltasInSync(void)
+{
+    return false;
+}
+
+
 int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const char *pszFilename)
 {
     NOREF(pDevExt); NOREF(pImage); NOREF(pszFilename);
@@ -859,15 +848,10 @@ int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
 }
 
 
-void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv,
+                                           const uint8_t *pbImageBits, const char *pszSymbol)
 {
-    NOREF(pDevExt); NOREF(pImage);
-}
-
-
-int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv, const uint8_t *pbImageBits)
-{
-    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits);
+    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits); NOREF(pszSymbol);
     return VERR_NOT_SUPPORTED;
 }
 
@@ -883,6 +867,500 @@ void VBOXCALL   supdrvOSLdrUnload(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
 {
     NOREF(pDevExt); NOREF(pImage);
 }
+
+
+/** @def VBOX_WITH_NON_PROD_HACK_FOR_PERF_STACKS
+ * A very crude hack for debugging using perf and dtrace.
+ *
+ * DO ABSOLUTELY NOT ENABLE IN PRODUCTION BUILDS!  DEVELOPMENT ONLY!!
+ * DO ABSOLUTELY NOT ENABLE IN PRODUCTION BUILDS!  DEVELOPMENT ONLY!!
+ * DO ABSOLUTELY NOT ENABLE IN PRODUCTION BUILDS!  DEVELOPMENT ONLY!!
+ *
+ */
+#if 0 || defined(DOXYGEN_RUNNING)
+# define VBOX_WITH_NON_PROD_HACK_FOR_PERF_STACKS
+#endif
+
+#if defined(VBOX_WITH_NON_PROD_HACK_FOR_PERF_STACKS) && defined(CONFIG_MODULES_TREE_LOOKUP)
+/** Whether g_pfnModTreeInsert and g_pfnModTreeRemove have been initialized.
+ * @remarks can still be NULL after init. */
+static volatile bool g_fLookedForModTreeFunctions = false;
+static void (*g_pfnModTreeInsert)(struct mod_tree_node *) = NULL;   /**< __mod_tree_insert */
+static void (*g_pfnModTreeRemove)(struct mod_tree_node *) = NULL;   /**< __mod_tree_remove */
+#endif
+
+
+void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const char *pszFilename)
+{
+#ifdef VBOX_WITH_NON_PROD_HACK_FOR_PERF_STACKS /* Not for production use!! Debugging only! */
+    /*
+     * This trick stops working with 4.2 when CONFIG_MODULES_TREE_LOOKUP is
+     * defined.  The module lookups are done via a tree structure and we
+     * cannot get at the root of it. :-(
+     */
+# ifdef CONFIG_KALLSYMS
+    size_t const cchName = strlen(pImage->szName);
+# endif
+    struct module *pMyMod, *pSelfMod, *pTestMod, *pTestModByName;
+    IPRT_LINUX_SAVE_EFL_AC();
+
+    pImage->pLnxModHack    = NULL;
+
+# ifdef CONFIG_MODULES_TREE_LOOKUP
+    /*
+     * This is pretty naive, but works for 4.2 on arch linux.  I don't think we
+     * can count on finding __mod_tree_remove in all kernel builds as it's not
+     * marked noinline like __mod_tree_insert.
+     */
+    if (!g_fLookedForModTreeFunctions)
+    {
+        unsigned long ulInsert = kallsyms_lookup_name("__mod_tree_insert");
+        unsigned long ulRemove = kallsyms_lookup_name("__mod_tree_remove");
+        if (!ulInsert || !ulRemove)
+        {
+            g_fLookedForModTreeFunctions = true;
+            printk(KERN_ERR "vboxdrv: failed to locate __mod_tree_insert and __mod_tree_remove.\n");
+            IPRT_LINUX_RESTORE_EFL_AC();
+            return;
+        }
+        *(unsigned long *)&g_pfnModTreeInsert = ulInsert;
+        *(unsigned long *)&g_pfnModTreeRemove = ulRemove;
+        ASMCompilerBarrier();
+        g_fLookedForModTreeFunctions = true;
+    }
+    else if (!g_pfnModTreeInsert || !g_pfnModTreeRemove)
+        return;
+#endif
+
+    /*
+     * Make sure we've found our own module, otherwise we cannot access the linked list.
+     */
+    mutex_lock(&module_mutex);
+    pSelfMod = find_module("vboxdrv");
+    mutex_unlock(&module_mutex);
+    if (!pSelfMod)
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
+        return;
+    }
+
+    /*
+     * Cook up a module structure for the image.
+     * We allocate symbol and string tables in the allocation and the module to keep things simple.
+     */
+# ifdef CONFIG_KALLSYMS
+    pMyMod = (struct module *)RTMemAllocZ(sizeof(*pMyMod)
+                                          + sizeof(Elf_Sym) * 3
+                                          + 1 + cchName * 2 + sizeof("_start") + sizeof("_end") + 4 );
+# else
+    pMyMod = (struct module *)RTMemAllocZ(sizeof(*pMyMod));
+# endif
+    if (pMyMod)
+    {
+        int rc = VINF_SUCCESS;
+# ifdef CONFIG_KALLSYMS
+        Elf_Sym *paSymbols = (Elf_Sym *)(pMyMod + 1);
+        char    *pchStrTab = (char *)(paSymbols + 3);
+# endif
+
+        pMyMod->state = MODULE_STATE_LIVE;
+        INIT_LIST_HEAD(&pMyMod->list);  /* just in case */
+
+        /* Perf only matches up files with a .ko extension (maybe .ko.gz),
+           so in order for this crap to work smoothly, we append .ko to the
+           module name and require the user to create symbolic links in
+           /lib/modules/`uname -r`:
+                for i in VMMR0.r0 VBoxDDR0.r0 VBoxDD2R0.r0; do
+                    sudo ln -s /mnt/scratch/vbox/svn/trunk/out/linux.amd64/debug/bin/$i /lib/modules/`uname -r`/$i.ko;
+                done  */
+        RTStrPrintf(pMyMod->name, sizeof(pMyMod->name), "%s", pImage->szName);
+
+        /* sysfs bits. */
+        INIT_LIST_HEAD(&pMyMod->mkobj.kobj.entry); /* rest of kobj is already zeroed, hopefully never accessed... */
+        pMyMod->mkobj.mod           = pMyMod;
+        pMyMod->mkobj.drivers_dir   = NULL;
+        pMyMod->mkobj.mp            = NULL;
+        pMyMod->mkobj.kobj_completion = NULL;
+
+        pMyMod->modinfo_attrs       = NULL; /* hopefully not accessed after setup. */
+        pMyMod->holders_dir         = NULL; /* hopefully not accessed. */
+        pMyMod->version             = "N/A";
+        pMyMod->srcversion          = "N/A";
+
+        /* We export no symbols. */
+        pMyMod->num_syms            = 0;
+        pMyMod->syms                = NULL;
+        pMyMod->crcs                = NULL;
+
+        pMyMod->num_gpl_syms        = 0;
+        pMyMod->gpl_syms            = NULL;
+        pMyMod->gpl_crcs            = NULL;
+
+        pMyMod->num_gpl_future_syms = 0;
+        pMyMod->gpl_future_syms     = NULL;
+        pMyMod->gpl_future_crcs     = NULL;
+
+# if CONFIG_UNUSED_SYMBOLS
+        pMyMod->num_unused_syms     = 0;
+        pMyMod->unused_syms         = NULL;
+        pMyMod->unused_crcs         = NULL;
+
+        pMyMod->num_unused_gpl_syms = 0;
+        pMyMod->unused_gpl_syms     = NULL;
+        pMyMod->unused_gpl_crcs     = NULL;
+# endif
+        /* No kernel parameters either. */
+        pMyMod->kp                  = NULL;
+        pMyMod->num_kp              = 0;
+
+# ifdef CONFIG_MODULE_SIG
+        /* Pretend ok signature. */
+        pMyMod->sig_ok              = true;
+# endif
+        /* No exception table. */
+        pMyMod->num_exentries       = 0;
+        pMyMod->extable             = NULL;
+
+        /* No init function */
+        pMyMod->init                = NULL;
+        pMyMod->module_init         = NULL;
+        pMyMod->init_size           = 0;
+        pMyMod->init_ro_size        = 0;
+        pMyMod->init_text_size      = 0;
+
+        /* The module address and size. It's all text. */
+        pMyMod->module_core         = pImage->pvImage;
+        pMyMod->core_size           = pImage->cbImageBits;
+        pMyMod->core_text_size      = pImage->cbImageBits;
+        pMyMod->core_ro_size        = pImage->cbImageBits;
+
+#ifdef CONFIG_MODULES_TREE_LOOKUP
+        /* Fill in the self pointers for the tree nodes. */
+        pMyMod->mtn_core.mod        = pMyMod;
+        pMyMod->mtn_init.mod        = pMyMod;
+#endif
+        /* They invented the tained bit for us, didn't they? */
+        pMyMod->taints              = 1;
+
+# ifdef CONFIG_GENERIC_BUGS
+        /* No BUGs in our modules. */
+        pMyMod->num_bugs            = 0;
+        INIT_LIST_HEAD(&pMyMod->bug_list);
+        pMyMod->bug_table           = NULL;
+# endif
+
+# ifdef CONFIG_KALLSYMS
+        /* The core stuff is documented as only used when loading. So just zero them. */
+        pMyMod->core_num_syms       = 0;
+        pMyMod->core_symtab         = NULL;
+        pMyMod->core_strtab         = NULL;
+
+        /* Construct a symbol table with start and end symbols.
+           Note! We don't have our own symbol table at this point, image bit
+                 are not uploaded yet! */
+        pMyMod->num_symtab          = 3;
+        pMyMod->symtab              = paSymbols;
+        pMyMod->strtab              = pchStrTab;
+        RT_ZERO(paSymbols[0]);
+        pchStrTab[0] = '\0';
+        paSymbols[1].st_name        = 1;
+        paSymbols[2].st_name        = 2 + RTStrPrintf(&pchStrTab[paSymbols[1].st_name], cchName + sizeof("_start"),
+                                                      "%s_start", pImage->szName);
+        RTStrPrintf(&pchStrTab[paSymbols[2].st_name], cchName + sizeof("_end"), "%s_end", pImage->szName);
+        paSymbols[1].st_info = 't';
+        paSymbols[2].st_info = 'b';
+        paSymbols[1].st_other = 0;
+        paSymbols[2].st_other = 0;
+        paSymbols[1].st_shndx = 0;
+        paSymbols[2].st_shndx = 0;
+        paSymbols[1].st_value = (uintptr_t)pImage->pvImage;
+        paSymbols[2].st_value = (uintptr_t)pImage->pvImage + pImage->cbImageBits - 1;
+        paSymbols[1].st_size  = pImage->cbImageBits - 1;
+        paSymbols[2].st_size  = 1;
+# endif
+        /* No arguments, but seems its always non-NULL so put empty string there. */
+        pMyMod->args                = "";
+
+# ifdef CONFIG_SMP
+        /* No per CPU data. */
+        pMyMod->percpu              = NULL;
+        pMyMod->percpu_size         = 0;
+# endif
+# ifdef CONFIG_TRACEPOINTS
+        /* No tracepoints we like to share. */
+        pMyMod->num_tracepoints     = 0;
+        pMyMod->tracepoints_ptrs    = NULL;
+#endif
+# ifdef HAVE_JUMP_LABEL
+        /* No jump lable stuff either. */
+        pMyMod->jump_entries        = NULL;
+        pMyMod->num_jump_entries    = 0;
+# endif
+# ifdef CONFIG_TRACING
+        pMyMod->num_trace_bprintk_fmt   = 0;
+        pMyMod->trace_bprintk_fmt_start = NULL;
+# endif
+# ifdef CONFIG_EVENT_TRACING
+        pMyMod->trace_events        = NULL;
+        pMyMod->num_trace_events    = 0;
+# endif
+# ifdef CONFIG_FTRACE_MCOUNT_RECORD
+        pMyMod->num_ftrace_callsites = 0;
+        pMyMod->ftrace_callsites    = NULL;
+# endif
+# ifdef CONFIG_MODULE_UNLOAD
+        /* Dependency lists, not worth sharing */
+        INIT_LIST_HEAD(&pMyMod->source_list);
+        INIT_LIST_HEAD(&pMyMod->target_list);
+
+        /* Nobody waiting and no exit function. */
+#  if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+        pMyMod->waiter              = NULL;
+#  endif
+        pMyMod->exit                = NULL;
+
+        /* References, very important as we must not allow the module
+           to be unloaded using rmmod. */
+#  if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
+        atomic_set(&pMyMod->refcnt, 42);
+#  else
+        pMyMod->refptr              = alloc_percpu(struct module_ref);
+        if (pMyMod->refptr)
+        {
+            int iCpu;
+            for_each_possible_cpu(iCpu)
+            {
+                per_cpu_ptr(pMyMod->refptr, iCpu)->decs = 0;
+                per_cpu_ptr(pMyMod->refptr, iCpu)->incs = 1;
+            }
+        }
+        else
+            rc = VERR_NO_MEMORY;
+#  endif
+# endif
+# ifdef CONFIG_CONSTRUCTORS
+        /* No constructors. */
+        pMyMod->ctors               = NULL;
+        pMyMod->num_ctors           = 0;
+# endif
+        if (RT_SUCCESS(rc))
+        {
+            bool fIsModText;
+
+            /*
+             * Add the module to the list.
+             */
+            mutex_lock(&module_mutex);
+            list_add_rcu(&pMyMod->list, &pSelfMod->list);
+            pImage->pLnxModHack = pMyMod;
+# ifdef CONFIG_MODULES_TREE_LOOKUP
+            g_pfnModTreeInsert(&pMyMod->mtn_core); /* __mod_tree_insert */
+# endif
+            mutex_unlock(&module_mutex);
+
+            /*
+             * Test it.
+             */
+            mutex_lock(&module_mutex);
+            pTestModByName = find_module(pMyMod->name);
+            pTestMod = __module_address((uintptr_t)pImage->pvImage + pImage->cbImageBits / 4);
+            fIsModText = __module_text_address((uintptr_t)pImage->pvImage + pImage->cbImageBits / 2);
+            mutex_unlock(&module_mutex);
+            if (   pTestMod == pMyMod
+                && pTestModByName == pMyMod
+                && fIsModText)
+                printk(KERN_ERR "vboxdrv: fake module works for '%s' (%#lx to %#lx)\n",
+                       pMyMod->name, (unsigned long)paSymbols[1].st_value, (unsigned long)paSymbols[2].st_value);
+            else
+                printk(KERN_ERR "vboxdrv: failed to find fake module (pTestMod=%p, pTestModByName=%p, pMyMod=%p, fIsModText=%d)\n",
+                       pTestMod, pTestModByName, pMyMod, fIsModText);
+        }
+        else
+            RTMemFree(pMyMod);
+    }
+
+    IPRT_LINUX_RESTORE_EFL_AC();
+#else
+    pImage->pLnxModHack    = NULL;
+#endif
+    NOREF(pDevExt); NOREF(pImage);
+}
+
+
+void VBOXCALL   supdrvOSLdrNotifyUnloaded(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+{
+#ifdef VBOX_WITH_NON_PROD_HACK_FOR_PERF_STACKS /* Not for production use!! Debugging only! */
+    struct module *pMyMod = pImage->pLnxModHack;
+    pImage->pLnxModHack = NULL;
+    if (pMyMod)
+    {
+        /*
+         * Remove the fake module list entry and free it.
+         */
+        IPRT_LINUX_SAVE_EFL_AC();
+        mutex_lock(&module_mutex);
+        list_del_rcu(&pMyMod->list);
+# ifdef CONFIG_MODULES_TREE_LOOKUP
+        g_pfnModTreeRemove(&pMyMod->mtn_core);
+# endif
+        synchronize_sched();
+        mutex_unlock(&module_mutex);
+
+# if LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)
+        free_percpu(pMyMod->refptr);
+# endif
+        RTMemFree(pMyMod);
+        IPRT_LINUX_RESTORE_EFL_AC();
+    }
+
+#else
+    Assert(pImage->pLnxModHack == NULL);
+#endif
+    NOREF(pDevExt); NOREF(pImage);
+}
+
+
+int  VBOXCALL   supdrvOSLdrQuerySymbol(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage,
+                                       const char *pszSymbol, size_t cchSymbol, void **ppvSymbol)
+{
+#ifdef VBOX_WITH_NON_PROD_HACK_FOR_PERF_STACKS
+# error "implement me!"
+#endif
+    RT_NOREF(pDevExt, pImage, pszSymbol, cchSymbol, ppvSymbol);
+    return VERR_WRONG_ORDER;
+}
+
+
+#ifdef SUPDRV_WITH_MSR_PROBER
+
+int VBOXCALL    supdrvOSMsrProberRead(uint32_t uMsr, RTCPUID idCpu, uint64_t *puValue)
+{
+# ifdef SUPDRV_LINUX_HAS_SAFE_MSR_API
+    uint32_t u32Low, u32High;
+    int rc;
+
+    IPRT_LINUX_SAVE_EFL_AC();
+    if (idCpu == NIL_RTCPUID)
+        rc = rdmsr_safe(uMsr, &u32Low, &u32High);
+    else if (RTMpIsCpuOnline(idCpu))
+        rc = rdmsr_safe_on_cpu(idCpu, uMsr, &u32Low, &u32High);
+    else
+        return VERR_CPU_OFFLINE;
+    IPRT_LINUX_RESTORE_EFL_AC();
+    if (rc == 0)
+    {
+        *puValue = RT_MAKE_U64(u32Low, u32High);
+        return VINF_SUCCESS;
+    }
+    return VERR_ACCESS_DENIED;
+# else
+    return VERR_NOT_SUPPORTED;
+# endif
+}
+
+
+int VBOXCALL    supdrvOSMsrProberWrite(uint32_t uMsr, RTCPUID idCpu, uint64_t uValue)
+{
+# ifdef SUPDRV_LINUX_HAS_SAFE_MSR_API
+    int rc;
+
+    IPRT_LINUX_SAVE_EFL_AC();
+    if (idCpu == NIL_RTCPUID)
+        rc = wrmsr_safe(uMsr, RT_LODWORD(uValue), RT_HIDWORD(uValue));
+    else if (RTMpIsCpuOnline(idCpu))
+        rc = wrmsr_safe_on_cpu(idCpu, uMsr, RT_LODWORD(uValue), RT_HIDWORD(uValue));
+    else
+        return VERR_CPU_OFFLINE;
+    IPRT_LINUX_RESTORE_EFL_AC();
+
+    if (rc == 0)
+        return VINF_SUCCESS;
+    return VERR_ACCESS_DENIED;
+# else
+    return VERR_NOT_SUPPORTED;
+# endif
+}
+
+# ifdef SUPDRV_LINUX_HAS_SAFE_MSR_API
+/**
+ * Worker for supdrvOSMsrProberModify.
+ */
+static DECLCALLBACK(void) supdrvLnxMsrProberModifyOnCpu(RTCPUID idCpu, void *pvUser1, void *pvUser2)
+{
+    PSUPMSRPROBER               pReq    = (PSUPMSRPROBER)pvUser1;
+    register uint32_t           uMsr    = pReq->u.In.uMsr;
+    bool const                  fFaster = pReq->u.In.enmOp == SUPMSRPROBEROP_MODIFY_FASTER;
+    uint64_t                    uBefore;
+    uint64_t                    uWritten;
+    uint64_t                    uAfter;
+    int                         rcBefore, rcWrite, rcAfter, rcRestore;
+    RTCCUINTREG                 fOldFlags;
+
+    /* Initialize result variables. */
+    uBefore = uWritten = uAfter    = 0;
+    rcWrite = rcAfter  = rcRestore = -EIO;
+
+    /*
+     * Do the job.
+     */
+    fOldFlags = ASMIntDisableFlags();
+    ASMCompilerBarrier(); /* paranoia */
+    if (!fFaster)
+        ASMWriteBackAndInvalidateCaches();
+
+    rcBefore = rdmsrl_safe(uMsr, &uBefore);
+    if (rcBefore >= 0)
+    {
+        register uint64_t uRestore = uBefore;
+        uWritten  = uRestore;
+        uWritten &= pReq->u.In.uArgs.Modify.fAndMask;
+        uWritten |= pReq->u.In.uArgs.Modify.fOrMask;
+
+        rcWrite   = wrmsr_safe(uMsr, RT_LODWORD(uWritten), RT_HIDWORD(uWritten));
+        rcAfter   = rdmsrl_safe(uMsr, &uAfter);
+        rcRestore = wrmsr_safe(uMsr, RT_LODWORD(uRestore), RT_HIDWORD(uRestore));
+
+        if (!fFaster)
+        {
+            ASMWriteBackAndInvalidateCaches();
+            ASMReloadCR3();
+            ASMNopPause();
+        }
+    }
+
+    ASMCompilerBarrier(); /* paranoia */
+    ASMSetFlags(fOldFlags);
+
+    /*
+     * Write out the results.
+     */
+    pReq->u.Out.uResults.Modify.uBefore    = uBefore;
+    pReq->u.Out.uResults.Modify.uWritten   = uWritten;
+    pReq->u.Out.uResults.Modify.uAfter     = uAfter;
+    pReq->u.Out.uResults.Modify.fBeforeGp  = rcBefore  != 0;
+    pReq->u.Out.uResults.Modify.fModifyGp  = rcWrite   != 0;
+    pReq->u.Out.uResults.Modify.fAfterGp   = rcAfter   != 0;
+    pReq->u.Out.uResults.Modify.fRestoreGp = rcRestore != 0;
+    RT_ZERO(pReq->u.Out.uResults.Modify.afReserved);
+}
+# endif
+
+
+int VBOXCALL    supdrvOSMsrProberModify(RTCPUID idCpu, PSUPMSRPROBER pReq)
+{
+# ifdef SUPDRV_LINUX_HAS_SAFE_MSR_API
+    if (idCpu == NIL_RTCPUID)
+    {
+        supdrvLnxMsrProberModifyOnCpu(idCpu, pReq, NULL);
+        return VINF_SUCCESS;
+    }
+    return RTMpOnSpecific(idCpu, supdrvLnxMsrProberModifyOnCpu, pReq, NULL);
+# else
+    return VERR_NOT_SUPPORTED;
+# endif
+}
+
+#endif /* SUPDRV_WITH_MSR_PROBER */
 
 
 /**
@@ -916,6 +1394,7 @@ RTDECL(int) SUPR0Printf(const char *pszFormat, ...)
 {
     va_list va;
     char    szMsg[512];
+    IPRT_LINUX_SAVE_EFL_AC();
 
     va_start(va, pszFormat);
     RTStrPrintfV(szMsg, sizeof(szMsg) - 1, pszFormat, va);
@@ -923,20 +1402,39 @@ RTDECL(int) SUPR0Printf(const char *pszFormat, ...)
     szMsg[sizeof(szMsg) - 1] = '\0';
 
     printk("%s", szMsg);
+
+    IPRT_LINUX_RESTORE_EFL_AC();
     return 0;
 }
 
 
-/**
- * Returns configuration flags of the host kernel.
- */
 SUPR0DECL(uint32_t) SUPR0GetKernelFeatures(void)
 {
     uint32_t fFlags = 0;
 #ifdef CONFIG_PAX_KERNEXEC
     fFlags |= SUPKERNELFEATURES_GDT_READ_ONLY;
 #endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+    fFlags |= SUPKERNELFEATURES_GDT_NEED_WRITABLE;
+#endif
+#if defined(VBOX_STRICT) || defined(VBOX_WITH_EFLAGS_AC_SET_IN_VBOXDRV)
+    fFlags |= SUPKERNELFEATURES_SMAP;
+#elif defined(CONFIG_X86_SMAP)
+    if (ASMGetCR4() & X86_CR4_SMAP)
+        fFlags |= SUPKERNELFEATURES_SMAP;
+#endif
     return fFlags;
+}
+
+
+int VBOXCALL    supdrvOSGetCurrentGdtRw(RTHCUINTPTR *pGdtRw)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+    *pGdtRw = (RTHCUINTPTR)get_current_gdt_rw();
+    return VINF_SUCCESS;
+#else
+    return VERR_NOT_IMPLEMENTED;
+#endif
 }
 
 
@@ -947,7 +1445,7 @@ MODULE_AUTHOR(VBOX_VENDOR);
 MODULE_DESCRIPTION(VBOX_PRODUCT " Support Driver");
 MODULE_LICENSE("GPL");
 #ifdef MODULE_VERSION
-MODULE_VERSION(VBOX_VERSION_STRING " (" RT_XSTR(SUPDRV_IOC_VERSION) ")");
+MODULE_VERSION(VBOX_VERSION_STRING " r" RT_XSTR(VBOX_SVN_REV) " (" RT_XSTR(SUPDRV_IOC_VERSION) ")");
 #endif
 
 module_param(force_async_tsc, int, 0444);

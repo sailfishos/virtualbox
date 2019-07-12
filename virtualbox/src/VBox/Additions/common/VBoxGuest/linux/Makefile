@@ -1,10 +1,10 @@
-# $Revision: 97163 $
+# $Revision: 119168 $
 ## @file
 # VirtualBox Guest Additions Module Makefile.
 #
 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
 # Foundation, in version 2 as it comes in the "COPYING" file of the
 # VirtualBox OSE distribution. VirtualBox OSE is distributed in the
 # hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+#
+# The contents of this file may alternatively be used under the terms
+# of the Common Development and Distribution License Version 1.0
+# (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+# VirtualBox OSE distribution, in which case the provisions of the
+# CDDL are applicable instead of those of the GPL.
+#
+# You may elect to license modified versions of this file under the
+# terms and conditions of either the GPL or the CDDL or both.
 #
 
 # Linux kbuild sets this to our source directory if we are called from there
@@ -24,13 +33,11 @@ MOD_NAME = vboxguest
 MOD_OBJS   = \
 	VBoxGuest-linux.o \
 	VBoxGuest.o \
-	VBoxGuest2.o \
-	GenericRequest.o \
-	HGCMInternal.o \
-	Init.o \
-	PhysHeap.o \
-	SysHlp.o \
-	VMMDev.o \
+	VBoxGuestR0LibGenericRequest.o \
+	VBoxGuestR0LibHGCMInternal.o \
+	VBoxGuestR0LibInit.o \
+	VBoxGuestR0LibPhysHeap.o \
+	VBoxGuestR0LibVMMDev.o \
 	r0drv/alloc-r0drv.o \
 	r0drv/initterm-r0drv.o \
 	r0drv/memobj-r0drv.o \
@@ -52,16 +59,18 @@ MOD_OBJS   = \
 	r0drv/linux/thread-r0drv-linux.o \
 	r0drv/linux/thread2-r0drv-linux.o \
 	r0drv/linux/time-r0drv-linux.o \
+	r0drv/linux/timer-r0drv-linux.o \
 	r0drv/linux/RTLogWriteDebugger-r0drv-linux.o \
 	r0drv/generic/semspinmutex-r0drv-generic.o \
 	common/alloc/alloc.o \
 	common/err/RTErrConvertFromErrno.o \
 	common/err/RTErrConvertToErrno.o \
+	common/err/errinfo.o \
 	common/log/log.o \
-        common/log/logellipsis.o \
-        common/log/logrel.o \
-        common/log/logrelellipsis.o \
-        common/log/logcom.o \
+	common/log/logellipsis.o \
+	common/log/logrel.o \
+	common/log/logrelellipsis.o \
+	common/log/logcom.o \
 	common/log/logformat.o \
 	common/misc/RTAssertMsg1Weak.o \
 	common/misc/RTAssertMsg2.o \
@@ -72,6 +81,7 @@ MOD_OBJS   = \
 	common/misc/RTAssertMsg2WeakV.o \
 	common/misc/assert.o \
 	common/misc/thread.o \
+	common/string/RTStrCat.o \
 	common/string/RTStrCopy.o \
 	common/string/RTStrCopyEx.o \
 	common/string/RTStrCopyP.o \
@@ -83,13 +93,16 @@ MOD_OBJS   = \
 	common/table/avlpv.o \
 	common/time/time.o \
 	generic/RTAssertShouldPanic-generic.o \
-        generic/RTLogWriteStdErr-stub-generic.o \
-        generic/RTLogWriteStdOut-stub-generic.o \
+	generic/RTLogWriteStdErr-stub-generic.o \
+	generic/RTLogWriteStdOut-stub-generic.o \
+	generic/RTMpGetCoreCount-generic.o \
 	generic/RTSemEventWait-2-ex-generic.o \
 	generic/RTSemEventWaitNoResume-2-ex-generic.o \
 	generic/RTSemEventMultiWait-2-ex-generic.o \
 	generic/RTSemEventMultiWaitNoResume-2-ex-generic.o \
+	generic/rtStrFormatKernelAddress-generic.o \
 	generic/errvars-generic.o \
+	generic/mppresent-generic.o \
 	VBox/log-vbox.o \
 	VBox/logbackdoor.o
 ifeq ($(BUILD_TARGET_ARCH),x86)
@@ -97,6 +110,7 @@ MOD_OBJS += \
 	common/math/gcc/divdi3.o \
 	common/math/gcc/moddi3.o \
 	common/math/gcc/udivdi3.o \
+	common/math/gcc/udivmoddi4.o \
 	common/math/gcc/umoddi3.o \
 	common/math/gcc/qdivrem.o
 endif
@@ -127,12 +141,12 @@ ifeq ($(KERN_VERSION),24)
  ## @todo move to MOD_DEFS when we have finished refactoring
  MOD_CFLAGS = -DEXPORT_SYMTAB
 else
- MOD_CFLAGS = -Wno-declaration-after-statement -include $(MANGLING)
+ MOD_CFLAGS = -Wno-declaration-after-statement -include $(MANGLING) -fno-pie
 endif
 
 MOD_CLEAN = . linux r0drv generic r0drv/linux r0drv/generic VBox \
 		common/alloc common/err common/log common/math/gcc common/misc \
-		common/string common/time
+		common/string common/table common/time
 
 include $(obj)/Makefile.include.footer
 
@@ -143,3 +157,4 @@ check: $(MOD_NAME)
 	    echo "error: Some exported IPRT symbols was not properly renamed! See above." >&2; \
 	    false; \
 	 fi
+

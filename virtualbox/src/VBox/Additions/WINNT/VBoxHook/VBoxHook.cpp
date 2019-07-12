@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,20 +15,34 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include <Windows.h>
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
 #include <VBoxHook.h>
 #include <VBox/VBoxGuestLib.h>
-#include <stdio.h>
+#ifdef DEBUG
+# include <stdio.h>
+#endif
 
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #pragma data_seg("SHARED")
-static HWINEVENTHOOK    hWinEventHook[2]    = {0};
-static HWINEVENTHOOK    hDesktopEventHook   = NULL;
+static HWINEVENTHOOK    g_ahWinEventHook[2]   = { NULL, NULL };
+static HWINEVENTHOOK    g_hDesktopEventHook   = NULL;
 #pragma data_seg()
 #pragma comment(linker, "/section:SHARED,RWS")
 
-static HANDLE   hWinNotifyEvent = 0;
-static HANDLE   hDesktopNotifyEvent = 0;
+static HANDLE   g_hWinNotifyEvent     = NULL;
+static HANDLE   g_hDesktopNotifyEvent = NULL;
 
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef DEBUG
 static void WriteLog(const char *pszFormat, ...);
 # define dprintf(a) do { WriteLog a; } while (0)
@@ -37,10 +51,11 @@ static void WriteLog(const char *pszFormat, ...);
 #endif /* !DEBUG */
 
 
-static void CALLBACK VBoxHandleWinEvent(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
+static void CALLBACK VBoxHandleWinEvent(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
                                         LONG idObject, LONG idChild,
                                         DWORD dwEventThread, DWORD dwmsEventTime)
 {
+    RT_NOREF(hWinEventHook, idChild, dwEventThread, dwmsEventTime);
     DWORD dwStyle;
     if (    idObject != OBJID_WINDOW
         ||  !hwnd)
@@ -80,88 +95,89 @@ static void CALLBACK VBoxHandleWinEvent(HWINEVENTHOOK hook, DWORD event, HWND hw
             break;
         }
 #endif
-        if (!hWinNotifyEvent)
+        if (!g_hWinNotifyEvent)
         {
-            hWinNotifyEvent = OpenEvent(EVENT_MODIFY_STATE, FALSE, VBOXHOOK_GLOBAL_WT_EVENT_NAME);
-            dprintf(("OpenEvent returned %x (last err=%x)\n", hWinNotifyEvent, GetLastError()));
+            g_hWinNotifyEvent = OpenEvent(EVENT_MODIFY_STATE, FALSE, VBOXHOOK_GLOBAL_WT_EVENT_NAME);
+            dprintf(("OpenEvent returned %x (last err=%x)\n", g_hWinNotifyEvent, GetLastError()));
         }
-        BOOL ret = SetEvent(hWinNotifyEvent);
-        dprintf(("SetEvent %x returned %d (last error %x)\n", hWinNotifyEvent, ret, GetLastError()));
+        BOOL fRc = SetEvent(g_hWinNotifyEvent);
+        dprintf(("SetEvent %x returned %d (last error %x)\n", g_hWinNotifyEvent, fRc, GetLastError())); NOREF(fRc);
         break;
     }
 }
 
-static void CALLBACK VBoxHandleDesktopEvent(HWINEVENTHOOK hook, DWORD event, HWND hwnd,
+static void CALLBACK VBoxHandleDesktopEvent(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd,
                                             LONG idObject, LONG idChild,
                                             DWORD dwEventThread, DWORD dwmsEventTime)
 {
-    if (!hDesktopNotifyEvent)
+    RT_NOREF(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime);
+    if (!g_hDesktopNotifyEvent)
     {
-        hDesktopNotifyEvent = OpenEvent(EVENT_MODIFY_STATE, FALSE, VBOXHOOK_GLOBAL_DT_EVENT_NAME);
-        dprintf(("OpenEvent returned %x (last err=%x)\n", hDesktopNotifyEvent, GetLastError()));
+        g_hDesktopNotifyEvent = OpenEvent(EVENT_MODIFY_STATE, FALSE, VBOXHOOK_GLOBAL_DT_EVENT_NAME);
+        dprintf(("OpenEvent returned %x (last err=%x)\n", g_hDesktopNotifyEvent, GetLastError()));
     }
-    BOOL ret = SetEvent(hDesktopNotifyEvent);
-    dprintf(("SetEvent %x returned %d (last error %x)\n", hDesktopNotifyEvent, ret, GetLastError()));
+    BOOL fRc = SetEvent(g_hDesktopNotifyEvent);
+    dprintf(("SetEvent %x returned %d (last error %x)\n", g_hDesktopNotifyEvent, fRc, GetLastError())); NOREF(fRc);
 }
 
 BOOL VBoxHookInstallActiveDesktopTracker(HMODULE hDll)
 {
-    if (hDesktopEventHook)
+    if (g_hDesktopEventHook)
         return TRUE;
 
     CoInitialize(NULL);
-    hDesktopEventHook = SetWinEventHook(EVENT_SYSTEM_DESKTOPSWITCH, EVENT_SYSTEM_DESKTOPSWITCH,
-                                        hDll,
-                                        VBoxHandleDesktopEvent,
-                                        0, 0,
-                                        0);
+    g_hDesktopEventHook = SetWinEventHook(EVENT_SYSTEM_DESKTOPSWITCH, EVENT_SYSTEM_DESKTOPSWITCH,
+                                          hDll,
+                                          VBoxHandleDesktopEvent,
+                                          0, 0,
+                                          0);
 
-    return !!hDesktopEventHook;
+    return !!g_hDesktopEventHook;
 
 }
 
 BOOL VBoxHookRemoveActiveDesktopTracker()
 {
-    if (hDesktopEventHook)
+    if (g_hDesktopEventHook)
     {
-        UnhookWinEvent(hDesktopEventHook);
+        UnhookWinEvent(g_hDesktopEventHook);
         CoUninitialize();
     }
-    hDesktopEventHook = 0;
+    g_hDesktopEventHook = 0;
     return TRUE;
 }
 
 /** Install the global message hook */
 BOOL VBoxHookInstallWindowTracker(HMODULE hDll)
 {
-    if (hWinEventHook[0] || hWinEventHook[1])
+    if (g_ahWinEventHook[0] || g_ahWinEventHook[1])
         return TRUE;
 
     CoInitialize(NULL);
-    hWinEventHook[0] = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE,
-                                       hDll,
-                                       VBoxHandleWinEvent,
-                                       0, 0,
-                                       WINEVENT_INCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    g_ahWinEventHook[0] = SetWinEventHook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE,
+                                          hDll,
+                                          VBoxHandleWinEvent,
+                                          0, 0,
+                                          WINEVENT_INCONTEXT | WINEVENT_SKIPOWNPROCESS);
 
-    hWinEventHook[1] = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE,
-                                       hDll,
-                                       VBoxHandleWinEvent,
-                                       0, 0,
-                                       WINEVENT_INCONTEXT | WINEVENT_SKIPOWNPROCESS);
-    return !!hWinEventHook[0];
+    g_ahWinEventHook[1] = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE,
+                                          hDll,
+                                          VBoxHandleWinEvent,
+                                          0, 0,
+                                          WINEVENT_INCONTEXT | WINEVENT_SKIPOWNPROCESS);
+    return !!g_ahWinEventHook[0];
 }
 
 /** Remove the global message hook */
 BOOL VBoxHookRemoveWindowTracker()
 {
-    if (hWinEventHook[0] && hWinEventHook[1])
+    if (g_ahWinEventHook[0] && g_ahWinEventHook[1])
     {
-        UnhookWinEvent(hWinEventHook[0]);
-        UnhookWinEvent(hWinEventHook[1]);
+        UnhookWinEvent(g_ahWinEventHook[0]);
+        UnhookWinEvent(g_ahWinEventHook[1]);
         CoUninitialize();
     }
-    hWinEventHook[0]  = hWinEventHook[1] = 0;
+    g_ahWinEventHook[0] = g_ahWinEventHook[1] = 0;
     return TRUE;
 }
 
@@ -216,7 +232,7 @@ static void WriteLog(const char *pszFormat, ...)
         __debugbreak();
 
     DWORD cbReturned;
-    DeviceIoControl(hVBoxGuest, VBOXGUEST_IOCTL_VMMREQUEST(s_uBuf.Req.size),
+    DeviceIoControl(hVBoxGuest, VBGL_IOCTL_VMMDEV_REQUEST(s_uBuf.Req.size),
                     &s_uBuf.Req, s_uBuf.Req.header.size,
                     &s_uBuf.Req, s_uBuf.Req.header.size,
                     &cbReturned, NULL);

@@ -2,8 +2,9 @@
 /** @file
  * USB PnP Handling
  */
+
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -12,7 +13,17 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
+
 #include "VBoxUsbCmn.h"
 
 static NTSTATUS vboxUsbPnPMnStartDevice(PVBOXUSBDEV_EXT pDevExt, PIRP pIrp)
@@ -69,21 +80,15 @@ static NTSTATUS vboxUsbPnPMnCancelStopDevice(PVBOXUSBDEV_EXT pDevExt, PIRP pIrp)
 {
     ENMVBOXUSB_PNPSTATE enmState = vboxUsbPnPStateGet(pDevExt);
     NTSTATUS Status = STATUS_SUCCESS;
-    if (enmState == ENMVBOXUSB_PNPSTATE_STOP_PENDING)
+
+    IoCopyCurrentIrpStackLocationToNext(pIrp);
+    Status = VBoxDrvToolIoPostSync(pDevExt->pLowerDO, pIrp);
+    if (NT_SUCCESS(Status) && enmState == ENMVBOXUSB_PNPSTATE_STOP_PENDING)
     {
-        IoCopyCurrentIrpStackLocationToNext(pIrp);
-        Status = VBoxDrvToolIoPostSync(pDevExt->pLowerDO, pIrp);
-        if (NT_SUCCESS(Status))
-        {
-            vboxUsbPnPStateRestore(pDevExt);
-        }
-    }
-    else
-    {
-        Assert(0);
-        Assert(enmState == ENMVBOXUSB_PNPSTATE_STARTED);
+        vboxUsbPnPStateRestore(pDevExt);
     }
 
+    Status = STATUS_SUCCESS;
     VBoxDrvToolIoComplete(pIrp, Status, 0);
     vboxUsbDdiStateRelease(pDevExt);
 
@@ -143,21 +148,17 @@ static NTSTATUS vboxUsbPnPMnCancelRemoveDevice(PVBOXUSBDEV_EXT pDevExt, PIRP pIr
 {
     ENMVBOXUSB_PNPSTATE enmState = vboxUsbPnPStateGet(pDevExt);
     NTSTATUS Status = STATUS_SUCCESS;
-    if (enmState == ENMVBOXUSB_PNPSTATE_REMOVE_PENDING)
+    IoCopyCurrentIrpStackLocationToNext(pIrp);
+
+    Status = VBoxDrvToolIoPostSync(pDevExt->pLowerDO, pIrp);
+
+    if (NT_SUCCESS(Status) &&
+        enmState == ENMVBOXUSB_PNPSTATE_REMOVE_PENDING)
     {
-        IoCopyCurrentIrpStackLocationToNext(pIrp);
-        Status = VBoxDrvToolIoPostSync(pDevExt->pLowerDO, pIrp);
-        if (NT_SUCCESS(Status))
-        {
-            vboxUsbPnPStateRestore(pDevExt);
-        }
-    }
-    else
-    {
-        Assert(0);
-        Assert(enmState == ENMVBOXUSB_PNPSTATE_STARTED);
+        vboxUsbPnPStateRestore(pDevExt);
     }
 
+    Status = STATUS_SUCCESS;
     VBoxDrvToolIoComplete(pIrp, Status, 0);
     vboxUsbDdiStateRelease(pDevExt);
 
@@ -188,8 +189,8 @@ static NTSTATUS vboxUsbPnPMnQueryCapabilities(PVBOXUSBDEV_EXT pDevExt, PIRP pIrp
 
     if (pDevCaps->Version < 1 || pDevCaps->Size < sizeof (*pDevCaps))
     {
-        Assert(0);
-        /* todo: return more appropriate status ?? */
+        AssertFailed();
+        /** @todo return more appropriate status ?? */
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -223,55 +224,41 @@ static NTSTATUS vboxUsbPnPMnDefault(PVBOXUSBDEV_EXT pDevExt, PIRP pIrp)
 DECLHIDDEN(NTSTATUS) vboxUsbDispatchPnP(IN PDEVICE_OBJECT pDeviceObject, IN PIRP pIrp)
 {
     PVBOXUSBDEV_EXT pDevExt = (PVBOXUSBDEV_EXT)pDeviceObject->DeviceExtension;
-    ENMVBOXUSB_PNPSTATE enmState = vboxUsbPnPStateGet(pDevExt);
     if (!vboxUsbDdiStateRetainIfNotRemoved(pDevExt))
-    {
         return VBoxDrvToolIoComplete(pIrp, STATUS_DELETE_PENDING, 0);
-    }
 
     PIO_STACK_LOCATION pSl = IoGetCurrentIrpStackLocation(pIrp);
-
     switch (pSl->MinorFunction)
     {
         case IRP_MN_START_DEVICE:
-        {
             return vboxUsbPnPMnStartDevice(pDevExt, pIrp);
-        }
+
         case IRP_MN_QUERY_STOP_DEVICE:
-        {
             return vboxUsbPnPMnQueryStopDevice(pDevExt, pIrp);
-        }
+
         case IRP_MN_STOP_DEVICE:
-        {
             return vboxUsbPnPMnStopDevice(pDevExt, pIrp);
-        }
+
         case IRP_MN_CANCEL_STOP_DEVICE:
-        {
             return vboxUsbPnPMnCancelStopDevice(pDevExt, pIrp);
-        }
+
         case IRP_MN_QUERY_REMOVE_DEVICE:
-        {
             return vboxUsbPnPMnQueryRemoveDevice(pDevExt, pIrp);
-        }
+
         case IRP_MN_REMOVE_DEVICE:
-        {
             return vboxUsbPnPMnRemoveDevice(pDevExt, pIrp);
-        }
+
         case IRP_MN_CANCEL_REMOVE_DEVICE:
-        {
             return vboxUsbPnPMnCancelRemoveDevice(pDevExt, pIrp);
-        }
+
         case IRP_MN_SURPRISE_REMOVAL:
-        {
             return vboxUsbPnPMnSurpriseRemoval(pDevExt, pIrp);
-        }
+
         case IRP_MN_QUERY_CAPABILITIES:
-        {
             return vboxUsbPnPMnQueryCapabilities(pDevExt, pIrp);
-        }
+
         default:
-        {
             return vboxUsbPnPMnDefault(pDevExt, pIrp);
-        }
     }
 }
+

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/dvm.h>
 
 #include <iprt/err.h>
@@ -36,9 +36,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Disk structure.
  */
@@ -50,15 +50,15 @@ typedef struct TSTRTDVMDISK
     union
     {
         /** File handle of the image. */
-        RTFILE      hImage;
+        RTVFSFILE   hImage;
         /** Handle of the volume. */
         RTDVMVOLUME hVol;
     };
 } TSTRTDVMDISK, *PTSTRTDVMDISK;
 
 
-
-static int dvmDiskRead(void *pvUser, uint64_t off, void *pvBuf, size_t cbRead)
+#if 0
+static DECLCALLBACK(int) dvmDiskRead(void *pvUser, uint64_t off, void *pvBuf, size_t cbRead)
 {
     PTSTRTDVMDISK pDisk = (PTSTRTDVMDISK)pvUser;
 
@@ -67,7 +67,7 @@ static int dvmDiskRead(void *pvUser, uint64_t off, void *pvBuf, size_t cbRead)
     return RTDvmVolumeRead(pDisk->hVol, off, pvBuf, cbRead);
 }
 
-static int dvmDiskWrite(void *pvUser, uint64_t off, const void *pvBuf, size_t cbWrite)
+static DECLCALLBACK(int) dvmDiskWrite(void *pvUser, uint64_t off, const void *pvBuf, size_t cbWrite)
 {
     PTSTRTDVMDISK pDisk = (PTSTRTDVMDISK)pvUser;
 
@@ -170,6 +170,7 @@ static int tstRTDvmVolume(RTTEST hTest, PTSTRTDVMDISK pDisk, uint64_t cb, unsign
 
     return rc;
 }
+#endif
 
 int main(int argc, char **argv)
 {
@@ -191,6 +192,9 @@ int main(int argc, char **argv)
         return RTTestSkipAndDestroy(hTest, "Missing required arguments\n");
     }
 
+#if 1
+    RTTestFailed(hTest, "Needs updating to RTDvm API changes!");
+#else
     /* Open image. */
     RTFILE hFile;
     uint64_t cb = 0;
@@ -220,6 +224,7 @@ int main(int argc, char **argv)
     /*
      * Summary
      */
+#endif
     return RTTestSummaryAndDestroy(hTest);
 }
 

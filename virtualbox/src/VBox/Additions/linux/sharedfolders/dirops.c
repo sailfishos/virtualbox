@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -62,9 +62,9 @@ static int sf_dir_open(struct inode *inode, struct file *file)
                        | SHFL_CF_ACCESS_READ
                        ;
 
-    LogFunc(("sf_dir_open(): calling vboxCallCreate, folder %s, flags %#x\n",
+    LogFunc(("sf_dir_open(): calling VbglR0SfCreate, folder %s, flags %#x\n",
              sf_i->path->String.utf8, params.CreateFlags));
-    rc = vboxCallCreate(&client_handle, &sf_g->map, sf_i->path, &params);
+    rc = VbglR0SfCreate(&client_handle, &sf_g->map, sf_i->path, &params);
     if (RT_SUCCESS(rc))
     {
         if (params.Result == SHFL_FILE_EXISTS)
@@ -76,9 +76,9 @@ static int sf_dir_open(struct inode *inode, struct file *file)
         else
             err = -ENOENT;
 
-        rc = vboxCallClose(&client_handle, &sf_g->map, params.Handle);
+        rc = VbglR0SfClose(&client_handle, &sf_g->map, params.Handle);
         if (RT_FAILURE(rc))
-            LogFunc(("sf_dir_open(): vboxCallClose(%s) after err=%d failed rc=%Rrc\n",
+            LogFunc(("sf_dir_open(): VbglR0SfClose(%s) after err=%d failed rc=%Rrc\n",
                      sf_i->path->String.utf8, err, rc));
     }
     else
@@ -111,11 +111,34 @@ static int sf_dir_release(struct inode *inode, struct file *file)
 }
 
 /**
+ * Translate RTFMODE into DT_xxx (in conjunction to rtDirType())
+ * @param fMode     file mode
+ * returns d_type
+ */
+static int sf_get_d_type(RTFMODE fMode)
+{
+    int d_type;
+    switch (fMode & RTFS_TYPE_MASK)
+    {
+        case RTFS_TYPE_FIFO:      d_type = DT_FIFO;    break;
+        case RTFS_TYPE_DEV_CHAR:  d_type = DT_CHR;     break;
+        case RTFS_TYPE_DIRECTORY: d_type = DT_DIR;     break;
+        case RTFS_TYPE_DEV_BLOCK: d_type = DT_BLK;     break;
+        case RTFS_TYPE_FILE:      d_type = DT_REG;     break;
+        case RTFS_TYPE_SYMLINK:   d_type = DT_LNK;     break;
+        case RTFS_TYPE_SOCKET:    d_type = DT_SOCK;    break;
+        case RTFS_TYPE_WHITEOUT:  d_type = DT_WHT;     break;
+        default:                  d_type = DT_UNKNOWN; break;
+    }
+    return d_type;
+}
+
+/**
  * Extract element ([dir]->f_pos) from the directory [dir] into [d_name].
  *
  * @returns 0 for success, 1 for end reached, Linux error code otherwise.
  */
-static int sf_getdent(struct file *dir, char d_name[NAME_MAX])
+static int sf_getdent(struct file *dir, char d_name[NAME_MAX], int *d_type)
 {
     loff_t cur;
     struct sf_glob_info *sf_g;
@@ -150,12 +173,12 @@ static int sf_getdent(struct file *dir, char d_name[NAME_MAX])
                            | SHFL_CF_ACCESS_READ
                            ;
 
-        LogFunc(("sf_getdent: calling vboxCallCreate, folder %s, flags %#x\n",
+        LogFunc(("sf_getdent: calling VbglR0SfCreate, folder %s, flags %#x\n",
                   sf_i->path->String.utf8, params.CreateFlags));
-        rc = vboxCallCreate(&client_handle, &sf_g->map, sf_i->path, &params);
+        rc = VbglR0SfCreate(&client_handle, &sf_g->map, sf_i->path, &params);
         if (RT_FAILURE(rc))
         {
-            LogFunc(("vboxCallCreate(%s) failed rc=%Rrc\n",
+            LogFunc(("VbglR0SfCreate(%s) failed rc=%Rrc\n",
                         sf_i->path->String.utf8, rc));
             return -EPERM;
         }
@@ -169,9 +192,9 @@ static int sf_getdent(struct file *dir, char d_name[NAME_MAX])
 
         sf_dir_info_empty(sf_d);
         err = sf_dir_read_all(sf_g, sf_i, sf_d, params.Handle);
-        rc = vboxCallClose(&client_handle, &sf_g->map, params.Handle);
+        rc = VbglR0SfClose(&client_handle, &sf_g->map, params.Handle);
         if (RT_FAILURE(rc))
-            LogFunc(("vboxCallClose(%s) failed rc=%Rrc\n", sf_i->path->String.utf8, rc));
+            LogFunc(("VbglR0SfClose(%s) failed rc=%Rrc\n", sf_i->path->String.utf8, rc));
         if (err)
             return err;
 
@@ -200,6 +223,8 @@ static int sf_getdent(struct file *dir, char d_name[NAME_MAX])
             size = offsetof(SHFLDIRINFO, name.String) + info->name.u16Size;
             info = (SHFLDIRINFO *) ((uintptr_t) info + size);
         }
+
+        *d_type = sf_get_d_type(info->Info.Attr.fMode);
 
         return sf_nlscpy(sf_g, d_name, NAME_MAX,
                          info->name.String.utf8, info->name.u16Length);
@@ -244,8 +269,9 @@ static int sf_dir_read(struct file *dir, void *opaque, filldir_t filldir)
         ino_t fake_ino;
         loff_t sanity;
         char d_name[NAME_MAX];
+        int d_type = DT_UNKNOWN;
 
-        err = sf_getdent(dir, d_name);
+        err = sf_getdent(dir, d_name, &d_type);
         switch (err)
         {
             case 1:
@@ -280,13 +306,13 @@ static int sf_dir_read(struct file *dir, void *opaque, filldir_t filldir)
         }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
-        if (!dir_emit(ctx, d_name, strlen(d_name), fake_ino, DT_UNKNOWN))
+        if (!dir_emit(ctx, d_name, strlen(d_name), fake_ino, d_type))
         {
             LogFunc(("dir_emit failed\n"));
             return 0;
         }
 #else
-        err = filldir(opaque, d_name, strlen(d_name), dir->f_pos, fake_ino, DT_UNKNOWN);
+        err = filldir(opaque, d_name, strlen(d_name), dir->f_pos, fake_ino, d_type);
         if (err)
         {
             LogFunc(("filldir returned error %d\n", err));
@@ -381,10 +407,8 @@ static struct dentry *sf_lookup(struct inode *parent, struct dentry *dentry
             err = -ENOMEM;
             goto fail1;
         }
-        INIT_LIST_HEAD(&sf_new_i->handles);
         sf_new_i->handle = SHFL_HANDLE_NIL;
         sf_new_i->force_reread = 0;
-        sf_new_i->force_restat = 0;
 
         ino = iunique(parent->i_sb, 1);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 4, 25)
@@ -473,11 +497,10 @@ static int sf_instantiate(struct inode *parent, struct dentry *dentry,
         goto fail1;
     }
 
-    SET_INODE_INFO(inode, sf_new_i);
     sf_init_inode(sf_g, inode, info);
     sf_new_i->path = path;
-    INIT_LIST_HEAD(&sf_new_i->handles);
-    sf_new_i->force_restat = 0;
+    SET_INODE_INFO(inode, sf_new_i);
+    sf_new_i->force_restat = 1;
     sf_new_i->force_reread = 0;
 
     d_instantiate(dentry, inode);
@@ -538,9 +561,9 @@ static int sf_create_aux(struct inode *parent, struct dentry *dentry,
                            ;
     params.Info.Attr.enmAdditional = RTFSOBJATTRADD_NOTHING;
 
-    LogFunc(("sf_create_aux: calling vboxCallCreate, folder %s, flags %#x\n",
+    LogFunc(("sf_create_aux: calling VbglR0SfCreate, folder %s, flags %#x\n",
               path->String.utf8, params.CreateFlags));
-    rc = vboxCallCreate(&client_handle, &sf_g->map, path, &params);
+    rc = VbglR0SfCreate(&client_handle, &sf_g->map, path, &params);
     if (RT_FAILURE(rc))
     {
         if (rc == VERR_WRITE_PROTECT)
@@ -549,7 +572,7 @@ static int sf_create_aux(struct inode *parent, struct dentry *dentry,
             goto fail1;
         }
         err = -EPROTO;
-        LogFunc(("(%d): vboxCallCreate(%s) failed rc=%Rrc\n",
+        LogFunc(("(%d): VbglR0SfCreate(%s) failed rc=%Rrc\n",
                     fDirectory, sf_i->path->String.utf8, rc));
         goto fail1;
     }
@@ -578,18 +601,18 @@ static int sf_create_aux(struct inode *parent, struct dentry *dentry,
      */
     if (fDirectory)
     {
-        rc = vboxCallClose(&client_handle, &sf_g->map, params.Handle);
+        rc = VbglR0SfClose(&client_handle, &sf_g->map, params.Handle);
         if (RT_FAILURE(rc))
-            LogFunc(("(%d): vboxCallClose failed rc=%Rrc\n", fDirectory, rc));
+            LogFunc(("(%d): VbglR0SfClose failed rc=%Rrc\n", fDirectory, rc));
     }
 
     sf_i->force_restat = 1;
     return 0;
 
 fail2:
-    rc = vboxCallClose(&client_handle, &sf_g->map, params.Handle);
+    rc = VbglR0SfClose(&client_handle, &sf_g->map, params.Handle);
     if (RT_FAILURE(rc))
-        LogFunc(("(%d): vboxCallClose failed rc=%Rrc\n", fDirectory, rc));
+        LogFunc(("(%d): VbglR0SfClose failed rc=%Rrc\n", fDirectory, rc));
 
 fail1:
     kfree(path);
@@ -604,9 +627,10 @@ fail0:
  * @param parent        inode of the directory
  * @param dentry        directory cache entry
  * @param mode          file mode
+ * @param excl          Possible O_EXCL...
  * @returns 0 on success, Linux error code otherwise
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 6, 0) || defined(DOXYGEN_RUNNING)
 static int sf_create(struct inode *parent, struct dentry *dentry, umode_t mode, bool excl)
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 3, 0)
 static int sf_create(struct inode *parent, struct dentry *dentry, umode_t mode, struct nameidata *nd)
@@ -662,15 +686,13 @@ static int sf_unlink_aux(struct inode *parent, struct dentry *dentry, int fDirec
         goto fail0;
 
     fFlags = fDirectory ? SHFL_REMOVE_DIR : SHFL_REMOVE_FILE;
-    if (   dentry
-        && dentry->d_inode
+    if (   dentry->d_inode
         && ((dentry->d_inode->i_mode & S_IFLNK) == S_IFLNK))
         fFlags |= SHFL_REMOVE_SYMLINK;
-    rc = vboxCallRemove(&client_handle, &sf_g->map, path, fFlags);
+    rc = VbglR0SfRemove(&client_handle, &sf_g->map, path, fFlags);
     if (RT_FAILURE(rc))
     {
-        LogFunc(("(%d): vboxCallRemove(%s) failed rc=%Rrc\n", fDirectory,
-                    path->String.utf8, rc));
+        LogFunc(("(%d): VbglR0SfRemove(%s) failed rc=%Rrc\n", fDirectory, path->String.utf8, rc));
         err = -RTErrConvertToErrno(rc);
         goto fail1;
     }
@@ -722,15 +744,28 @@ static int sf_rmdir(struct inode *parent, struct dentry *dentry)
  * @param old_dentry    old directory cache entry
  * @param new_parent    inode of the new parent directory
  * @param new_dentry    new directory cache entry
+ * @param flags         flags
  * @returns 0 on success, Linux error code otherwise
  */
 static int sf_rename(struct inode *old_parent, struct dentry *old_dentry,
-                     struct inode *new_parent, struct dentry *new_dentry)
+                     struct inode *new_parent, struct dentry *new_dentry
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+                     , unsigned flags
+#endif
+                     )
 {
     int err = 0, rc = VINF_SUCCESS;
     struct sf_glob_info *sf_g = GET_GLOB_INFO(old_parent->i_sb);
 
     TRACE();
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+    if (flags)
+    {
+        LogFunc(("rename with flags=%x\n", flags));
+        return -EINVAL;
+    }
+#endif
 
     if (sf_g != GET_GLOB_INFO(new_parent->i_sb))
     {
@@ -760,7 +795,7 @@ static int sf_rename(struct inode *old_parent, struct dentry *old_dentry,
         {
             int fDir = ((old_dentry->d_inode->i_mode & S_IFDIR) != 0);
 
-            rc = vboxCallRename(&client_handle, &sf_g->map, old_path,
+            rc = VbglR0SfRename(&client_handle, &sf_g->map, old_path,
                                 new_path, fDir ? 0 : SHFL_RENAME_FILE | SHFL_RENAME_REPLACE_IF_EXISTS);
             if (RT_SUCCESS(rc))
             {
@@ -772,7 +807,7 @@ static int sf_rename(struct inode *old_parent, struct dentry *old_dentry,
             }
             else
             {
-                LogFunc(("vboxCallRename failed rc=%Rrc\n", rc));
+                LogFunc(("VbglR0SfRename failed rc=%Rrc\n", rc));
                 err = -RTErrConvertToErrno(rc);
                 kfree(new_path);
             }
@@ -815,7 +850,7 @@ static int sf_symlink(struct inode *parent, struct dentry *dentry, const char *s
     ssymname->u16Size = symname_len;
     memcpy(ssymname->String.utf8, symname, symname_len);
 
-    rc = vboxCallSymlink(&client_handle, &sf_g->map, path, ssymname, &info);
+    rc = VbglR0SfSymlink(&client_handle, &sf_g->map, path, ssymname, &info);
     kfree(ssymname);
 
     if (RT_FAILURE(rc))
@@ -825,7 +860,7 @@ static int sf_symlink(struct inode *parent, struct dentry *dentry, const char *s
             err = -EROFS;
             goto fail1;
         }
-        LogFunc(("vboxCallSymlink(%s) failed rc=%Rrc\n",
+        LogFunc(("VbglR0SfSymlink(%s) failed rc=%Rrc\n",
                     sf_i->path->String.utf8, rc));
         err = -EPROTO;
         goto fail1;

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -38,15 +39,15 @@
 #include <iprt/formats/asn1.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static char const g_achDigits[11] = "0123456789";
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 DECLHIDDEN(int) rtAsn1ObjId_InternalFormatComponent(uint32_t uValue, char **ppszObjId, size_t *pcbObjId); /* asn1-ut-objid.cpp */
 
 
@@ -231,24 +232,25 @@ static int rtAsn1ObjId_PreParse(uint8_t const *pbContent, uint32_t cbContent, PR
                             return VINF_SUCCESS;
                         }
                         return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_OBJID_TOO_LONG_STRING_FORM,
-                                                   "Object ID has a too long string form: %#x (max %#x)",
-                                                   cchObjId, RT_SIZEOFMEMB(RTASN1OBJID, szObjId));
+                                                   "%s: Object ID has a too long string form: %#x (max %#x)",
+                                                   pszErrorTag, cchObjId, RT_SIZEOFMEMB(RTASN1OBJID, szObjId));
                     }
                     return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_OBJID_TOO_MANY_COMPONENTS,
-                                               "Object ID has too many components: %#x (max 127)", cComponents);
+                                               "%s: Object ID has too many components: %#x (max 127)", pszErrorTag, cComponents);
                 }
 
                 /* next */
                 rc = rtAsn1ObjId_ReadComponent(pbContent, cbContent, &uValue);
             } while (rc > 0);
         }
-        rc = RTAsn1CursorSetInfo(pCursor, rc, "Bad object ID component #%u encoding: %.*Rhxs",
-                                 cComponents, cbContent, pbContent);
+        rc = RTAsn1CursorSetInfo(pCursor, rc, "%s: Bad object ID component #%u encoding: %.*Rhxs",
+                                 pszErrorTag, cComponents, cbContent, pbContent);
     }
     else if (cbContent)
-        rc = RTAsn1CursorSetInfo(pCursor, VERR_ASN1_INVALID_OBJID_ENCODING, "Object ID content is loo long: %#x", cbContent);
+        rc = RTAsn1CursorSetInfo(pCursor, VERR_ASN1_INVALID_OBJID_ENCODING, "%s: Object ID content is loo long: %#x",
+                                 pszErrorTag, cbContent);
     else
-        rc = RTAsn1CursorSetInfo(pCursor, VERR_ASN1_INVALID_OBJID_ENCODING, "Zero length object ID content");
+        rc = RTAsn1CursorSetInfo(pCursor, VERR_ASN1_INVALID_OBJID_ENCODING, "%s: Zero length object ID content", pszErrorTag);
     return rc;
 }
 
@@ -344,6 +346,8 @@ RTDECL(int) RTAsn1ObjId_DecodeAsn1(PRTASN1CURSOR pCursor, uint32_t fFlags, PRTAS
                             }
                         }
                     }
+                    RTAsn1MemFree(&pThis->Allocation, (void *)pThis->pauComponents);
+                    pThis->pauComponents = NULL;
                 }
             }
         }

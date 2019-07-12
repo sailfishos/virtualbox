@@ -1,8 +1,8 @@
 <ui version="4.0" >
  <comment>
- VBox frontends: Qt4 GUI ("VirtualBox"):
+ VBox frontends: Qt GUI ("VirtualBox"):
 
- Copyright (C) 2008-2012 Oracle Corporation
+ Copyright (C) 2008-2016 Oracle Corporation
 
  This file is part of VirtualBox Open Source Edition (OSE), as
  available from http://www.virtualbox.org. This file is free software;
@@ -22,9 +22,6 @@
     <height>196</height>
    </rect>
   </property>
-  <property name="windowTitle" >
-   <string>Window</string>
-  </property>
   <layout class="QGridLayout" >
    <item row="0" column="0" >
     <widget class="QLabel" name="mLbPath" >
@@ -37,7 +34,7 @@
     </widget>
    </item>
    <item row="0" column="1" >
-    <widget class="VBoxFilePathSelectorWidget" name="mPsPath" />
+    <widget class="UIFilePathSelector" name="mPsPath" />
    </item>
    <item row="1" column="0" >
     <widget class="QLabel" name="mLbName" >
@@ -79,7 +76,7 @@
    <item row="4" column="1" >
     <widget class="QCheckBox" name="mCbPermanent" >
      <property name="toolTip" >
-      <string>If checked, this shared folder will be permanent.</string>
+      <string>When checked, this shared folder will be permanent.</string>
      </property>
      <property name="text" >
       <string>&amp;Make Permanent</string>
@@ -110,9 +107,9 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>VBoxFilePathSelectorWidget</class>
+   <class>UIFilePathSelector</class>
    <extends>QComboBox</extends>
-   <header>VBoxFilePathSelectorWidget.h</header>
+   <header>UIFilePathSelector.h</header>
    <container>1</container>
   </customwidget>
   <customwidget>

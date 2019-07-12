@@ -1,10 +1,11 @@
 #! /bin/sh
-#
-# Linux Additions X11 setup init script ($Revision: 97087 $)
+# $Id: vboxadd-x11.sh $
+## @file
+# Linux Additions X11 setup init script ($Revision: 128493 $)
 #
 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -29,28 +30,13 @@
 ### END INIT INFO
 
 PATH=$PATH:/bin:/sbin:/usr/sbin
-LOG="/var/log/vboxadd-install-x11.log"
 CONFIG_DIR="/var/lib/VBoxGuestAdditions"
-CONFIG="config"
+CONFIG="${CONFIG_DIR}/config"
+MODPROBE=/sbin/modprobe
 
-# Check architecture
-cpu=`uname -m`;
-case "$cpu" in
-  i[3456789]86|x86)
-    cpu="x86"
-    lib_candidates="/usr/lib/i386-linux-gnu /usr/lib /lib"
-    ;;
-  x86_64|amd64)
-    cpu="amd64"
-    lib_candidates="/usr/lib/x86_64-linux-gnu /usr/lib64 /usr/lib /lib64 /lib"
-    ;;
-esac
-for i in $lib_candidates; do
-  if test -d "$i/VBoxGuestAdditions"; then
-    LIB=$i
-    break
-  fi
-done
+if $MODPROBE -c 2>/dev/null | grep -q '^allow_unsupported_modules  *0'; then
+  MODPROBE="$MODPROBE --allow-unsupported-modules"
+fi
 
 # Find the version of X installed
 # The last of the three is for the X.org 6.7 included in Fedora Core 2
@@ -59,6 +45,8 @@ x_version=`echo "$xver" | sed -n 's/^X Window System Version \([0-9.]\+\)/\1/p'`
 x_version_short=`echo "${x_version}" | sed 's/\([0-9]*\.[0-9]*\)\..*/\1/'`
 # Version of Redhat or Fedora installed.  Needed for setting up selinux policy.
 redhat_release=`cat /etc/redhat-release 2> /dev/null`
+# Version of OL installed.  Needed for blacklisting vboxvideo.
+oracle_release=`cat /etc/oracle-release 2> /dev/null`
 # All the different possible locations for XFree86/X.Org configuration files
 # - how many of these have ever been used?
 x11conf_files="/etc/X11/xorg.conf /etc/X11/xorg.conf-4 /etc/X11/.xorg.conf \
@@ -68,111 +56,9 @@ x11conf_files="/etc/X11/xorg.conf /etc/X11/xorg.conf-4 /etc/X11/.xorg.conf \
     /usr/X11R6/etc/X11/XF86Config /usr/X11R6/lib/X11/XF86Config-4 \
     /usr/X11R6/lib/X11/XF86Config"
 
-if [ -f /etc/arch-release ]; then
-    system=arch
-elif [ -f /etc/redhat-release ]; then
-    system=redhat
-elif [ -f /etc/debian_version ]; then
-    system=debian
-elif [ -f /etc/SuSE-release ]; then
-    system=suse
-elif [ -f /etc/gentoo-release ]; then
-    system=gentoo
-elif [ -f /etc/lfs-release -a -d /etc/rc.d/init.d ]; then
-    system=lfs
-else
-    system=other
-fi
-
-if [ "$system" = "arch" ]; then
-    USECOLOR=yes
-    . /etc/rc.d/functions
-    fail_msg() {
-        stat_fail
-    }
-
-    succ_msg() {
-        stat_done
-    }
-
-    begin() {
-        stat_busy "$1"
-    }
-fi
-
-if [ "$system" = "redhat" ]; then
-    . /etc/init.d/functions
-    fail_msg() {
-        echo_failure
-        echo
-    }
-    succ_msg() {
-        echo_success
-        echo
-    }
-    begin() {
-        echo -n "$1"
-    }
-fi
-
-if [ "$system" = "suse" ]; then
-    . /etc/rc.status
-    fail_msg() {
-        rc_failed 1
-        rc_status -v
-    }
-    succ_msg() {
-        rc_reset
-        rc_status -v
-    }
-    begin() {
-        echo -n "$1"
-    }
-fi
-
-if [ "$system" = "gentoo" ]; then
-    if [ -f /sbin/functions.sh ]; then
-        . /sbin/functions.sh
-    elif [ -f /etc/init.d/functions.sh ]; then
-        . /etc/init.d/functions.sh
-    fi
-    fail_msg() {
-        eend 1
-    }
-    succ_msg() {
-        eend $?
-    }
-    begin() {
-        ebegin $1
-    }
-    if [ "`which $0`" = "/sbin/rc" ]; then
-        shift
-    fi
-fi
-
-if [ "$system" = "lfs" ]; then
-    . /etc/rc.d/init.d/functions
-    fail_msg() {
-        echo_failure
-    }
-    succ_msg() {
-        echo_ok
-    }
-    begin() {
-        echo $1
-    }
-fi
-
-if [ "$system" = "debian" -o "$system" = "other" ]; then
-    fail_msg() {
-        echo " ...fail!"
-    }
-    succ_msg() {
-        echo " ...done."
-    }
-    begin() {
-        echo -n $1
-    }
+# Preamble for Gentoo
+if [ "`which $0`" = "/sbin/rc" ]; then
+    shift
 fi
 
 dev=/dev/vboxguest
@@ -182,12 +68,7 @@ group=1
 
 fail()
 {
-    if [ "$system" = "gentoo" ]; then
-        eerror $1
-        exit 1
-    fi
-    fail_msg
-    echo "($1)"
+    echo "${1}" >&2
     exit 1
 }
 
@@ -202,14 +83,10 @@ install_x11_startup_app() {
     desktop_src=$2
     service_name=$3
     alt_command=$4
-    test -r "$app_src" ||
-        { echo >> $LOG "$self: no script given"; return 1; }
-    test -r "$desktop_src" ||
-        { echo >> $LOG "$self: no desktop file given"; return 1; }
-    test -n "$service_name" ||
-        { echo >> $LOG "$self: no service given"; return 1; }
-    test -n "$alt_command" ||
-        { echo >> $LOG "$self: no service given"; return 1; }
+    test -r "$app_src" || fail "$self: no script given"
+    test -r "$desktop_src" || fail "$self: no desktop file given"
+    test -n "$service_name" || fail "$self: no service given"
+    test -n "$alt_command" || fail "$self: no service given"
     app_dest=`basename $app_src sh`
     app_dest_sh=`basename $app_src sh`.sh
     desktop_dest=`basename $desktop_src`
@@ -247,7 +124,7 @@ install_x11_startup_app() {
     if [ $found -eq 1 ]; then
         return 0
     fi
-    cat >> $LOG << EOF
+    cat >&2 << EOF
 Could not set up the $service_name desktop service.
 To start it at log-in for a given user, add the command $alt_command
 to the file .xinitrc in their home directory.
@@ -273,15 +150,42 @@ restart()
     return 0
 }
 
-# setup_script
+setup_opengl()
+{
+    # Install the guest OpenGL drivers.  For now we don't support
+    # multi-architecture installations
+    rm -f /etc/ld.so.conf.d/00vboxvideo.conf
+    rm -Rf /var/lib/VBoxGuestAdditions/lib
+    if /usr/bin/VBoxClient --check3d 2>/dev/null; then
+        mkdir -p /var/lib/VBoxGuestAdditions/lib
+        ln -sf "${INSTALL_DIR}/lib/VBoxOGL.so" /var/lib/VBoxGuestAdditions/lib/libGL.so.1
+        # SELinux for the OpenGL libraries, so that gdm can load them during the
+        # acceleration support check.  This prevents an "Oh no, something has gone
+        # wrong!" error when starting EL7 guests.
+        if test -e /etc/selinux/config; then
+            if command -v semanage > /dev/null; then
+                semanage fcontext -a -t lib_t "/var/lib/VBoxGuestAdditions/lib/libGL.so.1"
+            fi
+            # This is needed on old Fedora/Redhat systems.  No one remembers which.
+            chcon -h  -t lib_t "/var/lib/VBoxGuestAdditions/lib/libGL.so.1" 2>/dev/null
+        fi
+        echo "/var/lib/VBoxGuestAdditions/lib" > /etc/ld.so.conf.d/00vboxvideo.conf
+    fi
+    ldconfig
+}
+
 setup()
 {
-    echo "VirtualBox Guest Additions installation, Window System and desktop setup" > $LOG
-    begin "Installing the Window System drivers"
-    lib_dir="$LIB/VBoxGuestAdditions"
-    share_dir="/usr/share/VBoxGuestAdditions"
-    test -x "$lib_dir" -a -x "$share_dir" ||
-        fail "Invalid Guest Additions configuration found"
+    if test -r "${CONFIG}"; then
+      . "${CONFIG}"
+    else
+      fail "Configuration file ${CONFIG} not found"
+    fi
+    test -n "$INSTALL_DIR" -a -n "$INSTALL_VER" ||
+      fail "Configuration file ${CONFIG} not complete"
+    lib_dir="${INSTALL_DIR}/other"
+    test -x "${lib_dir}" ||
+        fail "Invalid Guest Additions configuration found."
     # By default we want to configure X
     dox11config="true"
     # By default, we want to run our xorg.conf setup script
@@ -298,9 +202,12 @@ setup()
         test -c /dev/psaux && nopsaux="";;
     esac
     # Should we use the VMSVGA driver instead of VBoxVideo?
+    if grep 80eebeef /proc/bus/pci/devices > /dev/null; then
     vmsvga=""
-    if ! grep 80eebeef /proc/bus/pci/devices > /dev/null; then
+    elif grep 15ad0405 /proc/bus/pci/devices > /dev/null; then
         vmsvga="--vmsvga"
+    else
+        dox11config=""
     fi
     # The video driver to install for X.Org 6.9+
     vboxvideo_src=
@@ -322,14 +229,34 @@ setup()
         done
     fi
 
+    case "${x_version}" in
+    4.* | 6.* | 7.* | 1.?.* | 1.1[0-6].* )
+        blacklist_vboxvideo="yes"
+        ;;
+    esac
+    case "$oracle_release" in
+        Oracle*release\ 6.* )
+            # relevant for OL6/UEK4 but cannot hurt for other kernels
+            blacklist_vboxvideo="yes"
+    esac
+    if test -n "${blacklist_vboxvideo}"; then
+        test -d /etc/modprobe.d &&
+            echo "blacklist vboxvideo" > /etc/modprobe.d/blacklist-vboxvideo.conf
+    else
+        test -f /etc/modprobe.d/blacklist-vboxvideo.conf &&
+            rm -f /etc/modprobe.d/blacklist-vboxvideo.conf
+        # We do not want to load the driver if X.Org Server is already
+        # running, as without a driver the server will touch the hardware
+        # directly, causing problems.
+        ps -Af | grep -q '[X]org' || ${MODPROBE} -q vboxvideo
+    fi
+
     test -z "$x_version" -o -z "$modules_dir" &&
         {
-            echo
-            echo "Could not find the X.Org or XFree86 Window System, skipping."
+            echo "Could not find the X.Org or XFree86 Window System, skipping." >&2
             exit 0
         }
 
-    echo
     # openSUSE 10.3 shipped X.Org 7.2 with X.Org Server 1.3, but didn't
     # advertise the fact.
     if grep -q '10\.3' /etc/SuSE-release 2>/dev/null; then
@@ -339,8 +266,7 @@ setup()
     fi
     case $x_version in
         1.*.99.* )
-            echo "Warning: unsupported pre-release version of X.Org Server installed.  Not"
-            echo "installing the X.Org drivers."
+            echo "Warning: unsupported pre-release version of X.Org Server installed.  Not installing the X.Org drivers." >&2
             dox11config=""
             ;;
         1.11.* )
@@ -386,9 +312,12 @@ setup()
             xserver_version="X.Org Server 1.5"
             vboxvideo_src=vboxvideo_drv_15.so
             vboxmouse_src=vboxmouse_drv_15.so
-            # SUSE with X.Org 1.5 is another special case, and is also
-            # handled specially
-            test "$system" = "suse" && automouse=""
+            # Historical note: SUSE with X.Org Server 1.5 disabled automatic
+            # mouse configuration and was handled specially.  However since our
+            # kernel driver seems to have problems with X.Org Server 1.5 anyway
+            # we just create an X.Org configuration file and use the user space
+            # one generally, no longer just for SUSE.
+            automouse=""
             ;;
         1.4.* )
             xserver_version="X.Org Server 1.4"
@@ -427,41 +356,47 @@ setup()
             autokeyboard=""
             case $x_version in
                 6.8.* )
-                    autokeyboard="true"
+                    autokeyboard="--autoKeyboard"
                     ;;
                 4.2.* | 4.3.* )
                     main_cfg="/etc/X11/XF86Config"
                     ;;
             esac
             ;;
-        * )
-            # Anything else, including all X server versions as of 1.12.
+        1.12.* | 1.13.* | 1.14.* | 1.15.* | 1.16.* | 1.17.* | 1.18.* )
             xserver_version="X.Org Server ${x_version_short}"
             vboxvideo_src=vboxvideo_drv_`echo ${x_version_short} | sed 's/\.//'`.so
             setupxorgconf=""
             test -f "${lib_dir}/${vboxvideo_src}" ||
             {
-                echo "Warning: unknown version of the X Window System installed.  Not installing"
-                echo "X Window System drivers."
+                echo "Warning: unknown version of the X Window System installed.  Not installing X Window System drivers." >&2
                 dox11config=""
                 vboxvideo_src=""
             }
             ;;
+        * )
+            # For anything else, assume kernel drivers.
+            dox11config=""
+            ;;
     esac
     test -n "${dox11config}" &&
-        begin "Installing $xserver_version modules"
-    rm "$modules_dir/drivers/vboxvideo_drv$driver_ext" 2>/dev/null
-    rm "$modules_dir/input/vboxmouse_drv$driver_ext" 2>/dev/null
-    case "$vboxvideo_src" in ?*)
-        ln -s "$lib_dir/$vboxvideo_src" "$modules_dir/drivers/vboxvideo_drv$driver_ext";;
+        echo "Installing $xserver_version modules" >&2
+    case "$vboxvideo_src" in
+        ?*)
+        ln -s "${lib_dir}/$vboxvideo_src" "$modules_dir/drivers/vboxvideo_drv$driver_ext.new" &&
+            mv "$modules_dir/drivers/vboxvideo_drv$driver_ext.new" "$modules_dir/drivers/vboxvideo_drv$driver_ext";;
+        *)
+        rm "$modules_dir/drivers/vboxvideo_drv$driver_ext" 2>/dev/null
     esac
-    case "$vboxmouse_src" in ?*)
-        ln -s "$lib_dir/$vboxmouse_src" "$modules_dir/input/vboxmouse_drv$driver_ext";;
+    case "$vboxmouse_src" in
+        ?*)
+        ln -s "${lib_dir}/$vboxmouse_src" "$modules_dir/input/vboxmouse_drv$driver_ext.new" &&
+            mv "$modules_dir/input/vboxmouse_drv$driver_ext.new" "$modules_dir/input/vboxmouse_drv$driver_ext";;
+        *)
+        rm "$modules_dir/input/vboxmouse_drv$driver_ext" 2>/dev/null
     esac
-    succ_msg
 
     if test -n "$dox11config"; then
-        begin "Setting up the Window System to use the Guest Additions"
         # Certain Ubuntu/Debian versions use a special PCI-id file to identify
         # video drivers.  Some versions have the directory and don't use it.
         # Those versions can autoload vboxvideo though, so we don't need to
@@ -469,7 +404,7 @@ setup()
         test "$system" = "debian" -a -d /usr/share/xserver-xorg/pci &&
         {
             rm -f "/usr/share/xserver-xorg/pci/vboxvideo.ids"
-            ln -s "$share_dir/vboxvideo.ids" /usr/share/xserver-xorg/pci 2>/dev/null
+            ln -s "${lib_dir}/vboxvideo.ids" /usr/share/xserver-xorg/pci 2>/dev/null
             test -n "$automouse" && setupxorgconf=""
         }
 
@@ -482,7 +417,7 @@ setup()
                     if grep -q "VirtualBox generated" "$i"; then
                         generated="$generated  `printf "$i\n"`"
                     else
-                        "$lib_dir/x11config.sh" $autokeyboard $automouse $nopsaux $vmsvga "$i"
+                        "${lib_dir}/x11config.sh" $autokeyboard $automouse $nopsaux $vmsvga "$i"
                     fi
                     configured="true"
                 fi
@@ -495,36 +430,34 @@ setup()
             nobak_cfg="`expr "${main_cfg}" : '\([^.]*\)'`.vbox.nobak"
             if test -z "$configured"; then
                 touch "$main_cfg"
-                "$lib_dir/x11config.sh" $autokeyboard $automouse $nopsaux $vmsvga --noBak "$main_cfg"
+                "${lib_dir}/x11config.sh" $autokeyboard $automouse $nopsaux $vmsvga --noBak "$main_cfg"
                 touch "${nobak_cfg}"
             fi
         fi
-        succ_msg
         test -n "$generated" &&
-            cat << EOF
+            cat >&2 << EOF
 The following X.Org/XFree86 configuration files were originally generated by
 the VirtualBox Guest Additions and were not modified:
 
 $generated
 
 EOF
-        cat << EOF
-You may need to restart the hal service and the Window System (or just restart
-the guest system) to enable the Guest Additions.
+        tty >/dev/null && cat << EOF
+You may need to restart the Window System (or just restart the guest system)
+to enable the Guest Additions.
 
 EOF
     fi
 
-    begin "Installing graphics libraries and desktop services components"
     case "$redhat_release" in
         # Install selinux policy for Fedora 7 and 8 to allow the X server to
         # open device files
         Fedora\ release\ 7* | Fedora\ release\ 8* )
-            semodule -i "$share_dir/vbox_x11.pp" > /dev/null 2>&1
+            semodule -i "${lib_dir}/vbox_x11.pp" > /dev/null 2>&1
             ;;
         # Similar for the accelerated graphics check on Fedora 15
         Fedora\ release\ 15* )
-            semodule -i "$share_dir/vbox_accel.pp" > /dev/null 2>&1
+            semodule -i "${lib_dir}/vbox_accel.pp" > /dev/null 2>&1
             ;;
     esac
 
@@ -532,35 +465,28 @@ EOF
     # open our drivers
     case "$redhat_release" in
         Fedora\ release\ 8* )
-            chcon -u system_u -t lib_t "$lib_dir"/*.so
+            chcon -u system_u -t lib_t "${lib_dir}"/*.so 2>/dev/null
             ;;
     esac
 
     # Our logging code generates some glue code on 32-bit systems.  At least F10
     # needs a rule to allow this.  Send all output to /dev/null in case this is
     # completely irrelevant on the target system.
+    # chcon is needed on old Fedora/Redhat systems.  No one remembers which.
     chcon -t unconfined_execmem_exec_t '/usr/bin/VBoxClient' > /dev/null 2>&1
     semanage fcontext -a -t unconfined_execmem_exec_t '/usr/bin/VBoxClient' > /dev/null 2>&1
-    # Install the guest OpenGL drivers.  For now we don't support
-    # multi-architecture installations
-    for dir in /usr/lib/dri /usr/lib32/dri /usr/lib64/dri \
-        /usr/lib/xorg/modules/dri /usr/lib32/xorg/modules/dri \
-        /usr/lib64/xorg/modules/dri /usr/lib/i386-linux-gnu/dri \
-        /usr/lib/x86_64-linux-gnu/dri; do
-        if [ -d $dir ]; then
-            rm -f "$dir/vboxvideo_dri.so"
-            ln -s "$LIB/VBoxOGL.so" "$dir/vboxvideo_dri.so"
-        fi
-    done
 
     # And set up VBoxClient to start when the X session does
-    install_x11_startup_app "$lib_dir/98vboxadd-xclient" "$share_dir/vboxclient.desktop" VBoxClient VBoxClient-all ||
-        fail "See the log file $LOG for more information."
-    ln -s "$lib_dir/98vboxadd-xclient" /usr/bin/VBoxClient-all 2>/dev/null
-    succ_msg
+    install_x11_startup_app "${lib_dir}/98vboxadd-xclient" "${lib_dir}/vboxclient.desktop" VBoxClient VBoxClient-all ||
+        fail "Failed to set up VBoxClient to start automatically."
+    ln -s "${lib_dir}/98vboxadd-xclient" /usr/bin/VBoxClient-all 2>/dev/null
+    case "${x_version}" in 4.* | 6.* | 7.* | 1.?.* | 1.1* )
+        setup_opengl
+    esac 
+    # Try enabling VMSVGA drm device resizing.
+    VBoxClient --vmsvga
 }
 
-# cleanup_script
 cleanup()
 {
     # Restore xorg.conf files as far as possible
@@ -587,7 +513,7 @@ cleanup()
             nobak="true"
         fi
     done
-    if test -n "${nobak}"; then
+    if test -z "${nobak}"; then
         for i in $x11conf_files; do
             if test -r "$i.vbox"; then
                 if test ! "$i" -nt "$i.vbox" -o -n "$legacy"; then
@@ -600,7 +526,7 @@ cleanup()
             fi
         done
     fi
-    test -n "$newer" && cat << EOF
+    test -n "$newer" && cat >&2 << EOF
 
 The following X.Org/XFree86 configuration files were not restored, as they may
 have been changed since they were generated by the VirtualBox Guest Additions.
@@ -610,7 +536,7 @@ original version.
 $newer
 
 EOF
-    test -n "$failed" && cat << EOF
+    test -n "$failed" && cat >&2 << EOF
 
 The following X.Org/XFree86 configuration files were restored, but still
 contain references to the Guest Additions drivers.  You may wish to check and
@@ -622,14 +548,27 @@ $failed
 EOF
 
     # Remove X.Org drivers
-    find "$x11_modules_dir" /usr/lib64/xorg/modules /usr/lib/xorg/modules \
-        /usr/X11R6/lib64/modules /usr/X11R6/lib/modules \
-        /usr/X11R6/lib/X11/modules \
-        '(' -name 'vboxvideo_drv*' -o -name 'vboxmouse_drv*' ')' \
-        -exec rm -f '{}' ';' 2>/dev/null
+    modules_dir=`X -showDefaultModulePath 2>&1` || modules_dir=
+    if [ -z "$modules_dir" ]; then
+        for dir in /usr/lib64/xorg/modules /usr/lib/xorg/modules /usr/X11R6/lib64/modules /usr/X11R6/lib/modules /usr/X11R6/lib/X11/modules; do
+            if [ -d $dir ]; then
+                modules_dir=$dir
+                break
+            fi
+        done
+    fi
+    rm -f "$modules_dir/drivers/vboxvideo_drv"* 2>/dev/null
+    rm -f "$modules_dir/input/vboxmouse_drv"* 2>/dev/null
 
     # Remove the link to vboxvideo_dri.so
-    rm -f /usr/lib/dri/vboxvideo_dri.so /usr/lib64/dri/vboxvideo_dri.so 2>/dev/null
+    for dir in /usr/lib/dri /usr/lib32/dri /usr/lib64/dri \
+        /usr/lib/xorg/modules/dri /usr/lib32/xorg/modules/dri \
+        /usr/lib64/xorg/modules/dri /usr/lib/i386-linux-gnu/dri \
+        /usr/lib/x86_64-linux-gnu/dri; do
+        if [ -d $dir ]; then
+            rm -f "$dir/vboxvideo_dri.so" 2>/dev/null
+        fi
+    done
 
     # Remove VBoxClient autostart files
     rm /etc/X11/Xsession.d/98vboxadd-xclient 2>/dev/null
@@ -641,6 +580,7 @@ EOF
 
     # Remove other files
     rm /usr/share/xserver-xorg/pci/vboxvideo.ids 2>/dev/null
+    return 0
 }
 
 dmnstatus()

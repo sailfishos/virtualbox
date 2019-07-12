@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -113,7 +113,7 @@ DECLHIDDEN(RTEXITCODE) autostartStartMain(PCFGAST pCfgAst)
         }
 
         if (   SUCCEEDED(rc)
-            && listVM.size())
+            && !listVM.empty())
         {
             ULONG uDelayCurr = 0;
 
@@ -121,7 +121,7 @@ DECLHIDDEN(RTEXITCODE) autostartStartMain(PCFGAST pCfgAst)
             listVM.sort(autostartVMCmp);
 
             std::list<AUTOSTARTVM>::iterator it;
-            for (it = listVM.begin(); it != listVM.end(); it++)
+            for (it = listVM.begin(); it != listVM.end(); ++it)
             {
                 ComPtr<IMachine> machine;
                 ComPtr<IProgress> progress;

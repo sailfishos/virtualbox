@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_THREAD
 #include <iprt/thread.h>
 #include "internal/iprt.h"
@@ -53,9 +53,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef IN_RING0
 # define RT_THREAD_LOCK_RW()        RTSpinlockAcquire(g_ThreadSpinlock)
 # define RT_THREAD_UNLOCK_RW()      RTSpinlockRelease(g_ThreadSpinlock)
@@ -69,11 +69,13 @@
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The AVL thread containing the threads. */
-static PAVLPVNODECORE   g_ThreadTree;
+static PAVLPVNODECORE       g_ThreadTree;
+/** The number of threads in the tree (for ring-0 termination kludge). */
+static uint32_t volatile    g_cThreadInTree;
 #ifdef IN_RING3
 /** The RW lock protecting the tree. */
 static RTSEMRW          g_ThreadRWSem = NIL_RTSEMRW;
@@ -85,9 +87,9 @@ static RTSPINLOCK       g_ThreadSpinlock = NIL_RTSPINLOCK;
 static bool             g_frtThreadInitialized;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void rtThreadDestroy(PRTTHREADINT pThread);
 #ifdef IN_RING3
 static int rtThreadAdopt(RTTHREADTYPE enmType, unsigned fFlags, uint32_t fIntFlags, const char *pszName);
@@ -279,6 +281,8 @@ static int rtThreadAdopt(RTTHREADTYPE enmType, unsigned fFlags, uint32_t fIntFla
             rtThreadSetState(pThread, RTTHREADSTATE_RUNNING);
             rtThreadRelease(pThread);
         }
+        else
+            rtThreadDestroy(pThread);
     }
     return rc;
 }
@@ -447,13 +451,15 @@ DECLHIDDEN(void) rtThreadInsert(PRTTHREADINT pThread, RTNATIVETHREAD NativeThrea
                     ASMAtomicBitClear(&pThread->fIntFlags, RTTHREADINT_FLAG_IN_TREE_BIT);
                     rtThreadRemoveLocked(pThreadOther);
                     if (pThreadOther->fIntFlags & RTTHREADINT_FLAGS_ALIEN)
-                    rtThreadRelease(pThreadOther);
+                        rtThreadRelease(pThreadOther);
                 }
 
                 /* insert the thread */
                 ASMAtomicWritePtr(&pThread->Core.Key, (void *)NativeThread);
                 fRc = RTAvlPVInsert(&g_ThreadTree, &pThread->Core);
                 ASMAtomicOrU32(&pThread->fIntFlags, RTTHREADINT_FLAG_IN_TREE);
+                if (fRc)
+                    ASMAtomicIncU32(&g_cThreadInTree);
 
                 AssertReleaseMsg(fRc, ("Lock problem? %p (%RTnthrd) %s\n", pThread, NativeThread, pThread->szName));
                 NOREF(fRc);
@@ -478,7 +484,8 @@ static void rtThreadRemoveLocked(PRTTHREADINT pThread)
     AssertMsg(pThread2 == pThread, ("%p(%s) != %p (%p/%s)\n", pThread2, pThread2  ? pThread2->szName : "<null>",
                                     pThread, pThread->Core.Key, pThread->szName));
 #endif
-    NOREF(pThread2);
+    if (pThread2)
+        ASMAtomicDecU32(&g_cThreadInTree);
 }
 
 
@@ -1160,10 +1167,23 @@ static int rtThreadWait(RTTHREAD Thread, RTMSINTERVAL cMillies, int *prc, bool f
         {
             if (pThread->fFlags & RTTHREADFLAGS_WAITABLE)
             {
-                if (fAutoResume)
-                    rc = RTSemEventMultiWait(pThread->EventTerminated, cMillies);
+#if defined(IN_RING3) && defined(RT_OS_WINDOWS)
+                if (RT_LIKELY(rtThreadNativeIsAliveKludge(pThread)))
+#endif
+                {
+                    if (fAutoResume)
+                        rc = RTSemEventMultiWait(pThread->EventTerminated, cMillies);
+                    else
+                        rc = RTSemEventMultiWaitNoResume(pThread->EventTerminated, cMillies);
+                }
+#if defined(IN_RING3) && defined(RT_OS_WINDOWS)
                 else
-                    rc = RTSemEventMultiWaitNoResume(pThread->EventTerminated, cMillies);
+                {
+                    rc = VINF_SUCCESS;
+                    if (pThread->rc == VERR_PROCESS_RUNNING)
+                        pThread->rc = VERR_THREAD_IS_DEAD;
+                }
+#endif
                 if (RT_SUCCESS(rc))
                 {
                     if (prc)
@@ -1175,7 +1195,19 @@ static int rtThreadWait(RTTHREAD Thread, RTMSINTERVAL cMillies, int *prc, bool f
                      * init cRef in rtThreadAlloc()).
                      */
                     if (ASMAtomicBitTestAndClear(&pThread->fFlags, RTTHREADFLAGS_WAITABLE_BIT))
+                    {
                         rtThreadRelease(pThread);
+#ifdef IN_RING0
+                        /*
+                         * IPRT termination kludge. Call native code to make sure
+                         * the last thread is really out of IPRT to prevent it from
+                         * crashing after we destroyed the spinlock in rtThreadTerm.
+                         */
+                        if (   ASMAtomicReadU32(&g_cThreadInTree) == 1
+                            && ASMAtomicReadU32(&pThread->cRefs) > 1)
+                            rtThreadNativeWaitKludge(pThread);
+#endif
+                    }
                 }
             }
             else
@@ -1537,3 +1569,34 @@ DECLHIDDEN(void) rtThreadClearTlsEntry(RTTLS iTls)
 }
 
 #endif /* IPRT_WITH_GENERIC_TLS */
+
+
+#if defined(RT_OS_WINDOWS) && defined(IN_RING3)
+
+/**
+ * Thread enumeration callback for RTThreadNameThreads
+ */
+static DECLCALLBACK(int) rtThreadNameThreadCallback(PAVLPVNODECORE pNode, void *pvUser)
+{
+    PRTTHREADINT pThread = (PRTTHREADINT)pNode;
+    rtThreadNativeInformDebugger(pThread);
+    RT_NOREF_PV(pvUser);
+    return 0;
+}
+
+/**
+ * A function that can be called from the windows debugger to get the names of
+ * all threads when attaching to a process.
+ *
+ * Usage: .call VBoxRT!RTThreadNameThreads()
+ *
+ * @returns 0
+ * @remarks Do not call from source code as it skips locks.
+ */
+extern "C" RTDECL(int) RTThreadNameThreads(void);
+RTDECL(int) RTThreadNameThreads(void)
+{
+    return RTAvlPVDoWithAll(&g_ThreadTree, true /* fFromLeft*/, rtThreadNameThreadCallback, NULL);
+}
+
+#endif

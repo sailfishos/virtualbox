@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_MM_HEAP
 #include <VBox/vmm/mm.h>
 #include <VBox/vmm/stam.h>
@@ -35,9 +35,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void *mmR3HeapAlloc(PMMHEAP pHeap, MMTAG enmTag, size_t cbSize, bool fZero);
 
 
@@ -45,8 +45,8 @@ static void *mmR3HeapAlloc(PMMHEAP pHeap, MMTAG enmTag, size_t cbSize, bool fZer
 /**
  * Allocate and initialize a heap structure and it's associated substructures.
  *
- * @returns VBox status.
- * @param   pVM     The handle to the VM the heap should be associated with.
+ * @returns VBox status code.
+ * @param   pUVM    Pointer to the user mode VM structure.
  * @param   ppHeap  Where to store the heap pointer.
  */
 int mmR3HeapCreateU(PUVM pUVM, PMMHEAP *ppHeap)
@@ -151,7 +151,7 @@ VMMR3DECL(void *) MMR3HeapAllocU(PUVM pUVM, MMTAG enmTag, size_t cbSize)
  * freed during the life of the VM.
  *
  * @returns Pointer to allocated memory.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      Statistics tag. Statistics are collected on a per tag
  *                      basis in addition to a global one. Thus we can easily
  *                      identify how memory is used by the VM. See MM_TAG_*.
@@ -191,7 +191,7 @@ VMMR3DECL(int) MMR3HeapAllocExU(PUVM pUVM, MMTAG enmTag, size_t cbSize, void **p
  * Same as MMR3HeapAlloc().
  *
  * @returns Pointer to allocated memory.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      Statistics tag. Statistics are collected on a per tag
  *                      basis in addition to a global one. Thus we can easily
  *                      identify how memory is used by the VM. See MM_TAG_*.
@@ -230,7 +230,7 @@ VMMR3DECL(void *) MMR3HeapAllocZU(PUVM pUVM, MMTAG enmTag, size_t cbSize)
  * Same as MMR3HeapAlloc() only the memory is zeroed.
  *
  * @returns Pointer to allocated memory.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      Statistics tag. Statistics are collected on a per tag
  *                      basis in addition to a global one. Thus we can easily
  *                      identify how memory is used by the VM. See MM_TAG_*.
@@ -270,7 +270,7 @@ VMMR3DECL(int) MMR3HeapAllocZExU(PUVM pUVM, MMTAG enmTag, size_t cbSize, void **
  * Same as MMR3HeapAllocZ().
  *
  * @returns Pointer to allocated memory.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      Statistics tag. Statistics are collected on a per tag
  *                      basis in addition to a global one. Thus we can easily
  *                      identify how memory is used by the VM. See MM_TAG_*.
@@ -344,6 +344,8 @@ void *mmR3HeapAlloc(PMMHEAP pHeap, MMTAG enmTag, size_t cbSize, bool fZero)
         STAMR3RegisterFU(pUVM, &pStat->cbAllocated,    STAMTYPE_U64, STAMVISIBILITY_ALWAYS,  STAMUNIT_BYTES, "Total number of bytes allocated.",        "/MM/R3Heap/%s/cbAllocated", pszTag);
         STAMR3RegisterFU(pUVM, &pStat->cbFreed,        STAMTYPE_U64, STAMVISIBILITY_ALWAYS,  STAMUNIT_BYTES, "Total number of bytes freed.",            "/MM/R3Heap/%s/cbFreed", pszTag);
     }
+#else
+    RT_NOREF_PV(enmTag);
 #endif
 
     /*
@@ -539,7 +541,7 @@ VMMR3DECL(char *) MMR3HeapStrDupU(PUVM pUVM, MMTAG enmTag, const char *psz)
  *
  * @returns Pointer to the duplicate.
  * @returns NULL on failure or when input NULL.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      Statistics tag. Statistics are collected on a per tag
  *                      basis in addition to a global one. Thus we can easily
  *                      identify how memory is used by the VM. See MM_TAG_*.
@@ -555,7 +557,7 @@ VMMR3DECL(char *) MMR3HeapStrDup(PVM pVM, MMTAG enmTag, const char *psz)
  * Allocating string printf.
  *
  * @returns Pointer to the string.
- * @param   pVM         The VM
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      The statistics tag.
  * @param   pszFormat   The format string.
  * @param   ...         Format arguments.
@@ -593,7 +595,7 @@ VMMR3DECL(char *)    MMR3HeapAPrintfU(PUVM pUVM, MMTAG enmTag, const char *pszFo
  * Allocating string printf.
  *
  * @returns Pointer to the string.
- * @param   pVM         The VM
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      The statistics tag.
  * @param   pszFormat   The format string.
  * @param   va          Format arguments.

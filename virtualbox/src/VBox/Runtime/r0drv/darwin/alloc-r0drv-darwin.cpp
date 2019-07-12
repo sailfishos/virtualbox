@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,10 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations" /* (IOMallocContiguous et al are deprecated) */
 #include "the-darwin-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/mem.h>
@@ -39,9 +40,9 @@
 #include "r0drv/alloc-r0drv.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Extended header used for headers marked with RTMEMHDR_FLAG_EXEC.
  *
@@ -67,6 +68,8 @@ typedef RTMEMDARWINHDREX *PRTMEMDARWINHDREX;
  */
 DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
+
     if (RT_UNLIKELY(fFlags & RTMEMHDR_FLAG_ANY_CTX))
         return VERR_NOT_SUPPORTED;
 
@@ -76,7 +79,10 @@ DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
         RTR0MEMOBJ hMemObj;
         int rc = RTR0MemObjAllocPage(&hMemObj, cb + sizeof(RTMEMDARWINHDREX), true /*fExecutable*/);
         if (RT_FAILURE(rc))
+        {
+            IPRT_DARWIN_RESTORE_EFL_AC();
             return rc;
+        }
         PRTMEMDARWINHDREX pExHdr = (PRTMEMDARWINHDREX)RTR0MemObjAddress(hMemObj);
         pExHdr->hMemObj = hMemObj;
         pHdr = &pExHdr->Hdr;
@@ -87,11 +93,11 @@ DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
     }
     else
     {
-
         pHdr = (PRTMEMHDR)IOMalloc(cb + sizeof(*pHdr));
         if (RT_UNLIKELY(!pHdr))
         {
             printf("rtR0MemAllocEx(%#zx, %#x) failed\n", cb + sizeof(*pHdr), fFlags);
+            IPRT_DARWIN_RESTORE_EFL_AC();
             return VERR_NO_MEMORY;
         }
     }
@@ -100,7 +106,9 @@ DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
     pHdr->fFlags    = fFlags;
     pHdr->cb        = cb;
     pHdr->cbReq     = cb;
-    *ppHdr = pHdr;;
+    *ppHdr = pHdr;
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -110,6 +118,8 @@ DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
  */
 DECLHIDDEN(void) rtR0MemFree(PRTMEMHDR pHdr)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
+
     pHdr->u32Magic += 1;
     if (pHdr->fFlags & RTMEMHDR_FLAG_EXEC)
     {
@@ -119,6 +129,8 @@ DECLHIDDEN(void) rtR0MemFree(PRTMEMHDR pHdr)
     }
     else
         IOFree(pHdr, pHdr->cb + sizeof(*pHdr));
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
 }
 
 
@@ -130,6 +142,7 @@ RTR0DECL(void *) RTMemContAlloc(PRTCCPHYS pPhys, size_t cb)
     AssertPtr(pPhys);
     Assert(cb > 0);
     RT_ASSERT_PREEMPTIBLE();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Allocate the memory and ensure that the API is still providing
@@ -145,6 +158,7 @@ RTR0DECL(void *) RTMemContAlloc(PRTCCPHYS pPhys, size_t cb)
             if (!((uintptr_t)pv & PAGE_OFFSET_MASK))
             {
                 *pPhys = PhysAddr;
+                IPRT_DARWIN_RESTORE_EFL_AC();
                 return pv;
             }
             AssertMsgFailed(("IOMallocContiguous didn't return a page aligned address - %p!\n", pv));
@@ -153,6 +167,8 @@ RTR0DECL(void *) RTMemContAlloc(PRTCCPHYS pPhys, size_t cb)
             AssertMsgFailed(("IOMallocContiguous returned high address! PhysAddr=%RX64 cb=%#zx\n", (uint64_t)PhysAddr, cb));
         IOFreeContiguous(pv, cb);
     }
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return NULL;
 }
 
@@ -164,9 +180,12 @@ RTR0DECL(void) RTMemContFree(void *pv, size_t cb)
     {
         Assert(cb > 0);
         AssertMsg(!((uintptr_t)pv & PAGE_OFFSET_MASK), ("pv=%p\n", pv));
+        IPRT_DARWIN_SAVE_EFL_AC();
 
         cb = RT_ALIGN_Z(cb, PAGE_SIZE);
         IOFreeContiguous(pv, cb);
+
+        IPRT_DARWIN_RESTORE_EFL_AC();
     }
 }
 

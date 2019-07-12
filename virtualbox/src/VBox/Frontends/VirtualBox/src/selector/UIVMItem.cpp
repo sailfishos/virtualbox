@@ -1,12 +1,10 @@
 /* $Id: UIVMItem.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIVMItem class implementation
+ * VBox Qt GUI - UIVMItem class implementation.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,25 +16,27 @@
  */
 
 #ifdef VBOX_WITH_PRECOMPILED_HEADERS
-# include "precomp.h"
+# include <precomp.h>
 #else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
 /* Qt includes: */
-#include <QFileInfo>
-#include <QIcon>
+# include <QFileInfo>
+# include <QIcon>
 
 /* GUI includes: */
-#include "UIVMItem.h"
-#include "VBoxGlobal.h"
-#include "UIConverter.h"
-#ifdef Q_WS_MAC
-# include <ApplicationServices/ApplicationServices.h>
-#endif /* Q_WS_MAC */
+# include "UIVMItem.h"
+# include "VBoxGlobal.h"
+# include "UIConverter.h"
+# include "UIExtraDataManager.h"
+# ifdef VBOX_WS_MAC
+#  include <ApplicationServices/ApplicationServices.h>
+# endif /* VBOX_WS_MAC */
 
 /* COM includes: */
-#include "CSnapshot.h"
+# include "CSnapshot.h"
 
 #endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 // Helpers
 ////////////////////////////////////////////////////////////////////////////////
@@ -44,7 +44,7 @@
 /// @todo Remove. See @c todo in #switchTo() below.
 #if 0
 
-#if defined (Q_WS_WIN32)
+#if defined (VBOX_WS_WIN)
 
 struct EnumWindowsProcData
 {
@@ -111,19 +111,19 @@ BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam)
  */
 static WId FindWindowIdFromPid(ULONG aPid)
 {
-#if defined (Q_WS_WIN32)
+#if defined (VBOX_WS_WIN)
 
     EnumWindowsProcData d = { aPid, (WId) ~0 };
     EnumWindows(EnumWindowsProc, (LPARAM) &d);
     LogFlowFunc(("SELECTED wid=%08X\n", d.wid));
     return d.wid;
 
-#elif defined (Q_WS_X11)
+#elif defined (VBOX_WS_X11)
 
     NOREF(aPid);
     return (WId) ~0;
 
-#elif defined (Q_WS_MAC)
+#elif defined (VBOX_WS_MAC)
 
     /** @todo Figure out how to get access to another windows of another process...
      * Or at least check that it's not a VBoxVRDP process. */
@@ -152,10 +152,11 @@ UIVMItem::~UIVMItem()
 // public members
 ////////////////////////////////////////////////////////////////////////////////
 
-QIcon UIVMItem::osIcon() const
+QPixmap UIVMItem::osPixmap(QSize *pLogicalSize /* = 0 */) const
 {
-    return m_fAccessible ? vboxGlobal().vmGuestOSTypeIcon(m_strOSTypeId) :
-                           QPixmap(":/os_other.png");
+    if (pLogicalSize)
+        *pLogicalSize = m_logicalPixmapSize;
+    return m_pixmap;
 }
 
 QString UIVMItem::machineStateName() const
@@ -166,8 +167,8 @@ QString UIVMItem::machineStateName() const
 
 QIcon UIVMItem::machineStateIcon() const
 {
-    return m_fAccessible ? gpConverter->toPixmap(m_machineState) :
-                           QPixmap(":/state_aborted_16px.png");
+    return m_fAccessible ? gpConverter->toIcon(m_machineState) :
+                           gpConverter->toIcon(KMachineState_Aborted);
 }
 
 QString UIVMItem::sessionStateName() const
@@ -235,6 +236,10 @@ bool UIVMItem::recache()
         m_strOSTypeId = m_machine.GetOSTypeId();
         m_cSnaphot = m_machine.GetSnapshotCount();
 
+        m_pixmap = vboxGlobal().vmUserPixmapDefault(m_machine, &m_logicalPixmapSize);
+        if (m_pixmap.isNull())
+            m_pixmap = vboxGlobal().vmGuestOSTypePixmapDefault(m_strOSTypeId, &m_logicalPixmapSize);
+
         if (   m_machineState == KMachineState_PoweredOff
             || m_machineState == KMachineState_Saved
             || m_machineState == KMachineState_Teleported
@@ -256,12 +261,15 @@ bool UIVMItem::recache()
 #endif
         }
 
-        /* Should we allow reconfiguration for this item? */
-        m_fReconfigurable = m_machineState != KMachineState_Stuck &&
-                            VBoxGlobal::shouldWeAllowMachineReconfiguration(m_machine);
+        /* Determine configuration access level: */
+        m_configurationAccessLevel = ::configurationAccessLevel(m_sessionState, m_machineState);
+        /* Also take restrictions into account: */
+        if (   m_configurationAccessLevel != ConfigurationAccessLevel_Null
+            && !gEDataManager->machineReconfigurationEnabled(m_strId))
+            m_configurationAccessLevel = ConfigurationAccessLevel_Null;
 
         /* Should we show details for this item? */
-        m_fHasDetails = VBoxGlobal::shouldWeShowDetails(m_machine);
+        m_fHasDetails = gEDataManager->showMachineInSelectorDetails(m_strId);
     }
     else
     {
@@ -280,14 +288,16 @@ bool UIVMItem::recache()
         m_strOSTypeId = QString::null;
         m_cSnaphot = 0;
 
+        m_pixmap = vboxGlobal().vmGuestOSTypePixmapDefault("Other", &m_logicalPixmapSize);
+
         m_pid = (ULONG) ~0;
     /// @todo Remove. See @c todo in #switchTo() below.
 #if 0
         mWinId = (WId) ~0;
 #endif
 
-        /* Should we allow reconfiguration for this item? */
-        m_fReconfigurable = false;
+        /* Set configuration access level to NULL: */
+        m_configurationAccessLevel = ConfigurationAccessLevel_Null;
 
         /* Should we show details for this item? */
         m_fHasDetails = true;
@@ -317,7 +327,7 @@ bool UIVMItem::canSwitchTo() const
  */
 bool UIVMItem::switchTo()
 {
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     ULONG64 id = m_machine.ShowConsoleWindow();
 #else
     WId id = (WId) m_machine.ShowConsoleWindow();
@@ -331,11 +341,11 @@ bool UIVMItem::switchTo()
     if (id == 0)
         return true;
 
-#if defined (Q_WS_WIN32) || defined (Q_WS_X11)
+#if defined (VBOX_WS_WIN) || defined (VBOX_WS_X11)
 
     return vboxGlobal().activateWindow(id, true);
 
-#elif defined (Q_WS_MAC)
+#elif defined (VBOX_WS_MAC)
     /*
      * This is just for the case were the other process cannot steal
      * the focus from us. It will send us a PSN so we can try.
@@ -350,9 +360,9 @@ bool UIVMItem::switchTo()
         Log(("GUI: Failed to bring %#RX64 to front. rc=%#x\n", id, rc));
     return !rc;
 
-#endif
-
+#else
     return false;
+#endif
 
     /// @todo Below is the old method of switching to the console window
     //  based on the process ID of the console process. It should go away
@@ -362,7 +372,7 @@ bool UIVMItem::switchTo()
     if (!canSwitchTo())
         return false;
 
-#if defined (Q_WS_WIN32)
+#if defined (VBOX_WS_WIN)
 
     HWND hwnd = mWinId;
 
@@ -398,11 +408,11 @@ bool UIVMItem::switchTo()
 
     return true;
 
-#elif defined (Q_WS_X11)
+#elif defined (VBOX_WS_X11)
 
     return false;
 
-#elif defined (Q_WS_MAC)
+#elif defined (VBOX_WS_MAC)
 
     ProcessSerialNumber psn;
     OSStatus rc = ::GetProcessForPID(m_pid, &psn);
@@ -430,29 +440,28 @@ bool UIVMItem::switchTo()
 /* static */
 bool UIVMItem::isItemEditable(UIVMItem *pItem)
 {
-    return pItem->accessible() &&
+    return pItem &&
+           pItem->accessible() &&
            pItem->sessionState() == KSessionState_Unlocked;
 }
 
 /* static */
 bool UIVMItem::isItemSaved(UIVMItem *pItem)
 {
-    if (pItem->accessible() &&
-        pItem->machineState() == KMachineState_Saved)
-        return true;
-    return false;
+    return pItem &&
+           pItem->accessible() &&
+           pItem->machineState() == KMachineState_Saved;
 }
 
 /* static */
 bool UIVMItem::isItemPoweredOff(UIVMItem *pItem)
 {
-    if (pItem->accessible() &&
-        (pItem->machineState() == KMachineState_PoweredOff ||
-         pItem->machineState() == KMachineState_Saved ||
-         pItem->machineState() == KMachineState_Teleported ||
-         pItem->machineState() == KMachineState_Aborted))
-        return true;
-    return false;
+    return pItem &&
+           pItem->accessible() &&
+           (pItem->machineState() == KMachineState_PoweredOff ||
+            pItem->machineState() == KMachineState_Saved ||
+            pItem->machineState() == KMachineState_Teleported ||
+            pItem->machineState() == KMachineState_Aborted);
 }
 
 /* static */
@@ -464,32 +473,48 @@ bool UIVMItem::isItemStarted(UIVMItem *pItem)
 /* static */
 bool UIVMItem::isItemRunning(UIVMItem *pItem)
 {
-    if (pItem->accessible() &&
-        (pItem->machineState() == KMachineState_Running ||
-         pItem->machineState() == KMachineState_Teleporting ||
-         pItem->machineState() == KMachineState_LiveSnapshotting))
-        return true;
+    return pItem &&
+           pItem->accessible() &&
+           (pItem->machineState() == KMachineState_Running ||
+            pItem->machineState() == KMachineState_Teleporting ||
+            pItem->machineState() == KMachineState_LiveSnapshotting);
+}
+
+/* static */
+bool UIVMItem::isItemRunningHeadless(UIVMItem *pItem)
+{
+    if (isItemRunning(pItem))
+    {
+        /* Open session to determine which frontend VM is started with: */
+        CSession session = vboxGlobal().openExistingSession(pItem->id());
+        if (!session.isNull())
+        {
+            /* Acquire the session name: */
+            const QString strSessionName = session.GetMachine().GetSessionName();
+            /* Close the session early: */
+            session.UnlockMachine();
+            /* Check whether we are in 'headless' session: */
+            return strSessionName == "headless";
+        }
+    }
     return false;
 }
 
 /* static */
 bool UIVMItem::isItemPaused(UIVMItem *pItem)
 {
-    if (pItem->accessible() &&
-        (pItem->machineState() == KMachineState_Paused ||
-         pItem->machineState() == KMachineState_TeleportingPausedVM))
-        return true;
-    return false;
-
+    return pItem &&
+           pItem->accessible() &&
+           (pItem->machineState() == KMachineState_Paused ||
+            pItem->machineState() == KMachineState_TeleportingPausedVM);
 }
 
 /* static */
 bool UIVMItem::isItemStuck(UIVMItem *pItem)
 {
-    if (pItem->accessible() &&
-        pItem->machineState() == KMachineState_Stuck)
-        return true;
-    return false;
+    return pItem &&
+           pItem->accessible() &&
+           pItem->machineState() == KMachineState_Stuck;
 }
 
 QString UIVMItemMimeData::m_type = "application/org.virtualbox.gui.vmselector.uivmitem";

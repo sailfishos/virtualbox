@@ -9,8 +9,12 @@
 
 #ifdef WINDOWS
 #define WIN32_LEAN_AND_MEAN
+# ifndef VBOX
 #pragma warning( push, 3 ) /* shut up about warnings in YOUR OWN HEADER FILES!!! */
 #include <winsock.h>
+# else
+# include <iprt/win/winsock.h>
+# endif /* VBOX */
 #endif
 
 #include <stdio.h>
@@ -265,7 +269,7 @@ struct CRConnection {
 extern DECLEXPORT(int) crGetHostname( char *buf, unsigned int len );
 
 extern DECLEXPORT(void) crNetInit( CRNetReceiveFunc recvFunc, CRNetCloseFunc closeFunc );
-extern DECLEXPORT(void) crNetTearDown();
+extern DECLEXPORT(void) crNetTearDown(void);
 
 extern DECLEXPORT(void) *crNetAlloc( CRConnection *conn );
 extern DECLEXPORT(void) crNetFree( CRConnection *conn, void *buf );
@@ -287,6 +291,8 @@ extern DECLEXPORT(void) crNetReadline( CRConnection *conn, void *buf );
 extern DECLEXPORT(int) crNetRecv(
 #if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
                 CRConnection *conn
+#else
+                void
 #endif
         );
 #if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
@@ -306,7 +312,7 @@ extern DECLEXPORT(int) crNetRecv(
 
 #endif
 #ifdef IN_GUEST
-extern DECLEXPORT(uint32_t) crNetHostCapsGet();
+extern DECLEXPORT(uint32_t) crNetHostCapsGet(void);
 #endif
 extern DECLEXPORT(void) crNetDefaultRecv( CRConnection *conn, CRMessage *msg, unsigned int len );
 extern DECLEXPORT(void) crNetDispatchMessage( CRNetReceiveFuncList *rfl, CRConnection *conn, CRMessage *msg, unsigned int len );

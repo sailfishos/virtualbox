@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/test.h>
 
 #include <iprt/asm.h>
@@ -46,9 +46,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Guarded memory allocation record.
  */
@@ -144,14 +144,21 @@ typedef struct RTTESTINT
     size_t              cXmlElements;
     /** XML element stack. */
     const char         *apszXmlElements[10];
+
+    /** Number of times assertions has been disabled and quieted. */
+    uint32_t volatile   cAssertionsDisabledAndQuieted;
+    /** Saved RTAssertSetQuiet return code. */
+    bool                fAssertSavedQuiet;
+    /** Saved RTAssertSetMayPanic return code. */
+    bool                fAssertSavedMayPanic;
 } RTTESTINT;
 /** Pointer to a test instance. */
 typedef RTTESTINT *PRTTESTINT;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Validate a test instance. */
 #define RTTEST_VALID_RETURN(pTest)  \
     do { \
@@ -183,9 +190,9 @@ typedef RTTESTINT *PRTTESTINT;
     } while (0)
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void rtTestGuardedFreeOne(PRTTESTGUARDEDMEM pMem);
 static int  rtTestPrintf(PRTTESTINT pTest, const char *pszFormat, ...);
 static void rtTestXmlStart(PRTTESTINT pTest, const char *pszTest);
@@ -197,9 +204,9 @@ static void rtTestXmlElemEnd(PRTTESTINT pTest, const char *pszTag);
 static void rtTestXmlEnd(PRTTESTINT pTest);
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** For serializing TLS init. */
 static RTONCE   g_TestInitOnce = RTONCE_INITIALIZER;
 /** Our TLS entry. */
@@ -268,6 +275,9 @@ RTR3DECL(int) RTTestCreateEx(const char *pszTest, uint32_t fFlags, RTTESTLVL enm
     pTest->hXmlPipe         = NIL_RTPIPE;
     pTest->hXmlFile         = NIL_RTFILE;
     pTest->cXmlElements     = 0;
+    pTest->cAssertionsDisabledAndQuieted = 0;
+    pTest->fAssertSavedMayPanic          = true;
+    pTest->fAssertSavedQuiet             = false;
 
     rc = RTCritSectInit(&pTest->Lock);
     if (RT_SUCCESS(rc))
@@ -314,64 +324,70 @@ RTR3DECL(int) RTTestCreateEx(const char *pszTest, uint32_t fFlags, RTTESTLVL enm
                 /*
                  * Any test driver we are connected or should connect to?
                  */
-                if ((fFlags & RTTEST_C_USE_ENV) && iNativeTestPipe == -1)
+                if (!(fFlags & RTTEST_C_NO_XML_REPORTING_PIPE))
                 {
-                    rc = RTEnvGetEx(RTENV_DEFAULT, "IPRT_TEST_PIPE", szEnvVal, sizeof(szEnvVal), NULL);
-                    if (RT_SUCCESS(rc))
+                    if (   (fFlags & RTTEST_C_USE_ENV)
+                        && iNativeTestPipe == -1)
                     {
-#if ARCH_BITS == 64
-                        rc = RTStrToInt64Full(szEnvVal, 0, &iNativeTestPipe);
-#else
-                        rc = RTStrToInt32Full(szEnvVal, 0, &iNativeTestPipe);
-#endif
-                        if (RT_FAILURE(rc))
+                        rc = RTEnvGetEx(RTENV_DEFAULT, "IPRT_TEST_PIPE", szEnvVal, sizeof(szEnvVal), NULL);
+                        if (RT_SUCCESS(rc))
                         {
-                            RTStrmPrintf(g_pStdErr, "%s: test pipe error: RTStrToInt32Full(\"%s\") -> %Rrc\n",
-                                         pszTest, szEnvVal, rc);
-                            iNativeTestPipe = -1;
+#if ARCH_BITS == 64
+                            rc = RTStrToInt64Full(szEnvVal, 0, &iNativeTestPipe);
+#else
+                            rc = RTStrToInt32Full(szEnvVal, 0, &iNativeTestPipe);
+#endif
+                            if (RT_FAILURE(rc))
+                            {
+                                RTStrmPrintf(g_pStdErr, "%s: test pipe error: RTStrToInt32Full(\"%s\") -> %Rrc\n",
+                                             pszTest, szEnvVal, rc);
+                                iNativeTestPipe = -1;
+                            }
                         }
+                        else if (rc != VERR_ENV_VAR_NOT_FOUND)
+                            RTStrmPrintf(g_pStdErr, "%s: test pipe error: RTEnvGetEx(IPRT_TEST_PIPE) -> %Rrc\n", pszTest, rc);
                     }
-                    else if (rc != VERR_ENV_VAR_NOT_FOUND)
-                        RTStrmPrintf(g_pStdErr, "%s: test pipe error: RTEnvGetEx(IPRT_TEST_PIPE) -> %Rrc\n", pszTest, rc);
-                }
-                if (iNativeTestPipe != -1)
-                {
-                    rc = RTPipeFromNative(&pTest->hXmlPipe, iNativeTestPipe, RTPIPE_N_WRITE);
-                    if (RT_SUCCESS(rc))
-                        pTest->fXmlEnabled = true;
-                    else
+                    if (iNativeTestPipe != -1)
                     {
-                        RTStrmPrintf(g_pStdErr, "%s: test pipe error: RTPipeFromNative(,%p,WRITE) -> %Rrc\n",
-                                     pszTest, iNativeTestPipe, rc);
-                        pTest->hXmlPipe = NIL_RTPIPE;
+                        rc = RTPipeFromNative(&pTest->hXmlPipe, iNativeTestPipe, RTPIPE_N_WRITE);
+                        if (RT_SUCCESS(rc))
+                            pTest->fXmlEnabled = true;
+                        else
+                        {
+                            RTStrmPrintf(g_pStdErr, "%s: test pipe error: RTPipeFromNative(,%p,WRITE) -> %Rrc\n",
+                                         pszTest, iNativeTestPipe, rc);
+                            pTest->hXmlPipe = NIL_RTPIPE;
+                        }
                     }
                 }
 
                 /*
                  * Any test file we should write the test report to?
                  */
-                if ((fFlags & RTTEST_C_USE_ENV) && pszXmlFile == NULL)
+                if (!(fFlags & RTTEST_C_NO_XML_REPORTING_FILE))
                 {
-                    rc = RTEnvGetEx(RTENV_DEFAULT, "IPRT_TEST_FILE", szEnvVal, sizeof(szEnvVal), NULL);
-                    if (RT_SUCCESS(rc))
-                        pszXmlFile = szEnvVal;
-                    else if (rc != VERR_ENV_VAR_NOT_FOUND)
-                        RTStrmPrintf(g_pStdErr, "%s: test pipe error: RTEnvGetEx(IPRT_TEST_MAX_LEVEL) -> %Rrc\n", pszTest, rc);
-                }
-                if (pszXmlFile && *pszXmlFile)
-                {
-                    rc = RTFileOpen(&pTest->hXmlFile, pszXmlFile,
-                                    RTFILE_O_WRITE | RTFILE_O_DENY_WRITE | RTFILE_O_OPEN_CREATE | RTFILE_O_TRUNCATE);
-                    if (RT_SUCCESS(rc))
-                        pTest->fXmlEnabled = true;
-                    else
+                    if ((fFlags & RTTEST_C_USE_ENV) && pszXmlFile == NULL)
                     {
-                        RTStrmPrintf(g_pStdErr, "%s: test file error: RTFileOpen(,\"%s\",) -> %Rrc\n", pszTest, pszXmlFile, rc);
-                        pTest->hXmlFile = NIL_RTFILE;
+                        rc = RTEnvGetEx(RTENV_DEFAULT, "IPRT_TEST_FILE", szEnvVal, sizeof(szEnvVal), NULL);
+                        if (RT_SUCCESS(rc))
+                            pszXmlFile = szEnvVal;
+                        else if (rc != VERR_ENV_VAR_NOT_FOUND)
+                            RTStrmPrintf(g_pStdErr, "%s: test file error: RTEnvGetEx(IPRT_TEST_MAX_LEVEL) -> %Rrc\n", pszTest, rc);
+                    }
+                    if (pszXmlFile && *pszXmlFile)
+                    {
+                        rc = RTFileOpen(&pTest->hXmlFile, pszXmlFile,
+                                        RTFILE_O_WRITE | RTFILE_O_DENY_WRITE | RTFILE_O_OPEN_CREATE | RTFILE_O_TRUNCATE);
+                        if (RT_SUCCESS(rc))
+                            pTest->fXmlEnabled = true;
+                        else
+                        {
+                            RTStrmPrintf(g_pStdErr, "%s: test file error: RTFileOpen(,\"%s\",) -> %Rrc\n",
+                                         pszTest, pszXmlFile, rc);
+                            pTest->hXmlFile = NIL_RTFILE;
+                        }
                     }
                 }
-                else if (rc != VERR_ENV_VAR_NOT_FOUND)
-                    RTStrmPrintf(g_pStdErr, "%s: test file error: RTEnvGetEx(IPRT_TEST_FILE) -> %Rrc\n", pszTest, rc);
 
                 /*
                  * What do we report in the XML stream/file.?
@@ -407,6 +423,13 @@ RTR3DECL(int) RTTestCreate(const char *pszTest, PRTTEST phTest)
 }
 
 
+RTR3DECL(int) RTTestCreateChild(const char *pszTest, PRTTEST phTest)
+{
+    return RTTestCreateEx(pszTest, RTTEST_C_USE_ENV | RTTEST_C_NO_XML_REPORTING,
+                          RTTESTLVL_INVALID, -1 /*iNativeTestPipe*/, NULL /*pszXmlFile*/, phTest);
+}
+
+
 RTR3DECL(RTEXITCODE) RTTestInitAndCreate(const char *pszTest, PRTTEST phTest)
 {
     int rc = RTR3InitExeNoArguments(0);
@@ -426,13 +449,13 @@ RTR3DECL(RTEXITCODE) RTTestInitAndCreate(const char *pszTest, PRTTEST phTest)
 }
 
 
-RTR3DECL(RTEXITCODE) RTTestInitExAndCreate(int cArgs, char ***papszArgs, uint32_t fRtInit, const char *pszTest, PRTTEST phTest)
+RTR3DECL(RTEXITCODE) RTTestInitExAndCreate(int cArgs, char ***ppapszArgs, uint32_t fRtInit, const char *pszTest, PRTTEST phTest)
 {
     int rc;
-    if (cArgs <= 0 && papszArgs == NULL)
+    if (cArgs <= 0 && ppapszArgs == NULL)
         rc = RTR3InitExeNoArguments(fRtInit);
     else
-        rc = RTR3InitExe(cArgs, papszArgs, fRtInit);
+        rc = RTR3InitExe(cArgs, ppapszArgs, fRtInit);
     if (RT_FAILURE(rc))
     {
         RTStrmPrintf(g_pStdErr, "%s: fatal error: RTR3InitExe(,,%#x) failed with rc=%Rrc\n", pszTest, fRtInit, rc);
@@ -635,7 +658,7 @@ RTR3DECL(int) RTTestGuardedAlloc(RTTEST hTest, size_t cb, uint32_t cbAlign, bool
 RTR3DECL(void *) RTTestGuardedAllocTail(RTTEST hTest, size_t cb)
 {
     void *pvUser;
-    int rc = RTTestGuardedAlloc(hTest, cb, 1, false /*fHead*/, &pvUser);
+    int rc = RTTestGuardedAlloc(hTest, cb, 1 /* cbAlign */, false /* fHead */, &pvUser);
     if (RT_SUCCESS(rc))
         return pvUser;
     return NULL;
@@ -654,7 +677,7 @@ RTR3DECL(void *) RTTestGuardedAllocTail(RTTEST hTest, size_t cb)
 RTR3DECL(void *) RTTestGuardedAllocHead(RTTEST hTest, size_t cb)
 {
     void *pvUser;
-    int rc = RTTestGuardedAlloc(hTest, cb, 1, true /*fHead*/, &pvUser);
+    int rc = RTTestGuardedAlloc(hTest, cb, 1 /* cbAlign */, true /* fHead */, &pvUser);
     if (RT_SUCCESS(rc))
         return pvUser;
     return NULL;
@@ -1194,13 +1217,13 @@ static int rtTestSubTestReport(PRTTESTINT pTest)
             {
                 rtTestXmlElem(pTest, "Passed", NULL);
                 rtTestXmlElemEnd(pTest, "Test");
-                cch += RTTestPrintfNl(pTest, RTTESTLVL_SUB_TEST, "%-50s: PASSED\n", pTest->pszSubTest);
+                cch += RTTestPrintfNl(pTest, RTTESTLVL_SUB_TEST, "%-60s: PASSED\n", pTest->pszSubTest);
             }
             else
             {
                 rtTestXmlElem(pTest, "Skipped", NULL);
                 rtTestXmlElemEnd(pTest, "Test");
-                cch += RTTestPrintfNl(pTest, RTTESTLVL_SUB_TEST, "%-50s: SKIPPED\n", pTest->pszSubTest);
+                cch += RTTestPrintfNl(pTest, RTTESTLVL_SUB_TEST, "%-60s: SKIPPED\n", pTest->pszSubTest);
             }
         }
         else
@@ -1208,7 +1231,7 @@ static int rtTestSubTestReport(PRTTESTINT pTest)
             pTest->cSubTestsFailed++;
             rtTestXmlElem(pTest, "Failed", "errors=\"%u\"", cErrors);
             rtTestXmlElemEnd(pTest, "Test");
-            cch += RTTestPrintfNl(pTest, RTTESTLVL_SUB_TEST, "%-50s: FAILED (%u errors)\n",
+            cch += RTTestPrintfNl(pTest, RTTESTLVL_SUB_TEST, "%-60s: FAILED (%u errors)\n",
                                   pTest->pszSubTest, cErrors);
         }
     }
@@ -1258,7 +1281,7 @@ RTR3DECL(RTEXITCODE) RTTestSummaryAndDestroy(RTTEST hTest)
     RTEXITCODE enmExitCode;
     if (!pTest->cErrors)
     {
-        RTTestPrintfNl(hTest, RTTESTLVL_ALWAYS, "SUCCESS\n", pTest->cErrors);
+        RTTestPrintfNl(hTest, RTTESTLVL_ALWAYS, "SUCCESS\n");
         enmExitCode = RTEXITCODE_SUCCESS;
     }
     else
@@ -1286,7 +1309,7 @@ RTR3DECL(RTEXITCODE) RTTestSkipAndDestroyV(RTTEST hTest, const char *pszReasonFm
     {
         if (pszReasonFmt)
             RTTestPrintfNlV(hTest, RTTESTLVL_FAILURE, pszReasonFmt, va);
-        RTTestPrintfNl(hTest, RTTESTLVL_ALWAYS, "SKIPPED\n", pTest->cErrors);
+        RTTestPrintfNl(hTest, RTTESTLVL_ALWAYS, "SKIPPED\n");
         enmExitCode = RTEXITCODE_SKIPPED;
     }
     else
@@ -1336,6 +1359,7 @@ RTR3DECL(int) RTTestSub(RTTEST hTest, const char *pszSubTest)
     pTest->cSubTestAtErrors = ASMAtomicUoReadU32(&pTest->cErrors);
     pTest->pszSubTest = RTStrDup(pszSubTest);
     pTest->cchSubTest = strlen(pszSubTest);
+    Assert(pTest->cchSubTest < 64 /* See g_kcchMaxTestResultName in testmanager/config.py. */);
     pTest->fSubTestSkipped  = false;
     pTest->fSubTestReported = false;
 
@@ -1539,7 +1563,7 @@ static const char *rtTestUnitName(RTTESTUNIT enmUnit)
         case RTTESTUNIT_PACKETS:                return "packets";
         case RTTESTUNIT_PACKETS_PER_SEC:        return "packets/s";
         case RTTESTUNIT_FRAMES:                 return "frames";
-        case RTTESTUNIT_FRAMES_PER_SEC:         return "frames/";
+        case RTTESTUNIT_FRAMES_PER_SEC:         return "frames/s";
         case RTTESTUNIT_OCCURRENCES:            return "occurrences";
         case RTTESTUNIT_OCCURRENCES_PER_SEC:    return "occurrences/s";
         case RTTESTUNIT_ROUND_TRIP:             return "roundtrips";
@@ -1550,9 +1574,9 @@ static const char *rtTestUnitName(RTTESTUNIT enmUnit)
         case RTTESTUNIT_NS:                     return "ns";
         case RTTESTUNIT_NS_PER_CALL:            return "ns/call";
         case RTTESTUNIT_NS_PER_FRAME:           return "ns/frame";
-        case RTTESTUNIT_NS_PER_OCCURRENCE:      return "ns/occurrences";
+        case RTTESTUNIT_NS_PER_OCCURRENCE:      return "ns/occurrence";
         case RTTESTUNIT_NS_PER_PACKET:          return "ns/packet";
-        case RTTESTUNIT_NS_PER_ROUND_TRIP:      return "ns/roundtrips";
+        case RTTESTUNIT_NS_PER_ROUND_TRIP:      return "ns/roundtrip";
         case RTTESTUNIT_INSTRS:                 return "ins";
         case RTTESTUNIT_INSTRS_PER_SEC:         return "ins/sec";
         case RTTESTUNIT_NONE:                   return "";
@@ -1576,6 +1600,8 @@ RTR3DECL(int) RTTestValue(RTTEST hTest, const char *pszName, uint64_t u64Value, 
     PRTTESTINT pTest = hTest;
     RTTEST_GET_VALID_RETURN(pTest);
 
+    Assert(strlen(pszName) < 56 /* See g_kcchMaxTestValueName in testmanager/config.py. */);
+
     const char *pszUnit = rtTestUnitName(enmUnit);
 
     RTCritSectEnter(&pTest->Lock);
@@ -1583,7 +1609,7 @@ RTR3DECL(int) RTTestValue(RTTEST hTest, const char *pszName, uint64_t u64Value, 
     RTCritSectLeave(&pTest->Lock);
 
     RTCritSectEnter(&pTest->OutputLock);
-    rtTestPrintf(pTest, "  %-48s: %'16llu %s\n", pszName, u64Value, pszUnit);
+    rtTestPrintf(pTest, "  %-58s: %'16llu %s\n", pszName, u64Value, pszUnit);
     RTCritSectLeave(&pTest->OutputLock);
 
     return VINF_SUCCESS;
@@ -1745,5 +1771,42 @@ RTR3DECL(int) RTTestFailureDetails(RTTEST hTest, const char *pszFormat, ...)
     int cch = RTTestFailureDetailsV(hTest, pszFormat, va);
     va_end(va);
     return cch;
+}
+
+
+RTR3DECL(int) RTTestDisableAssertions(RTTEST hTest)
+{
+    PRTTESTINT pTest = hTest;
+    RTTEST_GET_VALID_RETURN(pTest);
+
+    uint32_t cTimes = ASMAtomicIncU32(&pTest->cAssertionsDisabledAndQuieted);
+    if (cTimes >= 2 && cTimes <= 8)
+        return VINF_SUCCESS;
+    if (cTimes > 8)
+    {
+        RTAssertSetMayPanic(pTest->fAssertSavedMayPanic);
+        RTAssertSetQuiet(pTest->fAssertSavedQuiet);
+        Assert(cTimes <= 8);
+    }
+    pTest->fAssertSavedMayPanic = RTAssertSetMayPanic(false);
+    pTest->fAssertSavedQuiet    = RTAssertSetQuiet(true);
+    return VINF_SUCCESS;
+}
+
+
+RTR3DECL(int) RTTestRestoreAssertions(RTTEST hTest)
+{
+    PRTTESTINT pTest = hTest;
+    RTTEST_GET_VALID_RETURN(pTest);
+
+    uint32_t cTimes = ASMAtomicDecU32(&pTest->cAssertionsDisabledAndQuieted);
+    if (cTimes == 0)
+    {
+        RTAssertSetMayPanic(pTest->fAssertSavedMayPanic);
+        RTAssertSetQuiet(pTest->fAssertSavedQuiet);
+    }
+    else
+        AssertStmt(cTimes < UINT32_MAX / 2, ASMAtomicIncU32(&pTest->cAssertionsDisabledAndQuieted));
+    return VINF_SUCCESS;
 }
 

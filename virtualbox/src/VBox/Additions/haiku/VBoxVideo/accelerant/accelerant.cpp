@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -44,18 +44,20 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <Accelerant.h>
 #include "accelerant.h"
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 AccelerantInfo gInfo;
 static engine_token sEngineToken = { 1, 0 /*B_2D_ACCELERATION*/, NULL };
 
@@ -279,7 +281,7 @@ uint32 vboxvideo_accelerant_mode_count(void)
 
 status_t vboxvideo_get_mode_list(display_mode *dm)
 {
-    // TODO return some standard modes here
+    /// @todo return some standard modes here
     TRACE("%s\n", __FUNCTION__);
     return vboxvideo_get_display_mode(dm);
 }

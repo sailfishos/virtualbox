@@ -1,12 +1,10 @@
 /* $Id: UIWizardCloneVMPageExpert.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardCloneVMPageExpert class implementation
+ * VBox Qt GUI - UIWizardCloneVMPageExpert class implementation.
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,17 +15,24 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QGridLayout>
-#include <QButtonGroup>
-#include <QGroupBox>
-#include <QLineEdit>
-#include <QCheckBox>
-#include <QRadioButton>
+# include <QGridLayout>
+# include <QButtonGroup>
+# include <QGroupBox>
+# include <QLineEdit>
+# include <QCheckBox>
+# include <QRadioButton>
 
 /* Local includes: */
-#include "UIWizardCloneVMPageExpert.h"
-#include "UIWizardCloneVM.h"
+# include "UIWizardCloneVMPageExpert.h"
+# include "UIWizardCloneVM.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardCloneVMPageExpert::UIWizardCloneVMPageExpert(const QString &strOriginalName, bool fAdditionalInfo, bool fShowChildsOption)
     : UIWizardCloneVMPage1(strOriginalName)
@@ -37,8 +42,6 @@ UIWizardCloneVMPageExpert::UIWizardCloneVMPageExpert(const QString &strOriginalN
     /* Create widgets: */
     QGridLayout *pMainLayout = new QGridLayout(this);
     {
-        pMainLayout->setContentsMargins(8, 6, 8, 6);
-        pMainLayout->setSpacing(10);
         m_pNameCnt = new QGroupBox(this);
         {
             QVBoxLayout *pNameCntLayout = new QVBoxLayout(m_pNameCnt);
@@ -88,6 +91,7 @@ UIWizardCloneVMPageExpert::UIWizardCloneVMPageExpert(const QString &strOriginalN
             }
         }
         m_pReinitMACsCheckBox = new QCheckBox(this);
+        m_pReinitMACsCheckBox->setChecked(true);
         pMainLayout->addWidget(m_pNameCnt, 0, 0, 1, 2);
         pMainLayout->addWidget(m_pCloneTypeCnt, 1, 0, Qt::AlignTop);
         pMainLayout->addWidget(m_pCloneModeCnt, 1, 1, Qt::AlignTop);
@@ -161,4 +165,3 @@ bool UIWizardCloneVMPageExpert::validatePage()
     /* Return result: */
     return fResult;
 }
-

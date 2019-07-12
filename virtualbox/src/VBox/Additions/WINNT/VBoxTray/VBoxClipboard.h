@@ -1,9 +1,10 @@
+/* $Id: VBoxClipboard.h $ */
 /** @file
  * VBoxSeamless - Shared Clipboard
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,10 +18,5 @@
 #ifndef __VBOXSERVICESHAREDCLIPLBOARD__H
 #define __VBOXSERVICESHAREDCLIPLBOARD__H
 
-/* The shared clipboard service prototypes. */
-int                VBoxClipboardInit    (const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread);
-unsigned __stdcall VBoxClipboardThread  (void *pInstance);
-void               VBoxClipboardDestroy (const VBOXSERVICEENV *pEnv, void *pInstance);
+#endif /* !__VBOXSERVICESHAREDCLIPLBOARD__H */
 
-
-#endif /* __VBOXSERVICESHAREDCLIPLBOARD__H */

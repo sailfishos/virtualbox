@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,7 +25,7 @@
 #endif /* _WIN32_WINNT < 0x0500 */
 #endif /* !_WIN32_WINNT */
 
-#include <windows.h>
+#include <iprt/win/windows.h>
 #include <winternl.h>
 #include <psapi.h>
 extern "C" {
@@ -139,7 +139,7 @@ int CollectorWin::preCollect(const CollectorHints& hints, uint64_t /* iTick */)
 
     mProcessStats.clear();
 
-    for (it = processes.begin(); it != processes.end() && RT_SUCCESS(rc); it++)
+    for (it = processes.begin(); it != processes.end() && RT_SUCCESS(rc); ++it)
     {
         RTPROCESS process = it->first;
         HANDLE h = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ,
@@ -154,6 +154,7 @@ int CollectorWin::preCollect(const CollectorHints& hints, uint64_t /* iTick */)
         }
 
         VMProcessStats vmStats;
+        RT_ZERO(vmStats);
         if ((it->second & COLLECT_CPU_LOAD) != 0)
         {
             FILETIME ftCreate, ftExit, ftKernel, ftUser;
@@ -193,6 +194,7 @@ int CollectorWin::preCollect(const CollectorHints& hints, uint64_t /* iTick */)
 
 int CollectorWin::getHostCpuLoad(ULONG *user, ULONG *kernel, ULONG *idle)
 {
+    RT_NOREF(user, kernel, idle);
     return VERR_NOT_IMPLEMENTED;
 }
 
@@ -268,7 +270,8 @@ int CollectorWin::getHostCpuMHz(ULONG *mhz)
 {
     uint64_t uTotalMhz   = 0;
     RTCPUID  nProcessors = RTMpGetCount();
-    PPROCESSOR_POWER_INFORMATION ppi = (PPROCESSOR_POWER_INFORMATION)RTMemAllocZ(nProcessors * sizeof(PROCESSOR_POWER_INFORMATION));
+    PPROCESSOR_POWER_INFORMATION ppi = (PPROCESSOR_POWER_INFORMATION)
+                                       RTMemAllocZ(nProcessors * sizeof(PROCESSOR_POWER_INFORMATION));
 
     if (!ppi)
         return VERR_NO_MEMORY;
@@ -310,6 +313,7 @@ int CollectorWin::getHostMemoryUsage(ULONG *total, ULONG *used, ULONG *available
 
 int CollectorWin::getProcessCpuLoad(RTPROCESS process, ULONG *user, ULONG *kernel)
 {
+    RT_NOREF(process, user, kernel);
     return VERR_NOT_IMPLEMENTED;
 }
 

@@ -973,8 +973,8 @@ static void crStateBufferObjectIntCmp(CRBufferObjectBits *bb, CRbitvalue *bitID,
 void crStateBufferObjectDiff(CRBufferObjectBits *bb, CRbitvalue *bitID,
                              CRContext *fromCtx, CRContext *toCtx)
 {
-    CRBufferObjectState *from = &(fromCtx->bufferobject);
-    const CRBufferObjectState *to = &(toCtx->bufferobject);
+    /*CRBufferObjectState *from = &(fromCtx->bufferobject); - unused
+    const CRBufferObjectState *to = &(toCtx->bufferobject); - unused */
 
     if (!HaveBufferObjectExtension())
         return;
@@ -986,6 +986,7 @@ static void crStateBufferObjectSyncCB(unsigned long key, void *data1, void *data
 {
     CRBufferObject *pBufferObj = (CRBufferObject *) data1;
     CRBufferObjectState *pState = (CRBufferObjectState *) data2;
+    (void)key;
 
     if (pBufferObj->id && !pBufferObj->hwid)
     {
@@ -995,7 +996,7 @@ static void crStateBufferObjectSyncCB(unsigned long key, void *data1, void *data
 
     if (pBufferObj->data)
     {
-        /*@todo http://www.opengl.org/registry/specs/ARB/pixel_buffer_object.txt
+        /** @todo http://www.opengl.org/registry/specs/ARB/pixel_buffer_object.txt
           "While it is entirely legal to create a buffer object by binding
           it to GL_ARRAY_BUFFER and loading it with data, then using it
           with the GL_PIXEL_UNPACK_BUFFER_ARB or GL_PIXEL_PACK_BUFFER_ARB
@@ -1019,7 +1020,7 @@ static void crStateBufferObjectSyncCB(unsigned long key, void *data1, void *data
 void crStateBufferObjectSwitch(CRBufferObjectBits *bb, CRbitvalue *bitID, 
                                CRContext *fromCtx, CRContext *toCtx)
 {
-    const CRBufferObjectState *from = &(fromCtx->bufferobject);
+    /*const CRBufferObjectState *from = &(fromCtx->bufferobject); - unused */
     CRBufferObjectState *to = &(toCtx->bufferobject);
     int i;
 
@@ -1039,49 +1040,49 @@ void crStateBufferObjectSwitch(CRBufferObjectBits *bb, CRbitvalue *bitID,
         if (cp->buffer && (cp->buffer->id || locked))
         {
             diff_api.BindBufferARB(GL_ARRAY_BUFFER_ARB, cp->buffer->hwid);
-            diff_api.VertexPointer(cp->size, cp->type, cp->stride, cp->p);
+            diff_api.VertexPointer(cp->size, cp->type, cp->stride, cp->p CRVBOX_HOST_ONLY_PARAM(-1 /*fRealPtr*/));
         }
 
         cp = &toCtx->client.array.c;
         if (cp->buffer && (cp->buffer->id || locked))
         {
             diff_api.BindBufferARB(GL_ARRAY_BUFFER_ARB, cp->buffer->hwid);
-            diff_api.ColorPointer(cp->size, cp->type, cp->stride, cp->p);
+            diff_api.ColorPointer(cp->size, cp->type, cp->stride, cp->p CRVBOX_HOST_ONLY_PARAM(-1 /*fRealPtr*/));
         }
 
         cp = &toCtx->client.array.f;
         if (cp->buffer && (cp->buffer->id || locked))
         {
             diff_api.BindBufferARB(GL_ARRAY_BUFFER_ARB, cp->buffer->hwid);
-            diff_api.FogCoordPointerEXT(cp->type, cp->stride, cp->p);
+            diff_api.FogCoordPointerEXT(cp->type, cp->stride, cp->p CRVBOX_HOST_ONLY_PARAM(-1 /*fRealPtr*/));
         }
 
         cp = &toCtx->client.array.s;
         if (cp->buffer && (cp->buffer->id || locked))
         {
             diff_api.BindBufferARB(GL_ARRAY_BUFFER_ARB, cp->buffer->hwid);
-            diff_api.SecondaryColorPointerEXT(cp->size, cp->type, cp->stride, cp->p);
+            diff_api.SecondaryColorPointerEXT(cp->size, cp->type, cp->stride, cp->p CRVBOX_HOST_ONLY_PARAM(-1 /*fRealPtr*/));
         }
 
         cp = &toCtx->client.array.e;
         if (cp->buffer && (cp->buffer->id || locked))
         {
             diff_api.BindBufferARB(GL_ARRAY_BUFFER_ARB, cp->buffer->hwid);
-            diff_api.EdgeFlagPointer(cp->stride, cp->p);
+            diff_api.EdgeFlagPointer(cp->stride, cp->p CRVBOX_HOST_ONLY_PARAM(-1 /*fRealPtr*/));
         }
 
         cp = &toCtx->client.array.i;
         if (cp->buffer && (cp->buffer->id || locked))
         {
             diff_api.BindBufferARB(GL_ARRAY_BUFFER_ARB, cp->buffer->hwid);
-            diff_api.IndexPointer(cp->type, cp->stride, cp->p);
+            diff_api.IndexPointer(cp->type, cp->stride, cp->p CRVBOX_HOST_ONLY_PARAM(-1 /*fRealPtr*/));
         }
 
         cp = &toCtx->client.array.n;
         if (cp->buffer && (cp->buffer->id || locked))
         {
             diff_api.BindBufferARB(GL_ARRAY_BUFFER_ARB, cp->buffer->hwid);
-            diff_api.NormalPointer(cp->type, cp->stride, cp->p);
+            diff_api.NormalPointer(cp->type, cp->stride, cp->p CRVBOX_HOST_ONLY_PARAM(-1 /*fRealPtr*/));
         }
 
         for (i = 0; i < CR_MAX_TEXTURE_UNITS; i++)
@@ -1092,7 +1093,7 @@ void crStateBufferObjectSwitch(CRBufferObjectBits *bb, CRbitvalue *bitID,
                 if (diff_api.ActiveTextureARB)
                     diff_api.ActiveTextureARB(i+GL_TEXTURE0_ARB);
                 diff_api.BindBufferARB(GL_ARRAY_BUFFER_ARB, cp->buffer->hwid);
-                diff_api.TexCoordPointer(cp->size, cp->type, cp->stride, cp->p);
+                diff_api.TexCoordPointer(cp->size, cp->type, cp->stride, cp->p CRVBOX_HOST_ONLY_PARAM(-1 /*fRealPtr*/));
             }
         }
 
@@ -1106,7 +1107,7 @@ void crStateBufferObjectSwitch(CRBufferObjectBits *bb, CRbitvalue *bitID,
             if (cp->buffer && (cp->buffer->id || locked))
             {
                 diff_api.BindBufferARB(GL_ARRAY_BUFFER_ARB, cp->buffer->hwid);
-                diff_api.VertexAttribPointerARB(i, cp->size, cp->type, cp->normalized, cp->stride, cp->p);
+                diff_api.VertexAttribPointerARB(i, cp->size, cp->type, cp->normalized, cp->stride, cp->p CRVBOX_HOST_ONLY_PARAM(-1 /*fRealPtr*/));
             }
         }
 #endif
@@ -1122,5 +1123,4 @@ void crStateBufferObjectSwitch(CRBufferObjectBits *bb, CRbitvalue *bitID,
         crStateBufferObjectIntCmp(bb, bitID, fromCtx, toCtx, GL_TRUE);
     }
 }
-
 

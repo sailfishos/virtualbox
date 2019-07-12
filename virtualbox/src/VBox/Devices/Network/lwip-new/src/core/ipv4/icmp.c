@@ -205,7 +205,7 @@ icmp_input(struct pbuf *p, struct netif *inp)
     ICMPH_TYPE_SET(iecho, ICMP_ER);
 #if CHECKSUM_GEN_ICMP
     /* adjust the checksum */
-    if (iecho->chksum >= PP_HTONS(0xffffU - (ICMP_ECHO << 8))) {
+    if (iecho->chksum > PP_HTONS(0xffffU - (ICMP_ECHO << 8))) {
       iecho->chksum += PP_HTONS(ICMP_ECHO << 8) + 1;
     } else {
       iecho->chksum += PP_HTONS(ICMP_ECHO << 8);
@@ -281,6 +281,9 @@ void
 icmp_proxy_input(struct pbuf *p, struct netif *inp)
 {
   u8_t type, code;
+# ifdef VBOX
+  (void)inp;
+# endif
 
   ICMP_STATS_INC(icmp.recv);
   snmp_inc_icmpinmsgs();
@@ -324,6 +327,9 @@ icmp_proxy_input(struct pbuf *p, struct netif *inp)
 
     if (ping_proxy_accept_callback != NULL) {
       (*ping_proxy_accept_callback)(ping_proxy_accept_arg, p);
+    } else {
+      /* ignore silently */
+      pbuf_free(p);
     }
     break;
 

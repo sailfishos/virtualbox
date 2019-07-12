@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,22 +16,34 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGF
 #include <VBox/vmm/dbgf.h>
 #include "DBGFInternal.h"
 #include <VBox/vmm/vm.h>
 #include <VBox/err.h>
 #include <iprt/assert.h>
+#include <iprt/asm.h>
+
+
+/*
+ * Check the read-only VM members.
+ */
+AssertCompileMembersSameSizeAndOffset(VM, dbgf.s.bmSoftIntBreakpoints,  VM, dbgf.ro.bmSoftIntBreakpoints);
+AssertCompileMembersSameSizeAndOffset(VM, dbgf.s.bmHardIntBreakpoints,  VM, dbgf.ro.bmHardIntBreakpoints);
+AssertCompileMembersSameSizeAndOffset(VM, dbgf.s.bmSelectedEvents,      VM, dbgf.ro.bmSelectedEvents);
+AssertCompileMembersSameSizeAndOffset(VM, dbgf.s.cHardIntBreakpoints,   VM, dbgf.ro.cHardIntBreakpoints);
+AssertCompileMembersSameSizeAndOffset(VM, dbgf.s.cSoftIntBreakpoints,   VM, dbgf.ro.cSoftIntBreakpoints);
+AssertCompileMembersSameSizeAndOffset(VM, dbgf.s.cSelectedEvents,       VM, dbgf.ro.cSelectedEvents);
 
 
 /**
  * Gets the hardware breakpoint configuration as DR7.
  *
  * @returns DR7 from the DBGF point of view.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR7(PVM pVM)
 {
@@ -62,13 +74,13 @@ VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR7(PVM pVM)
  * Gets the address of the hardware breakpoint number 0.
  *
  * @returns DR0 from the DBGF point of view.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR0(PVM pVM)
 {
     PCDBGFBP    pBp = &pVM->dbgf.s.aHwBreakpoints[0];
     Assert(pBp->u.Reg.iReg == 0);
-    return pBp->GCPtr;
+    return pBp->u.Reg.GCPtr;
 }
 
 
@@ -76,13 +88,13 @@ VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR0(PVM pVM)
  * Gets the address of the hardware breakpoint number 1.
  *
  * @returns DR1 from the DBGF point of view.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR1(PVM pVM)
 {
     PCDBGFBP    pBp = &pVM->dbgf.s.aHwBreakpoints[1];
     Assert(pBp->u.Reg.iReg == 1);
-    return pBp->GCPtr;
+    return pBp->u.Reg.GCPtr;
 }
 
 
@@ -90,13 +102,13 @@ VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR1(PVM pVM)
  * Gets the address of the hardware breakpoint number 2.
  *
  * @returns DR2 from the DBGF point of view.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR2(PVM pVM)
 {
     PCDBGFBP    pBp = &pVM->dbgf.s.aHwBreakpoints[2];
     Assert(pBp->u.Reg.iReg == 2);
-    return pBp->GCPtr;
+    return pBp->u.Reg.GCPtr;
 }
 
 
@@ -104,13 +116,13 @@ VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR2(PVM pVM)
  * Gets the address of the hardware breakpoint number 3.
  *
  * @returns DR3 from the DBGF point of view.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR3(PVM pVM)
 {
     PCDBGFBP    pBp = &pVM->dbgf.s.aHwBreakpoints[3];
     Assert(pBp->u.Reg.iReg == 3);
-    return pBp->GCPtr;
+    return pBp->u.Reg.GCPtr;
 }
 
 
@@ -118,15 +130,12 @@ VMM_INT_DECL(RTGCUINTREG) DBGFBpGetDR3(PVM pVM)
  * Checks if any of the hardware breakpoints are armed.
  *
  * @returns true if armed, false if not.
- * @param   pVM         The cross context VM structure.
+ * @param   pVM        The cross context VM structure.
+ * @remarks Don't call this from CPUMRecalcHyperDRx!
  */
 VMM_INT_DECL(bool) DBGFBpIsHwArmed(PVM pVM)
 {
-    Assert(RT_ELEMENTS(pVM->dbgf.s.aHwBreakpoints) == 4);
-    return (pVM->dbgf.s.aHwBreakpoints[0].fEnabled && pVM->dbgf.s.aHwBreakpoints[0].enmType == DBGFBPTYPE_REG)
-        || (pVM->dbgf.s.aHwBreakpoints[1].fEnabled && pVM->dbgf.s.aHwBreakpoints[1].enmType == DBGFBPTYPE_REG)
-        || (pVM->dbgf.s.aHwBreakpoints[2].fEnabled && pVM->dbgf.s.aHwBreakpoints[2].enmType == DBGFBPTYPE_REG)
-        || (pVM->dbgf.s.aHwBreakpoints[3].fEnabled && pVM->dbgf.s.aHwBreakpoints[3].enmType == DBGFBPTYPE_REG);
+    return pVM->dbgf.s.cEnabledHwBreakpoints > 0;
 }
 
 
@@ -134,28 +143,25 @@ VMM_INT_DECL(bool) DBGFBpIsHwArmed(PVM pVM)
  * Checks if any of the hardware I/O breakpoints are armed.
  *
  * @returns true if armed, false if not.
- * @param   pVM         The cross context VM structure.
+ * @param   pVM        The cross context VM structure.
+ * @remarks Don't call this from CPUMRecalcHyperDRx!
  */
 VMM_INT_DECL(bool) DBGFBpIsHwIoArmed(PVM pVM)
 {
-    Assert(RT_ELEMENTS(pVM->dbgf.s.aHwBreakpoints) == 4);
-    /** @todo cache this! */
-    return (   pVM->dbgf.s.aHwBreakpoints[0].u.Reg.fType == X86_DR7_RW_IO
-            && pVM->dbgf.s.aHwBreakpoints[0].fEnabled
-            && pVM->dbgf.s.aHwBreakpoints[0].enmType     == DBGFBPTYPE_REG
-           )
-        || (   pVM->dbgf.s.aHwBreakpoints[1].u.Reg.fType == X86_DR7_RW_IO
-            && pVM->dbgf.s.aHwBreakpoints[1].fEnabled
-            && pVM->dbgf.s.aHwBreakpoints[1].enmType     == DBGFBPTYPE_REG
-           )
-        || (   pVM->dbgf.s.aHwBreakpoints[2].u.Reg.fType == X86_DR7_RW_IO
-            && pVM->dbgf.s.aHwBreakpoints[2].fEnabled
-            && pVM->dbgf.s.aHwBreakpoints[2].enmType     == DBGFBPTYPE_REG
-           )
-        || (   pVM->dbgf.s.aHwBreakpoints[3].u.Reg.fType == X86_DR7_RW_IO
-            && pVM->dbgf.s.aHwBreakpoints[3].fEnabled
-            && pVM->dbgf.s.aHwBreakpoints[3].enmType     == DBGFBPTYPE_REG
-           );
+    return pVM->dbgf.s.cEnabledHwIoBreakpoints > 0;
+}
+
+
+/**
+ * Checks if any INT3 breakpoints are armed.
+ *
+ * @returns true if armed, false if not.
+ * @param   pVM        The cross context VM structure.
+ * @remarks Don't call this from CPUMRecalcHyperDRx!
+ */
+VMM_INT_DECL(bool) DBGFBpIsInt3Armed(PVM pVM)
+{
+    return pVM->dbgf.s.cEnabledInt3Breakpoints > 0;
 }
 
 
@@ -168,8 +174,8 @@ VMM_INT_DECL(bool) DBGFBpIsHwIoArmed(PVM pVM)
  * @retval  VINF_EM_RAW_GUEST_TRAP guest breakpoint triggered, DR6 and DR7 have
  *          been updated appropriately.
  *
- * @param   pVM         The cross context VM structure.
- * @param   pVCpu       The cross context CPU structure for the calling EMT.
+ * @param   pVM        The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  * @param   pCtx        The CPU context for the calling EMT.
  * @param   uIoPort     The I/O port being accessed.
  * @param   cbValue     The size/width of the access, in bytes.
@@ -184,24 +190,27 @@ VMM_INT_DECL(VBOXSTRICTRC)  DBGFBpCheckIo(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, 
      * Check hyper breakpoints first as the VMM debugger has priority over
      * the guest.
      */
-    for (unsigned iBp = 0; iBp < RT_ELEMENTS(pVM->dbgf.s.aHwBreakpoints); iBp++)
+    if (pVM->dbgf.s.cEnabledHwIoBreakpoints > 0)
     {
-        if (   pVM->dbgf.s.aHwBreakpoints[iBp].u.Reg.fType == X86_DR7_RW_IO
-            && pVM->dbgf.s.aHwBreakpoints[iBp].fEnabled
-            && pVM->dbgf.s.aHwBreakpoints[iBp].enmType     == DBGFBPTYPE_REG )
+        for (unsigned iBp = 0; iBp < RT_ELEMENTS(pVM->dbgf.s.aHwBreakpoints); iBp++)
         {
-            uint8_t  cbReg      = pVM->dbgf.s.aHwBreakpoints[iBp].u.Reg.cb; Assert(RT_IS_POWER_OF_TWO(cbReg));
-            uint64_t uDrXFirst  = pVM->dbgf.s.aHwBreakpoints[iBp].GCPtr & ~(uint64_t)(cbReg - 1);
-            uint64_t uDrXLast   = uDrXFirst + cbReg - 1;
-            if (uDrXFirst <= uIoPortLast && uDrXLast >= uIoPortFirst)
+            if (   pVM->dbgf.s.aHwBreakpoints[iBp].u.Reg.fType == X86_DR7_RW_IO
+                && pVM->dbgf.s.aHwBreakpoints[iBp].fEnabled
+                && pVM->dbgf.s.aHwBreakpoints[iBp].enmType     == DBGFBPTYPE_REG )
             {
-                /* (See also DBGFRZTrap01Handler.) */
-                pVCpu->dbgf.s.iActiveBp = pVM->dbgf.s.aHwBreakpoints[iBp].iBp;
-                pVCpu->dbgf.s.fSingleSteppingRaw = false;
+                uint8_t  cbReg      = pVM->dbgf.s.aHwBreakpoints[iBp].u.Reg.cb; Assert(RT_IS_POWER_OF_TWO(cbReg));
+                uint64_t uDrXFirst  = pVM->dbgf.s.aHwBreakpoints[iBp].u.Reg.GCPtr & ~(uint64_t)(cbReg - 1);
+                uint64_t uDrXLast   = uDrXFirst + cbReg - 1;
+                if (uDrXFirst <= uIoPortLast && uDrXLast >= uIoPortFirst)
+                {
+                    /* (See also DBGFRZTrap01Handler.) */
+                    pVCpu->dbgf.s.iActiveBp = pVM->dbgf.s.aHwBreakpoints[iBp].iBp;
+                    pVCpu->dbgf.s.fSingleSteppingRaw = false;
 
-                LogFlow(("DBGFBpCheckIo: hit hw breakpoint %d at %04x:%RGv (iop %#x)\n",
-                         pVM->dbgf.s.aHwBreakpoints[iBp].iBp, pCtx->cs.Sel, pCtx->rip, uIoPort));
-                return VINF_EM_DBG_BREAKPOINT;
+                    LogFlow(("DBGFBpCheckIo: hit hw breakpoint %d at %04x:%RGv (iop %#x)\n",
+                             pVM->dbgf.s.aHwBreakpoints[iBp].iBp, pCtx->cs.Sel, pCtx->rip, uIoPort));
+                    return VINF_EM_DBG_BREAKPOINT;
+                }
             }
         }
     }
@@ -258,10 +267,126 @@ VMM_INT_DECL(VBOXSTRICTRC)  DBGFBpCheckIo(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, 
  *
  * @returns stepping (true) or not (false).
  *
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  */
 VMM_INT_DECL(bool) DBGFIsStepping(PVMCPU pVCpu)
 {
     return pVCpu->dbgf.s.fSingleSteppingRaw;
+}
+
+
+/**
+ * Checks if the specified generic event is enabled or not.
+ *
+ * @returns true / false.
+ * @param   pVM                 The cross context VM structure.
+ * @param   enmEvent            The generic event being raised.
+ * @param   uEventArg           The argument of that event.
+ */
+DECLINLINE(bool) dbgfEventIsGenericWithArgEnabled(PVM pVM, DBGFEVENTTYPE enmEvent, uint64_t uEventArg)
+{
+    if (DBGF_IS_EVENT_ENABLED(pVM, enmEvent))
+    {
+        switch (enmEvent)
+        {
+            case DBGFEVENT_INTERRUPT_HARDWARE:
+                AssertReturn(uEventArg < 256, false);
+                return ASMBitTest(pVM->dbgf.s.bmHardIntBreakpoints, (uint32_t)uEventArg);
+
+            case DBGFEVENT_INTERRUPT_SOFTWARE:
+                AssertReturn(uEventArg < 256, false);
+                return ASMBitTest(pVM->dbgf.s.bmSoftIntBreakpoints, (uint32_t)uEventArg);
+
+            default:
+                return true;
+
+        }
+    }
+    return false;
+}
+
+
+/**
+ * Raises a generic debug event if enabled and not being ignored.
+ *
+ * @returns Strict VBox status code.
+ * @retval  VINF_EM_DBG_EVENT if the event was raised and the caller should
+ *          return ASAP to the debugger (via EM).  We set VMCPU_FF_DBGF so, it
+ *          is okay not to pass this along in some situations  .
+ * @retval  VINF_SUCCESS if the event was disabled or ignored.
+ *
+ * @param   pVM                 The cross context VM structure.
+ * @param   pVCpu               The cross context virtual CPU structure.
+ * @param   enmEvent            The generic event being raised.
+ * @param   uEventArg           The argument of that event.
+ * @param   enmCtx              The context in which this event is being raised.
+ *
+ * @thread  EMT(pVCpu)
+ */
+VMM_INT_DECL(VBOXSTRICTRC) DBGFEventGenericWithArg(PVM pVM, PVMCPU pVCpu, DBGFEVENTTYPE enmEvent, uint64_t uEventArg,
+                                                   DBGFEVENTCTX enmCtx)
+{
+    /*
+     * Is it enabled.
+     */
+    if (dbgfEventIsGenericWithArgEnabled(pVM, enmEvent, uEventArg))
+    {
+        /*
+         * Any events on the stack. Should the incoming event be ignored?
+         */
+        uint64_t const rip = CPUMGetGuestRIP(pVCpu);
+        uint32_t i = pVCpu->dbgf.s.cEvents;
+        if (i > 0)
+        {
+            while (i-- > 0)
+            {
+                if (   pVCpu->dbgf.s.aEvents[i].Event.enmType   == enmEvent
+                    && pVCpu->dbgf.s.aEvents[i].enmState        == DBGFEVENTSTATE_IGNORE
+                    && pVCpu->dbgf.s.aEvents[i].rip             == rip)
+                {
+                    pVCpu->dbgf.s.aEvents[i].enmState = DBGFEVENTSTATE_RESTORABLE;
+                    return VINF_SUCCESS;
+                }
+                Assert(pVCpu->dbgf.s.aEvents[i].enmState != DBGFEVENTSTATE_CURRENT);
+            }
+
+            /*
+             * Trim the event stack.
+             */
+            i = pVCpu->dbgf.s.cEvents;
+            while (i-- > 0)
+            {
+                if (   pVCpu->dbgf.s.aEvents[i].rip == rip
+                    && (   pVCpu->dbgf.s.aEvents[i].enmState == DBGFEVENTSTATE_RESTORABLE
+                        || pVCpu->dbgf.s.aEvents[i].enmState == DBGFEVENTSTATE_IGNORE) )
+                    pVCpu->dbgf.s.aEvents[i].enmState = DBGFEVENTSTATE_IGNORE;
+                else
+                {
+                    if (i + 1 != pVCpu->dbgf.s.cEvents)
+                        memmove(&pVCpu->dbgf.s.aEvents[i], &pVCpu->dbgf.s.aEvents[i + 1],
+                                (pVCpu->dbgf.s.cEvents - i) * sizeof(pVCpu->dbgf.s.aEvents));
+                    pVCpu->dbgf.s.cEvents--;
+                }
+            }
+
+            i = pVCpu->dbgf.s.cEvents;
+            AssertStmt(i < RT_ELEMENTS(pVCpu->dbgf.s.aEvents), i = RT_ELEMENTS(pVCpu->dbgf.s.aEvents) - 1);
+        }
+
+        /*
+         * Push the event.
+         */
+        pVCpu->dbgf.s.aEvents[i].enmState               = DBGFEVENTSTATE_CURRENT;
+        pVCpu->dbgf.s.aEvents[i].rip                    = rip;
+        pVCpu->dbgf.s.aEvents[i].Event.enmType          = enmEvent;
+        pVCpu->dbgf.s.aEvents[i].Event.enmCtx           = enmCtx;
+        pVCpu->dbgf.s.aEvents[i].Event.u.Generic.uArg   = uEventArg;
+        pVCpu->dbgf.s.cEvents = i + 1;
+
+        VMCPU_FF_SET(pVCpu, VMCPU_FF_DBGF);
+        return VINF_EM_DBG_EVENT;
+    }
+
+    return VINF_SUCCESS;
 }
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2010 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,13 +13,23 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/usbfilter.h>
+#include <VBox/usblib.h>
 #include <VBox/err.h>
 #include <VBox/log.h>
 #include <iprt/string.h>
@@ -284,6 +294,7 @@ static int usbfilterValidateStringPattern(const char *psz)
      * This is only becomes important if we start doing
      * sets ([0-9]) and such like.
      */
+    RT_NOREF1(psz);
     return VINF_SUCCESS;
 }
 
@@ -948,7 +959,7 @@ USBLIB_DECL(bool) USBFilterMatchDevice(PCUSBFILTER pFilter, PUSBDEVICE pDevice)
                     case USBFILTERIDX_DEVICE_PROTOCOL:  u16Value = pDevice->bDeviceProtocol; break;
                     case USBFILTERIDX_BUS:              u16Value = pDevice->bBus; break;
                     case USBFILTERIDX_PORT:             u16Value = pDevice->bPort; break;
-                    default:                            u16Value = ~0; break;
+                    default:                            u16Value = UINT16_MAX; break;
 
                 }
                 switch (pFilter->aFields[i].enmMatch)
@@ -1073,8 +1084,10 @@ USBLIB_DECL(int) USBFilterSetFilterType(PUSBFILTER pFilter, USBFILTERTYPE enmTyp
  * @param   pFilter         The filter.
  * @param   enmFieldIdx     The field index.
  * @param   pszString       The string to add.
+ * @param   fPurge          Purge invalid UTF-8 encoding and control characters
+ *                          before setting it.
  */
-static int usbfilterSetString(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, const char *pszString)
+static int usbfilterSetString(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, const char *pszString, bool fPurge)
 {
     /*
      * Validate input.
@@ -1123,12 +1136,14 @@ static int usbfilterSetString(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, cons
         pFilter->aFields[enmFieldIdx].u16Value = 0;
     else
     {
-        const size_t cch = strlen(pszString);
+        size_t cch = strlen(pszString);
         if (pFilter->offCurEnd + cch + 2 > sizeof(pFilter->achStrTab))
             return VERR_BUFFER_OVERFLOW;
 
         pFilter->aFields[enmFieldIdx].u16Value = pFilter->offCurEnd + 1;
         memcpy(&pFilter->achStrTab[pFilter->offCurEnd + 1], pszString, cch + 1);
+        if (fPurge)
+            cch = USBLibPurgeEncoding(&pFilter->achStrTab[pFilter->offCurEnd + 1]);
         pFilter->offCurEnd += (uint32_t)cch + 1;
     }
 
@@ -1153,7 +1168,7 @@ static int usbfilterDeleteAnyStringValue(PUSBFILTER pFilter, USBFILTERIDX enmFie
     int rc = VINF_SUCCESS;
     if (    USBFilterIsMethodUsingStringValue((USBFILTERMATCH)pFilter->aFields[enmFieldIdx].enmMatch)
         &&  pFilter->aFields[enmFieldIdx].u16Value != 0)
-        rc = usbfilterSetString(pFilter, enmFieldIdx, "");
+        rc = usbfilterSetString(pFilter, enmFieldIdx, "", false /*fPurge*/);
     else if ((unsigned)enmFieldIdx >= (unsigned)USBFILTERIDX_END)
         rc = VERR_INVALID_PARAMETER;
     return rc;
@@ -1267,7 +1282,7 @@ USBLIB_DECL(int) USBFilterSetNumExpression(PUSBFILTER pFilter, USBFILTERIDX enmF
         {
             /* We could optimize the expression further (stripping spaces, convert numbers),
                but it's more work than what it's worth and it could upset some users. */
-            rc = usbfilterSetString(pFilter, enmFieldIdx, pszExpression);
+            rc = usbfilterSetString(pFilter, enmFieldIdx, pszExpression, false /*fPurge*/);
             if (RT_SUCCESS(rc))
                 pFilter->aFields[enmFieldIdx].enmMatch = fMustBePresent ? USBFILTERMATCH_NUM_EXPRESSION : USBFILTERMATCH_NUM_EXPRESSION_NP;
             else if (rc == VERR_NO_DIGITS)
@@ -1293,13 +1308,16 @@ USBLIB_DECL(int) USBFilterSetNumExpression(PUSBFILTER pFilter, USBFILTERIDX enmF
  * @param   pszValue            The string value.
  * @param   fMustBePresent      If set, a non-present field on the device will result in a mismatch.
  *                              If clear, a non-present field on the device will match.
+ * @param   fPurge              Purge invalid UTF-8 encoding and control
+ *                              characters before setting it.
  */
-USBLIB_DECL(int) USBFilterSetStringExact(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, const char *pszValue, bool fMustBePresent)
+USBLIB_DECL(int) USBFilterSetStringExact(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, const char *pszValue,
+                                         bool fMustBePresent, bool fPurge)
 {
     int rc = USBFilterIsStringField(enmFieldIdx) ? VINF_SUCCESS : VERR_INVALID_PARAMETER;
     if (RT_SUCCESS(rc))
     {
-        rc = usbfilterSetString(pFilter, enmFieldIdx, pszValue);
+        rc = usbfilterSetString(pFilter, enmFieldIdx, pszValue, fPurge);
         if (RT_SUCCESS(rc))
             pFilter->aFields[enmFieldIdx].enmMatch = fMustBePresent ? USBFILTERMATCH_STR_EXACT : USBFILTERMATCH_STR_EXACT_NP;
     }
@@ -1331,7 +1349,7 @@ USBLIB_DECL(int) USBFilterSetStringPattern(PUSBFILTER pFilter, USBFILTERIDX enmF
         rc = usbfilterValidateStringPattern(pszPattern);
         if (RT_SUCCESS(rc))
         {
-            rc = usbfilterSetString(pFilter, enmFieldIdx, pszPattern);
+            rc = usbfilterSetString(pFilter, enmFieldIdx, pszPattern, false /*fPurge*/);
             if (RT_SUCCESS(rc))
                 pFilter->aFields[enmFieldIdx].enmMatch = fMustBePresent ? USBFILTERMATCH_STR_PATTERN : USBFILTERMATCH_STR_PATTERN_NP;
         }
@@ -1671,6 +1689,7 @@ USBLIB_DECL(bool) USBFilterIsNumericField(USBFILTERIDX enmFieldIdx)
 
         default:
             AssertMsgFailed(("%d\n", enmFieldIdx));
+            RT_FALL_THRU();
         case USBFILTERIDX_MANUFACTURER_STR:
         case USBFILTERIDX_PRODUCT_STR:
         case USBFILTERIDX_SERIAL_NUMBER_STR:
@@ -1691,6 +1710,7 @@ USBLIB_DECL(bool) USBFilterIsStringField(USBFILTERIDX enmFieldIdx)
     {
         default:
             AssertMsgFailed(("%d\n", enmFieldIdx));
+            RT_FALL_THRU();
         case USBFILTERIDX_VENDOR_ID:
         case USBFILTERIDX_PRODUCT_ID:
         case USBFILTERIDX_DEVICE:
@@ -1721,6 +1741,7 @@ USBLIB_DECL(bool) USBFilterIsMethodUsingNumericValue(USBFILTERMATCH enmMatchingM
     {
         default:
             AssertMsgFailed(("%d\n", enmMatchingMethod));
+            RT_FALL_THRU();
         case USBFILTERMATCH_IGNORE:
         case USBFILTERMATCH_PRESENT:
         case USBFILTERMATCH_NUM_EXPRESSION:
@@ -1750,6 +1771,7 @@ USBLIB_DECL(bool) USBFilterIsMethodUsingStringValue(USBFILTERMATCH enmMatchingMe
     {
         default:
             AssertMsgFailed(("%d\n", enmMatchingMethod));
+            RT_FALL_THRU();
         case USBFILTERMATCH_IGNORE:
         case USBFILTERMATCH_PRESENT:
         case USBFILTERMATCH_NUM_EXACT:

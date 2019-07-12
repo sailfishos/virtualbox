@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VMM
 #include <VBox/vmm/vmm.h>
 #include <VBox/vmm/pdmapi.h>
@@ -35,15 +36,16 @@
 #include <VBox/version.h>
 #include <VBox/vmm/hm.h>
 #include <iprt/assert.h>
+#include <iprt/dbg.h>
 #include <iprt/time.h>
 #include <iprt/stream.h>
 #include <iprt/string.h>
 #include <iprt/stdarg.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Structure to pass to DBGFR3Info() and for doing all other
  * output during fatal dump.
@@ -154,7 +156,7 @@ static void vmmR3FatalDumpInfoHlpInit(PVMMR3FATALDUMPINFOHLP pHlp)
     /*
      * The loggers.
      */
-    pHlp->pRelLogger  = RTLogRelDefaultInstance();
+    pHlp->pRelLogger  = RTLogRelGetDefaultInstance();
 #ifdef LOG_ENABLED
     pHlp->pLogger     = RTLogDefaultInstance();
 #else
@@ -225,8 +227,8 @@ static void vmmR3FatalDumpInfoHlpDelete(PVMMR3FATALDUMPINFOHLP pHlp)
 /**
  * Dumps the VM state on a fatal error.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   rcErr       VBox status code.
  */
 VMMR3DECL(void) VMMR3FatalDump(PVM pVM, PVMCPU pVCpu, int rcErr)
@@ -248,9 +250,9 @@ VMMR3DECL(void) VMMR3FatalDump(PVM pVM, PVMCPU pVCpu, int rcErr)
     pHlp->pfnPrintf(pHlp,
                     "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
                     "!!\n"
-                    "!!                 Guru Meditation %d (%Rrc)\n"
+                    "!!         VCPU%u: Guru Meditation %d (%Rrc)\n"
                     "!!\n",
-                    rcErr, rcErr);
+                    pVCpu->idCpu, rcErr, rcErr);
 
     /*
      * Continue according to context.
@@ -280,8 +282,8 @@ VMMR3DECL(void) VMMR3FatalDump(PVM pVM, PVMCPU pVCpu, int rcErr)
                 ||  !*pszMsg2
                 ||  strchr(pszMsg2, '\0')[-1] != '\n')
                 pHlp->pfnPrintf(pHlp, "\n");
-            /* fall thru */
         }
+        RT_FALL_THRU();
         case VERR_TRPM_DONT_PANIC:
         case VERR_TRPM_PANIC:
         case VINF_EM_RAW_STALE_SELECTOR:
@@ -470,11 +472,57 @@ VMMR3DECL(void) VMMR3FatalDump(PVM pVM, PVMCPU pVCpu, int rcErr)
                         DBGFR3StackWalkEnd(pFirstFrame);
                     }
 
+                    /* Symbols on the stack. */
+#ifdef VMM_R0_SWITCH_STACK
+                    uint32_t const   iLast   = VMM_STACK_SIZE / sizeof(uintptr_t);
+                    uint32_t         iAddr   = (uint32_t)(  pVCpu->vmm.s.CallRing3JmpBufR0.SavedEsp
+                                                          - MMHyperCCToR0(pVM, pVCpu->vmm.s.pbEMTStackR3)) / sizeof(uintptr_t);
+                    if (iAddr > iLast)
+                        iAddr = 0;
+#else
+                    uint32_t const   iLast   = RT_MIN(pVCpu->vmm.s.CallRing3JmpBufR0.cbSavedStack, VMM_STACK_SIZE)
+                                             / sizeof(uintptr_t);
+                    uint32_t         iAddr   = 0;
+#endif
+                    pHlp->pfnPrintf(pHlp,
+                                    "!!\n"
+                                    "!! Addresses on the stack (iAddr=%#x, iLast=%#x)\n"
+                                    "!!\n",
+                                    iAddr, iLast);
+                    uintptr_t const *paAddr  = (uintptr_t const *)pVCpu->vmm.s.pbEMTStackR3;
+                    while (iAddr < iLast)
+                    {
+                        uintptr_t const uAddr = paAddr[iAddr];
+                        if (uAddr > X86_PAGE_SIZE)
+                        {
+                            DBGFADDRESS  Addr;
+                            DBGFR3AddrFromFlat(pVM->pUVM, &Addr, uAddr);
+                            RTGCINTPTR   offDisp = 0;
+                            PRTDBGSYMBOL pSym  = DBGFR3AsSymbolByAddrA(pVM->pUVM, DBGF_AS_R0, &Addr,
+                                                                       RTDBGSYMADDR_FLAGS_LESS_OR_EQUAL, &offDisp, NULL);
+                            RTGCINTPTR   offLineDisp;
+                            PRTDBGLINE   pLine = DBGFR3AsLineByAddrA(pVM->pUVM, DBGF_AS_R0, &Addr, &offLineDisp, NULL);
+                            if (pLine || pSym)
+                            {
+                                pHlp->pfnPrintf(pHlp, "%#06x: %p =>", iAddr * sizeof(uintptr_t), uAddr);
+                                if (pSym)
+                                    pHlp->pfnPrintf(pHlp, " %s + %#x", pSym->szName, (intptr_t)offDisp);
+                                if (pLine)
+                                    pHlp->pfnPrintf(pHlp, " [%s:%u + %#x]\n", pLine->szFilename, pLine->uLineNo, offLineDisp);
+                                else
+                                    pHlp->pfnPrintf(pHlp, "\n");
+                                RTDbgSymbolFree(pSym);
+                                RTDbgLineFree(pLine);
+                            }
+                        }
+                        iAddr++;
+                    }
+
                     /* raw stack */
                     Hlp.fRecSummary = false;
                     pHlp->pfnPrintf(pHlp,
                                     "!!\n"
-                                    "!! Raw stack (mind the direction). \n"
+                                    "!! Raw stack (mind the direction).\n"
                                     "!! pbEMTStackR0=%RHv pbEMTStackBottomR0=%RHv VMM_STACK_SIZE=%#x\n"
                                     "!! pbEmtStackR3=%p\n"
                                     "!!\n"
@@ -600,9 +648,12 @@ VMMR3DECL(void) VMMR3FatalDump(PVM pVM, PVMCPU pVCpu, int rcErr)
 
         case VERR_IEM_INSTR_NOT_IMPLEMENTED:
         case VERR_IEM_ASPECT_NOT_IMPLEMENTED:
+        case VERR_PATM_IPE_TRAP_IN_PATCH_CODE:
+        case VERR_EM_GUEST_CPU_HANG:
         {
             DBGFR3Info(pVM->pUVM, "cpumguest", NULL, pHlp);
             DBGFR3Info(pVM->pUVM, "cpumguestinstr", NULL, pHlp);
+            DBGFR3Info(pVM->pUVM, "cpumguesthwvirt", NULL, pHlp);
             break;
         }
 
@@ -624,17 +675,18 @@ VMMR3DECL(void) VMMR3FatalDump(PVM pVM, PVMCPU pVCpu, int rcErr)
         const char *pszArgs;
     } const     aInfo[] =
     {
-        { "mappings",       NULL },
-        { "hma",            NULL },
-        { "cpumguest",      "verbose" },
-        { "cpumguestinstr", "verbose" },
-        { "cpumhyper",      "verbose" },
-        { "cpumhost",       "verbose" },
-        { "mode",           "all" },
-        { "cpuid",          "verbose" },
-        { "handlers",       "phys virt hyper stats" },
-        { "timers",         NULL },
-        { "activetimers",   NULL },
+        { "mappings",        NULL },
+        { "hma",             NULL },
+        { "cpumguest",       "verbose" },
+        { "cpumguesthwvirt", "verbose" },
+        { "cpumguestinstr",  "verbose" },
+        { "cpumhyper",       "verbose" },
+        { "cpumhost",        "verbose" },
+        { "mode",            "all" },
+        { "cpuid",           "verbose" },
+        { "handlers",        "phys virt hyper stats" },
+        { "timers",          NULL },
+        { "activetimers",    NULL },
     };
     for (unsigned i = 0; i < RT_ELEMENTS(aInfo); i++)
     {
@@ -651,7 +703,7 @@ VMMR3DECL(void) VMMR3FatalDump(PVM pVM, PVMCPU pVCpu, int rcErr)
     /* All other info items */
     DBGFR3InfoMulti(pVM,
                     "*",
-                    "mappings|hma|cpum|cpumguest|cpumguestinstr|cpumhyper|cpumhost|mode|cpuid"
+                    "mappings|hma|cpum|cpumguest|cpumguesthwvirt|cpumguestinstr|cpumhyper|cpumhost|mode|cpuid"
                     "|pgmpd|pgmcr3|timers|activetimers|handlers|help",
                     "!!\n"
                     "!! {%s}\n"

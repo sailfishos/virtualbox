@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/dbg.h>
 #include <VBox/vmm/cfgm.h>
 #include <VBox/err.h>
@@ -31,9 +31,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Debug console TCP backend instance data.
  */
@@ -50,13 +50,13 @@ typedef struct DBGCTCP
 typedef DBGCTCP *PDBGCTCP;
 
 /** Converts a pointer to DBGCTCP::Back to a pointer to DBGCTCP. */
-#define DBGCTCP_BACK2DBGCTCP(pBack) ( (PDBGCTCP)((char *)pBack - RT_OFFSETOF(DBGCTCP, Back)) )
+#define DBGCTCP_BACK2DBGCTCP(pBack) ( (PDBGCTCP)((char *)(pBack) - RT_UOFFSETOF(DBGCTCP, Back)) )
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-static int  dbgcTcpConnection(RTSOCKET Sock, void *pvUser);
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
+static DECLCALLBACK(int)  dbgcTcpConnection(RTSOCKET Sock, void *pvUser);
 
 
 
@@ -101,6 +101,8 @@ static DECLCALLBACK(int) dbgcTcpBackRead(PDBGCBACK pBack, void *pvBuf, size_t cb
     if (!pDbgcTcp->fAlive)
         return VERR_INVALID_HANDLE;
     int rc = RTTcpRead(pDbgcTcp->Sock, pvBuf, cbBuf, pcbRead);
+    if (RT_SUCCESS(rc) && pcbRead != NULL && *pcbRead == 0)
+        rc = VERR_NET_SHUTDOWN;
     if (RT_FAILURE(rc))
         pDbgcTcp->fAlive = false;
     return rc;
@@ -135,7 +137,7 @@ static DECLCALLBACK(int) dbgcTcpBackWrite(PDBGCBACK pBack, const void *pvBuf, si
         /* write newlines */
         if (*(const char *)pvBuf == '\n')
         {
-            rc = RTTcpWrite(pDbgcTcp->Sock, "\n\r", 2);
+            rc = RTTcpWrite(pDbgcTcp->Sock, "\r\n", 2);
             cb = 1;
         }
         /* write till next newline */
@@ -166,18 +168,18 @@ static DECLCALLBACK(int) dbgcTcpBackWrite(PDBGCBACK pBack, const void *pvBuf, si
 }
 
 /** @copydoc FNDBGCBACKSETREADY */
-static DECLCALLBACK(void) dbgcTcpBackSetReady(PDBGCBACK pBack, bool fBusy)
+static DECLCALLBACK(void) dbgcTcpBackSetReady(PDBGCBACK pBack, bool fReady)
 {
     /* stub */
     NOREF(pBack);
-    NOREF(fBusy);
+    NOREF(fReady);
 }
 
 
 /**
  * Serve a TCP Server connection.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @returns VERR_TCP_SERVER_STOP to terminate the server loop forcing
  *          the RTTcpCreateServer() call to return.
  * @param   Sock        The socket which the client is connected to.
@@ -207,7 +209,7 @@ static DECLCALLBACK(int) dbgcTcpConnection(RTSOCKET Sock, void *pvUser)
 /**
  * Spawns a new thread with a TCP based debugging console service.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM        The user mode VM handle.
  * @param   ppvData     Where to store a pointer to the instance data.
  */
@@ -270,12 +272,14 @@ DBGDECL(int)    DBGCTcpCreate(PUVM pUVM, void **ppvData)
 /**
  * Terminates any running TCP base debugger console service.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM            The user mode VM handle.
  * @param   pvData          The data returned by DBGCTcpCreate.
  */
 DBGDECL(int) DBGCTcpTerminate(PUVM pUVM, void *pvData)
 {
+    RT_NOREF1(pUVM);
+
     /*
      * Destroy the server instance if any.
      */

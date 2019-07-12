@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,13 +15,15 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_CPUM
 #include <VBox/vmm/cpum.h>
 #include "CPUMInternal.h"
 #include <VBox/vmm/vm.h>
+#include <VBox/vmm/mm.h>
 
 #include <VBox/err.h>
 #include <iprt/asm-amd64-x86.h>
@@ -29,9 +31,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct CPUMDBENTRY
 {
     /** The CPU name. */
@@ -50,21 +52,24 @@ typedef struct CPUMDBENTRY
     CPUMMICROARCH   enmMicroarch;
     /** Scalable bus frequency used for reporting other frequencies. */
     uint64_t        uScalableBusFreq;
-    /** Flags (TBD). */
+    /** Flags - CPUDB_F_XXX. */
     uint32_t        fFlags;
     /** The maximum physical address with of the CPU.  This should correspond to
      * the value in CPUID leaf 0x80000008 when present. */
     uint8_t         cMaxPhysAddrWidth;
+    /** The MXCSR mask. */
+    uint32_t        fMxCsrMask;
     /** Pointer to an array of CPUID leaves.  */
     PCCPUMCPUIDLEAF paCpuIdLeaves;
     /** The number of CPUID leaves in the array paCpuIdLeaves points to. */
     uint32_t        cCpuIdLeaves;
     /** The method used to deal with unknown CPUID leaves. */
-    CPUMUKNOWNCPUID enmUnknownCpuId;
+    CPUMUNKNOWNCPUID enmUnknownCpuId;
     /** The default unknown CPUID value. */
     CPUMCPUID       DefUnknownCpuId;
 
-    /** MSR mask.  Several microarchitectures ignore higher bits of the    */
+    /** MSR mask.  Several microarchitectures ignore the higher bits of ECX in
+     *  the RDMSR and WRMSR instructions. */
     uint32_t        fMsrMask;
 
     /** The number of ranges in the table pointed to b paMsrRanges. */
@@ -74,9 +79,16 @@ typedef struct CPUMDBENTRY
 } CPUMDBENTRY;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
+/** @name CPUDB_F_XXX - CPUDBENTRY::fFlags
+ * @{ */
+/** Should execute all in IEM.
+ * @todo Implement this - currently done in Main...  */
+#define CPUDB_F_EXECUTE_ALL_IN_IEM          RT_BIT_32(0)
+/** @} */
+
 
 /** @def NULL_ALONE
  * For eliminating an unnecessary data dependency in standalone builds (for
@@ -173,13 +185,22 @@ typedef struct CPUMDBENTRY
 #endif
 /** @} */
 
+#ifndef CPUM_DB_STANDALONE
 
+#include "cpus/Intel_Core_i7_6700K.h"
+#include "cpus/Intel_Core_i7_5600U.h"
 #include "cpus/Intel_Core_i7_3960X.h"
 #include "cpus/Intel_Core_i5_3570.h"
 #include "cpus/Intel_Core_i7_2635QM.h"
 #include "cpus/Intel_Xeon_X5482_3_20GHz.h"
 #include "cpus/Intel_Pentium_M_processor_2_00GHz.h"
 #include "cpus/Intel_Pentium_4_3_00GHz.h"
+#include "cpus/Intel_Pentium_N3530_2_16GHz.h"
+#include "cpus/Intel_Atom_330_1_60GHz.h"
+#include "cpus/Intel_80386.h"
+#include "cpus/Intel_80286.h"
+#include "cpus/Intel_80186.h"
+#include "cpus/Intel_8086.h"
 
 #include "cpus/AMD_FX_8150_Eight_Core.h"
 #include "cpus/AMD_Phenom_II_X6_1100T.h"
@@ -188,6 +209,8 @@ typedef struct CPUMDBENTRY
 #include "cpus/AMD_Athlon_64_3200.h"
 
 #include "cpus/VIA_QuadCore_L4700_1_2_GHz.h"
+
+#include "cpus/ZHAOXIN_KaiXian_KX_U5581_1_8GHz.h"
 
 
 
@@ -205,6 +228,12 @@ typedef struct CPUMDBENTRY
  */
 static CPUMDBENTRY const * const g_apCpumDbEntries[] =
 {
+#ifdef VBOX_CPUDB_Intel_Core_i7_6700K
+    &g_Entry_Intel_Core_i7_6700K,
+#endif
+#ifdef VBOX_CPUDB_Intel_Core_i7_5600U
+    &g_Entry_Intel_Core_i7_5600U,
+#endif
 #ifdef VBOX_CPUDB_Intel_Core_i5_3570
     &g_Entry_Intel_Core_i5_3570,
 #endif
@@ -214,6 +243,12 @@ static CPUMDBENTRY const * const g_apCpumDbEntries[] =
 #ifdef VBOX_CPUDB_Intel_Core_i7_2635QM
     &g_Entry_Intel_Core_i7_2635QM,
 #endif
+#ifdef VBOX_CPUDB_Intel_Pentium_N3530_2_16GHz
+    &g_Entry_Intel_Pentium_N3530_2_16GHz,
+#endif
+#ifdef VBOX_CPUDB_Intel_Atom_330_1_60GHz
+    &g_Entry_Intel_Atom_330_1_60GHz,
+#endif
 #ifdef Intel_Pentium_M_processor_2_00GHz
     &g_Entry_Intel_Pentium_M_processor_2_00GHz,
 #endif
@@ -222,6 +257,21 @@ static CPUMDBENTRY const * const g_apCpumDbEntries[] =
 #endif
 #ifdef VBOX_CPUDB_Intel_Pentium_4_3_00GHz
     &g_Entry_Intel_Pentium_4_3_00GHz,
+#endif
+#ifdef VBOX_CPUDB_Intel_80486
+    &g_Entry_Intel_80486,
+#endif
+#ifdef VBOX_CPUDB_Intel_80386
+    &g_Entry_Intel_80386,
+#endif
+#ifdef VBOX_CPUDB_Intel_80286
+    &g_Entry_Intel_80286,
+#endif
+#ifdef VBOX_CPUDB_Intel_80186
+    &g_Entry_Intel_80186,
+#endif
+#ifdef VBOX_CPUDB_Intel_8086
+    &g_Entry_Intel_8086,
 #endif
 
 #ifdef VBOX_CPUDB_AMD_FX_8150_Eight_Core
@@ -240,13 +290,20 @@ static CPUMDBENTRY const * const g_apCpumDbEntries[] =
     &g_Entry_AMD_Athlon_64_3200,
 #endif
 
+#ifdef VBOX_CPUDB_ZHAOXIN_KaiXian_KX_U5581_1_8GHz
+    &g_Entry_ZHAOXIN_KaiXian_KX_U5581_1_8GHz,
+#endif
+
 #ifdef VBOX_CPUDB_VIA_QuadCore_L4700_1_2_GHz
     &g_Entry_VIA_QuadCore_L4700_1_2_GHz,
+#endif
+
+#ifdef VBOX_CPUDB_NEC_V20
+    &g_Entry_NEC_V20,
 #endif
 };
 
 
-#ifndef CPUM_DB_STANDALONE
 
 /**
  * Binary search used by cpumR3MsrRangesInsert and has some special properties
@@ -296,25 +353,69 @@ static uint32_t cpumR3MsrRangesBinSearch(PCCPUMMSRRANGE paMsrRanges, uint32_t cM
  *
  * @returns Pointer to the MSR ranges on success, NULL on failure.  On failure
  *          @a *ppaMsrRanges is freed and set to NULL.
+ * @param   pVM             The cross context VM structure.  If NULL,
+ *                          use the process heap, otherwise the VM's hyper heap.
  * @param   ppaMsrRanges    The variable pointing to the ranges (input/output).
  * @param   cMsrRanges      The current number of ranges.
  * @param   cNewRanges      The number of ranges to be added.
  */
-static PCPUMMSRRANGE cpumR3MsrRangesEnsureSpace(PCPUMMSRRANGE *ppaMsrRanges, uint32_t cMsrRanges, uint32_t cNewRanges)
+static PCPUMMSRRANGE cpumR3MsrRangesEnsureSpace(PVM pVM, PCPUMMSRRANGE *ppaMsrRanges, uint32_t cMsrRanges, uint32_t cNewRanges)
 {
-    uint32_t cMsrRangesAllocated = RT_ALIGN_32(cMsrRanges, 16);
+    uint32_t cMsrRangesAllocated;
+    if (!pVM)
+        cMsrRangesAllocated = RT_ALIGN_32(cMsrRanges, 16);
+    else
+    {
+        /*
+         * We're using the hyper heap now, but when the range array was copied over to it from
+         * the host-context heap, we only copy the exact size and not the ensured size.
+         * See @bugref{7270}.
+         */
+        cMsrRangesAllocated = cMsrRanges;
+    }
     if (cMsrRangesAllocated < cMsrRanges + cNewRanges)
     {
+        void    *pvNew;
         uint32_t cNew = RT_ALIGN_32(cMsrRanges + cNewRanges, 16);
-        void *pvNew = RTMemRealloc(*ppaMsrRanges, cNew * sizeof(**ppaMsrRanges));
-        if (!pvNew)
+        if (pVM)
         {
-            RTMemFree(*ppaMsrRanges);
-            *ppaMsrRanges = NULL;
-            return NULL;
+            Assert(ppaMsrRanges == &pVM->cpum.s.GuestInfo.paMsrRangesR3);
+            Assert(cMsrRanges   == pVM->cpum.s.GuestInfo.cMsrRanges);
+
+            size_t cb    = cMsrRangesAllocated * sizeof(**ppaMsrRanges);
+            size_t cbNew = cNew * sizeof(**ppaMsrRanges);
+            int rc = MMR3HyperRealloc(pVM, *ppaMsrRanges, cb, 32, MM_TAG_CPUM_MSRS, cbNew, &pvNew);
+            if (RT_FAILURE(rc))
+            {
+                *ppaMsrRanges = NULL;
+                pVM->cpum.s.GuestInfo.paMsrRangesR0 = NIL_RTR0PTR;
+                pVM->cpum.s.GuestInfo.paMsrRangesRC = NIL_RTRCPTR;
+                LogRel(("CPUM: cpumR3MsrRangesEnsureSpace: MMR3HyperRealloc failed. rc=%Rrc\n", rc));
+                return NULL;
+            }
+            *ppaMsrRanges = (PCPUMMSRRANGE)pvNew;
+        }
+        else
+        {
+            pvNew = RTMemRealloc(*ppaMsrRanges, cNew * sizeof(**ppaMsrRanges));
+            if (!pvNew)
+            {
+                RTMemFree(*ppaMsrRanges);
+                *ppaMsrRanges = NULL;
+                return NULL;
+            }
         }
         *ppaMsrRanges = (PCPUMMSRRANGE)pvNew;
     }
+
+    if (pVM)
+    {
+        /* Update R0 and RC pointers. */
+        Assert(ppaMsrRanges == &pVM->cpum.s.GuestInfo.paMsrRangesR3);
+        pVM->cpum.s.GuestInfo.paMsrRangesR0 = MMHyperR3ToR0(pVM, *ppaMsrRanges);
+        pVM->cpum.s.GuestInfo.paMsrRangesRC = MMHyperR3ToRC(pVM, *ppaMsrRanges);
+    }
+
     return *ppaMsrRanges;
 }
 
@@ -329,18 +430,39 @@ static PCPUMMSRRANGE cpumR3MsrRangesEnsureSpace(PCPUMMSRRANGE *ppaMsrRanges, uin
  * @retval  VINF_SUCCESS
  * @retval  VERR_NO_MEMORY
  *
+ * @param   pVM             The cross context VM structure.  If NULL,
+ *                          use the process heap, otherwise the VM's hyper heap.
  * @param   ppaMsrRanges    The variable pointing to the ranges (input/output).
- * @param   pcMsrRanges     The variable holding number of ranges.
+ *                          Must be NULL if using the hyper heap.
+ * @param   pcMsrRanges     The variable holding number of ranges. Must be NULL
+ *                          if using the hyper heap.
  * @param   pNewRange       The new range.
  */
-int cpumR3MsrRangesInsert(PCPUMMSRRANGE *ppaMsrRanges, uint32_t *pcMsrRanges, PCCPUMMSRRANGE pNewRange)
+int cpumR3MsrRangesInsert(PVM pVM, PCPUMMSRRANGE *ppaMsrRanges, uint32_t *pcMsrRanges, PCCPUMMSRRANGE pNewRange)
 {
-    uint32_t        cMsrRanges  = *pcMsrRanges;
-    PCPUMMSRRANGE   paMsrRanges = *ppaMsrRanges;
-
     Assert(pNewRange->uLast >= pNewRange->uFirst);
     Assert(pNewRange->enmRdFn > kCpumMsrRdFn_Invalid && pNewRange->enmRdFn < kCpumMsrRdFn_End);
     Assert(pNewRange->enmWrFn > kCpumMsrWrFn_Invalid && pNewRange->enmWrFn < kCpumMsrWrFn_End);
+
+    /*
+     * Validate and use the VM's MSR ranges array if we are using the hyper heap.
+     */
+    if (pVM)
+    {
+        AssertReturn(!ppaMsrRanges, VERR_INVALID_PARAMETER);
+        AssertReturn(!pcMsrRanges,  VERR_INVALID_PARAMETER);
+
+        ppaMsrRanges = &pVM->cpum.s.GuestInfo.paMsrRangesR3;
+        pcMsrRanges  = &pVM->cpum.s.GuestInfo.cMsrRanges;
+    }
+    else
+    {
+        AssertReturn(ppaMsrRanges, VERR_INVALID_POINTER);
+        AssertReturn(pcMsrRanges, VERR_INVALID_POINTER);
+    }
+
+    uint32_t        cMsrRanges  = *pcMsrRanges;
+    PCPUMMSRRANGE   paMsrRanges = *ppaMsrRanges;
 
     /*
      * Optimize the linear insertion case where we add new entries at the end.
@@ -348,7 +470,7 @@ int cpumR3MsrRangesInsert(PCPUMMSRRANGE *ppaMsrRanges, uint32_t *pcMsrRanges, PC
     if (   cMsrRanges > 0
         && paMsrRanges[cMsrRanges - 1].uLast < pNewRange->uFirst)
     {
-        paMsrRanges = cpumR3MsrRangesEnsureSpace(ppaMsrRanges, cMsrRanges, 1);
+        paMsrRanges = cpumR3MsrRangesEnsureSpace(pVM, ppaMsrRanges, cMsrRanges, 1);
         if (!paMsrRanges)
             return VERR_NO_MEMORY;
         paMsrRanges[cMsrRanges] = *pNewRange;
@@ -366,7 +488,7 @@ int cpumR3MsrRangesInsert(PCPUMMSRRANGE *ppaMsrRanges, uint32_t *pcMsrRanges, PC
         if (   i >= cMsrRanges
             || pNewRange->uLast < paMsrRanges[i].uFirst)
         {
-            paMsrRanges = cpumR3MsrRangesEnsureSpace(ppaMsrRanges, cMsrRanges, 1);
+            paMsrRanges = cpumR3MsrRangesEnsureSpace(pVM, ppaMsrRanges, cMsrRanges, 1);
             if (!paMsrRanges)
                 return VERR_NO_MEMORY;
             if (i < cMsrRanges)
@@ -386,7 +508,7 @@ int cpumR3MsrRangesInsert(PCPUMMSRRANGE *ppaMsrRanges, uint32_t *pcMsrRanges, PC
         else if (   pNewRange->uFirst > paMsrRanges[i].uFirst
                  && pNewRange->uLast  < paMsrRanges[i].uLast)
         {
-            paMsrRanges = cpumR3MsrRangesEnsureSpace(ppaMsrRanges, cMsrRanges, 2);
+            paMsrRanges = cpumR3MsrRangesEnsureSpace(pVM, ppaMsrRanges, cMsrRanges, 2);
             if (!paMsrRanges)
                 return VERR_NO_MEMORY;
             if (i < cMsrRanges)
@@ -446,7 +568,7 @@ int cpumR3MsrRangesInsert(PCPUMMSRRANGE *ppaMsrRanges, uint32_t *pcMsrRanges, PC
             }
 
             /* Now, perform a normal insertion. */
-            paMsrRanges = cpumR3MsrRangesEnsureSpace(ppaMsrRanges, cMsrRanges, 1);
+            paMsrRanges = cpumR3MsrRangesEnsureSpace(pVM, ppaMsrRanges, cMsrRanges, 1);
             if (!paMsrRanges)
                 return VERR_NO_MEMORY;
             if (i < cMsrRanges)
@@ -461,10 +583,80 @@ int cpumR3MsrRangesInsert(PCPUMMSRRANGE *ppaMsrRanges, uint32_t *pcMsrRanges, PC
 
 
 /**
+ * Reconciles CPUID info with MSRs (selected ones).
+ *
+ * @returns VBox status code.
+ * @param   pVM                 The cross context VM structure.
+ */
+int cpumR3MsrReconcileWithCpuId(PVM pVM)
+{
+    PCCPUMMSRRANGE papToAdd[10];
+    uint32_t       cToAdd = 0;
+
+    /*
+     * The IA32_FLUSH_CMD MSR was introduced in MCUs for CVS-2018-3646 and associates.
+     */
+    if (pVM->cpum.s.GuestFeatures.fFlushCmd && !cpumLookupMsrRange(pVM, MSR_IA32_FLUSH_CMD))
+    {
+        static CPUMMSRRANGE const s_FlushCmd =
+        {
+            /*.uFirst =*/       MSR_IA32_FLUSH_CMD,
+            /*.uLast =*/        MSR_IA32_FLUSH_CMD,
+            /*.enmRdFn =*/      kCpumMsrRdFn_WriteOnly,
+            /*.enmWrFn =*/      kCpumMsrWrFn_Ia32FlushCmd,
+            /*.offCpumCpu =*/   UINT16_MAX,
+            /*.fReserved =*/    0,
+            /*.uValue =*/       0,
+            /*.fWrIgnMask =*/   0,
+            /*.fWrGpMask =*/    ~MSR_IA32_FLUSH_CMD_F_L1D,
+            /*.szName = */      "IA32_FLUSH_CMD"
+        };
+        papToAdd[cToAdd++] = &s_FlushCmd;
+    }
+
+    /*
+     * The MSR_IA32_ARCH_CAPABILITIES was introduced in various spectre MCUs, or at least
+     * documented in relation to such.
+     */
+    if (pVM->cpum.s.GuestFeatures.fArchCap && !cpumLookupMsrRange(pVM, MSR_IA32_ARCH_CAPABILITIES))
+    {
+        static CPUMMSRRANGE const s_ArchCaps =
+        {
+            /*.uFirst =*/       MSR_IA32_ARCH_CAPABILITIES,
+            /*.uLast =*/        MSR_IA32_ARCH_CAPABILITIES,
+            /*.enmRdFn =*/      kCpumMsrRdFn_Ia32ArchCapabilities,
+            /*.enmWrFn =*/      kCpumMsrWrFn_ReadOnly,
+            /*.offCpumCpu =*/   UINT16_MAX,
+            /*.fReserved =*/    0,
+            /*.uValue =*/       0,
+            /*.fWrIgnMask =*/   0,
+            /*.fWrGpMask =*/    UINT64_MAX,
+            /*.szName = */      "IA32_ARCH_CAPABILITIES"
+        };
+        papToAdd[cToAdd++] = &s_ArchCaps;
+    }
+
+    /*
+     * Do the adding.
+     */
+    for (uint32_t i = 0; i < cToAdd; i++)
+    {
+        PCCPUMMSRRANGE pRange = papToAdd[i];
+        LogRel(("CPUM: MSR/CPUID reconciliation insert: %#010x %s\n", pRange->uFirst, pRange->szName));
+        int rc = cpumR3MsrRangesInsert(NULL /* pVM */, &pVM->cpum.s.GuestInfo.paMsrRangesR3, &pVM->cpum.s.GuestInfo.cMsrRanges,
+                                       pRange);
+        if (RT_FAILURE(rc))
+            return rc;
+    }
+    return VINF_SUCCESS;
+}
+
+
+/**
  * Worker for cpumR3MsrApplyFudge that applies one table.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the cross context VM structure.
+ * @param   pVM                 The cross context VM structure.
  * @param   paRanges            Array of MSRs to fudge.
  * @param   cRanges             Number of MSRs in the array.
  */
@@ -474,7 +666,7 @@ static int cpumR3MsrApplyFudgeTable(PVM pVM, PCCPUMMSRRANGE paRanges, size_t cRa
         if (!cpumLookupMsrRange(pVM, paRanges[i].uFirst))
         {
             LogRel(("CPUM: MSR fudge: %#010x %s\n", paRanges[i].uFirst, paRanges[i].szName));
-            int rc = cpumR3MsrRangesInsert(&pVM->cpum.s.GuestInfo.paMsrRangesR3, &pVM->cpum.s.GuestInfo.cMsrRanges,
+            int rc = cpumR3MsrRangesInsert(NULL /* pVM */, &pVM->cpum.s.GuestInfo.paMsrRangesR3, &pVM->cpum.s.GuestInfo.cMsrRanges,
                                            &paRanges[i]);
             if (RT_FAILURE(rc))
                 return rc;
@@ -489,8 +681,13 @@ static int cpumR3MsrApplyFudgeTable(PVM pVM, PCCPUMMSRRANGE paRanges, size_t cRa
  * A typical example is a VM that has been moved between different hosts where
  * for instance the cpu vendor differs.
  *
+ * Another example is older CPU profiles (e.g. Atom Bonnet) for newer CPUs (e.g.
+ * Atom Silvermont), where features reported thru CPUID aren't present in the
+ * MSRs (e.g. AMD64_TSC_AUX).
+ *
+ *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the cross context VM structure.
+ * @param   pVM                 The cross context VM structure.
  */
 int cpumR3MsrApplyFudge(PVM pVM)
 {
@@ -533,7 +730,133 @@ int cpumR3MsrApplyFudge(PVM pVM)
         AssertLogRelRCReturn(rc, rc);
     }
 
+    if (pVM->cpum.s.GuestFeatures.fRdTscP)
+    {
+        static CPUMMSRRANGE const s_aRdTscPFudgeMsrs[] =
+        {
+            MFX(0xc0000103, "AMD64_TSC_AUX", Amd64TscAux, Amd64TscAux, 0, 0, ~(uint64_t)UINT32_MAX),
+        };
+        rc = cpumR3MsrApplyFudgeTable(pVM, &s_aRdTscPFudgeMsrs[0], RT_ELEMENTS(s_aRdTscPFudgeMsrs));
+        AssertLogRelRCReturn(rc, rc);
+    }
+
     return rc;
+}
+
+
+/**
+ * Do we consider @a enmConsider a better match for @a enmTarget than
+ * @a enmFound?
+ *
+ * Only called when @a enmConsider isn't exactly what we're looking for.
+ *
+ * @returns true/false.
+ * @param   enmConsider         The new microarch to consider.
+ * @param   enmTarget           The target microarch.
+ * @param   enmFound            The best microarch match we've found thus far.
+ */
+DECLINLINE(bool) cpumR3DbIsBetterMarchMatch(CPUMMICROARCH enmConsider, CPUMMICROARCH enmTarget, CPUMMICROARCH enmFound)
+{
+    Assert(enmConsider != enmTarget);
+
+    /*
+     * If we've got an march match, don't bother with enmConsider.
+     */
+    if (enmFound == enmTarget)
+        return false;
+
+    /*
+     * Found is below: Pick 'consider' if it's closer to the target or above it.
+     */
+    if (enmFound < enmTarget)
+        return enmConsider > enmFound;
+
+    /*
+     * Found is above: Pick 'consider' if it's also above (paranoia: or equal)
+     *                 and but closer to the target.
+     */
+    return enmConsider >= enmTarget && enmConsider < enmFound;
+}
+
+
+/**
+ * Do we consider @a enmConsider a better match for @a enmTarget than
+ * @a enmFound?
+ *
+ * Only called for intel family 06h CPUs.
+ *
+ * @returns true/false.
+ * @param   enmConsider         The new microarch to consider.
+ * @param   enmTarget           The target microarch.
+ * @param   enmFound            The best microarch match we've found thus far.
+ */
+static bool cpumR3DbIsBetterIntelFam06Match(CPUMMICROARCH enmConsider, CPUMMICROARCH enmTarget, CPUMMICROARCH enmFound)
+{
+    /* Check intel family 06h claims. */
+    AssertReturn(enmConsider >= kCpumMicroarch_Intel_P6_Core_Atom_First && enmConsider <= kCpumMicroarch_Intel_P6_Core_Atom_End,
+                 false);
+    AssertReturn(enmTarget   >= kCpumMicroarch_Intel_P6_Core_Atom_First && enmTarget   <= kCpumMicroarch_Intel_P6_Core_Atom_End,
+                 false);
+
+    /* Put matches out of the way. */
+    if (enmConsider == enmTarget)
+        return true;
+    if (enmFound == enmTarget)
+        return false;
+
+    /* If found isn't a family 06h march, whatever we're considering must be a better choice. */
+    if (   enmFound < kCpumMicroarch_Intel_P6_Core_Atom_First
+        || enmFound > kCpumMicroarch_Intel_P6_Core_Atom_End)
+        return true;
+
+    /*
+     * The family 06h stuff is split into three categories:
+     *      - Common P6 heritage
+     *      - Core
+     *      - Atom
+     *
+     * Determin which of the three arguments are Atom marchs, because that's
+     * all we need to make the right choice.
+     */
+    bool const fConsiderAtom = enmConsider >= kCpumMicroarch_Intel_Atom_First;
+    bool const fTargetAtom   = enmTarget   >= kCpumMicroarch_Intel_Atom_First;
+    bool const fFoundAtom    = enmFound    >= kCpumMicroarch_Intel_Atom_First;
+
+    /*
+     * Want atom:
+     */
+    if (fTargetAtom)
+    {
+        /* Pick the atom if we've got one of each.*/
+        if (fConsiderAtom != fFoundAtom)
+            return fConsiderAtom;
+        /* If we haven't got any atoms under consideration, pick a P6 or the earlier core.
+           Note! Not entirely sure Dothan is the best choice, but it'll do for now. */
+        if (!fConsiderAtom)
+        {
+            if (enmConsider > enmFound)
+                return enmConsider <= kCpumMicroarch_Intel_P6_M_Dothan;
+            return enmFound > kCpumMicroarch_Intel_P6_M_Dothan;
+        }
+        /* else: same category, default comparison rules. */
+        Assert(fConsiderAtom && fFoundAtom);
+    }
+    /*
+     * Want non-atom:
+     */
+    /* Pick the non-atom if we've got one of each. */
+    else if (fConsiderAtom != fFoundAtom)
+        return fFoundAtom;
+    /* If we've only got atoms under consideration, pick the older one just to pick something. */
+    else if (fConsiderAtom)
+        return enmConsider < enmFound;
+    else
+        Assert(!fConsiderAtom && !fFoundAtom);
+
+    /*
+     * Same basic category.  Do same compare as caller.
+     */
+    return cpumR3DbIsBetterMarchMatch(enmConsider, enmTarget, enmFound);
 }
 
 
@@ -555,6 +878,7 @@ int cpumR3DbGetCpuInfo(const char *pszName, PCPUMINFO pInfo)
         rc = CPUMR3CpuIdCollectLeaves(&pInfo->paCpuIdLeavesR3, &pInfo->cCpuIdLeaves);
         if (RT_FAILURE(rc))
             return rc;
+        pInfo->fMxCsrMask = CPUMR3DeterminHostMxCsrMask();
 
         /* Lookup database entry for MSRs. */
         CPUMCPUVENDOR const enmVendor    = CPUMR3CpuIdDetectVendorEx(pInfo->paCpuIdLeavesR3[0].uEax,
@@ -610,9 +934,11 @@ int cpumR3DbGetCpuInfo(const char *pszName, PCPUMINFO pInfo)
                     else if (   !pEntry
                              || pEntry->uFamily != uFamily)
                         pEntry = pCur;
-                    else if (  pCur->enmMicroarch >= enmMicroarch
-                             ? pCur->enmMicroarch < pEntry->enmMicroarch || pEntry->enmMicroarch < enmMicroarch
-                             : pCur->enmMicroarch > pEntry->enmMicroarch)
+                    /* Special march matching rules applies to intel family 06h. */
+                    else if (     enmVendor == CPUMCPUVENDOR_INTEL
+                               && uFamily   == 6
+                             ? cpumR3DbIsBetterIntelFam06Match(pCur->enmMicroarch, enmMicroarch, pEntry->enmMicroarch)
+                             : cpumR3DbIsBetterMarchMatch(pCur->enmMicroarch, enmMicroarch, pEntry->enmMicroarch))
                         pEntry = pCur;
                 }
                 /* We don't do closeness matching on family, we use the first
@@ -623,14 +949,14 @@ int cpumR3DbGetCpuInfo(const char *pszName, PCPUMINFO pInfo)
         }
 
         if (pEntry)
-            LogRel(("CPUM: Matched host CPU %s %#x/%#x/%#x %s with CPU DB entry '%s' (%s %#x/%#x/%#x %s).\n",
+            LogRel(("CPUM: Matched host CPU %s %#x/%#x/%#x %s with CPU DB entry '%s' (%s %#x/%#x/%#x %s)\n",
                     CPUMR3CpuVendorName(enmVendor), uFamily, uModel, uStepping, CPUMR3MicroarchName(enmMicroarch),
                     pEntry->pszName,  CPUMR3CpuVendorName((CPUMCPUVENDOR)pEntry->enmVendor), pEntry->uFamily, pEntry->uModel,
                     pEntry->uStepping, CPUMR3MicroarchName(pEntry->enmMicroarch) ));
         else
         {
             pEntry = g_apCpumDbEntries[0];
-            LogRel(("CPUM: No matching processor database entry %s %#x/%#x/%#x %s, falling back on '%s'.\n",
+            LogRel(("CPUM: No matching processor database entry %s %#x/%#x/%#x %s, falling back on '%s'\n",
                     CPUMR3CpuVendorName(enmVendor), uFamily, uModel, uStepping, CPUMR3MicroarchName(enmMicroarch),
                     pEntry->pszName));
         }
@@ -658,8 +984,11 @@ int cpumR3DbGetCpuInfo(const char *pszName, PCPUMINFO pInfo)
         pInfo->cCpuIdLeaves = pEntry->cCpuIdLeaves;
         if (pEntry->cCpuIdLeaves)
         {
-            pInfo->paCpuIdLeavesR3 = (PCPUMCPUIDLEAF)RTMemDup(pEntry->paCpuIdLeaves,
-                                                              sizeof(pEntry->paCpuIdLeaves[0]) * pEntry->cCpuIdLeaves);
+            /* Must allocate a multiple of 16 here, matching cpumR3CpuIdEnsureSpace. */
+            size_t cbExtra = sizeof(pEntry->paCpuIdLeaves[0]) * (RT_ALIGN(pEntry->cCpuIdLeaves, 16) - pEntry->cCpuIdLeaves);
+            pInfo->paCpuIdLeavesR3 = (PCPUMCPUIDLEAF)RTMemDupEx(pEntry->paCpuIdLeaves,
+                                                                sizeof(pEntry->paCpuIdLeaves[0]) * pEntry->cCpuIdLeaves,
+                                                                cbExtra);
             if (!pInfo->paCpuIdLeavesR3)
                 return VERR_NO_MEMORY;
         }
@@ -667,16 +996,16 @@ int cpumR3DbGetCpuInfo(const char *pszName, PCPUMINFO pInfo)
             pInfo->paCpuIdLeavesR3 = NULL;
 
         pInfo->enmUnknownCpuIdMethod = pEntry->enmUnknownCpuId;
-        pInfo->DefCpuId         = pEntry->DefUnknownCpuId;
+        pInfo->DefCpuId              = pEntry->DefUnknownCpuId;
+        pInfo->fMxCsrMask            = pEntry->fMxCsrMask;
 
-        LogRel(("CPUM: Using CPU DB entry '%s' (%s %#x/%#x/%#x %s).\n",
+        LogRel(("CPUM: Using CPU DB entry '%s' (%s %#x/%#x/%#x %s)\n",
                 pEntry->pszName, CPUMR3CpuVendorName((CPUMCPUVENDOR)pEntry->enmVendor),
                 pEntry->uFamily, pEntry->uModel, pEntry->uStepping, CPUMR3MicroarchName(pEntry->enmMicroarch) ));
     }
 
     pInfo->fMsrMask             = pEntry->fMsrMask;
     pInfo->iFirstExtCpuIdLeaf   = 0; /* Set by caller. */
-    pInfo->uPadding             = 0;
     pInfo->uScalableBusFreq     = pEntry->uScalableBusFreq;
     pInfo->paCpuIdLeavesR0      = NIL_RTR0PTR;
     pInfo->paMsrRangesR0        = NIL_RTR0PTR;
@@ -693,7 +1022,7 @@ int cpumR3DbGetCpuInfo(const char *pszName, PCPUMINFO pInfo)
     uint32_t        cLeft   = pEntry->cMsrRanges;
     while (cLeft-- > 0)
     {
-        rc = cpumR3MsrRangesInsert(&paMsrs, &cMsrs, pCurMsr);
+        rc = cpumR3MsrRangesInsert(NULL /* pVM */, &paMsrs, &cMsrs, pCurMsr);
         if (RT_FAILURE(rc))
         {
             Assert(!paMsrs); /* The above function frees this. */
@@ -711,13 +1040,32 @@ int cpumR3DbGetCpuInfo(const char *pszName, PCPUMINFO pInfo)
 
 
 /**
+ * Insert an MSR range into the VM.
+ *
+ * If the new MSR range overlaps existing ranges, the existing ones will be
+ * adjusted/removed to fit in the new one.
+ *
+ * @returns VBox status code.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pNewRange           Pointer to the MSR range being inserted.
+ */
+VMMR3DECL(int) CPUMR3MsrRangesInsert(PVM pVM, PCCPUMMSRRANGE pNewRange)
+{
+    AssertReturn(pVM, VERR_INVALID_PARAMETER);
+    AssertReturn(pNewRange, VERR_INVALID_PARAMETER);
+
+    return cpumR3MsrRangesInsert(pVM, NULL /* ppaMsrRanges */, NULL /* pcMsrRanges */, pNewRange);
+}
+
+
+/**
  * Register statistics for the MSRs.
  *
  * This must not be called before the MSRs have been finalized and moved to the
  * hyper heap.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the cross context VM structure.
+ * @param   pVM                 The cross context VM structure.
  */
 int cpumR3MsrRegStats(PVM pVM)
 {

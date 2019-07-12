@@ -2,8 +2,8 @@
 ; VBoxGuest - VirtualBox Guest Additions Interface, NASM/YASM header.
 ;
 
-;/*
-; Copyright (C) 2006-2010 Oracle Corporation
+;
+; Copyright (C) 2006-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -22,16 +22,14 @@
 ; You may elect to license modified versions of this file under the
 ; terms and conditions of either the GPL or the CDDL or both.
 ;
-; */
 
 %ifndef ___VBox_VBoxGuest_mac___
 %define ___VBox_VBoxGuest_mac___
 
 %ifdef RT_OS_OS2
-%define VBOXGUEST_DEVICE_NAME   "vboxgst$"
+%define VBOXGUEST_DEVICE_NAME_SHORT "vboxgst$"
 
-;; aka VBOXGUESTOS2IDCCONNECT
-struc VBGOS2IDC
+struc VBGLOS2ATTACHDD
     .u32Version         resd 1
     .u32Session         resd 1
     .pfnServiceEP       resd 1
@@ -40,6 +38,17 @@ struc VBGOS2IDC
 endstruc
 
 %endif ; RT_OS_OS2
+
+struc VBGLREQHDR
+    .cbIn               resd 1
+    .uVersion           resd 1
+    .uType              resd 1
+    .rc                 resd 1
+    .cbOut              resd 1
+    .uReserved          resd 1
+endstruc
+
+%define VBGL_IOC_VERSION        000010000h
 
 ; From VMMDev.h
 %define VMMDEV_VERSION_MAJOR    1

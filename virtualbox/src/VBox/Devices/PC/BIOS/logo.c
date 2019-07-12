@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2004-2012 Oracle Corporation
+ * Copyright (C) 2004-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,7 +30,7 @@
 
 /**
  * Set video mode (VGA).
- * @params    New video mode.
+ * @param   mode    New video mode.
  */
 void set_mode(uint8_t mode);
 #pragma aux set_mode =      \
@@ -41,7 +41,7 @@ void set_mode(uint8_t mode);
 
 /**
  * Set VESA video mode.
- * @params    New video mode.
+ * @param   mode    New video mode.
  */
 uint16_t vesa_set_mode(uint16_t mode);
 #pragma aux vesa_set_mode = \
@@ -51,7 +51,7 @@ uint16_t vesa_set_mode(uint16_t mode);
 
 /**
  * Get current VESA video mode.
- * @params    New video mode.
+ * @param   mode    New video mode.
  */
 uint16_t vesa_get_mode(uint16_t __far *mode);
 #pragma aux vesa_get_mode = \
@@ -65,7 +65,7 @@ uint16_t vesa_get_mode(uint16_t __far *mode);
  * Check for keystroke.
  * @returns    True if keystroke available, False if not.
  */
-//@todo: INT 16h should already be returning the right value in al; could also use setz
+/// @todo INT 16h should already be returning the right value in al; could also use setz
 uint8_t check_for_keystroke(void);
 #pragma aux check_for_keystroke =   \
     "mov    ax, 100h"               \
@@ -91,7 +91,7 @@ uint8_t get_keystroke(void);
     modify [ax] nomemory;
 
 
-//@todo: This whole business with reprogramming the PIT is rather suspect.
+/// @todo This whole business with reprogramming the PIT is rather suspect.
 // The BIOS already has waiting facilities in INT 15h (fn 83h, 86h) which
 // should be utilized instead.
 
@@ -106,7 +106,7 @@ void wait_init(void);
     "out    40h, al"    \
     modify [ax] nomemory;
 
-//@todo: using this private interface is not great
+/// @todo using this private interface is not great
 extern void rtc_post(void);
 #pragma aux rtc_post "*";
 
@@ -115,7 +115,8 @@ extern void rtc_post(void);
  * timer at WAIT_HZ for a while.
  */
 void wait_uninit(void);
-#pragma aux wait_uninit =   \
+#if VBOX_BIOS_CPU >= 80386
+# pragma aux wait_uninit =   \
     ".386"                  \
     "mov    al, 34h"        \
     "out    43h, al"        \
@@ -129,6 +130,21 @@ void wait_uninit(void);
     "pop    ds"             \
     "popad"                 \
     modify [ax] nomemory;
+#else
+# pragma aux wait_uninit = \
+    "mov    al, 34h" \
+    "out    43h, al" \
+    "xor    ax, ax" \
+    "out    40h, al" \
+    "out    40h, al" \
+    "push   bp" \
+    "push   ds" \
+    "mov    ds, ax" \
+    "call   rtc_post" \
+    "pop    ds" \
+    "pop    bp" \
+    modify [ax bx cx dx si di];
+#endif
 
 
 /**
@@ -330,7 +346,7 @@ void show_logo(void)
     uint16_t    old_mode;
 
 
-    // Set PIT to 1ms ticks
+    // Set PIT to 64hz.
     wait_init();
 
     // Get main signature
@@ -393,6 +409,8 @@ void show_logo(void)
             }
         }
     }
+    else if (!f12_pressed)
+        outw(LOGO_IO_PORT, LOGO_CMD_SHOW_BMP | 0);
 
 done:
     // Clear forced boot drive setting.

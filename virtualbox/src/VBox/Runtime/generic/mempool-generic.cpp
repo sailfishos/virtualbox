@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/mempool.h>
 #include "internal/iprt.h"
 
@@ -41,9 +41,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to a memory pool instance. */
 typedef struct RTMEMPOOLINT *PRTMEMPOOLINT;
 /** Pointer to a memory pool entry. */
@@ -85,9 +85,9 @@ typedef struct RTMEMPOOLINT
 } RTMEMPOOLINT;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Validates a memory pool handle, translating RTMEMPOOL_DEFAULT when found,
  * and returns rc if not valid. */
 #define RTMEMPOOL_VALID_RETURN_RC(pMemPool, rc) \
@@ -111,9 +111,9 @@ typedef struct RTMEMPOOLINT
     } while (0)
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The */
 static RTMEMPOOLINT g_rtMemPoolDefault =
 {
@@ -134,7 +134,7 @@ RTDECL(int) RTMemPoolCreate(PRTMEMPOOL phMemPool, const char *pszName)
     Assert(*pszName);
 
     size_t          cchName  = strlen(pszName);
-    PRTMEMPOOLINT   pMemPool = (PRTMEMPOOLINT)RTMemAlloc(RT_OFFSETOF(RTMEMPOOLINT, szName[cchName + 1]));
+    PRTMEMPOOLINT   pMemPool = (PRTMEMPOOLINT)RTMemAlloc(RT_UOFFSETOF_DYN(RTMEMPOOLINT, szName[cchName + 1]));
     if (!pMemPool)
         return VERR_NO_MEMORY;
     int rc = RTSpinlockCreate(&pMemPool->hSpinLock, RTSPINLOCK_FLAGS_INTERRUPT_UNSAFE, "RTMemPoolCreate");
@@ -243,7 +243,7 @@ DECLINLINE(void) rtMemPoolUnlink(PRTMEMPOOLENTRY pEntry)
 }
 
 
-RTDECL(void *) RTMemPoolAlloc(RTMEMPOOL hMemPool, size_t cb) RT_NO_THROW
+RTDECL(void *) RTMemPoolAlloc(RTMEMPOOL hMemPool, size_t cb) RT_NO_THROW_DEF
 {
     PRTMEMPOOLINT pMemPool = hMemPool;
     RTMEMPOOL_VALID_RETURN_RC(pMemPool, NULL);
@@ -258,7 +258,7 @@ RTDECL(void *) RTMemPoolAlloc(RTMEMPOOL hMemPool, size_t cb) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemPoolAlloc);
 
 
-RTDECL(void *) RTMemPoolAllocZ(RTMEMPOOL hMemPool, size_t cb) RT_NO_THROW
+RTDECL(void *) RTMemPoolAllocZ(RTMEMPOOL hMemPool, size_t cb) RT_NO_THROW_DEF
 {
     PRTMEMPOOLINT pMemPool = hMemPool;
     RTMEMPOOL_VALID_RETURN_RC(pMemPool, NULL);
@@ -273,7 +273,7 @@ RTDECL(void *) RTMemPoolAllocZ(RTMEMPOOL hMemPool, size_t cb) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemPoolAllocZ);
 
 
-RTDECL(void *) RTMemPoolDup(RTMEMPOOL hMemPool, const void *pvSrc, size_t cb) RT_NO_THROW
+RTDECL(void *) RTMemPoolDup(RTMEMPOOL hMemPool, const void *pvSrc, size_t cb) RT_NO_THROW_DEF
 {
     PRTMEMPOOLINT pMemPool = hMemPool;
     RTMEMPOOL_VALID_RETURN_RC(pMemPool, NULL);
@@ -289,7 +289,7 @@ RTDECL(void *) RTMemPoolDup(RTMEMPOOL hMemPool, const void *pvSrc, size_t cb) RT
 RT_EXPORT_SYMBOL(RTMemPoolDup);
 
 
-RTDECL(void *) RTMemPoolDupEx(RTMEMPOOL hMemPool, const void *pvSrc, size_t cbSrc, size_t cbExtra) RT_NO_THROW
+RTDECL(void *) RTMemPoolDupEx(RTMEMPOOL hMemPool, const void *pvSrc, size_t cbSrc, size_t cbExtra) RT_NO_THROW_DEF
 {
     PRTMEMPOOLINT pMemPool = hMemPool;
     RTMEMPOOL_VALID_RETURN_RC(pMemPool, NULL);
@@ -307,7 +307,7 @@ RT_EXPORT_SYMBOL(RTMemPoolDupEx);
 
 
 
-RTDECL(void *) RTMemPoolRealloc(RTMEMPOOL hMemPool, void *pvOld, size_t cbNew) RT_NO_THROW
+RTDECL(void *) RTMemPoolRealloc(RTMEMPOOL hMemPool, void *pvOld, size_t cbNew) RT_NO_THROW_DEF
 {
     /*
      * Fend off the odd cases.
@@ -350,14 +350,14 @@ RTDECL(void *) RTMemPoolRealloc(RTMEMPOOL hMemPool, void *pvOld, size_t cbNew) R
 RT_EXPORT_SYMBOL(RTMemPoolRealloc);
 
 
-RTDECL(void) RTMemPoolFree(RTMEMPOOL hMemPool, void *pv) RT_NO_THROW
+RTDECL(void) RTMemPoolFree(RTMEMPOOL hMemPool, void *pv) RT_NO_THROW_DEF
 {
     RTMemPoolRelease(hMemPool, pv);
 }
 RT_EXPORT_SYMBOL(RTMemPoolFree);
 
 
-RTDECL(uint32_t) RTMemPoolRetain(void *pv) RT_NO_THROW
+RTDECL(uint32_t) RTMemPoolRetain(void *pv) RT_NO_THROW_DEF
 {
     PRTMEMPOOLENTRY pEntry = (PRTMEMPOOLENTRY)pv - 1;
     RTMEMPOOL_VALID_ENTRY_RETURN_RC(pEntry, UINT32_MAX);
@@ -370,7 +370,7 @@ RTDECL(uint32_t) RTMemPoolRetain(void *pv) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemPoolRetain);
 
 
-RTDECL(uint32_t) RTMemPoolRelease(RTMEMPOOL hMemPool, void *pv) RT_NO_THROW
+RTDECL(uint32_t) RTMemPoolRelease(RTMEMPOOL hMemPool, void *pv) RT_NO_THROW_DEF
 {
     if (!pv)
         return 0;
@@ -379,7 +379,7 @@ RTDECL(uint32_t) RTMemPoolRelease(RTMEMPOOL hMemPool, void *pv) RT_NO_THROW
     RTMEMPOOL_VALID_ENTRY_RETURN_RC(pEntry, UINT32_MAX);
     Assert(    hMemPool == NIL_RTMEMPOOL
            ||  hMemPool == pEntry->pMemPool
-           ||  (hMemPool == RTMEMPOOL_DEFAULT && pEntry->pMemPool == &g_rtMemPoolDefault));
+           ||  (hMemPool == RTMEMPOOL_DEFAULT && pEntry->pMemPool == &g_rtMemPoolDefault)); RT_NOREF_PV(hMemPool);
     AssertReturn(pEntry->cRefs > 0, UINT32_MAX);
 
     uint32_t cRefs = ASMAtomicDecU32(&pEntry->cRefs);
@@ -396,7 +396,7 @@ RTDECL(uint32_t) RTMemPoolRelease(RTMEMPOOL hMemPool, void *pv) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemPoolRelease);
 
 
-RTDECL(uint32_t) RTMemPoolRefCount(void *pv) RT_NO_THROW
+RTDECL(uint32_t) RTMemPoolRefCount(void *pv) RT_NO_THROW_DEF
 {
     PRTMEMPOOLENTRY pEntry = (PRTMEMPOOLENTRY)pv - 1;
     RTMEMPOOL_VALID_ENTRY_RETURN_RC(pEntry, UINT32_MAX);

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEFAULT
 #include "VBoxNetLib.h"
 #include <iprt/string.h>
@@ -135,7 +136,7 @@ bool VBoxNetArpHandleIt(PSUPDRVSESSION pSession, INTNETIFHANDLE hIf, PINTNETBUF 
     EthHdr.EtherType = RT_H2N_U16_C(RTNET_ETHERTYPE_ARP);
 
     uint8_t abTrailer[60 - sizeof(Reply) - sizeof(EthHdr)];
-    memset(abTrailer, '\0', sizeof(abTrailer));
+    RT_ZERO(abTrailer);
 
     INTNETSEG aSegs[3];
     aSegs[0].cb = sizeof(EthHdr);

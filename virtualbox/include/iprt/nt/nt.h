@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2014 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -39,12 +39,15 @@
 # define NtQueryInformationFile         ZwQueryInformationFile
 # define NtQueryInformationProcess      ZwQueryInformationProcess
 # define NtQueryInformationThread       ZwQueryInformationThread
+# define NtQueryFullAttributesFile      ZwQueryFullAttributesFile
 # define NtQuerySystemInformation       ZwQuerySystemInformation
 # define NtQuerySecurityObject          ZwQuerySecurityObject
+# define NtSetInformationFile           ZwSetInformationFile
 # define NtClose                        ZwClose
 # define NtCreateFile                   ZwCreateFile
 # define NtReadFile                     ZwReadFile
 # define NtWriteFile                    ZwWriteFile
+# define NtFlushBuffersFile             ZwFlushBuffersFile
 /** @todo this is very incomplete! */
 #endif
 
@@ -70,6 +73,9 @@
 #define _PEB_LDR_DATA              Incomplete__PEB_LDR_DATA
 #define PEB_LDR_DATA               Incomplete_PEB_LDR_DATA
 #define PPEB_LDR_DATA              Incomplete_PPEB_LDR_DATA
+#define _KUSER_SHARED_DATA         Incomplete__KUSER_SHARED_DATA
+#define KUSER_SHARED_DATA          Incomplete_KUSER_SHARED_DATA
+#define PKUSER_SHARED_DATA         Incomplete_PKUSER_SHARED_DATA
 
 
 
@@ -120,12 +126,15 @@
 # define SystemPolicyInformation                IncompleteWinternl_SystemPolicyInformation
 
 
+# pragma warning(push)
+# pragma warning(disable: 4668)
 # define WIN32_NO_STATUS
 # include <windef.h>
 # include <winnt.h>
 # include <winternl.h>
 # undef WIN32_NO_STATUS
 # include <ntstatus.h>
+# pragma warning(pop)
 
 
 # undef _FILE_INFORMATION_CLASS
@@ -174,18 +183,31 @@
 /*
  * Use ntifs.h and wdm.h.
  */
+# if _MSC_VER >= 1200 /* Fix/workaround for KeInitializeSpinLock visibility issue on AMD64. */
+#  define FORCEINLINE static __forceinline
+# else
+#  define FORCEINLINE static __inline
+# endif
+
+# pragma warning(push)
 # ifdef RT_ARCH_X86
 #  define _InterlockedAddLargeStatistic  _InterlockedAddLargeStatistic_StupidDDKVsCompilerCrap
-#  pragma warning(disable : 4163)
+#  pragma warning(disable: 4163)
+# endif
+# pragma warning(disable: 4668)
+# pragma warning(disable: 4255) /* warning C4255: 'ObGetFilterVersion' : no function prototype given: converting '()' to '(void)' */
+# if _MSC_VER >= 1800 /*RT_MSC_VER_VC120*/
+#  pragma warning(disable:4005) /* sdk/v7.1/include/sal_supp.h(57) : warning C4005: '__useHeader' : macro redefinition */
+#  pragma warning(disable:4471) /* wdm.h(11057) : warning C4471: '_POOL_TYPE' : a forward declaration of an unscoped enumeration must have an underlying type (int assumed) */
 # endif
 
 # include <ntifs.h>
 # include <wdm.h>
 
 # ifdef RT_ARCH_X86
-#  pragma warning(default : 4163)
 #  undef _InterlockedAddLargeStatistic
 # endif
+# pragma warning(pop)
 
 # define IPRT_NT_NEED_API_GROUP_NTIFS
 #endif
@@ -207,6 +229,9 @@
 #undef _PEB_LDR_DATA
 #undef PEB_LDR_DATA
 #undef PPEB_LDR_DATA
+#undef _KUSER_SHARED_DATA
+#undef KUSER_SHARED_DATA
+#undef PKUSER_SHARED_DATA
 
 
 #include <iprt/types.h>
@@ -215,10 +240,13 @@
 
 /** @name Useful macros
  * @{ */
-/** Indicates that we're targetting native NT in the current source. */
+/** Indicates that we're targeting native NT in the current source. */
 #define RTNT_USE_NATIVE_NT              1
 /** Initializes a IO_STATUS_BLOCK. */
 #define RTNT_IO_STATUS_BLOCK_INITIALIZER  { STATUS_FAILED_DRIVER_ENTRY, ~(uintptr_t)42 }
+/** Reinitializes a IO_STATUS_BLOCK. */
+#define RTNT_IO_STATUS_BLOCK_REINIT(a_pIos) \
+    do { (a_pIos)->Status = STATUS_FAILED_DRIVER_ENTRY; (a_pIos)->Information = ~(uintptr_t)42; } while (0)
 /** Similar to INVALID_HANDLE_VALUE in the Windows environment. */
 #define RTNT_INVALID_HANDLE_VALUE         ( (HANDLE)~(uintptr_t)0 )
 /** Constant UNICODE_STRING initializer. */
@@ -235,7 +263,20 @@ RTDECL(int) RTNtPathOpen(const char *pszPath, ACCESS_MASK fDesiredAccess, ULONG 
                           PHANDLE phHandle, PULONG_PTR puDisposition);
 RTDECL(int) RTNtPathOpenDir(const char *pszPath, ACCESS_MASK fDesiredAccess, ULONG fShareAccess, ULONG fCreateOptions,
                             ULONG fObjAttribs, PHANDLE phHandle, bool *pfObjDir);
+RTDECL(int) RTNtPathOpenDirEx(HANDLE hRootDir, struct _UNICODE_STRING *pNtName, ACCESS_MASK fDesiredAccess,
+                              ULONG fShareAccess, ULONG fCreateOptions, ULONG fObjAttribs, PHANDLE phHandle, bool *pfObjDir);
 RTDECL(int) RTNtPathClose(HANDLE hHandle);
+
+/**
+ * Converts a windows-style path to NT format and encoding.
+ *
+ * @returns IPRT status code.
+ * @param   pNtName             Where to return the NT name.  Free using
+ *                              RTNtPathFree.
+ * @param   phRootDir           Where to return the root handle, if applicable.
+ * @param   pszPath             The UTF-8 path.
+ */
+RTDECL(int) RTNtPathFromWinUtf8(struct _UNICODE_STRING *pNtName, PHANDLE phRootDir, const char *pszPath);
 
 /**
  * Converts a UTF-16 windows-style path to NT format.
@@ -252,14 +293,94 @@ RTDECL(int) RTNtPathClose(HANDLE hHandle);
 RTDECL(int) RTNtPathFromWinUtf16Ex(struct _UNICODE_STRING *pNtName, HANDLE *phRootDir, PCRTUTF16 pwszPath, size_t cwcPath);
 
 /**
+ * How to handle ascent ('..' relative to a root handle).
+ */
+typedef enum RTNTPATHRELATIVEASCENT
+{
+    kRTNtPathRelativeAscent_Invalid = 0,
+    kRTNtPathRelativeAscent_Allow,
+    kRTNtPathRelativeAscent_Fail,
+    kRTNtPathRelativeAscent_Ignore,
+    kRTNtPathRelativeAscent_End,
+    kRTNtPathRelativeAscent_32BitHack = 0x7fffffff
+} RTNTPATHRELATIVEASCENT;
+
+/**
+ * Converts a relative windows-style path to relative NT format and encoding.
+ *
+ * @returns IPRT status code.
+ * @param   pNtName             Where to return the NT name.  Free using
+ *                              rtTNtPathToNative with phRootDir set to NULL.
+ * @param   phRootDir           On input, the handle to the directory the path
+ *                              is relative to.  On output, the handle to
+ *                              specify as root directory in the object
+ *                              attributes when accessing the path.  If
+ *                              enmAscent is kRTNtPathRelativeAscent_Allow, it
+ *                              may have been set to NULL.
+ * @param   pszPath             The relative UTF-8 path.
+ * @param   enmAscent           How to handle ascent.
+ * @param   fMustReturnAbsolute Must convert to an absolute path.  This
+ *                              is necessary if the root dir is a NT directory
+ *                              object (e.g. /Devices) since they cannot parse
+ *                              relative paths it seems.
+ */
+RTDECL(int) RTNtPathRelativeFromUtf8(struct _UNICODE_STRING *pNtName, PHANDLE phRootDir, const char *pszPath,
+                                     RTNTPATHRELATIVEASCENT enmAscent, bool fMustReturnAbsolute);
+
+/**
+ * Ensures that the NT string has sufficient storage to hold @a cwcMin RTUTF16
+ * chars plus a terminator.
+ *
+ * The NT string must have been returned by RTNtPathFromWinUtf8 or
+ * RTNtPathFromWinUtf16Ex.
+ *
+ * @returns IPRT status code.
+ * @param   pNtName             The NT path string.
+ * @param   cwcMin              The minimum number of RTUTF16 chars. Max 32767.
+ * @sa      RTNtPathFree
+ */
+RTDECL(int) RTNtPathEnsureSpace(struct _UNICODE_STRING *pNtName, size_t cwcMin);
+
+/**
  * Frees the native path and root handle.
  *
- * @param   pNtName             The NT path after a successful
- *                              RTNtPathFromWinUtf16Ex call.
- * @param   phRootDir           The root handle variable after a successfull
- *                              RTNtPathFromWinUtf16Ex call.
+ * @param   pNtName             The NT path after a successful rtNtPathToNative
+ *                              call or RTNtPathRelativeFromUtf8.
+ * @param   phRootDir           The root handle variable from rtNtPathToNative,
  */
 RTDECL(void) RTNtPathFree(struct _UNICODE_STRING *pNtName, HANDLE *phRootDir);
+
+
+/**
+ * Checks whether the path could be containing alternative 8.3 names generated
+ * by NTFS, FAT, or other similar file systems.
+ *
+ * @returns Pointer to the first component that might be an 8.3 name, NULL if
+ *          not 8.3 path.
+ * @param   pwszPath        The path to check.
+ *
+ * @remarks This is making bad ASSUMPTION wrt to the naming scheme of 8.3 names,
+ *          however, non-tilde 8.3 aliases are probably rare enough to not be
+ *          worth all the extra code necessary to open each path component and
+ *          check if we've got the short name or not.
+ */
+RTDECL(PRTUTF16) RTNtPathFindPossible8dot3Name(PCRTUTF16 pwszPath);
+
+/**
+ * Fixes up a path possibly containing one or more alternative 8-dot-3 style
+ * components.
+ *
+ * The path is fixed up in place.  Errors are ignored.
+ *
+ * @returns VINF_SUCCESS if it all went smoothly, informational status codes
+ *          indicating the nature of last problem we ran into.
+ *
+ * @param   pUniStr     The path to fix up. MaximumLength is the max buffer
+ *                      length.
+ * @param   fPathOnly   Whether to only process the path and leave the filename
+ *                      as passed in.
+ */
+RTDECL(int) RTNtPathExpand8dot3Path(struct _UNICODE_STRING *pUniStr, bool fPathOnly);
 
 
 RT_C_DECLS_END
@@ -390,6 +511,21 @@ typedef struct _CLIENT_ID
 typedef CLIENT_ID *PCLIENT_ID;
 #endif
 
+/** Extended affinity type, introduced in Windows 7 (?). */
+typedef struct _KAFFINITY_EX
+{
+    /** Count of valid bitmap entries. */
+    uint16_t                Count;
+    /** Count of allocated bitmap entries. */
+    uint16_t                Size;
+    /** Reserved / aligmment padding. */
+    uint32_t                Reserved;
+    /** Bitmap where one bit corresponds to a CPU. */
+    uintptr_t               Bitmap[20];
+} KAFFINITY_EX;
+typedef KAFFINITY_EX *PKAFFINITY_EX;
+typedef KAFFINITY_EX const *PCKAFFINITY_EX;
+
 /** @name User Shared Data
  * @{ */
 
@@ -437,45 +573,46 @@ typedef struct _XSTATE_CONFIGURATION
 } XSTATE_CONFIGURATION;
 typedef XSTATE_CONFIGURATION *PXSTATE_CONFIGURATION;
 # endif
+#endif /* IPRT_NT_USE_WINTERNL */
 
 typedef struct _KUSER_SHARED_DATA
 {
-    ULONG                   TickCountLowDeprecated;
-    ULONG                   TickCountMultiplier;
-    KSYSTEM_TIME volatile   InterruptTime;
-    KSYSTEM_TIME volatile   SystemTime;
-    KSYSTEM_TIME volatile   TimeZoneBias;
-    USHORT                  ImageNumberLow;
-    USHORT                  ImageNumberHigh;
-    WCHAR                   NtSystemRoot[260];
-    ULONG                   MaxStackTraceDepth;
-    ULONG                   CryptoExponent;
-    ULONG                   TimeZoneId;
-    ULONG                   LargePageMinimum;
-    ULONG                   AitSamplingValue;
-    ULONG                   AppCompatFlag;
-    ULONGLONG               RNGSeedVersion;
-    ULONG                   GlobalValidationRunlevel;
-    LONG volatile           TimeZoneBiasStamp;
-    ULONG                   Reserved2;
-    NT_PRODUCT_TYPE         NtProductType;
-    BOOLEAN                 ProductTypeIsValid;
-    BOOLEAN                 Reserved0[1];
-    USHORT                  NativeProcessorArchitecture;
-    ULONG                   NtMajorVersion;
-    ULONG                   NtMinorVersion;
-    BOOLEAN                 ProcessorFeatures[PROCESSOR_FEATURE_MAX];
-    ULONG                   Reserved1;
-    ULONG                   Reserved3;
-    ULONG volatile          TimeSlip;
-    ALTERNATIVE_ARCHITECTURE_TYPE AlternativeArchitecture;
-    ULONG                   AltArchitecturePad[1];
-    LARGE_INTEGER           SystemExpirationDate;
-    ULONG                   SuiteMask;
-    BOOLEAN                 KdDebuggerEnabled;
-    union
+    ULONG                   TickCountLowDeprecated;                     /**< 0x000 */
+    ULONG                   TickCountMultiplier;                        /**< 0x004 */
+    KSYSTEM_TIME volatile   InterruptTime;                              /**< 0x008 */
+    KSYSTEM_TIME volatile   SystemTime;                                 /**< 0x014 */
+    KSYSTEM_TIME volatile   TimeZoneBias;                               /**< 0x020 */
+    USHORT                  ImageNumberLow;                             /**< 0x02c */
+    USHORT                  ImageNumberHigh;                            /**< 0x02e */
+    WCHAR                   NtSystemRoot[260];                          /**< 0x030 */
+    ULONG                   MaxStackTraceDepth;                         /**< 0x238 */
+    ULONG                   CryptoExponent;                             /**< 0x23c */
+    ULONG                   TimeZoneId;                                 /**< 0x240 */
+    ULONG                   LargePageMinimum;                           /**< 0x244 */
+    ULONG                   AitSamplingValue;                           /**< 0x248 */
+    ULONG                   AppCompatFlag;                              /**< 0x24c */
+    ULONGLONG               RNGSeedVersion;                             /**< 0x250 */
+    ULONG                   GlobalValidationRunlevel;                   /**< 0x258 */
+    LONG volatile           TimeZoneBiasStamp;                          /**< 0x25c*/
+    ULONG                   Reserved2;                                  /**< 0x260 */
+    NT_PRODUCT_TYPE         NtProductType;                              /**< 0x264 */
+    BOOLEAN                 ProductTypeIsValid;                         /**< 0x268 */
+    BOOLEAN                 Reserved0[1];                               /**< 0x269 */
+    USHORT                  NativeProcessorArchitecture;                /**< 0x26a */
+    ULONG                   NtMajorVersion;                             /**< 0x26c */
+    ULONG                   NtMinorVersion;                             /**< 0x270 */
+    BOOLEAN                 ProcessorFeatures[PROCESSOR_FEATURE_MAX];   /**< 0x274 */
+    ULONG                   Reserved1;                                  /**< 0x2b4 */
+    ULONG                   Reserved3;                                  /**< 0x2b8 */
+    ULONG volatile          TimeSlip;                                   /**< 0x2bc */
+    ALTERNATIVE_ARCHITECTURE_TYPE AlternativeArchitecture;              /**< 0x2c0 */
+    ULONG                   AltArchitecturePad[1];                      /**< 0x2c4 */
+    LARGE_INTEGER           SystemExpirationDate;                       /**< 0x2c8 */
+    ULONG                   SuiteMask;                                  /**< 0x2d0 */
+    BOOLEAN                 KdDebuggerEnabled;                          /**< 0x2d4 */
+    union                                                               /**< 0x2d5 */
     {
-        UCHAR               MitigationPolicies;
+        UCHAR               MitigationPolicies;                         /**< 0x2d5 */
         struct
         {
             UCHAR           NXSupportPolicy  : 2;
@@ -484,17 +621,17 @@ typedef struct _KUSER_SHARED_DATA
             UCHAR           Reserved  : 2;
         };
     };
-    UCHAR                   Reserved6[2];
-    ULONG volatile          ActiveConsoleId;
-    ULONG volatile          DismountCount;
-    ULONG                   ComPlusPackage;
-    ULONG                   LastSystemRITEventTickCount;
-    ULONG                   NumberOfPhysicalPages;
-    BOOLEAN                 SafeBootMode;
-    UCHAR                   Reserved12[3];
-    union
+    UCHAR                   Reserved6[2];                               /**< 0x2d6 */
+    ULONG volatile          ActiveConsoleId;                            /**< 0x2d8 */
+    ULONG volatile          DismountCount;                              /**< 0x2dc */
+    ULONG                   ComPlusPackage;                             /**< 0x2e0 */
+    ULONG                   LastSystemRITEventTickCount;                /**< 0x2e4 */
+    ULONG                   NumberOfPhysicalPages;                      /**< 0x2e8 */
+    BOOLEAN                 SafeBootMode;                               /**< 0x2ec */
+    UCHAR                   Reserved12[3];                              /**< 0x2ed */
+    union                                                               /**< 0x2f0 */
     {
-        ULONG               SharedDataFlags;
+        ULONG               SharedDataFlags;                            /**< 0x2f0 */
         struct
         {
             ULONG           DbgErrorPortPresent  : 1;
@@ -508,57 +645,87 @@ typedef struct _KUSER_SHARED_DATA
             ULONG           SpareBits  : 24;
         };
     };
-    ULONG                   DataFlagsPad[1];
-    ULONGLONG               TestRetInstruction;
-    LONGLONG                QpcFrequency;
-    ULONGLONG               SystemCallPad[3];
-    union
+    ULONG                   DataFlagsPad[1];                            /**< 0x2f4 */
+    ULONGLONG               TestRetInstruction;                         /**< 0x2f8 */
+    LONGLONG                QpcFrequency;                               /**< 0x300 */
+    ULONGLONG               SystemCallPad[3];                           /**< 0x308 */
+    union                                                               /**< 0x320 */
     {
-        ULONG64 volatile    TickCountQuad;
-        KSYSTEM_TIME volatile TickCount;
-        struct
+        ULONG64 volatile    TickCountQuad;                              /**< 0x320 */
+        KSYSTEM_TIME volatile TickCount;                                /**< 0x320 */
+        struct                                                          /**< 0x320 */
         {
-            ULONG           ReservedTickCountOverlay[3];
-            ULONG           TickCountPad[1];
+            ULONG           ReservedTickCountOverlay[3];                /**< 0x320 */
+            ULONG           TickCountPad[1];                            /**< 0x32c */
         };
     };
-    ULONG                   Cookie;
-    ULONG                   CookiePad[1];
-    LONGLONG                ConsoleSessionForegroundProcessId;
-    ULONGLONG               TimeUpdateLock;
-    ULONGLONG               BaselineSystemTimeQpc;
-    ULONGLONG               BaselineInterruptTimeQpc;
-    ULONGLONG               QpcSystemTimeIncrement;
-    ULONGLONG               QpcInterruptTimeIncrement;
-    ULONG                   QpcSystemTimeIncrement32;
-    ULONG                   QpcInterruptTimeIncrement32;
-    UCHAR                   QpcSystemTimeIncrementShift;
-    UCHAR                   QpcInterruptTimeIncrementShift;
-    UCHAR                   Reserved8[14];
-    USHORT                  UserModeGlobalLogger[16];
-    ULONG                   ImageFileExecutionOptions;
-    ULONG                   LangGenerationCount;
-    ULONGLONG               Reserved4;
-    ULONGLONG volatile      InterruptTimeBias;
-    ULONGLONG volatile      QpcBias;
-    ULONG volatile          ActiveProcessorCount;
-    UCHAR volatile          ActiveGroupCount;
-    UCHAR                   Reserved9;
-    union
+    ULONG                   Cookie;                                     /**< 0x330 */
+    ULONG                   CookiePad[1];                               /**< 0x334 */
+    LONGLONG                ConsoleSessionForegroundProcessId;          /**< 0x338 */
+    ULONGLONG               TimeUpdateLock;                             /**< 0x340 */
+    ULONGLONG               BaselineSystemTimeQpc;                      /**< 0x348 */
+    ULONGLONG               BaselineInterruptTimeQpc;                   /**< 0x350 */
+    ULONGLONG               QpcSystemTimeIncrement;                     /**< 0x358 */
+    ULONGLONG               QpcInterruptTimeIncrement;                  /**< 0x360 */
+    ULONG                   QpcSystemTimeIncrement32;                   /**< 0x368 */
+    ULONG                   QpcInterruptTimeIncrement32;                /**< 0x36c */
+    UCHAR                   QpcSystemTimeIncrementShift;                /**< 0x370 */
+    UCHAR                   QpcInterruptTimeIncrementShift;             /**< 0x371 */
+    UCHAR                   Reserved8[14];                              /**< 0x372 */
+    USHORT                  UserModeGlobalLogger[16];                   /**< 0x380 */
+    ULONG                   ImageFileExecutionOptions;                  /**< 0x3a0 */
+    ULONG                   LangGenerationCount;                        /**< 0x3a4 */
+    ULONGLONG               Reserved4;                                  /**< 0x3a8 */
+    ULONGLONG volatile      InterruptTimeBias;                          /**< 0x3b0 */
+    ULONGLONG volatile      QpcBias;                                    /**< 0x3b8 */
+    ULONG volatile          ActiveProcessorCount;                       /**< 0x3c0 */
+    UCHAR volatile          ActiveGroupCount;                           /**< 0x3c4 */
+    UCHAR                   Reserved9;                                  /**< 0x3c5 */
+    union                                                               /**< 0x3c6 */
     {
-        USHORT              QpcData;
-        struct
+        USHORT              QpcData;                                    /**< 0x3c6 */
+        struct                                                          /**< 0x3c6 */
         {
-            BOOLEAN volatile QpcBypassEnabled;
-            UCHAR           QpcShift;
+            BOOLEAN volatile QpcBypassEnabled;                          /**< 0x3c6 */
+            UCHAR           QpcShift;                                   /**< 0x3c7 */
         };
     };
-    LARGE_INTEGER           TimeZoneBiasEffectiveStart;
-    LARGE_INTEGER           TimeZoneBiasEffectiveEnd;
-    XSTATE_CONFIGURATION    XState;
+    LARGE_INTEGER           TimeZoneBiasEffectiveStart;                 /**< 0x3c8 */
+    LARGE_INTEGER           TimeZoneBiasEffectiveEnd;                   /**< 0x3d0 */
+    XSTATE_CONFIGURATION    XState;                                     /**< 0x3d8 */
 } KUSER_SHARED_DATA;
 typedef KUSER_SHARED_DATA *PKUSER_SHARED_DATA;
-#endif /* IPRT_NT_USE_WINTERNL */
+AssertCompileMemberOffset(KUSER_SHARED_DATA, InterruptTime,             0x008);
+AssertCompileMemberOffset(KUSER_SHARED_DATA, SystemTime,                0x014);
+AssertCompileMemberOffset(KUSER_SHARED_DATA, NtSystemRoot,              0x030);
+AssertCompileMemberOffset(KUSER_SHARED_DATA, LargePageMinimum,          0x244);
+AssertCompileMemberOffset(KUSER_SHARED_DATA, Reserved1,                 0x2b4);
+AssertCompileMemberOffset(KUSER_SHARED_DATA, TestRetInstruction,        0x2f8);
+AssertCompileMemberOffset(KUSER_SHARED_DATA, Cookie,                    0x330);
+AssertCompileMemberOffset(KUSER_SHARED_DATA, ImageFileExecutionOptions, 0x3a0);
+AssertCompileMemberOffset(KUSER_SHARED_DATA, XState,                    0x3d8);
+/** @def MM_SHARED_USER_DATA_VA
+ * Read only userland mapping of KUSER_SHARED_DATA. */
+#ifndef MM_SHARED_USER_DATA_VA
+# if ARCH_BITS == 32
+#  define MM_SHARED_USER_DATA_VA        UINT32_C(0x7ffe0000)
+# elif ARCH_BITS == 64
+#  define MM_SHARED_USER_DATA_VA        UINT64_C(0x7ffe0000)
+# else
+#  error "Unsupported/undefined ARCH_BITS value."
+# endif
+#endif
+/** @def KI_USER_SHARED_DATA
+ * Read write kernel mapping of KUSER_SHARED_DATA. */
+#ifndef KI_USER_SHARED_DATA
+# ifdef RT_ARCH_X86
+#  define KI_USER_SHARED_DATA           UINT32_C(0xffdf0000)
+# elif defined(RT_ARCH_AMD64)
+#  define KI_USER_SHARED_DATA           UINT64_C(0xfffff78000000000)
+# else
+#  error "PORT ME - KI_USER_SHARED_DATA"
+# endif
+#endif
 /** @} */
 
 
@@ -860,6 +1027,13 @@ typedef struct _PEB_COMMON
     uint32_t Padding6;                                                      /**< 0x37c / NA */
 #endif
     uint64_t CsrServerReadOnlySharedMemoryBase;                             /**< 0x380 / 0x248 */
+    /* End of PEB in W8, W81. */
+    uintptr_t TppWorkerpListLock;                                           /**< 0x388 / 0x250 */
+    LIST_ENTRY TppWorkerpList;                                              /**< 0x390 / 0x254 */
+    PVOID WaitOnAddressHashTable[128];                                      /**< 0x3a0 / 0x25c */
+#if ARCH_BITS == 32
+    uint32_t ExplicitPadding7;                                              /**< NA NA / 0x45c */
+#endif
 } PEB_COMMON;
 typedef PEB_COMMON *PPEB_COMMON;
 
@@ -871,12 +1045,14 @@ AssertCompileMemberOffset(PEB_COMMON, LoaderLock,     ARCH_BITS == 64 ? 0x110 : 
 AssertCompileMemberOffset(PEB_COMMON, Diff5.W52.ImageProcessAffinityMask, ARCH_BITS == 64 ? 0x138 :  0xc0);
 AssertCompileMemberOffset(PEB_COMMON, PostProcessInitRoutine,    ARCH_BITS == 64 ? 0x230 : 0x14c);
 AssertCompileMemberOffset(PEB_COMMON, AppCompatFlags, ARCH_BITS == 64 ? 0x2c8 : 0x1d8);
-AssertCompileSize(PEB_COMMON, ARCH_BITS == 64 ? 0x388 : 0x250);
+AssertCompileSize(PEB_COMMON, ARCH_BITS == 64 ? 0x7a0 : 0x460);
 
+/** The size of the windows 10 (build 14393) PEB structure. */
+#define PEB_SIZE_W10    sizeof(PEB_COMMON)
 /** The size of the windows 8.1 PEB structure.  */
-#define PEB_SIZE_W81    sizeof(PEB_COMMON)
+#define PEB_SIZE_W81    RT_UOFFSETOF(PEB_COMMON, TppWorkerpListLock)
 /** The size of the windows 8.0 PEB structure.  */
-#define PEB_SIZE_W80    sizeof(PEB_COMMON)
+#define PEB_SIZE_W80    RT_UOFFSETOF(PEB_COMMON, TppWorkerpListLock)
 /** The size of the windows 7 PEB structure.  */
 #define PEB_SIZE_W7     RT_UOFFSETOF(PEB_COMMON, CsrServerReadOnlySharedMemoryBase)
 /** The size of the windows vista PEB structure.  */
@@ -1248,7 +1424,10 @@ typedef struct _TEB_COMMON
             /* End of TEB in W7 (windows 7)! */
             PVOID ReservedForWdf;                                          /**< 0x1818 / 0xfe4 - New Since W7. */
             /* End of TEB in W8 (windows 8.0 & 8.1)! */
-        } W8, W80, W81;
+            PVOID ReservedForCrt;                                          /**< 0x1820 / 0xfe8 - New Since W10.  */
+            RTUUID EffectiveContainerId;                                   /**< 0x1828 / 0xfec - New Since W10.  */
+            /* End of TEB in W10 14393! */
+        } W8, W80, W81, W10;
         struct
         {
             PVOID ResourceRetValue;                                        /**< 0x1810 / 0xfe0 */
@@ -1275,9 +1454,11 @@ AssertCompileMemberOffset(TEB_COMMON, WinSockData,          ARCH_BITS == 64 ? 0x
 AssertCompileMemberOffset(TEB_COMMON, GuaranteedStackBytes, ARCH_BITS == 64 ? 0x1748 : 0xf78);
 AssertCompileMemberOffset(TEB_COMMON, MuiImpersonation,     ARCH_BITS == 64 ? 0x17e8 : 0xfc4);
 AssertCompileMemberOffset(TEB_COMMON, LockCount,            ARCH_BITS == 64 ? 0x1808 : 0xfd8);
-AssertCompileSize(TEB_COMMON, ARCH_BITS == 64 ? 0x1828 : 0xff8);
+AssertCompileSize(TEB_COMMON, ARCH_BITS == 64 ? 0x1838 : 0x1000);
 
 
+/** The size of the windows 8.1 PEB structure.  */
+#define TEB_SIZE_W10    ( RT_UOFFSETOF(TEB_COMMON, Diff12.W10.EffectiveContainerId) + sizeof(RTUUID) )
 /** The size of the windows 8.1 PEB structure.  */
 #define TEB_SIZE_W81    ( RT_UOFFSETOF(TEB_COMMON, Diff12.W8.ReservedForWdf) + sizeof(PVOID) )
 /** The size of the windows 8.0 PEB structure.  */
@@ -1301,26 +1482,43 @@ typedef PPEB_COMMON PPEB;
 typedef TEB_COMMON  TEB;
 typedef PTEB_COMMON PTEB;
 
-#define RTNtCurrentTeb()        ((PTEB)NtCurrentTeb())
-#define RTNtCurrentPeb()        (RTNtCurrentTeb()->ProcessEnvironmentBlock)
-#define NtCurrentPeb()          RTNtCurrentPeb()
-#define RTNtCurrentThreadId()   ((uint32_t)(uintptr_t)RTNtCurrentTeb()->ClientId.UniqueThread)
+#if !defined(NtCurrentTeb) && !defined(IPRT_NT_HAVE_CURRENT_TEB_MACRO)
+# ifdef RT_ARCH_X86
+DECL_FORCE_INLINE(PTEB)     RTNtCurrentTeb(void) { return (PTEB)__readfsdword(RT_UOFFSETOF(TEB_COMMON, NtTib.Self)); }
+DECL_FORCE_INLINE(PPEB)     RTNtCurrentPeb(void) { return (PPEB)__readfsdword(RT_UOFFSETOF(TEB_COMMON, ProcessEnvironmentBlock)); }
+DECL_FORCE_INLINE(uint32_t) RTNtCurrentThreadId(void) { return __readfsdword(RT_UOFFSETOF(TEB_COMMON, ClientId.UniqueThread)); }
+# elif defined(RT_ARCH_AMD64)
+DECL_FORCE_INLINE(PTEB)     RTNtCurrentTeb(void) { return (PTEB)__readgsqword(RT_UOFFSETOF(TEB_COMMON, NtTib.Self)); }
+DECL_FORCE_INLINE(PPEB)     RTNtCurrentPeb(void) { return (PPEB)__readgsqword(RT_UOFFSETOF(TEB_COMMON, ProcessEnvironmentBlock)); }
+DECL_FORCE_INLINE(uint32_t) RTNtCurrentThreadId(void) { return (uint32_t)__readgsqword(RT_UOFFSETOF(TEB_COMMON, ClientId.UniqueThread)); }
+# else
+#  error "Port me"
+# endif
+#else
+# define RTNtCurrentTeb()        ((PTEB)NtCurrentTeb())
+# define RTNtCurrentPeb()        (RTNtCurrentTeb()->ProcessEnvironmentBlock)
+# define RTNtCurrentThreadId()   ((uint32_t)(uintptr_t)RTNtCurrentTeb()->ClientId.UniqueThread)
+#endif
+#define NtCurrentPeb()           RTNtCurrentPeb()
+
 
 /** @} */
 
 
 #ifdef IPRT_NT_USE_WINTERNL
 NTSYSAPI NTSTATUS NTAPI NtCreateSection(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PLARGE_INTEGER, ULONG, ULONG, HANDLE);
-NTSYSAPI NTSTATUS NTAPI NtUnmapViewOfSection(HANDLE, PVOID);
 typedef enum _SECTION_INHERIT
 {
     ViewShare = 1,
     ViewUnmap
 } SECTION_INHERIT;
+#endif
 NTSYSAPI NTSTATUS NTAPI NtMapViewOfSection(HANDLE, HANDLE, PVOID *, ULONG, SIZE_T, PLARGE_INTEGER, PSIZE_T, SECTION_INHERIT,
                                            ULONG, ULONG);
+NTSYSAPI NTSTATUS NTAPI NtFlushVirtualMemory(HANDLE, PVOID *, PSIZE_T, PIO_STATUS_BLOCK);
+NTSYSAPI NTSTATUS NTAPI NtUnmapViewOfSection(HANDLE, PVOID);
 
-
+#ifdef IPRT_NT_USE_WINTERNL
 typedef struct _FILE_FS_ATTRIBUTE_INFORMATION
 {
     ULONG   FileSystemAttributes;
@@ -1396,6 +1594,17 @@ typedef struct _FILE_NAME_INFORMATION
     WCHAR           FileName[1];
 } FILE_NAME_INFORMATION;
 typedef FILE_NAME_INFORMATION *PFILE_NAME_INFORMATION;
+typedef struct _FILE_NETWORK_OPEN_INFORMATION
+{
+    LARGE_INTEGER   CreationTime;
+    LARGE_INTEGER   LastAccessTime;
+    LARGE_INTEGER   LastWriteTime;
+    LARGE_INTEGER   ChangeTime;
+    LARGE_INTEGER   AllocationSize;
+    LARGE_INTEGER   EndOfFile;
+    ULONG           FileAttributes;
+} FILE_NETWORK_OPEN_INFORMATION;
+typedef FILE_NETWORK_OPEN_INFORMATION *PFILE_NETWORK_OPEN_INFORMATION;
 typedef enum _FILE_INFORMATION_CLASS
 {
     FileDirectoryInformation = 1,
@@ -1466,6 +1675,100 @@ typedef FILE_INFORMATION_CLASS *PFILE_INFORMATION_CLASS;
 NTSYSAPI NTSTATUS NTAPI NtQueryInformationFile(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
 NTSYSAPI NTSTATUS NTAPI NtQueryDirectoryFile(HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID, PIO_STATUS_BLOCK, PVOID, ULONG,
                                              FILE_INFORMATION_CLASS, BOOLEAN, PUNICODE_STRING, BOOLEAN);
+NTSYSAPI NTSTATUS NTAPI NtSetInformationFile(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
+#endif /* IPRT_NT_USE_WINTERNL */
+NTSYSAPI NTSTATUS NTAPI NtQueryAttributesFile(POBJECT_ATTRIBUTES, PFILE_BASIC_INFORMATION);
+NTSYSAPI NTSTATUS NTAPI NtQueryFullAttributesFile(POBJECT_ATTRIBUTES, PFILE_NETWORK_OPEN_INFORMATION);
+
+#ifdef IPRT_NT_USE_WINTERNL
+
+/** For use with KeyBasicInformation. */
+typedef struct _KEY_BASIC_INFORMATION
+{
+    LARGE_INTEGER   LastWriteTime;
+    ULONG           TitleIndex;
+    ULONG           NameLength;
+    WCHAR           Name[1];
+} KEY_BASIC_INFORMATION;
+typedef KEY_BASIC_INFORMATION *PKEY_BASIC_INFORMATION;
+
+/** For use with KeyNodeInformation. */
+typedef struct _KEY_NODE_INFORMATION
+{
+    LARGE_INTEGER   LastWriteTime;
+    ULONG           TitleIndex;
+    ULONG           ClassOffset; /**< Offset from the start of the structure. */
+    ULONG           ClassLength;
+    ULONG           NameLength;
+    WCHAR           Name[1];
+} KEY_NODE_INFORMATION;
+typedef KEY_NODE_INFORMATION *PKEY_NODE_INFORMATION;
+
+/** For use with KeyFullInformation. */
+typedef struct _KEY_FULL_INFORMATION
+{
+    LARGE_INTEGER   LastWriteTime;
+    ULONG           TitleIndex;
+    ULONG           ClassOffset; /**< Offset of the Class member. */
+    ULONG           ClassLength;
+    ULONG           SubKeys;
+    ULONG           MaxNameLen;
+    ULONG           MaxClassLen;
+    ULONG           Values;
+    ULONG           MaxValueNameLen;
+    ULONG           MaxValueDataLen;
+    WCHAR           Class[1];
+} KEY_FULL_INFORMATION;
+typedef KEY_FULL_INFORMATION *PKEY_FULL_INFORMATION;
+
+/** For use with KeyNameInformation. */
+typedef struct _KEY_NAME_INFORMATION
+{
+    ULONG           NameLength;
+    WCHAR           Name[1];
+} KEY_NAME_INFORMATION;
+typedef KEY_NAME_INFORMATION *PKEY_NAME_INFORMATION;
+
+/** For use with KeyCachedInformation. */
+typedef struct _KEY_CACHED_INFORMATION
+{
+    LARGE_INTEGER   LastWriteTime;
+    ULONG           TitleIndex;
+    ULONG           SubKeys;
+    ULONG           MaxNameLen;
+    ULONG           Values;
+    ULONG           MaxValueNameLen;
+    ULONG           MaxValueDataLen;
+    ULONG           NameLength;
+} KEY_CACHED_INFORMATION;
+typedef KEY_CACHED_INFORMATION *PKEY_CACHED_INFORMATION;
+
+/** For use with KeyVirtualizationInformation. */
+typedef struct _KEY_VIRTUALIZATION_INFORMATION
+{
+    ULONG           VirtualizationCandidate : 1;
+    ULONG           VirtualizationEnabled   : 1;
+    ULONG           VirtualTarget           : 1;
+    ULONG           VirtualStore            : 1;
+    ULONG           VirtualSource           : 1;
+    ULONG           Reserved                : 27;
+} KEY_VIRTUALIZATION_INFORMATION;
+typedef KEY_VIRTUALIZATION_INFORMATION *PKEY_VIRTUALIZATION_INFORMATION;
+
+typedef enum _KEY_INFORMATION_CLASS
+{
+    KeyBasicInformation = 0,
+    KeyNodeInformation,
+    KeyFullInformation,
+    KeyNameInformation,
+    KeyCachedInformation,
+    KeyFlagsInformation,
+    KeyVirtualizationInformation,
+    KeyHandleTagsInformation,
+    MaxKeyInfoClass
+} KEY_INFORMATION_CLASS;
+NTSYSAPI NTSTATUS NTAPI NtQueryKey(HANDLE, KEY_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+NTSYSAPI NTSTATUS NTAPI NtEnumerateKey(HANDLE, ULONG, KEY_INFORMATION_CLASS, PVOID, ULONG, PULONG);
 
 typedef struct _MEMORY_SECTION_NAME
 {
@@ -1488,58 +1791,75 @@ typedef PROCESS_BASIC_INFORMATION *PPROCESS_BASIC_INFORMATION;
 
 typedef enum _PROCESSINFOCLASS
 {
-    ProcessBasicInformation = 0,
-    ProcessQuotaLimits,
-    ProcessIoCounters,
-    ProcessVmCounters,
-    ProcessTimes,
-    ProcessBasePriority,
-    ProcessRaisePriority,
-    ProcessDebugPort,
-    ProcessExceptionPort,
-    ProcessAccessToken,
-    ProcessLdtInformation,
-    ProcessLdtSize,
-    ProcessDefaultHardErrorMode,
-    ProcessIoPortHandlers,
-    ProcessPooledUsageAndLimits,
-    ProcessWorkingSetWatch,
-    ProcessUserModeIOPL,
-    ProcessEnableAlignmentFaultFixup,
-    ProcessPriorityClass,
-    ProcessWx86Information,
-    ProcessHandleCount,
-    ProcessAffinityMask,
-    ProcessPriorityBoost,
-    ProcessDeviceMap,
-    ProcessSessionInformation,
-    ProcessForegroundInformation,
-    ProcessWow64Information,
-    ProcessImageFileName,
-    ProcessLUIDDeviceMapsEnabled,
-    ProcessBreakOnTermination,
-    ProcessDebugObjectHandle,
-    ProcessDebugFlags,
-    ProcessHandleTracing,
-    ProcessIoPriority,
-    ProcessExecuteFlags,
-    ProcessTlsInformation,
-    ProcessCookie,
-    ProcessImageInformation,
-    ProcessCycleTime,
-    ProcessPagePriority,
-    ProcessInstrumentationCallbak,
-    ProcessThreadStackAllocation,
-    ProcessWorkingSetWatchEx,
-    ProcessImageFileNameWin32,
-    ProcessImageFileMapping,
-    ProcessAffinityUpdateMode,
-    ProcessMemoryAllocationMode,
-    ProcessGroupInformation,
-    ProcessTokenVirtualizationEnabled,
-    ProcessConsoleHostProcess,
-    ProcessWindowsInformation,
-    MaxProcessInfoClass
+    ProcessBasicInformation = 0,        /**<  0 / 0x00 */
+    ProcessQuotaLimits,                 /**<  1 / 0x01 */
+    ProcessIoCounters,                  /**<  2 / 0x02 */
+    ProcessVmCounters,                  /**<  3 / 0x03 */
+    ProcessTimes,                       /**<  4 / 0x04 */
+    ProcessBasePriority,                /**<  5 / 0x05 */
+    ProcessRaisePriority,               /**<  6 / 0x06 */
+    ProcessDebugPort,                   /**<  7 / 0x07 */
+    ProcessExceptionPort,               /**<  8 / 0x08 */
+    ProcessAccessToken,                 /**<  9 / 0x09 */
+    ProcessLdtInformation,              /**< 10 / 0x0a */
+    ProcessLdtSize,                     /**< 11 / 0x0b */
+    ProcessDefaultHardErrorMode,        /**< 12 / 0x0c */
+    ProcessIoPortHandlers,              /**< 13 / 0x0d */
+    ProcessPooledUsageAndLimits,        /**< 14 / 0x0e */
+    ProcessWorkingSetWatch,             /**< 15 / 0x0f */
+    ProcessUserModeIOPL,                /**< 16 / 0x10 */
+    ProcessEnableAlignmentFaultFixup,   /**< 17 / 0x11 */
+    ProcessPriorityClass,               /**< 18 / 0x12 */
+    ProcessWx86Information,             /**< 19 / 0x13 */
+    ProcessHandleCount,                 /**< 20 / 0x14 */
+    ProcessAffinityMask,                /**< 21 / 0x15 */
+    ProcessPriorityBoost,               /**< 22 / 0x16 */
+    ProcessDeviceMap,                   /**< 23 / 0x17 */
+    ProcessSessionInformation,          /**< 24 / 0x18 */
+    ProcessForegroundInformation,       /**< 25 / 0x19 */
+    ProcessWow64Information,            /**< 26 / 0x1a */
+    ProcessImageFileName,               /**< 27 / 0x1b */
+    ProcessLUIDDeviceMapsEnabled,       /**< 28 / 0x1c */
+    ProcessBreakOnTermination,          /**< 29 / 0x1d */
+    ProcessDebugObjectHandle,           /**< 30 / 0x1e */
+    ProcessDebugFlags,                  /**< 31 / 0x1f */
+    ProcessHandleTracing,               /**< 32 / 0x20 */
+    ProcessIoPriority,                  /**< 33 / 0x21 */
+    ProcessExecuteFlags,                /**< 34 / 0x22 */
+    ProcessTlsInformation,              /**< 35 / 0x23 */
+    ProcessCookie,                      /**< 36 / 0x24 */
+    ProcessImageInformation,            /**< 37 / 0x25 */
+    ProcessCycleTime,                   /**< 38 / 0x26 */
+    ProcessPagePriority,                /**< 39 / 0x27 */
+    ProcessInstrumentationCallbak,      /**< 40 / 0x28 */
+    ProcessThreadStackAllocation,       /**< 41 / 0x29 */
+    ProcessWorkingSetWatchEx,           /**< 42 / 0x2a */
+    ProcessImageFileNameWin32,          /**< 43 / 0x2b */
+    ProcessImageFileMapping,            /**< 44 / 0x2c */
+    ProcessAffinityUpdateMode,          /**< 45 / 0x2d */
+    ProcessMemoryAllocationMode,        /**< 46 / 0x2e */
+    ProcessGroupInformation,            /**< 47 / 0x2f */
+    ProcessTokenVirtualizationEnabled,  /**< 48 / 0x30 */
+    ProcessConsoleHostProcess,          /**< 49 / 0x31 */
+    ProcessWindowsInformation,          /**< 50 / 0x32 */
+    ProcessUnknown51,
+    ProcessUnknown52,
+    ProcessUnknown53,
+    ProcessUnknown54,
+    ProcessUnknown55,
+    ProcessUnknown56,
+    ProcessUnknown57,
+    ProcessUnknown58,
+    ProcessUnknown59,
+    ProcessUnknown60,
+    ProcessUnknown61,
+    ProcessUnknown62,
+    ProcessUnknown63,
+    ProcessUnknown64,
+    ProcessUnknown65,
+    ProcessUnknown66,
+    ProcessMaybe_KeSetCpuSetsProcess,   /**< 67 / 0x43 - is correct, then PROCESS_SET_LIMITED_INFORMATION & audiog.exe; W10. */
+    MaxProcessInfoClass                 /**< 68 / 0x44 */
 } PROCESSINFOCLASS;
 NTSYSAPI NTSTATUS NTAPI NtQueryInformationProcess(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG);
 
@@ -1588,6 +1908,7 @@ NTSYSAPI NTSTATUS NTAPI NtQueryInformationToken(HANDLE, TOKEN_INFORMATION_CLASS,
 
 NTSYSAPI NTSTATUS NTAPI NtReadFile(HANDLE, HANDLE, PIO_APC_ROUTINE, PVOID, PIO_STATUS_BLOCK, PVOID, ULONG, PLARGE_INTEGER, PULONG);
 NTSYSAPI NTSTATUS NTAPI NtWriteFile(HANDLE, HANDLE, PIO_APC_ROUTINE, void const *, PIO_STATUS_BLOCK, PVOID, ULONG, PLARGE_INTEGER, PULONG);
+NTSYSAPI NTSTATUS NTAPI NtFlushBuffersFile(HANDLE, PIO_STATUS_BLOCK);
 
 NTSYSAPI NTSTATUS NTAPI NtReadVirtualMemory(HANDLE, PVOID, PVOID, SIZE_T, PSIZE_T);
 NTSYSAPI NTSTATUS NTAPI NtWriteVirtualMemory(HANDLE, PVOID, void const *, SIZE_T, PSIZE_T);
@@ -1849,7 +2170,18 @@ typedef enum _SYSTEM_INFORMATION_CLASS
     SystemInformation_Unknown_93,
     SystemInformation_Unknown_94,
     SystemInformation_Unknown_95,
-    SystemInformation_KiOpPrefetchPatchCount,
+    SystemInformation_KiOpPrefetchPatchCount, /* 96 */
+    SystemInformation_Unknown_97,
+    SystemInformation_Unknown_98,
+    SystemInformation_Unknown_99,
+    SystemInformation_Unknown_100,
+    SystemInformation_Unknown_101,
+    SystemInformation_Unknown_102,
+    SystemInformation_Unknown_103,
+    SystemInformation_Unknown_104,
+    SystemInformation_Unknown_105,
+    SystemInformation_Unknown_107,
+    SystemInformation_GetLogicalProcessorInformationEx, /* 107 */
 
     /** @todo fill gap. they've added a whole bunch of things  */
     SystemPolicyInformation = 134,
@@ -1956,7 +2288,7 @@ typedef struct _SYSTEM_HANDLE_INFORMATION_EX
 } SYSTEM_HANDLE_INFORMATION_EX;
 typedef SYSTEM_HANDLE_INFORMATION_EX *PSYSTEM_HANDLE_INFORMATION_EX;
 
-/** Input to SystemSessionProcessInformation. */
+/** Returned by SystemSessionProcessInformation. */
 typedef struct _SYSTEM_SESSION_PROCESS_INFORMATION
 {
     ULONG SessionId;
@@ -1966,7 +2298,33 @@ typedef struct _SYSTEM_SESSION_PROCESS_INFORMATION
 } SYSTEM_SESSION_PROCESS_INFORMATION;
 typedef SYSTEM_SESSION_PROCESS_INFORMATION *PSYSTEM_SESSION_PROCESS_INFORMATION;
 
+typedef struct _RTL_PROCESS_MODULE_INFORMATION
+{
+    HANDLE Section;                 /**< 0x00 / 0x00 */
+    PVOID MappedBase;               /**< 0x04 / 0x08 */
+    PVOID ImageBase;                /**< 0x08 / 0x10 */
+    ULONG ImageSize;                /**< 0x0c / 0x18 */
+    ULONG Flags;                    /**< 0x10 / 0x1c */
+    USHORT LoadOrderIndex;          /**< 0x14 / 0x20 */
+    USHORT InitOrderIndex;          /**< 0x16 / 0x22 */
+    USHORT LoadCount;               /**< 0x18 / 0x24 */
+    USHORT OffsetToFileName;        /**< 0x1a / 0x26 */
+    UCHAR  FullPathName[256];       /**< 0x1c / 0x28 */
+} RTL_PROCESS_MODULE_INFORMATION;
+typedef RTL_PROCESS_MODULE_INFORMATION *PRTL_PROCESS_MODULE_INFORMATION;
+
+/** Returned by SystemModuleInformation. */
+typedef struct _RTL_PROCESS_MODULES
+{
+    ULONG NumberOfModules;
+    RTL_PROCESS_MODULE_INFORMATION Modules[1];  /**< 0x04 / 0x08 */
+} RTL_PROCESS_MODULES;
+typedef RTL_PROCESS_MODULES *PRTL_PROCESS_MODULES;
+
 NTSYSAPI NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+
+NTSYSAPI NTSTATUS NTAPI NtSetTimerResolution(ULONG cNtTicksWanted, BOOLEAN fSetResolution, PULONG pcNtTicksCur);
+NTSYSAPI NTSTATUS NTAPI NtQueryTimerResolution(PULONG pcNtTicksMin, PULONG pcNtTicksMax, PULONG pcNtTicksCur);
 
 NTSYSAPI NTSTATUS NTAPI NtDelayExecution(BOOLEAN, PLARGE_INTEGER);
 NTSYSAPI NTSTATUS NTAPI NtYieldExecution(void);
@@ -2112,6 +2470,33 @@ NTSYSAPI VOID     NTAPI RtlDestroyProcessParameters(PRTL_USER_PROCESS_PARAMETERS
 NTSYSAPI NTSTATUS NTAPI RtlCreateUserThread(HANDLE, PSECURITY_DESCRIPTOR, BOOLEAN, ULONG, SIZE_T, SIZE_T,
                                             PFNRT, PVOID, PHANDLE, PCLIENT_ID);
 
+#ifndef RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO
+typedef struct _RTL_CRITICAL_SECTION
+{
+    struct _RTL_CRITICAL_SECTION_DEBUG *DebugInfo;
+    LONG            LockCount;
+    LONG            Recursioncount;
+    HANDLE          OwningThread;
+    HANDLE          LockSemaphore;
+    ULONG_PTR       SpinCount;
+} RTL_CRITICAL_SECTION;
+typedef RTL_CRITICAL_SECTION *PRTL_CRITICAL_SECTION;
+#endif
+
+/*NTSYSAPI ULONG NTAPI RtlNtStatusToDosError(NTSTATUS rcNt);*/
+
+/** @def RTL_QUERY_REGISTRY_TYPECHECK
+ * WDK 8.1+, backported in updates, ignored in older. */
+#if !defined(RTL_QUERY_REGISTRY_TYPECHECK) || defined(DOXYGEN_RUNNING)
+# define RTL_QUERY_REGISTRY_TYPECHECK       UINT32_C(0x00000100)
+#endif
+/** @def RTL_QUERY_REGISTRY_TYPECHECK_SHIFT
+ * WDK 8.1+, backported in updates, ignored in older. */
+#if !defined(RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) || defined(DOXYGEN_RUNNING)
+# define RTL_QUERY_REGISTRY_TYPECHECK_SHIFT 24
+#endif
+
+
 RT_C_DECLS_END
 /** @} */
 
@@ -2120,6 +2505,58 @@ RT_C_DECLS_END
 /** @name NT Kernel APIs
  * @{ */
 RT_C_DECLS_BEGIN
+
+typedef ULONG KEPROCESSORINDEX; /**< Bitmap indexes != process numbers, apparently. */
+
+NTSYSAPI VOID     NTAPI KeInitializeAffinityEx(PKAFFINITY_EX pAffinity);
+typedef  VOID    (NTAPI *PFNKEINITIALIZEAFFINITYEX)(PKAFFINITY_EX pAffinity);
+NTSYSAPI VOID     NTAPI KeAddProcessorAffinityEx(PKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+typedef  VOID    (NTAPI *PFNKEADDPROCESSORAFFINITYEX)(PKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+NTSYSAPI VOID     NTAPI KeRemoveProcessorAffinityEx(PKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+typedef  VOID    (NTAPI *PFNKEREMOVEPROCESSORAFFINITYEX)(PKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+NTSYSAPI BOOLEAN  NTAPI KeInterlockedSetProcessorAffinityEx(PKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+typedef  BOOLEAN (NTAPI *PFNKEINTERLOCKEDSETPROCESSORAFFINITYEX)(PKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+NTSYSAPI BOOLEAN  NTAPI KeInterlockedClearProcessorAffinityEx(PKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+typedef  BOOLEAN (NTAPI *PFNKEINTERLOCKEDCLEARPROCESSORAFFINITYEX)(PKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+NTSYSAPI BOOLEAN  NTAPI KeCheckProcessorAffinityEx(PCKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+typedef  BOOLEAN (NTAPI *PFNKECHECKPROCESSORAFFINITYEX)(PCKAFFINITY_EX pAffinity, KEPROCESSORINDEX idxProcessor);
+NTSYSAPI VOID     NTAPI KeCopyAffinityEx(PKAFFINITY_EX pDst, PCKAFFINITY_EX pSrc);
+typedef  VOID    (NTAPI *PFNKECOPYAFFINITYEX)(PKAFFINITY_EX pDst, PCKAFFINITY_EX pSrc);
+NTSYSAPI VOID     NTAPI KeComplementAffinityEx(PKAFFINITY_EX pResult, PCKAFFINITY_EX pIn);
+typedef  VOID    (NTAPI *PFNKECOMPLEMENTAFFINITYEX)(PKAFFINITY_EX pResult, PCKAFFINITY_EX pIn);
+NTSYSAPI BOOLEAN  NTAPI KeAndAffinityEx(PCKAFFINITY_EX pIn1, PCKAFFINITY_EX pIn2, PKAFFINITY_EX pResult OPTIONAL);
+typedef  BOOLEAN (NTAPI *PFNKEANDAFFINITYEX)(PCKAFFINITY_EX pIn1, PCKAFFINITY_EX pIn2, PKAFFINITY_EX pResult OPTIONAL);
+NTSYSAPI BOOLEAN  NTAPI KeOrAffinityEx(PCKAFFINITY_EX pIn1, PCKAFFINITY_EX pIn2, PKAFFINITY_EX pResult OPTIONAL);
+typedef  BOOLEAN (NTAPI *PFNKEORAFFINITYEX)(PCKAFFINITY_EX pIn1, PCKAFFINITY_EX pIn2, PKAFFINITY_EX pResult OPTIONAL);
+/** Works like anding the complemented subtrahend with the minuend. */
+NTSYSAPI BOOLEAN  NTAPI KeSubtractAffinityEx(PCKAFFINITY_EX pMinuend, PCKAFFINITY_EX pSubtrahend, PKAFFINITY_EX pResult OPTIONAL);
+typedef  BOOLEAN (NTAPI *PFNKESUBTRACTAFFINITYEX)(PCKAFFINITY_EX pMinuend, PCKAFFINITY_EX pSubtrahend, PKAFFINITY_EX pResult OPTIONAL);
+NTSYSAPI BOOLEAN  NTAPI KeIsEqualAffinityEx(PCKAFFINITY_EX pLeft, PCKAFFINITY_EX pRight);
+typedef  BOOLEAN (NTAPI *PFNKEISEQUALAFFINITYEX)(PCKAFFINITY_EX pLeft, PCKAFFINITY_EX pRight);
+NTSYSAPI BOOLEAN  NTAPI KeIsEmptyAffinityEx(PCKAFFINITY_EX pAffinity);
+typedef  BOOLEAN (NTAPI *PFNKEISEMPTYAFFINITYEX)(PCKAFFINITY_EX pAffinity);
+NTSYSAPI BOOLEAN  NTAPI KeIsSubsetAffinityEx(PCKAFFINITY_EX pSubset, PCKAFFINITY_EX pSuperSet);
+typedef  BOOLEAN (NTAPI *PFNKEISSUBSETAFFINITYEX)(PCKAFFINITY_EX pSubset, PCKAFFINITY_EX pSuperSet);
+NTSYSAPI ULONG    NTAPI KeCountSetBitsAffinityEx(PCKAFFINITY_EX pAffinity);
+typedef  ULONG   (NTAPI *PFNKECOUNTSETAFFINITYEX)(PCKAFFINITY_EX pAffinity);
+NTSYSAPI KEPROCESSORINDEX  NTAPI KeFindFirstSetLeftAffinityEx(PCKAFFINITY_EX pAffinity);
+typedef  KEPROCESSORINDEX (NTAPI *PFNKEFINDFIRSTSETLEFTAFFINITYEX)(PCKAFFINITY_EX pAffinity);
+typedef  NTSTATUS (NTAPI *PFNKEGETPROCESSORNUMBERFROMINDEX)(KEPROCESSORINDEX idxProcessor, PPROCESSOR_NUMBER pProcNumber);
+typedef  KEPROCESSORINDEX (NTAPI *PFNKEGETPROCESSORINDEXFROMNUMBER)(const PROCESSOR_NUMBER *pProcNumber);
+typedef  NTSTATUS (NTAPI *PFNKEGETPROCESSORNUMBERFROMINDEX)(KEPROCESSORINDEX ProcIndex, PROCESSOR_NUMBER *pProcNumber);
+typedef  KEPROCESSORINDEX (NTAPI *PFNKEGETCURRENTPROCESSORNUMBEREX)(const PROCESSOR_NUMBER *pProcNumber);
+typedef  KAFFINITY (NTAPI *PFNKEQUERYACTIVEPROCESSORS)(VOID);
+typedef  ULONG   (NTAPI *PFNKEQUERYMAXIMUMPROCESSORCOUNT)(VOID);
+typedef  ULONG   (NTAPI *PFNKEQUERYMAXIMUMPROCESSORCOUNTEX)(USHORT GroupNumber);
+typedef  USHORT  (NTAPI *PFNKEQUERYMAXIMUMGROUPCOUNT)(VOID);
+typedef  ULONG   (NTAPI *PFNKEQUERYACTIVEPROCESSORCOUNT)(KAFFINITY *pfActiveProcessors);
+typedef  ULONG   (NTAPI *PFNKEQUERYACTIVEPROCESSORCOUNTEX)(USHORT GroupNumber);
+typedef  NTSTATUS (NTAPI *PFNKEQUERYLOGICALPROCESSORRELATIONSHIP)(PROCESSOR_NUMBER *pProcNumber,
+                                                                  LOGICAL_PROCESSOR_RELATIONSHIP RelationShipType,
+                                                                  SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *pInfo, PULONG pcbInfo);
+typedef  PVOID   (NTAPI *PFNKEREGISTERPROCESSORCHANGECALLBACK)(PPROCESSOR_CALLBACK_FUNCTION pfnCallback, void *pvUser, ULONG fFlags);
+typedef  VOID    (NTAPI *PFNKEDEREGISTERPROCESSORCHANGECALLBACK)(PVOID pvCallback);
+typedef  NTSTATUS (NTAPI *PFNKESETTARGETPROCESSORDPCEX)(KDPC *pDpc, PROCESSOR_NUMBER *pProcNumber);
 
 NTSYSAPI BOOLEAN  NTAPI ObFindHandleForObject(PEPROCESS pProcess, PVOID pvObject, POBJECT_TYPE pObjectType,
                                               PVOID pvOptionalConditions, PHANDLE phFound);
@@ -2132,6 +2569,9 @@ NTSYSAPI BOOLEAN  NTAPI PsIsProcessBeingDebugged(PEPROCESS);
 NTSYSAPI ULONG    NTAPI PsGetProcessSessionId(PEPROCESS);
 extern DECLIMPORT(POBJECT_TYPE *) LpcPortObjectType;            /**< In vista+ this is the ALPC port object type. */
 extern DECLIMPORT(POBJECT_TYPE *) LpcWaitablePortObjectType;    /**< In vista+ this is the ALPC port object type. */
+
+typedef VOID (NTAPI *PFNHALREQUESTIPI_PRE_W7)(KAFFINITY TargetSet);
+typedef VOID (NTAPI *PFNHALREQUESTIPI_W7PLUS)(ULONG uUsuallyZero, PCKAFFINITY_EX pTargetSet);
 
 RT_C_DECLS_END
 /** @ */
@@ -2260,6 +2700,12 @@ NTSYSAPI NTSTATUS NTAPI RtlDosApplyFileIsolationRedirection_Ustr(IN ULONG fFlags
                                                                  IN PULONG pfNewFlags OPTIONAL,
                                                                  IN PSIZE_T pcbFilename OPTIONAL,
                                                                  IN PSIZE_T pcbNeeded OPTIONAL);
+/** @since Windows 8.
+ * @note Status code is always zero in windows 10 build 14393. */
+NTSYSAPI NTSTATUS NTAPI ApiSetQueryApiSetPresence(IN PCUNICODE_STRING pAllegedApiSetDll, OUT PBOOLEAN pfPresent);
+/** @copydoc ApiSetQueryApiSetPresence */
+typedef NTSTATUS (NTAPI *PFNAPISETQUERYAPISETPRESENCE)(IN PCUNICODE_STRING pAllegedApiSetDll, OUT PBOOLEAN pfPresent);
+
 
 # ifdef IPRT_NT_USE_WINTERNL
 typedef NTSTATUS NTAPI RTL_HEAP_COMMIT_ROUTINE(PVOID, PVOID *, PSIZE_T);
@@ -2344,6 +2790,9 @@ NTSYSAPI ULONG NTAPI    RtlGetLastWin32Error(VOID);
 NTSYSAPI VOID NTAPI     RtlSetLastWin32Error(ULONG uError);
 NTSYSAPI VOID NTAPI     RtlSetLastWin32ErrorAndNtStatusFromNtStatus(NTSTATUS rcNt);
 NTSYSAPI VOID NTAPI     RtlRestoreLastWin32Error(ULONG uError);
+NTSYSAPI BOOLEAN NTAPI  RtlQueryPerformanceCounter(PLARGE_INTEGER);
+NTSYSAPI uint64_t NTAPI RtlGetSystemTimePrecise(VOID);
+typedef uint64_t (NTAPI * PFNRTLGETSYSTEMTIMEPRECISE)(VOID);
 
 RT_C_DECLS_END
 /** @} */

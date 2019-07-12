@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,9 +38,9 @@
  *
  *  @param  aFilter     The filter.
  *  @param  aIdx        The field index.
- *  @param  aStr        The output string.
+ *  @param  rstrOut     The output string.
  */
-static void usbFilterFieldToString(PCUSBFILTER aFilter, USBFILTERIDX aIdx, Utf8Str &out)
+static void i_usbFilterFieldToString(PCUSBFILTER aFilter, USBFILTERIDX aIdx, Utf8Str &rstrOut)
 {
     const USBFILTERMATCH matchingMethod = USBFilterGetMatchingMethod(aFilter, aIdx);
     Assert(matchingMethod != USBFILTERMATCH_INVALID);
@@ -50,31 +50,29 @@ static void usbFilterFieldToString(PCUSBFILTER aFilter, USBFILTERIDX aIdx, Utf8S
         int value = USBFilterGetNum(aFilter, aIdx);
         Assert(value >= 0 && value <= 0xffff);
 
-        out = Utf8StrFmt("%04RX16", (uint16_t)value);
+        rstrOut = Utf8StrFmt("%04RX16", (uint16_t)value);
     }
     else if (USBFilterIsMethodString(matchingMethod))
-    {
-        out = USBFilterGetString(aFilter, aIdx);
-    }
+        rstrOut = USBFilterGetString(aFilter, aIdx);
     else
-        out.setNull();
+        rstrOut.setNull();
 }
 
 /*static*/
-const char* USBDeviceFilter::describeUSBFilterIdx(USBFILTERIDX aIdx)
+const char* USBDeviceFilter::i_describeUSBFilterIdx(USBFILTERIDX aIdx)
 {
     switch (aIdx)
     {
-        case USBFILTERIDX_VENDOR_ID: return tr("Vendor ID");
-        case USBFILTERIDX_PRODUCT_ID: return tr("Product ID");
-        case USBFILTERIDX_DEVICE: return tr("Revision");
-        case USBFILTERIDX_MANUFACTURER_STR: return tr("Manufacturer");
-        case USBFILTERIDX_PRODUCT_STR: return tr("Product");
-        case USBFILTERIDX_SERIAL_NUMBER_STR: return tr("Serial number");
-        case USBFILTERIDX_PORT: return tr("Port number");
-        default: return "";
+        case USBFILTERIDX_VENDOR_ID:            return tr("Vendor ID");
+        case USBFILTERIDX_PRODUCT_ID:           return tr("Product ID");
+        case USBFILTERIDX_DEVICE:               return tr("Revision");
+        case USBFILTERIDX_MANUFACTURER_STR:     return tr("Manufacturer");
+        case USBFILTERIDX_PRODUCT_STR:          return tr("Product");
+        case USBFILTERIDX_SERIAL_NUMBER_STR:    return tr("Serial number");
+        case USBFILTERIDX_PORT:                 return tr("Port number");
+        default:                                return "";
     }
-    return "";
+    /* not reached. */
 }
 
 /**
@@ -84,20 +82,18 @@ const char* USBDeviceFilter::describeUSBFilterIdx(USBFILTERIDX aIdx)
  *
  *  @param  aFilter     The filter.
  *  @param  aIdx        The field index.
- *  @param  aStr        The input string.
- *  @param  aName       The field name for use in the error string.
+ *  @param  aValue      The input string.
  *  @param  aErrStr     Where to return the error string on failure.
  *
  *  @return COM status code.
  *  @remark The idea was to have this as a static function, but tr() doesn't wanna work without a class :-/
  */
-/*static*/ HRESULT USBDeviceFilter::usbFilterFieldFromString(PUSBFILTER aFilter,
-                                                             USBFILTERIDX aIdx,
-                                                             const Utf8Str &aValue,
-                                                             Utf8Str &aErrStr)
+/*static*/ HRESULT USBDeviceFilter::i_usbFilterFieldFromString(PUSBFILTER aFilter,
+                                                               USBFILTERIDX aIdx,
+                                                               const Utf8Str &aValue,
+                                                               Utf8Str &aErrStr)
 {
     int vrc;
-//     Utf8Str str (aStr);
     if (aValue.isEmpty())
         vrc = USBFilterSetIgnore(aFilter, aIdx);
     else
@@ -110,7 +106,7 @@ const char* USBDeviceFilter::describeUSBFilterIdx(USBFILTERIDX aIdx)
             uint64_t u64;
             vrc = RTStrToUInt64Ex(pcszValue, &pszNext, 16, &u64);
             if (RT_SUCCESS(vrc))
-                pszNext = RTStrStripL (pszNext);
+                pszNext = RTStrStripL(pszNext);
             if (    vrc == VINF_SUCCESS
                 &&  !*pszNext)
             {
@@ -122,7 +118,8 @@ const char* USBDeviceFilter::describeUSBFilterIdx(USBFILTERIDX aIdx)
                         u64 = 0xffff;
                     else
                     {
-                        aErrStr = Utf8StrFmt(tr("The %s value '%s' is too big (max 0xFFFF)"), describeUSBFilterIdx(aIdx), pcszValue);
+                        aErrStr = Utf8StrFmt(tr("The %s value '%s' is too big (max 0xFFFF)"),
+                                             i_describeUSBFilterIdx(aIdx), pcszValue);
                         return E_INVALIDARG;
                     }
                 }
@@ -140,9 +137,9 @@ const char* USBDeviceFilter::describeUSBFilterIdx(USBFILTERIDX aIdx)
                 ||  strchr(pcszValue, '?')
                 /* || strchr (psz, '[') - later */
                 )
-                vrc = USBFilterSetStringPattern(aFilter, aIdx, pcszValue, true /* fMustBePresent */);
+                vrc = USBFilterSetStringPattern(aFilter, aIdx, pcszValue, true /*fMustBePresent*/);
             else
-                vrc = USBFilterSetStringExact(aFilter, aIdx, pcszValue, true /* fMustBePresent */);
+                vrc = USBFilterSetStringExact(aFilter, aIdx, pcszValue, true /*fMustBePresent*/, false /*fPurge*/);
         }
     }
 
@@ -150,16 +147,18 @@ const char* USBDeviceFilter::describeUSBFilterIdx(USBFILTERIDX aIdx)
     {
         if (vrc == VERR_INVALID_PARAMETER)
         {
-            aErrStr = Utf8StrFmt(tr("The %s filter expression '%s' is not valid"), describeUSBFilterIdx(aIdx), aValue.c_str());
+            aErrStr = Utf8StrFmt(tr("The %s filter expression '%s' is not valid"), i_describeUSBFilterIdx(aIdx), aValue.c_str());
             return E_INVALIDARG;
         }
         if (vrc == VERR_BUFFER_OVERFLOW)
         {
-            aErrStr = Utf8StrFmt(tr("Insufficient expression space for the '%s' filter expression '%s'"), describeUSBFilterIdx(aIdx), aValue.c_str());
+            aErrStr = Utf8StrFmt(tr("Insufficient expression space for the '%s' filter expression '%s'"),
+                                 i_describeUSBFilterIdx(aIdx), aValue.c_str());
             return E_FAIL;
         }
         AssertRC(vrc);
-        aErrStr = Utf8StrFmt(tr("Encountered unexpected status %Rrc when setting '%s' to '%s'"), vrc, describeUSBFilterIdx(aIdx), aValue.c_str());
+        aErrStr = Utf8StrFmt(tr("Encountered unexpected status %Rrc when setting '%s' to '%s'"),
+                             vrc, i_describeUSBFilterIdx(aIdx), aValue.c_str());
         return E_FAIL;
     }
 
@@ -202,6 +201,7 @@ void USBDeviceFilter::FinalRelease()
  *  Initializes the USB device filter object.
  *
  *  @param aParent  Handle of the parent object.
+ *  @param data     Reference filter settings.
  */
 HRESULT USBDeviceFilter::init(USBDeviceFilters *aParent,
                               const settings::USBDeviceFilter &data)
@@ -219,14 +219,14 @@ HRESULT USBDeviceFilter::init(USBDeviceFilters *aParent,
 
     m_fModified = false;
 
-    mData.allocate();
-    mData->mName = data.strName;
-    mData->mActive = data.fActive;
-    mData->mMaskedIfs = 0;
+    bd.allocate();
+    bd->mData.strName = data.strName;
+    bd->mData.fActive = data.fActive;
+    bd->mData.ulMaskedInterfaces = 0;
 
     /* initialize all filters to any match using null string */
-    USBFilterInit(&mData->mUSBFilter, USBFILTERTYPE_CAPTURE);
-    mData->mRemote = NULL;
+    USBFilterInit(&bd->mUSBFilter, USBFILTERTYPE_CAPTURE);
+    bd->mRemote = NULL;
 
     mInList = false;
 
@@ -236,25 +236,25 @@ HRESULT USBDeviceFilter::init(USBDeviceFilters *aParent,
     HRESULT rc = S_OK;
     do
     {
-        rc = usbFilterFieldSetter(USBFILTERIDX_VENDOR_ID, data.strVendorId);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_VENDOR_ID, data.strVendorId);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, data.strProductId);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, data.strProductId);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_DEVICE, data.strRevision);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_DEVICE, data.strRevision);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_MANUFACTURER_STR, data.strManufacturer);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_MANUFACTURER_STR, data.strManufacturer);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_PRODUCT_STR, data.strProduct);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_PRODUCT_STR, data.strProduct);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_SERIAL_NUMBER_STR, data.strSerialNumber);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_SERIAL_NUMBER_STR, data.strSerialNumber);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_PORT, data.strPort);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_PORT, data.strPort);
         if (FAILED(rc)) break;
 
         rc = COMSETTER(Remote)(Bstr(data.strRemote).raw());
@@ -276,6 +276,7 @@ HRESULT USBDeviceFilter::init(USBDeviceFilters *aParent,
  *  Initializes the USB device filter object (short version).
  *
  *  @param aParent  Handle of the parent object.
+ *  @param aName    Name of the filter.
  */
 HRESULT USBDeviceFilter::init(USBDeviceFilters *aParent, IN_BSTR aName)
 {
@@ -292,15 +293,15 @@ HRESULT USBDeviceFilter::init(USBDeviceFilters *aParent, IN_BSTR aName)
 
     m_fModified = false;
 
-    mData.allocate();
+    bd.allocate();
 
-    mData->mName = aName;
-    mData->mActive = FALSE;
-    mData->mMaskedIfs = 0;
+    bd->mData.strName = Utf8Str(aName);
+    bd->mData.fActive = FALSE;
+    bd->mData.ulMaskedInterfaces = 0;
 
     /* initialize all filters to any match using null string */
-    USBFilterInit (&mData->mUSBFilter, USBFILTERTYPE_CAPTURE);
-    mData->mRemote = NULL;
+    USBFilterInit(&bd->mUSBFilter, USBFILTERTYPE_CAPTURE);
+    bd->mRemote = NULL;
 
     mInList = false;
 
@@ -315,6 +316,8 @@ HRESULT USBDeviceFilter::init(USBDeviceFilters *aParent, IN_BSTR aName)
  *  (a kind of copy constructor). This object shares data with
  *  the object passed as an argument.
  *
+ *  @param  aParent  Handle of the parent object.
+ *  @param  aThat
  *  @param  aReshare
  *      When false, the original object will remain a data owner.
  *      Otherwise, data ownership will be transferred from the original
@@ -326,8 +329,8 @@ HRESULT USBDeviceFilter::init(USBDeviceFilters *aParent, IN_BSTR aName)
  *  @note Locks @a aThat object for writing if @a aReshare is @c true, or for
  *  reading if @a aReshare is false.
  */
-HRESULT USBDeviceFilter::init (USBDeviceFilters *aParent, USBDeviceFilter *aThat,
-                               bool aReshare /* = false */)
+HRESULT USBDeviceFilter::init(USBDeviceFilters *aParent, USBDeviceFilter *aThat,
+                              bool aReshare /* = false */)
 {
     LogFlowThisFunc(("aParent=%p, aThat=%p, aReshare=%RTbool\n",
                       aParent, aThat, aReshare));
@@ -343,7 +346,7 @@ HRESULT USBDeviceFilter::init (USBDeviceFilters *aParent, USBDeviceFilter *aThat
     m_fModified = false;
 
     /* sanity */
-    AutoCaller thatCaller (aThat);
+    AutoCaller thatCaller(aThat);
     AssertComRCReturnRC(thatCaller.rc());
 
     if (aReshare)
@@ -351,14 +354,14 @@ HRESULT USBDeviceFilter::init (USBDeviceFilters *aParent, USBDeviceFilter *aThat
         AutoWriteLock thatLock(aThat COMMA_LOCKVAL_SRC_POS);
 
         unconst(aThat->mPeer) = this;
-        mData.attach (aThat->mData);
+        bd.attach(aThat->bd);
     }
     else
     {
         unconst(mPeer) = aThat;
 
         AutoReadLock thatLock(aThat COMMA_LOCKVAL_SRC_POS);
-        mData.share (aThat->mData);
+        bd.share(aThat->bd);
     }
 
     /* the arbitrary ID field is not reset because
@@ -379,7 +382,7 @@ HRESULT USBDeviceFilter::init (USBDeviceFilters *aParent, USBDeviceFilter *aThat
  *
  *  @note Locks @a aThat object for reading.
  */
-HRESULT USBDeviceFilter::initCopy (USBDeviceFilters *aParent, USBDeviceFilter *aThat)
+HRESULT USBDeviceFilter::initCopy(USBDeviceFilters *aParent, USBDeviceFilter *aThat)
 {
     LogFlowThisFunc(("aParent=%p, aThat=%p\n", aParent, aThat));
 
@@ -395,16 +398,16 @@ HRESULT USBDeviceFilter::initCopy (USBDeviceFilters *aParent, USBDeviceFilter *a
     m_fModified = false;
 
     /* sanity */
-    AutoCaller thatCaller (aThat);
+    AutoCaller thatCaller(aThat);
     AssertComRCReturnRC(thatCaller.rc());
 
     AutoReadLock thatLock(aThat COMMA_LOCKVAL_SRC_POS);
-    mData.attachCopy (aThat->mData);
+    bd.attachCopy(aThat->bd);
 
     /* reset the arbitrary ID field
      * (this field is something unique that two distinct objects, even if they
      * are deep copies of each other, should not share) */
-    mData->mId = NULL;
+    bd->mId = NULL;
 
     mInList = aThat->mInList;
 
@@ -429,7 +432,7 @@ void USBDeviceFilter::uninit()
 
     mInList = false;
 
-    mData.free();
+    bd.free();
 
     unconst(mPeer) = NULL;
     unconst(mParent) = NULL;
@@ -439,264 +442,230 @@ void USBDeviceFilter::uninit()
 // IUSBDeviceFilter properties
 ////////////////////////////////////////////////////////////////////////////////
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(Name) (BSTR *aName)
+HRESULT USBDeviceFilter::getName(com::Utf8Str &aName)
 {
-    CheckComArgOutPointerValid(aName);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    mData->mName.cloneTo(aName);
+    aName = bd->mData.strName;
 
     return S_OK;
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(Name) (IN_BSTR aName)
+HRESULT USBDeviceFilter::setName(const com::Utf8Str &aName)
 {
-    CheckComArgStrNotEmptyOrNull(aName);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* the machine needs to be mutable */
-    AutoMutableStateDependency adep(mParent->getMachine());
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent->i_getMachine());
     if (FAILED(adep.rc())) return adep.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData->mName != aName)
+    if (bd->mData.strName != aName)
     {
         m_fModified = true;
-        ComObjPtr<Machine> pMachine = mParent->getMachine();
+        ComObjPtr<Machine> pMachine = mParent->i_getMachine();
 
-        mData.backup();
-        mData->mName = aName;
+        bd.backup();
+        bd->mData.strName = aName;
 
         // leave the lock before informing callbacks
         alock.release();
 
         AutoWriteLock mlock(pMachine COMMA_LOCKVAL_SRC_POS);
-        pMachine->setModified(Machine::IsModified_USB);
+        pMachine->i_setModified(Machine::IsModified_USB);
         mlock.release();
 
-        return mParent->onDeviceFilterChange(this);
+        return mParent->i_onDeviceFilterChange(this);
     }
 
     return S_OK;
 }
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(Active) (BOOL *aActive)
+HRESULT USBDeviceFilter::getActive(BOOL *aActive)
 {
-    CheckComArgOutPointerValid(aActive);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    *aActive = mData->mActive;
+    *aActive = bd->mData.fActive;
 
     return S_OK;
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(Active) (BOOL aActive)
+HRESULT USBDeviceFilter::setActive(const BOOL aActive)
 {
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* the machine needs to be mutable */
-    AutoMutableStateDependency adep(mParent->getMachine());
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent->i_getMachine());
     if (FAILED(adep.rc())) return adep.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData->mActive != aActive)
+    if (bd->mData.fActive != RT_BOOL(aActive))
     {
         m_fModified = true;
-        ComObjPtr<Machine> pMachine = mParent->getMachine();
+        ComObjPtr<Machine> pMachine = mParent->i_getMachine();
 
-        mData.backup();
-        mData->mActive = aActive;
+        bd.backup();
+        bd->mData.fActive = RT_BOOL(aActive);
 
         // leave the lock before informing callbacks
         alock.release();
 
         AutoWriteLock mlock(pMachine COMMA_LOCKVAL_SRC_POS);
-        pMachine->setModified(Machine::IsModified_USB);
+        pMachine->i_setModified(Machine::IsModified_USB);
         mlock.release();
 
-        return mParent->onDeviceFilterChange(this, TRUE /* aActiveChanged */);
+        return mParent->i_onDeviceFilterChange(this, TRUE /* aActiveChanged */);
     }
 
     return S_OK;
 }
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(VendorId) (BSTR *aVendorId)
+HRESULT USBDeviceFilter::getVendorId(com::Utf8Str &aVendorId)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_VENDOR_ID, aVendorId);
+    return i_usbFilterFieldGetter(USBFILTERIDX_VENDOR_ID, aVendorId);
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(VendorId) (IN_BSTR aVendorId)
+HRESULT USBDeviceFilter::setVendorId(const com::Utf8Str &aVendorId)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_VENDOR_ID, aVendorId);
+    return i_usbFilterFieldSetter(USBFILTERIDX_VENDOR_ID, aVendorId);
 }
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(ProductId) (BSTR *aProductId)
+HRESULT USBDeviceFilter::getProductId(com::Utf8Str &aProductId)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_PRODUCT_ID, aProductId);
+    return i_usbFilterFieldGetter(USBFILTERIDX_PRODUCT_ID, aProductId);
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(ProductId) (IN_BSTR aProductId)
+HRESULT USBDeviceFilter::setProductId(const com::Utf8Str &aProductId)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, aProductId);
- }
-
-STDMETHODIMP USBDeviceFilter::COMGETTER(Revision) (BSTR *aRevision)
-{
-    return usbFilterFieldGetter(USBFILTERIDX_DEVICE, aRevision);
+    return i_usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, aProductId);
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(Revision) (IN_BSTR aRevision)
+HRESULT USBDeviceFilter::getRevision(com::Utf8Str &aRevision)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_DEVICE, aRevision);
+    return i_usbFilterFieldGetter(USBFILTERIDX_DEVICE, aRevision);
 }
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(Manufacturer) (BSTR *aManufacturer)
+HRESULT USBDeviceFilter::setRevision(const com::Utf8Str &aRevision)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_MANUFACTURER_STR, aManufacturer);
+    return i_usbFilterFieldSetter(USBFILTERIDX_DEVICE, aRevision);
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(Manufacturer) (IN_BSTR aManufacturer)
+HRESULT USBDeviceFilter::getManufacturer(com::Utf8Str &aManufacturer)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_MANUFACTURER_STR, aManufacturer);
+    return i_usbFilterFieldGetter(USBFILTERIDX_MANUFACTURER_STR, aManufacturer);
 }
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(Product) (BSTR *aProduct)
+HRESULT USBDeviceFilter::setManufacturer(const com::Utf8Str &aManufacturer)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_PRODUCT_STR, aProduct);
+    return i_usbFilterFieldSetter(USBFILTERIDX_MANUFACTURER_STR, aManufacturer);
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(Product) (IN_BSTR aProduct)
+HRESULT USBDeviceFilter::getProduct(com::Utf8Str &aProduct)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_PRODUCT_STR, aProduct);
+    return i_usbFilterFieldGetter(USBFILTERIDX_PRODUCT_STR, aProduct);
 }
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(SerialNumber) (BSTR *aSerialNumber)
+HRESULT USBDeviceFilter::setProduct(const com::Utf8Str &aProduct)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_SERIAL_NUMBER_STR, aSerialNumber);
+    return i_usbFilterFieldSetter(USBFILTERIDX_PRODUCT_STR, aProduct);
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(SerialNumber) (IN_BSTR aSerialNumber)
+HRESULT USBDeviceFilter::getSerialNumber(com::Utf8Str &aSerialNumber)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_SERIAL_NUMBER_STR, aSerialNumber);
+    return i_usbFilterFieldGetter(USBFILTERIDX_SERIAL_NUMBER_STR, aSerialNumber);
 }
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(Port) (BSTR *aPort)
+HRESULT USBDeviceFilter::setSerialNumber(const com::Utf8Str &aSerialNumber)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_PORT, aPort);
+    return i_usbFilterFieldSetter(USBFILTERIDX_SERIAL_NUMBER_STR, aSerialNumber);
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(Port) (IN_BSTR aPort)
+HRESULT USBDeviceFilter::getPort(com::Utf8Str &aPort)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_PORT, aPort);
+    return i_usbFilterFieldGetter(USBFILTERIDX_PORT, aPort);
 }
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(Remote) (BSTR *aRemote)
+HRESULT USBDeviceFilter::setPort(const com::Utf8Str &aPort)
 {
-    CheckComArgOutPointerValid(aRemote);
+    return i_usbFilterFieldSetter(USBFILTERIDX_PORT, aPort);
+}
 
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
+HRESULT USBDeviceFilter::getRemote(com::Utf8Str &aRemote)
+{
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    mData->mRemote.string().cloneTo(aRemote);
+    aRemote = bd->mRemote.string();
 
     return S_OK;
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(Remote) (IN_BSTR aRemote)
+HRESULT USBDeviceFilter::setRemote(const com::Utf8Str &aRemote)
 {
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* the machine needs to be mutable */
-    AutoMutableStateDependency adep(mParent->getMachine());
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent->i_getMachine());
     if (FAILED(adep.rc())) return adep.rc();
-
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
+    Bstr bRemote = Bstr(aRemote).raw();
 
-    if (mData->mRemote.string() != aRemote)
+    if (bd->mRemote.string() != bRemote)
     {
-        Data::BOOLFilter flt = aRemote;
+        BackupableUSBDeviceFilterData::BOOLFilter flt = bRemote;
         ComAssertRet(!flt.isNull(), E_FAIL);
         if (!flt.isValid())
             return setError(E_INVALIDARG,
-                            tr("Remote state filter string '%ls' is not valid (error at position %d)"),
-                            aRemote, flt.errorPosition() + 1);
+                            tr("Remote state filter string '%s' is not valid (error at position %d)"),
+                            aRemote.c_str(), flt.errorPosition() + 1);
 
         m_fModified = true;
-        ComObjPtr<Machine> pMachine = mParent->getMachine();
+        ComObjPtr<Machine> pMachine = mParent->i_getMachine();
 
-        mData.backup();
-        mData->mRemote = flt;
+        bd.backup();
+        bd->mRemote = flt;
 
         // leave the lock before informing callbacks
         alock.release();
 
         AutoWriteLock mlock(pMachine COMMA_LOCKVAL_SRC_POS);
-        pMachine->setModified(Machine::IsModified_USB);
+        pMachine->i_setModified(Machine::IsModified_USB);
         mlock.release();
 
-        return mParent->onDeviceFilterChange(this);
+        return mParent->i_onDeviceFilterChange(this);
     }
-
     return S_OK;
 }
 
-STDMETHODIMP USBDeviceFilter::COMGETTER(MaskedInterfaces) (ULONG *aMaskedIfs)
+
+HRESULT USBDeviceFilter::getMaskedInterfaces(ULONG *aMaskedIfs)
 {
-    CheckComArgOutPointerValid(aMaskedIfs);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    *aMaskedIfs = mData->mMaskedIfs;
+    *aMaskedIfs = bd->mData.ulMaskedInterfaces;
 
     return S_OK;
 }
 
-STDMETHODIMP USBDeviceFilter::COMSETTER(MaskedInterfaces) (ULONG aMaskedIfs)
+HRESULT USBDeviceFilter::setMaskedInterfaces(ULONG aMaskedIfs)
 {
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* the machine needs to be mutable */
-    AutoMutableStateDependency adep(mParent->getMachine());
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent->i_getMachine());
     if (FAILED(adep.rc())) return adep.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData->mMaskedIfs != aMaskedIfs)
+    if (bd->mData.ulMaskedInterfaces != aMaskedIfs)
     {
         m_fModified = true;
-        ComObjPtr<Machine> pMachine = mParent->getMachine();
+        ComObjPtr<Machine> pMachine = mParent->i_getMachine();
 
-        mData.backup();
-        mData->mMaskedIfs = aMaskedIfs;
-
+        bd.backup();
+        bd->mData.ulMaskedInterfaces = aMaskedIfs;
         // leave the lock before informing callbacks
         alock.release();
 
         AutoWriteLock mlock(pMachine COMMA_LOCKVAL_SRC_POS);
-        pMachine->setModified(Machine::IsModified_USB);
+        pMachine->i_setModified(Machine::IsModified_USB);
         mlock.release();
 
-        return mParent->onDeviceFilterChange(this);
+        return mParent->i_onDeviceFilterChange(this);
     }
 
     return S_OK;
@@ -705,10 +674,10 @@ STDMETHODIMP USBDeviceFilter::COMSETTER(MaskedInterfaces) (ULONG aMaskedIfs)
 // public methods only for internal purposes
 ////////////////////////////////////////////////////////////////////////////////
 
-bool USBDeviceFilter::isModified()
+bool USBDeviceFilter::i_isModified()
 {
     AutoCaller autoCaller(this);
-    AssertComRCReturn (autoCaller.rc(), false);
+    AssertComRCReturn(autoCaller.rc(), false);
 
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
     return m_fModified;
@@ -717,7 +686,7 @@ bool USBDeviceFilter::isModified()
 /**
  *  @note Locks this object for writing.
  */
-void USBDeviceFilter::rollback()
+void USBDeviceFilter::i_rollback()
 {
     /* sanity */
     AutoCaller autoCaller(this);
@@ -725,34 +694,34 @@ void USBDeviceFilter::rollback()
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    mData.rollback();
+    bd.rollback();
 }
 
 /**
  *  @note Locks this object for writing, together with the peer object (also
  *  for writing) if there is one.
  */
-void USBDeviceFilter::commit()
+void USBDeviceFilter::i_commit()
 {
     /* sanity */
     AutoCaller autoCaller(this);
-    AssertComRCReturnVoid (autoCaller.rc());
+    AssertComRCReturnVoid(autoCaller.rc());
 
     /* sanity too */
-    AutoCaller peerCaller (mPeer);
-    AssertComRCReturnVoid (peerCaller.rc());
+    AutoCaller peerCaller(mPeer);
+    AssertComRCReturnVoid(peerCaller.rc());
 
     /* lock both for writing since we modify both (mPeer is "master" so locked
      * first) */
     AutoMultiWriteLock2 alock(mPeer, this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData.isBackedUp())
+    if (bd.isBackedUp())
     {
-        mData.commit();
+        bd.commit();
         if (mPeer)
         {
             /* attach new data to the peer and reshare it */
-            mPeer->mData.attach (mData);
+            mPeer->bd.attach(bd);
         }
     }
 }
@@ -768,23 +737,23 @@ void USBDeviceFilter::unshare()
 {
     /* sanity */
     AutoCaller autoCaller(this);
-    AssertComRCReturnVoid (autoCaller.rc());
+    AssertComRCReturnVoid(autoCaller.rc());
 
     /* sanity too */
-    AutoCaller peerCaller (mPeer);
-    AssertComRCReturnVoid (peerCaller.rc());
+    AutoCaller peerCaller(mPeer);
+    AssertComRCReturnVoid(peerCaller.rc());
 
     /* peer is not modified, lock it for reading (mPeer is "master" so locked
      * first) */
     AutoReadLock rl(mPeer COMMA_LOCKVAL_SRC_POS);
     AutoWriteLock wl(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData.isShared())
+    if (bd.isShared())
     {
-        if (!mData.isBackedUp())
-            mData.backup();
+        if (!bd.isBackedUp())
+            bd.backup();
 
-        mData.commit();
+        bd.commit();
     }
 
     unconst(mPeer) = NULL;
@@ -798,20 +767,11 @@ void USBDeviceFilter::unshare()
  *
  *  @return COM status.
  */
-HRESULT USBDeviceFilter::usbFilterFieldGetter(USBFILTERIDX aIdx, BSTR *aStr)
+HRESULT USBDeviceFilter::i_usbFilterFieldGetter(USBFILTERIDX aIdx, com::Utf8Str &aStr)
 {
-    CheckComArgOutPointerValid(aStr);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    Utf8Str str;
-    usbFilterFieldToString(&mData->mUSBFilter, aIdx, str);
-
-    str.cloneTo(aStr);
-
+    i_usbFilterFieldToString(&bd->mUSBFilter, aIdx, aStr);
     return S_OK;
 }
 
@@ -819,36 +779,34 @@ HRESULT USBDeviceFilter::usbFilterFieldGetter(USBFILTERIDX aIdx, BSTR *aStr)
  *  Generic USB filter field setter, expects UTF-8 input.
  *
  *  @param  aIdx    The field index.
- *  @param  aStr    The new value.
+ *  @param  strNew  The new value.
  *
  *  @return COM status.
  */
-HRESULT USBDeviceFilter::usbFilterFieldSetter(USBFILTERIDX aIdx,
-                                              const Utf8Str &strNew)
+HRESULT USBDeviceFilter::i_usbFilterFieldSetter(USBFILTERIDX aIdx,
+                                                const com::Utf8Str &strNew)
 {
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* the machine needs to be mutable */
-    AutoMutableStateDependency adep(mParent->getMachine());
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent->i_getMachine());
     if (FAILED(adep.rc())) return adep.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    Utf8Str strOld;
-    usbFilterFieldToString(&mData->mUSBFilter, aIdx, strOld);
+
+    com::Utf8Str strOld;
+    i_usbFilterFieldToString(&bd->mUSBFilter, aIdx, strOld);
     if (strOld != strNew)
     {
         m_fModified = true;
-        ComObjPtr<Machine> pMachine = mParent->getMachine();
+        ComObjPtr<Machine> pMachine = mParent->i_getMachine();
 
-        mData.backup();
+        bd.backup();
 
-        Utf8Str errStr;
-        HRESULT rc = usbFilterFieldFromString(&mData->mUSBFilter, aIdx, strNew, errStr);
+        com::Utf8Str errStr;
+        HRESULT rc = i_usbFilterFieldFromString(&bd->mUSBFilter, aIdx, strNew, errStr);
         if (FAILED(rc))
         {
-            mData.rollback();
+            bd.rollback();
             return setError(rc, "%s", errStr.c_str());
         }
 
@@ -856,27 +814,13 @@ HRESULT USBDeviceFilter::usbFilterFieldSetter(USBFILTERIDX aIdx,
         alock.release();
 
         AutoWriteLock mlock(pMachine COMMA_LOCKVAL_SRC_POS);
-        pMachine->setModified(Machine::IsModified_USB);
+        pMachine->i_setModified(Machine::IsModified_USB);
         mlock.release();
 
-        return mParent->onDeviceFilterChange(this);
+        return mParent->i_onDeviceFilterChange(this);
     }
 
     return S_OK;
-}
-
-/**
- *  Generic USB filter field setter, expects UTF-16 input.
- *
- *  @param  aIdx    The field index.
- *  @param  aStr    The new value.
- *
- *  @return COM status.
- */
-HRESULT USBDeviceFilter::usbFilterFieldSetter(USBFILTERIDX aIdx,
-                                              IN_BSTR aStr)
-{
-    return usbFilterFieldSetter(aIdx, Utf8Str(aStr));
 }
 
 
@@ -914,6 +858,7 @@ void HostUSBDeviceFilter::FinalRelease()
  *  Initializes the USB device filter object.
  *
  *  @param aParent  Handle of the parent object.
+ *  @param data     Settings data.
  */
 HRESULT HostUSBDeviceFilter::init(Host *aParent,
                                   const settings::USBDeviceFilter &data)
@@ -930,14 +875,14 @@ HRESULT HostUSBDeviceFilter::init(Host *aParent,
 
     /* register with parent early, since uninit() will unconditionally
      * unregister on failure */
-    mParent->addChild(this);
+    mParent->i_addChild(this);
 
-    mData.allocate();
-    mData->mName = data.strName;
-    mData->mActive = data.fActive;
-    USBFilterInit (&mData->mUSBFilter, USBFILTERTYPE_IGNORE);
-    mData->mRemote = NULL;
-    mData->mMaskedIfs = 0;
+    bd.allocate();
+    bd->mData.strName = data.strName;
+    bd->mData.fActive = data.fActive;
+    USBFilterInit (&bd->mUSBFilter, USBFILTERTYPE_IGNORE);
+    bd->mRemote = NULL;
+    bd->mData.ulMaskedInterfaces = 0;
 
     mInList = false;
 
@@ -947,28 +892,28 @@ HRESULT HostUSBDeviceFilter::init(Host *aParent,
     HRESULT rc = S_OK;
     do
     {
-        rc = COMSETTER(Action)(data.action);
+        rc = setAction(data.action);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_VENDOR_ID, data.strVendorId);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_VENDOR_ID, data.strVendorId);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, data.strProductId);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, data.strProductId);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_DEVICE, data.strRevision);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_DEVICE, data.strRevision);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_MANUFACTURER_STR, data.strManufacturer);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_MANUFACTURER_STR, data.strManufacturer);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, data.strProduct);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, data.strProduct);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_SERIAL_NUMBER_STR, data.strSerialNumber);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_SERIAL_NUMBER_STR, data.strSerialNumber);
         if (FAILED(rc)) break;
 
-        rc = usbFilterFieldSetter(USBFILTERIDX_PORT, data.strPort);
+        rc = i_usbFilterFieldSetter(USBFILTERIDX_PORT, data.strPort);
         if (FAILED(rc)) break;
     }
     while (0);
@@ -984,8 +929,9 @@ HRESULT HostUSBDeviceFilter::init(Host *aParent,
  *  Initializes the USB device filter object (short version).
  *
  *  @param aParent  Handle of the parent object.
+ *  @param aName    Filter name.
  */
-HRESULT HostUSBDeviceFilter::init (Host *aParent, IN_BSTR aName)
+HRESULT HostUSBDeviceFilter::init(Host *aParent, IN_BSTR aName)
 {
     LogFlowThisFunc(("aParent=%p\n", aParent));
 
@@ -999,16 +945,16 @@ HRESULT HostUSBDeviceFilter::init (Host *aParent, IN_BSTR aName)
 
     /* register with parent early, since uninit() will unconditionally
      * unregister on failure */
-    mParent->addChild(this);
+    mParent->i_addChild(this);
 
-    mData.allocate();
+    bd.allocate();
 
-    mData->mName = aName;
-    mData->mActive = FALSE;
+    bd->mData.strName = Utf8Str(aName);
+    bd->mData.fActive = FALSE;
     mInList = false;
-    USBFilterInit (&mData->mUSBFilter, USBFILTERTYPE_IGNORE);
-    mData->mRemote = NULL;
-    mData->mMaskedIfs = 0;
+    USBFilterInit(&bd->mUSBFilter, USBFILTERTYPE_IGNORE);
+    bd->mRemote = NULL;
+    bd->mData.ulMaskedInterfaces = 0;
 
     /* Confirm successful initialization */
     autoInitSpan.setSucceeded();
@@ -1031,9 +977,9 @@ void HostUSBDeviceFilter::uninit()
 
     mInList = false;
 
-    mData.free();
+    bd.free();
 
-    mParent->removeChild(this);
+    mParent->i_removeChild(this);
 
     unconst(mParent) = NULL;
 }
@@ -1051,200 +997,170 @@ RWLockHandle *HostUSBDeviceFilter::lockHandle() const
 
 // IUSBDeviceFilter properties
 ////////////////////////////////////////////////////////////////////////////////
-
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(Name) (BSTR *aName)
+HRESULT HostUSBDeviceFilter::getName(com::Utf8Str &aName)
 {
-    CheckComArgOutPointerValid(aName);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    mData->mName.cloneTo(aName);
+    aName = bd->mData.strName;
 
     return S_OK;
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Name) (IN_BSTR aName)
+
+HRESULT HostUSBDeviceFilter::setName(const com::Utf8Str &aName)
 {
-    CheckComArgStrNotEmptyOrNull(aName);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData->mName != aName)
+    if (bd->mData.strName != aName)
     {
-        mData->mName = aName;
+        bd->mData.strName = aName;
 
         /* leave the lock before informing callbacks */
         alock.release();
 
-        return mParent->onUSBDeviceFilterChange (this);
+        return mParent->i_onUSBDeviceFilterChange(this);
     }
 
     return S_OK;
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(Active) (BOOL *aActive)
+
+HRESULT HostUSBDeviceFilter::getActive(BOOL *aActive)
 {
-    CheckComArgOutPointerValid(aActive);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    *aActive = mData->mActive;
+    *aActive = bd->mData.fActive;
 
     return S_OK;
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Active) (BOOL aActive)
-{
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
+HRESULT HostUSBDeviceFilter::setActive(BOOL aActive)
+{
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData->mActive != aActive)
+    if (bd->mData.fActive != RT_BOOL(aActive))
     {
-        mData->mActive = aActive;
+        bd->mData.fActive = RT_BOOL(aActive);
 
         /* leave the lock before informing callbacks */
         alock.release();
 
-        return mParent->onUSBDeviceFilterChange (this, TRUE /* aActiveChanged  */);
+        return mParent->i_onUSBDeviceFilterChange(this, TRUE /* aActiveChanged  */);
     }
 
     return S_OK;
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(VendorId) (BSTR *aVendorId)
+HRESULT HostUSBDeviceFilter::getVendorId(com::Utf8Str &aVendorId)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_VENDOR_ID, aVendorId);
+    return i_usbFilterFieldGetter(USBFILTERIDX_VENDOR_ID, aVendorId);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(VendorId) (IN_BSTR aVendorId)
+HRESULT HostUSBDeviceFilter::setVendorId(const com::Utf8Str &aVendorId)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_VENDOR_ID, aVendorId);
+    return i_usbFilterFieldSetter(USBFILTERIDX_VENDOR_ID, aVendorId);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(ProductId) (BSTR *aProductId)
+HRESULT HostUSBDeviceFilter::getProductId(com::Utf8Str &aProductId)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_PRODUCT_ID, aProductId);
+    return i_usbFilterFieldGetter(USBFILTERIDX_PRODUCT_ID, aProductId);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(ProductId) (IN_BSTR aProductId)
+HRESULT HostUSBDeviceFilter::setProductId(const com::Utf8Str &aProductId)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, aProductId);
+    return i_usbFilterFieldSetter(USBFILTERIDX_PRODUCT_ID, aProductId);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(Revision) (BSTR *aRevision)
+HRESULT HostUSBDeviceFilter::getRevision(com::Utf8Str &aRevision)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_DEVICE, aRevision);
+    return i_usbFilterFieldGetter(USBFILTERIDX_DEVICE, aRevision);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Revision) (IN_BSTR aRevision)
+HRESULT HostUSBDeviceFilter::setRevision(const com::Utf8Str &aRevision)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_DEVICE, aRevision);
+    return i_usbFilterFieldSetter(USBFILTERIDX_DEVICE, aRevision);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(Manufacturer) (BSTR *aManufacturer)
+HRESULT HostUSBDeviceFilter::getManufacturer(com::Utf8Str &aManufacturer)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_MANUFACTURER_STR, aManufacturer);
+    return i_usbFilterFieldGetter(USBFILTERIDX_MANUFACTURER_STR, aManufacturer);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Manufacturer) (IN_BSTR aManufacturer)
+HRESULT HostUSBDeviceFilter::setManufacturer(const com::Utf8Str &aManufacturer)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_MANUFACTURER_STR, aManufacturer);
+    return i_usbFilterFieldSetter(USBFILTERIDX_MANUFACTURER_STR, aManufacturer);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(Product) (BSTR *aProduct)
+HRESULT HostUSBDeviceFilter::getProduct(com::Utf8Str &aProduct)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_PRODUCT_STR, aProduct);
+    return i_usbFilterFieldGetter(USBFILTERIDX_PRODUCT_STR, aProduct);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Product) (IN_BSTR aProduct)
+HRESULT HostUSBDeviceFilter::setProduct(const com::Utf8Str &aProduct)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_PRODUCT_STR, aProduct);
+    return i_usbFilterFieldSetter(USBFILTERIDX_PRODUCT_STR, aProduct);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(SerialNumber) (BSTR *aSerialNumber)
+HRESULT HostUSBDeviceFilter::getSerialNumber(com::Utf8Str &aSerialNumber)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_SERIAL_NUMBER_STR, aSerialNumber);
+    return i_usbFilterFieldGetter(USBFILTERIDX_SERIAL_NUMBER_STR, aSerialNumber);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(SerialNumber) (IN_BSTR aSerialNumber)
+HRESULT HostUSBDeviceFilter::setSerialNumber(const com::Utf8Str &aSerialNumber)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_SERIAL_NUMBER_STR, aSerialNumber);
+    return i_usbFilterFieldSetter(USBFILTERIDX_SERIAL_NUMBER_STR, aSerialNumber);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(Port) (BSTR *aPort)
+HRESULT HostUSBDeviceFilter::getPort(com::Utf8Str &aPort)
 {
-    return usbFilterFieldGetter(USBFILTERIDX_PORT, aPort);
+    return i_usbFilterFieldGetter(USBFILTERIDX_PORT, aPort);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Port) (IN_BSTR aPort)
+HRESULT HostUSBDeviceFilter::setPort(const com::Utf8Str &aPort)
 {
-    return usbFilterFieldSetter(USBFILTERIDX_PORT, aPort);
+    return i_usbFilterFieldSetter(USBFILTERIDX_PORT, aPort);
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(Remote) (BSTR *aRemote)
+HRESULT HostUSBDeviceFilter::getRemote(com::Utf8Str &aRemote)
 {
-    CheckComArgOutPointerValid(aRemote);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    mData->mRemote.string().cloneTo(aRemote);
+    aRemote = bd->mRemote.string();
 
     return S_OK;
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Remote) (IN_BSTR /* aRemote */)
+HRESULT HostUSBDeviceFilter::setRemote(const com::Utf8Str & /* aRemote */)
 {
     return setError(E_NOTIMPL,
                     tr("The remote state filter is not supported by IHostUSBDeviceFilter objects"));
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(MaskedInterfaces) (ULONG *aMaskedIfs)
+
+HRESULT HostUSBDeviceFilter::getMaskedInterfaces(ULONG *aMaskedIfs)
 {
-    CheckComArgOutPointerValid(aMaskedIfs);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    *aMaskedIfs = mData->mMaskedIfs;
+    *aMaskedIfs = bd->mData.ulMaskedInterfaces;
 
     return S_OK;
 }
-
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(MaskedInterfaces) (ULONG /* aMaskedIfs */)
+HRESULT HostUSBDeviceFilter::setMaskedInterfaces(ULONG /* aMaskedIfs */)
 {
     return setError(E_NOTIMPL,
                     tr("The masked interfaces property is not applicable to IHostUSBDeviceFilter objects"));
 }
 
-// IHostUSBDeviceFilter properties
+// wrapped IHostUSBDeviceFilter properties
 ////////////////////////////////////////////////////////////////////////////////
-
-STDMETHODIMP HostUSBDeviceFilter::COMGETTER(Action) (USBDeviceFilterAction_T *aAction)
+HRESULT HostUSBDeviceFilter::getAction(USBDeviceFilterAction_T *aAction)
 {
     CheckComArgOutPointerValid(aAction);
 
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    switch (USBFilterGetFilterType (&mData->mUSBFilter))
+    switch (USBFilterGetFilterType(&bd->mUSBFilter))
     {
         case USBFILTERTYPE_IGNORE:   *aAction = USBDeviceFilterAction_Ignore; break;
         case USBFILTERTYPE_CAPTURE:  *aAction = USBDeviceFilterAction_Hold; break;
@@ -1254,11 +1170,9 @@ STDMETHODIMP HostUSBDeviceFilter::COMGETTER(Action) (USBDeviceFilterAction_T *aA
     return S_OK;
 }
 
-STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Action) (USBDeviceFilterAction_T aAction)
-{
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
+HRESULT HostUSBDeviceFilter::setAction(USBDeviceFilterAction_T aAction)
+{
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
     USBFILTERTYPE filterType;
@@ -1274,9 +1188,9 @@ STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Action) (USBDeviceFilterAction_T aAc
                             tr("Invalid action %d"),
                             aAction);
     }
-    if (USBFilterGetFilterType (&mData->mUSBFilter) != filterType)
+    if (USBFilterGetFilterType(&bd->mUSBFilter) != filterType)
     {
-        int vrc = USBFilterSetFilterType (&mData->mUSBFilter, filterType);
+        int vrc = USBFilterSetFilterType(&bd->mUSBFilter, filterType);
         if (RT_FAILURE(vrc))
             return setError(E_INVALIDARG,
                             tr("Unexpected error %Rrc"),
@@ -1285,12 +1199,15 @@ STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Action) (USBDeviceFilterAction_T aAc
         /* leave the lock before informing callbacks */
         alock.release();
 
-        return mParent->onUSBDeviceFilterChange (this);
+        return mParent->i_onUSBDeviceFilterChange(this);
     }
 
     return S_OK;
 }
 
+
+// IHostUSBDeviceFilter properties
+////////////////////////////////////////////////////////////////////////////////
 /**
  *  Generic USB filter field getter.
  *
@@ -1299,40 +1216,28 @@ STDMETHODIMP HostUSBDeviceFilter::COMSETTER(Action) (USBDeviceFilterAction_T aAc
  *
  *  @return COM status.
  */
-HRESULT HostUSBDeviceFilter::usbFilterFieldGetter(USBFILTERIDX aIdx, BSTR *aStr)
+HRESULT HostUSBDeviceFilter::i_usbFilterFieldGetter(USBFILTERIDX aIdx, com::Utf8Str &aStr)
 {
-    CheckComArgOutPointerValid(aStr);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
-
-    Utf8Str str;
-    usbFilterFieldToString(&mData->mUSBFilter, aIdx, str);
-
-    str.cloneTo(aStr);
-
+    i_usbFilterFieldToString(&bd->mUSBFilter, aIdx, aStr);
     return S_OK;
 }
 
-void HostUSBDeviceFilter::saveSettings(settings::USBDeviceFilter &data)
+void HostUSBDeviceFilter::i_saveSettings(settings::USBDeviceFilter &data)
 {
     AutoCaller autoCaller(this);
     AssertComRCReturnVoid(autoCaller.rc());
 
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
-
-    data.strName = mData->mName;
-    data.fActive = !!mData->mActive;
-
-    usbFilterFieldToString(&mData->mUSBFilter, USBFILTERIDX_VENDOR_ID, data.strVendorId);
-    usbFilterFieldToString(&mData->mUSBFilter, USBFILTERIDX_PRODUCT_ID, data.strProductId);
-    usbFilterFieldToString(&mData->mUSBFilter, USBFILTERIDX_DEVICE, data.strRevision);
-    usbFilterFieldToString(&mData->mUSBFilter, USBFILTERIDX_MANUFACTURER_STR, data.strManufacturer);
-    usbFilterFieldToString(&mData->mUSBFilter, USBFILTERIDX_PRODUCT_STR, data.strProduct);
-    usbFilterFieldToString(&mData->mUSBFilter, USBFILTERIDX_SERIAL_NUMBER_STR, data.strSerialNumber);
-    usbFilterFieldToString(&mData->mUSBFilter, USBFILTERIDX_PORT, data.strPort);
+    data.strName = bd->mData.strName;
+    data.fActive = bd->mData.fActive;
+    i_usbFilterFieldToString(&bd->mUSBFilter, USBFILTERIDX_VENDOR_ID, data.strVendorId);
+    i_usbFilterFieldToString(&bd->mUSBFilter, USBFILTERIDX_PRODUCT_ID, data.strProductId);
+    i_usbFilterFieldToString(&bd->mUSBFilter, USBFILTERIDX_DEVICE, data.strRevision);
+    i_usbFilterFieldToString(&bd->mUSBFilter, USBFILTERIDX_MANUFACTURER_STR, data.strManufacturer);
+    i_usbFilterFieldToString(&bd->mUSBFilter, USBFILTERIDX_PRODUCT_STR, data.strProduct);
+    i_usbFilterFieldToString(&bd->mUSBFilter, USBFILTERIDX_SERIAL_NUMBER_STR, data.strSerialNumber);
+    i_usbFilterFieldToString(&bd->mUSBFilter, USBFILTERIDX_PORT, data.strPort);
 
     COMGETTER(Action)(&data.action);
 }
@@ -1343,36 +1248,29 @@ void HostUSBDeviceFilter::saveSettings(settings::USBDeviceFilter &data)
  *
  *  @param  aIdx    The field index.
  *  @param  aStr    The new value.
- *  @param  aName   The translated field name (for error messages).
  *
  *  @return COM status.
  */
-HRESULT HostUSBDeviceFilter::usbFilterFieldSetter(USBFILTERIDX aIdx, Bstr aStr)
+HRESULT HostUSBDeviceFilter::i_usbFilterFieldSetter(USBFILTERIDX aIdx, const com::Utf8Str &aStr)
 {
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
-
     Utf8Str strOld;
-    Utf8Str strNew(aStr);
-    usbFilterFieldToString(&mData->mUSBFilter, aIdx, strOld);
-    if (strOld != strNew)
+    i_usbFilterFieldToString(&bd->mUSBFilter, aIdx, strOld);
+    if (strOld != aStr)
     {
-        //mData.backup();
-
-        Utf8Str errStr;
-        HRESULT rc = USBDeviceFilter::usbFilterFieldFromString(&mData->mUSBFilter, aIdx, aStr, errStr);
+        //bd.backup();
+        com::Utf8Str errStr;
+        HRESULT rc = USBDeviceFilter::i_usbFilterFieldFromString(&bd->mUSBFilter, aIdx, aStr, errStr);
         if (FAILED(rc))
         {
-            //mData.rollback();
+            //bd.rollback();
             return setError(rc, "%s", errStr.c_str());
         }
 
         /* leave the lock before informing callbacks */
         alock.release();
 
-        return mParent->onUSBDeviceFilterChange(this);
+        return mParent->i_onUSBDeviceFilterChange(this);
     }
 
     return S_OK;

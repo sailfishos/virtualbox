@@ -1,12 +1,10 @@
 /* $Id: UIDesktopServices_x11.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Qt GUI - Utility Classes and Functions specific to X11.
+ * VBox Qt GUI - Qt GUI - Utility Classes and Functions specific to X11..
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,16 +15,23 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* VBox includes */
-#include "UIDesktopServices.h"
+# include "UIDesktopServices.h"
 
 /* Qt includes */
-#include <QCoreApplication>
-#include <QDesktopServices>
-#include <QDir>
-#include <QFile>
-#include <QTextStream>
-#include <QUrl>
+# include <QCoreApplication>
+# include <QDesktopServices>
+# include <QDir>
+# include <QFile>
+# include <QTextStream>
+# include <QUrl>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 bool UIDesktopServices::createMachineShortcut(const QString & /* strSrcFile */, const QString &strDstPath, const QString &strName, const QString &strUuid)
 {

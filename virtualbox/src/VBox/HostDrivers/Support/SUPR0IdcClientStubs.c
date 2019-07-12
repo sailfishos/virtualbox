@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "SUPR0IdcClientInternal.h"
 #include <VBox/err.h>
 #include <iprt/asm.h>
@@ -38,6 +39,7 @@
  * @returns Pointer to the symbol on success, NULL on failure.
  *
  * @param   pHandle     The IDC handle.
+ * @param   ppfn        Where to return the address of the symbol.
  * @param   pszName     The name of the symbol.
  */
 static void supR0IdcGetSymbol(PSUPDRVIDCHANDLE pHandle, PFNRT *ppfn, const char *pszName)
@@ -55,7 +57,7 @@ static void supR0IdcGetSymbol(PSUPDRVIDCHANDLE pHandle, PFNRT *ppfn, const char 
     Req.u.In.pszModule = NULL;
     rc = supR0IdcNativeCall(pHandle, SUPDRV_IDC_REQ_GET_SYMBOL, &Req.Hdr);
     if (RT_SUCCESS(rc))
-        ASMAtomicWritePtr((void * volatile *)ppfn, Req.u.Out.pfnSymbol);
+        ASMAtomicWritePtr((void * volatile *)ppfn, (void *)(uintptr_t)Req.u.Out.pfnSymbol);
 }
 
 
@@ -64,7 +66,8 @@ static void supR0IdcGetSymbol(PSUPDRVIDCHANDLE pHandle, PFNRT *ppfn, const char 
  *
  * @returns Pointer to the symbol on success, NULL on failure.
  *
- * @param   pHandle     The IDC handle.
+ * @param   pSession    The IDC session.
+ * @param   ppfn        Where to return the address of the symbol.
  * @param   pszName     The name of the symbol.
  */
 static void supR0IdcGetSymbolBySession(PSUPDRVSESSION pSession, PFNRT *ppfn, const char *pszName)

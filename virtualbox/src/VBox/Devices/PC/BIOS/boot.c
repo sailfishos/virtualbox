@@ -1,5 +1,10 @@
+/* $Id: boot.c $ */
+/** @file
+ * PC BIOS - ???
+ */
+
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,6 +43,15 @@
  *
  */
 
+/*
+ * Oracle LGPL Disclaimer: For the avoidance of doubt, except that if any license choice
+ * other than GPL or LGPL is available it will apply instead, Oracle elects to use only
+ * the Lesser General Public License version 2.1 (LGPLv2) at this time for any software where
+ * a choice of LGPL license versions is made available with the language indicating
+ * that LGPLv2 or any later version may be used, or where a choice of which version
+ * of the LGPL is applied is otherwise unspecified.
+ */
+
 
 #include <stdint.h>
 #include <string.h>
@@ -45,6 +59,10 @@
 #include "biosint.h"
 #include "ebda.h"
 
+/* Sanity check the LAN boot segment definition. */
+#if VBOX_LANBOOT_SEG < 0xA000
+#error VBOX_LANBOOT_SEG incorrect!
+#endif
 
 /* PnP header used with LAN boot ROMs. */
 typedef struct {
@@ -87,7 +105,7 @@ int read_boot_sec(uint8_t bootdrv, uint16_t segment);
 
 static const char drivetypes[][10]={"Floppy","Hard Disk","CD-ROM","LAN"};
 
-//@todo: pass inputs as bit flags rather than bytes?
+/// @todo pass inputs as bit flags rather than bytes?
 void print_boot_device(uint8_t cdboot, uint8_t lanboot, uint8_t drive)
 {
     int     i;
@@ -109,7 +127,7 @@ void print_boot_device(uint8_t cdboot, uint8_t lanboot, uint8_t drive)
 // print_boot_failure
 //   displays the reason why boot failed
 //--------------------------------------------------------------------------
-//@todo: pass inputs as bit flags rather than bytes?
+/// @todo pass inputs as bit flags rather than bytes?
 void print_boot_failure(uint8_t cdboot, uint8_t lanboot, uint8_t drive,
                         uint8_t reason, uint8_t lastdrive)
 {
@@ -151,7 +169,7 @@ void print_cdromboot_failure(uint16_t code)
 // returns bootsegment in ax, drive in bl
 uint32_t BIOSCALL int19_function(uint8_t bseqnr)
 {
-    //@todo: common code for getting the EBDA segment
+    /// @todo common code for getting the EBDA segment
     uint16_t    ebda_seg=read_word(0x0040,0x000E);
     uint16_t    bootseq;
     uint8_t     bootdrv;
@@ -305,7 +323,7 @@ uint32_t BIOSCALL int19_function(uint8_t bseqnr)
     // NB: It is somewhat common for failed OS installs to have the
     // 0x55AA signature and a valid partition table but zeros in the
     // rest of the boot sector. We do a quick check by comparing the first
-    // two words of boot sector; if identical, the boot sector is
+    // and third word of boot sector; if identical, the boot sector is
     // extremely unlikely to be valid.
     if (bootdrv != 0) bootchk = 0;
     else bootchk = 1; /* disable 0x55AA signature check on drive A: */
@@ -316,7 +334,7 @@ uint32_t BIOSCALL int19_function(uint8_t bseqnr)
         bootchk = 1;
 #endif // BX_ELTORITO_BOOT
 
-    if (read_word(bootseg,0) == read_word(bootseg,2)
+    if (read_word(bootseg,0) == read_word(bootseg,4)
       || (bootchk == 0 && read_word(bootseg,0x1fe) != 0xaa55))
     {
         print_boot_failure(bootcd, bootlan, bootdrv, 0, lastdrive);
@@ -333,3 +351,4 @@ uint32_t BIOSCALL int19_function(uint8_t bseqnr)
     // return the boot segment
     return (((uint32_t)bootdrv) << 16) + bootseg;
 }
+

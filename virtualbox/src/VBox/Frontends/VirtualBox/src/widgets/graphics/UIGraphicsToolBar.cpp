@@ -1,12 +1,10 @@
 /* $Id: UIGraphicsToolBar.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGraphicsToolBar class definition
+ * VBox Qt GUI - UIGraphicsToolBar class definition.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +15,16 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* GUI includes: */
-#include "UIGraphicsToolBar.h"
-#include "UIGraphicsButton.h"
+# include "UIGraphicsToolBar.h"
+# include "UIGraphicsButton.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIGraphicsToolBar::UIGraphicsToolBar(QIGraphicsWidget *pParent, int iRows, int iColumns)
     : QIGraphicsWidget(pParent)

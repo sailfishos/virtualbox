@@ -58,7 +58,6 @@
 #ifdef CHROMIUM_THREADSAFE
 # include <cr_threads.h>
 #endif
-/*#define VBOX_TEST_MEGOO*/
 
 #if 0 && defined(CR_NEWWINTRACK) && !defined(WINDOWS)
 #define XLOCK(dpy) XLockDisplay(dpy)
@@ -142,7 +141,6 @@ struct context_info_t
 #elif defined(GLX)
     Display *dpy;
     ContextInfo *share;
-    XVisualInfo *visual;
     Bool direct;
     GLXContext glxContext;
     CRHashTable *pGLXPixmapsHash;
@@ -283,7 +281,7 @@ typedef struct {
  * */
 extern CRtsd g_stubCurrentContextTSD;
 
-DECLINLINE(ContextInfo*) stubGetCurrentContext()
+DECLINLINE(ContextInfo*) stubGetCurrentContext(void)
 {
     ContextInfo* ctx;
     VBoxTlsRefGetCurrentFunctional(ctx, ContextInfo, &g_stubCurrentContextTSD);
@@ -336,7 +334,7 @@ extern void stubCheckXExtensions(WindowInfo *pWindow);
 #endif
 
 
-extern ContextInfo *stubNewContext( const char *dpyName, GLint visBits, ContextType type, unsigned long shareCtx
+extern ContextInfo *stubNewContext(char *dpyName, GLint visBits, ContextType type, unsigned long shareCtx
 #if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
         , struct VBOXUHGSMI *pHgsmi
 #endif

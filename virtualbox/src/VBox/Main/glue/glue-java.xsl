@@ -10,7 +10,7 @@
         XSLT stylesheet that generates Java glue code for XPCOM, MSCOM and JAX-WS from
         VirtualBox.xidl.
 
-    Copyright (C) 2010-2014 Oracle Corporation
+    Copyright (C) 2010-2016 Oracle Corporation
 
     This file is part of VirtualBox Open Source Edition (OSE), as
     available from http://www.virtualbox.org. This file is free software;
@@ -43,10 +43,22 @@
 
 <xsl:strip-space elements="*"/>
 
+
+<!-- - - - - - - - - - - - - - - - - - - - - - -
+  Keys for more efficiently looking up of types.
+ - - - - - - - - - - - - - - - - - - - - - - -->
+
+<xsl:key name="G_keyEnumsByName" match="//enum[@name]" use="@name"/>
+<xsl:key name="G_keyInterfacesByName" match="//interface[@name]" use="@name"/>
+
+
+<!-- - - - - - - - - - - - - - - - - - - - - - -
+ - - - - - - - - - - - - - - - - - - - - - - -->
+
 <xsl:template name="fileheader">
   <xsl:param name="name" />
   <xsl:text>/*
- * Copyright (C) 2010-2014 Oracle Corporation
+ * Copyright (C) 2010-2016 Oracle Corporation
  *
  * This file is part of the VirtualBox SDK, as available from
  * http://www.virtualbox.org.  This library is free software; you can
@@ -106,7 +118,7 @@
       </xsl:choose>
     </xsl:when>
     <xsl:otherwise>
-      <xsl:value-of select="concat('&#9;', $G_vboxDirPrefix, $file, ' \&#10;')"/>
+      <xsl:value-of select="concat(' \', $G_sNewLine, '&#9;', $G_vboxDirPrefix, $file)"/>
     </xsl:otherwise>
   </xsl:choose>
 </xsl:template>
@@ -114,79 +126,68 @@
 <xsl:template name="endFile">
   <xsl:param name="file" />
   <xsl:if test="$filelistonly=''">
-    <xsl:value-of select="concat('&#10;// ##### ENDFILE &quot;', $file, '&quot;&#10;&#10;')" />
+    <xsl:value-of select="concat('&#10;// ##### ENDFILE &quot;', $file, '&quot;&#10;')" />
+    <xsl:call-template name="xsltprocNewlineOutputHack"/>
   </xsl:if>
 </xsl:template>
 
-
-<xsl:template name="string-replace">
-  <xsl:param name="haystack"/>
-  <xsl:param name="needle"/>
-  <xsl:param name="replacement"/>
-  <xsl:param name="onlyfirst" select="false"/>
-  <xsl:choose>
-    <xsl:when test="contains($haystack, $needle)">
-      <xsl:value-of select="substring-before($haystack, $needle)"/>
-      <xsl:value-of select="$replacement"/>
-      <xsl:choose>
-        <xsl:when test="$onlyfirst = 'true'">
-          <xsl:value-of select="substring-after($haystack, $needle)"/>
-        </xsl:when>
-        <xsl:otherwise>
-          <xsl:call-template name="string-replace">
-            <xsl:with-param name="haystack" select="substring-after($haystack, $needle)"/>
-            <xsl:with-param name="needle" select="$needle"/>
-            <xsl:with-param name="replacement" select="$replacement"/>
-          </xsl:call-template>
-        </xsl:otherwise>
-      </xsl:choose>
-    </xsl:when>
-    <xsl:otherwise>
-      <xsl:value-of select="$haystack"/>
-    </xsl:otherwise>
-  </xsl:choose>
-</xsl:template>
-
-<xsl:template name="string-trim">
+<!-- strip-and-normalize-desc
+ Removes leading and trailing white space on each line in the given text.
+ -->
+<xsl:template name="strip-and-normalize-desc">
   <xsl:param name="text"/>
 
-  <xsl:variable name="begin" select="substring($text, 1, 1)"/>
+  <!-- Strip the whole string first so we won't leave trailing new line chars behind. -->
+  <xsl:variable name="sStrippedText">
+    <xsl:call-template name="strip-string">
+      <xsl:with-param name="text" select="$text"/>
+    </xsl:call-template>
+  </xsl:variable>
+
   <xsl:choose>
-    <xsl:when test="$begin = ' ' or $begin = '&#10;' or $begin = '&#13;'">
-      <xsl:call-template name="string-trim">
-        <xsl:with-param name="text" select="substring($text, 2)"/>
+    <!-- If there are multiple lines, strip them one by one on a recursive fasion. -->
+    <xsl:when test="contains($sStrippedText, '&#10;')">
+      <xsl:call-template name="strip-string-right">
+        <xsl:with-param name="text" select="substring-before($sStrippedText, '&#10;')"/>
+      </xsl:call-template>
+      <xsl:value-of select="'&#10;'"/>
+      <xsl:call-template name="strip-and-normalize-desc-recursive">
+        <xsl:with-param name="text" select="substring-after($sStrippedText, '&#10;')"/>
       </xsl:call-template>
     </xsl:when>
+
+    <!-- Single line, we're done. -->
     <xsl:otherwise>
-      <xsl:variable name="end" select="substring($text, string-length($text) - 1, 1)"/>
-      <xsl:choose>
-        <xsl:when test="$end = ' ' or $end = '&#10;' or $end = '&#13;'">
-          <xsl:call-template name="string-trim">
-            <xsl:with-param name="text" select="substring($text, 1, string-length($text) - 1)"/>
-          </xsl:call-template>
-        </xsl:when>
-        <xsl:otherwise>
-          <xsl:choose>
-            <xsl:when test="contains($text, '&#10; ')">
-              <xsl:variable name="tmptext">
-                <xsl:call-template name="string-replace">
-                  <xsl:with-param name="haystack" select="$text"/>
-                  <xsl:with-param name="needle" select="'&#10; '"/>
-                  <xsl:with-param name="replacement" select="'&#10;'"/>
-                </xsl:call-template>
-              </xsl:variable>
-              <xsl:call-template name="string-trim">
-                <xsl:with-param name="text" select="$tmptext"/>
-              </xsl:call-template>
-            </xsl:when>
-            <xsl:otherwise>
-              <xsl:value-of select="$text"/>
-            </xsl:otherwise>
-          </xsl:choose>
-        </xsl:otherwise>
-      </xsl:choose>
+      <xsl:value-of select="$sStrippedText"/>
     </xsl:otherwise>
   </xsl:choose>
+
+</xsl:template>
+
+<!-- Internal worker for strip-and-normalize-desc, don't use. -->
+<xsl:template name="strip-and-normalize-desc-recursive">
+  <xsl:param name="text"/>
+
+  <xsl:choose>
+    <!-- If there are multiple lines, strip them one by one on a recursive fasion. -->
+    <xsl:when test="contains($text, '&#10;')">
+      <xsl:call-template name="strip-string">
+        <xsl:with-param name="text" select="substring-before($text, '&#10;')"/>
+      </xsl:call-template>
+      <xsl:value-of select="'&#10;'"/>
+      <xsl:call-template name="strip-and-normalize-desc-recursive">
+        <xsl:with-param name="text" select="substring-after($text, '&#10;')"/>
+      </xsl:call-template>
+    </xsl:when>
+
+    <!-- Single line: Left strip it. -->
+    <xsl:otherwise>
+      <xsl:call-template name="strip-string-left">
+        <xsl:with-param name="text" select="$text"/>
+      </xsl:call-template>
+    </xsl:otherwise>
+  </xsl:choose>
+
 </xsl:template>
 
 <!-- descriptions -->
@@ -218,13 +219,36 @@
     </xsl:call-template>
   </xsl:variable>
 
+  <!-- &amp;, &lt; and &gt; must remain as they are or javadoc 8 throws a fit. -->
   <xsl:variable name="rep4">
-    <xsl:call-template name="string-trim">
-      <xsl:with-param name="text" select="$rep3"/>
+    <xsl:call-template name="string-replace">
+      <xsl:with-param name="haystack" select="$rep3"/>
+      <xsl:with-param name="needle" select="'&amp;'"/>
+      <xsl:with-param name="replacement" select="'&amp;amp;'"/>
+    </xsl:call-template>
+  </xsl:variable>
+  <xsl:variable name="rep5">
+    <xsl:call-template name="string-replace">
+      <xsl:with-param name="haystack" select="$rep4"/>
+      <xsl:with-param name="needle" select="'&lt;'"/>
+      <xsl:with-param name="replacement" select="'&amp;lt;'"/>
+    </xsl:call-template>
+  </xsl:variable>
+  <xsl:variable name="rep6">
+    <xsl:call-template name="string-replace">
+      <xsl:with-param name="haystack" select="$rep5"/>
+      <xsl:with-param name="needle" select="'&gt;'"/>
+      <xsl:with-param name="replacement" select="'&amp;gt;'"/>
     </xsl:call-template>
   </xsl:variable>
 
-  <xsl:value-of select="$rep4"/>
+  <xsl:variable name="rep7">
+    <xsl:call-template name="strip-and-normalize-desc">
+      <xsl:with-param name="text" select="$rep6"/>
+    </xsl:call-template>
+  </xsl:variable>
+
+  <xsl:value-of select="$rep7"/>
 </xsl:template>
 
 <!--
@@ -233,7 +257,11 @@
 -->
 <xsl:template match="desc//*">
   <xsl:variable name="tagname" select="local-name()"/>
-  <xsl:value-of select="concat('&lt;', $tagname, '&gt;')"/>
+  <xsl:value-of select="concat('&lt;', $tagname)"/>
+  <xsl:if test="$tagname = 'table'"> <!-- javadoc 8 fudge -->
+    <xsl:text> summary=""</xsl:text>
+  </xsl:if>
+  <xsl:text>&gt;</xsl:text>
   <xsl:apply-templates/>
   <xsl:value-of select="concat('&lt;/', $tagname, '&gt;')"/>
 </xsl:template>
@@ -243,13 +271,13 @@
   <xsl:param name="identifier"/>
 
   <xsl:choose>
-    <xsl:when test="//enum[@name=$context]/const[@name=$identifier]">
+    <xsl:when test="key('G_keyEnumsByName', $context)/const[@name=$identifier]">
       <xsl:value-of select="$identifier"/>
     </xsl:when>
-    <xsl:when test="//interface[@name=$context]/method[@name=$identifier]">
+    <xsl:when test="key('G_keyInterfacesByName', $context)/method[@name=$identifier]">
       <xsl:value-of select="$identifier"/>
       <xsl:text>(</xsl:text>
-      <xsl:for-each select="//interface[@name=$context]/method[@name=$identifier]/param">
+      <xsl:for-each select="key('G_keyInterfacesByName', $context)/method[@name=$identifier]/param">
         <xsl:if test="@dir!='return'">
           <xsl:if test="position() > 1">
             <xsl:text>,</xsl:text>
@@ -270,7 +298,7 @@
       </xsl:for-each>
       <xsl:text>)</xsl:text>
     </xsl:when>
-    <xsl:when test="//interface[@name=$context]/attribute[@name=$identifier]">
+    <xsl:when test="key('G_keyInterfacesByName', $context)/attribute[@name=$identifier]">
       <xsl:call-template name="makeGetterName">
         <xsl:with-param name="attrname" select="$identifier" />
       </xsl:call-template>
@@ -295,11 +323,10 @@
 
 <xsl:template match="link" mode="middle">
   <xsl:variable name="linktext">
-    <xsl:call-template name="string-replace">
+    <xsl:call-template name="string-replace-first">
       <xsl:with-param name="haystack" select="@to"/>
       <xsl:with-param name="needle" select="'_'"/>
       <xsl:with-param name="replacement" select="'#'"/>
-      <xsl:with-param name="onlyfirst" select="'true'"/>
     </xsl:call-template>
   </xsl:variable>
   <xsl:choose>
@@ -389,11 +416,16 @@
  * common comment prologue (handles group IDs)
 -->
 <xsl:template match="desc" mode="begin">
+  <!-- TODO,XXX: This is a hot spot. The whole $id crap isn't working though,
+                 so it's been disabled to save precious time. -->
+<!--
   <xsl:param name="id" select="@group | preceding::descGroup[1]/@id"/>
   <xsl:text>&#10;/**&#10;</xsl:text>
   <xsl:if test="$id">
     <xsl:value-of select="concat(' @ingroup ', $id, '&#10;')"/>
   </xsl:if>
+-->
+  <xsl:value-of select="concat($G_sNewLine, '/**', $G_sNewLine)"/>
 </xsl:template>
 
 <!--
@@ -411,7 +443,7 @@
 <xsl:template match="desc" mode="results">
   <xsl:if test="result">
     <xsl:text>&#10;Expected result codes:&#10;</xsl:text>
-    <xsl:text>&lt;table&gt;&#10;</xsl:text>
+    <xsl:text>&lt;table summary=""&gt;&#10;</xsl:text>
     <xsl:for-each select="result">
       <xsl:text>&lt;tr&gt;</xsl:text>
       <xsl:choose>
@@ -425,18 +457,10 @@
       <xsl:text>&lt;td&gt;</xsl:text>
       <xsl:apply-templates select="text() | *[not(self::note or self::see or
                                                   self::result)]"/>
-      <xsl:text>&lt;/td&gt;&lt;tr&gt;&#10;</xsl:text>
+      <xsl:text>&lt;/td&gt;&lt;/tr&gt;&#10;</xsl:text>
     </xsl:for-each>
     <xsl:text>&lt;/table&gt;&#10;</xsl:text>
   </xsl:if>
-</xsl:template>
-
-<!--
- * translates the string to uppercase
--->
-<xsl:template name="uppercase">
-  <xsl:param name="str" select="."/>
-  <xsl:value-of select="translate($str, $G_lowerCase, $G_upperCase)"/>
 </xsl:template>
 
 <!--
@@ -445,8 +469,8 @@
 <xsl:template match="desc" mode="interface">
   <xsl:apply-templates select="." mode="begin"/>
   <xsl:apply-templates select="." mode="middle"/>
-  <xsl:text>&#10;Interface ID: &lt;tt&gt;{</xsl:text>
-  <xsl:call-template name="uppercase">
+  <xsl:text>&#10;&#10;Interface ID: &lt;tt&gt;{</xsl:text>
+  <xsl:call-template name="string-to-upper">
     <xsl:with-param name="str" select="../@uuid"/>
   </xsl:call-template>
   <xsl:text>}&lt;/tt&gt;&#10;*/&#10;</xsl:text>
@@ -464,6 +488,7 @@
   <xsl:call-template name="typeIdl2Glue">
     <xsl:with-param name="type" select="../@type"/>
     <xsl:with-param name="safearray" select="../@safearray"/>
+    <xsl:with-param name="doubleescape">yes</xsl:with-param>
   </xsl:call-template>
   <xsl:text>&#10;</xsl:text>
   <xsl:apply-templates select="see"/>
@@ -482,6 +507,7 @@
   <xsl:call-template name="typeIdl2Glue">
     <xsl:with-param name="type" select="../@type"/>
     <xsl:with-param name="safearray" select="../@safearray"/>
+    <xsl:with-param name="doubleescape">yes</xsl:with-param>
   </xsl:call-template>
   <xsl:text>&#10;</xsl:text>
   <xsl:apply-templates select="see"/>
@@ -531,7 +557,7 @@
   <xsl:apply-templates select="." mode="begin"/>
   <xsl:apply-templates select="." mode="middle"/>
   <xsl:text>&#10;Interface ID: &lt;tt&gt;{</xsl:text>
-  <xsl:call-template name="uppercase">
+  <xsl:call-template name="string-to-upper">
     <xsl:with-param name="str" select="../@uuid"/>
   </xsl:call-template>
   <xsl:text>}&lt;/tt&gt;&#10;*/&#10;</xsl:text>
@@ -621,11 +647,17 @@
 </xsl:template>
 
 <xsl:template name="startExcWrapper">
+  <xsl:param name="preventObjRelease" />
+
+  <xsl:if test="$G_vboxGlueStyle='jaxws' and $preventObjRelease">
+    <xsl:text>        this.getObjMgr().preventObjRelease();&#10;</xsl:text>
+  </xsl:if>
   <xsl:text>        try&#10;</xsl:text>
   <xsl:text>        {&#10;</xsl:text>
 </xsl:template>
 
 <xsl:template name="endExcWrapper">
+  <xsl:param name="allowObjRelease" />
 
   <xsl:choose>
     <xsl:when test="$G_vboxGlueStyle='xpcom'">
@@ -648,12 +680,18 @@
       <xsl:text>        }&#10;</xsl:text>
       <xsl:text>        catch (InvalidObjectFaultMsg e)&#10;</xsl:text>
       <xsl:text>        {&#10;</xsl:text>
-      <xsl:text>            throw new VBoxException(e.getMessage(), e, this.port);&#10;</xsl:text>
+      <xsl:text>            throw new VBoxException(e.getMessage(), e, this.getObjMgr(), this.port);&#10;</xsl:text>
       <xsl:text>        }&#10;</xsl:text>
       <xsl:text>        catch (RuntimeFaultMsg e)&#10;</xsl:text>
       <xsl:text>        {&#10;</xsl:text>
-      <xsl:text>            throw new VBoxException(e.getMessage(), e, this.port);&#10;</xsl:text>
+      <xsl:text>            throw new VBoxException(e.getMessage(), e, this.getObjMgr(), this.port);&#10;</xsl:text>
       <xsl:text>        }&#10;</xsl:text>
+      <xsl:if test="$allowObjRelease">
+        <xsl:text>        finally&#10;</xsl:text>
+        <xsl:text>        {&#10;</xsl:text>
+        <xsl:text>            getObjMgr().allowObjRelease();&#10;</xsl:text>
+        <xsl:text>        }&#10;</xsl:text>
+      </xsl:if>
     </xsl:when>
 
     <xsl:otherwise>
@@ -695,10 +733,10 @@
   <xsl:param name="collPrefix" />
 
   <xsl:choose>
-    <xsl:when test="//enum[@name=$name] or //enum[@name=$origname]">
+    <xsl:when test="(count(key('G_keyEnumsByName', $name)) > 0) or (count(key('G_keyEnumsByName', $origname)) > 0)">
       <xsl:value-of select="concat($G_virtualBoxPackage, concat('.', $name))" />
     </xsl:when>
-    <xsl:when test="//interface[@name=$name]">
+    <xsl:when test="count(key('G_keyInterfacesByName', $name)) > 0">
       <xsl:value-of select="concat($G_virtualBoxPackage, concat('.', $name))" />
     </xsl:when>
     <xsl:otherwise>
@@ -714,6 +752,7 @@
   <xsl:param name="safearray" />
   <xsl:param name="forceelem" />
   <xsl:param name="skiplisttype" />
+  <xsl:param name="doubleescape" />
 
   <xsl:variable name="needarray" select="($safearray='yes') and not($forceelem='yes')" />
   <xsl:variable name="needlist" select="($needarray) and not($type='octet')" />
@@ -721,7 +760,14 @@
   <xsl:if test="($needlist)">
     <xsl:text>List</xsl:text>
     <xsl:if test="not($skiplisttype='yes')">
-      <xsl:text>&lt;</xsl:text>
+      <xsl:choose>
+        <xsl:when test="$doubleescape='yes'">
+          <xsl:text>&amp;lt;</xsl:text>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:text>&lt;</xsl:text>
+        </xsl:otherwise>
+      </xsl:choose>
     </xsl:if>
   </xsl:if>
 
@@ -747,7 +793,14 @@
   <xsl:choose>
     <xsl:when test="($needlist)">
       <xsl:if test="not($skiplisttype='yes')">
-        <xsl:text>&gt;</xsl:text>
+        <xsl:choose>
+          <xsl:when test="$doubleescape='yes'">
+            <xsl:text>&amp;gt;</xsl:text>
+          </xsl:when>
+          <xsl:otherwise>
+            <xsl:text>&gt;</xsl:text>
+          </xsl:otherwise>
+        </xsl:choose>
       </xsl:if>
     </xsl:when>
     <xsl:when test="($needarray)">
@@ -809,19 +862,19 @@
           <xsl:text>String</xsl:text>
         </xsl:when>
 
-        <xsl:when test="//interface[@name=$type]/@wsmap='struct'">
+        <xsl:when test="key('G_keyInterfacesByName', $type)/@wsmap='struct'">
           <xsl:call-template name="wrappedName">
             <xsl:with-param name="ifname" select="$type" />
           </xsl:call-template>
         </xsl:when>
 
-        <xsl:when test="//interface[@name=$type]">
+        <xsl:when test="count(key('G_keyInterfacesByName', $type)) > 0">
           <xsl:call-template name="wrappedName">
             <xsl:with-param name="ifname" select="$type" />
           </xsl:call-template>
         </xsl:when>
 
-        <xsl:when test="//enum[@name=$type]">
+        <xsl:when test="count(key('G_keyEnumsByName', $type)) > 0">
           <xsl:text>long</xsl:text>
         </xsl:when>
 
@@ -852,15 +905,15 @@
           <xsl:text>String</xsl:text>
         </xsl:when>
 
-        <xsl:when test="//interface[@name=$type]/@wsmap='managed'">
+        <xsl:when test="key('G_keyInterfacesByName', $type)/@wsmap='managed'">
           <xsl:text>String</xsl:text>
         </xsl:when>
 
-        <xsl:when test="//interface[@name=$type]/@wsmap='struct'">
+        <xsl:when test="key('G_keyInterfacesByName', $type)/@wsmap='struct'">
           <xsl:value-of select="concat($G_virtualBoxPackageCom, '.', $type)" />
         </xsl:when>
 
-        <xsl:when test="//enum[@name=$type]">
+        <xsl:when test="count(key('G_keyEnumsByName', $type)) > 0">
           <xsl:value-of select="concat($G_virtualBoxPackageCom, '.', $type)" />
         </xsl:when>
 
@@ -928,7 +981,7 @@
   <xsl:param name="idltype"/>
   <xsl:param name="safearray"/>
   <xsl:variable name="isstruct"
-                select="//interface[@name=$idltype]/@wsmap='struct'" />
+                select="key('G_keyInterfacesByName', $idltype)/@wsmap='struct'" />
 
   <xsl:variable name="gluetype">
     <xsl:call-template name="typeIdl2Glue">
@@ -948,7 +1001,7 @@
   </xsl:variable>
 
   <xsl:choose>
-    <xsl:when test="//interface[@name=$idltype] or $idltype='$unknown'">
+    <xsl:when test="$idltype = '$unknown' or (count(key('G_keyInterfacesByName', $idltype)) > 0)">
       <xsl:choose>
         <xsl:when test="$safearray='yes'">
           <xsl:variable name="elembacktype">
@@ -966,7 +1019,7 @@
       </xsl:choose>
     </xsl:when>
 
-    <xsl:when test="//enum[@name=$idltype]">
+    <xsl:when test="count(key('G_keyEnumsByName', $idltype)) > 0">
       <xsl:choose>
         <xsl:when test="$safearray='yes'">
           <xsl:variable name="elembacktype">
@@ -1031,11 +1084,11 @@
       </xsl:choose>
     </xsl:when>
 
-    <xsl:when test="//interface[@name=$idltype] or $idltype='$unknown'">
+    <xsl:when test="$idltype = '$unknown' or (count(key('G_keyInterfacesByName', $idltype)) > 0)">
       <xsl:value-of select="concat('Helper.wrapDispatch(', $gluetype, '.class, ', $value, '.getDispatch())')"/>
     </xsl:when>
 
-    <xsl:when test="//enum[@name=$idltype]">
+    <xsl:when test="count(key('G_keyEnumsByName', $idltype)) > 0">
       <xsl:value-of select="concat($gluetype, '.fromValue(', $value, '.getInt())')"/>
     </xsl:when>
 
@@ -1091,7 +1144,7 @@
   <xsl:param name="safearray"/>
 
   <xsl:variable name="isstruct"
-                select="//interface[@name=$idltype]/@wsmap='struct'" />
+                select="key('G_keyInterfacesByName', $idltype)/@wsmap='struct'" />
 
   <xsl:variable name="gluetype">
     <xsl:call-template name="typeIdl2Glue">
@@ -1118,13 +1171,13 @@
       </xsl:variable>
       <xsl:choose>
         <xsl:when test="$isstruct">
-          <xsl:value-of select="concat('Helper.wrap2(', $elemgluetype, '.class, ', $elembacktype, '.class, port, ', $value, ')')"/>
+          <xsl:value-of select="concat('Helper.wrap2(', $elemgluetype, '.class, ', $elembacktype, '.class, objMgr, port, ', $value, ')')"/>
         </xsl:when>
-        <xsl:when test="//enum[@name=$idltype]">
+        <xsl:when test="count(key('G_keyEnumsByName', $idltype)) > 0">
           <xsl:value-of select="concat('Helper.convertEnums(', $elembacktype, '.class, ', $elemgluetype, '.class, ', $value, ')')"/>
         </xsl:when>
-        <xsl:when test="//interface[@name=$idltype] or $idltype='$unknown'">
-          <xsl:value-of select="concat('Helper.wrap(', $elemgluetype, '.class, port, ', $value, ')')"/>
+        <xsl:when test="$idltype = '$unknown' or (count(key('G_keyInterfacesByName', $idltype)) > 0)">
+          <xsl:value-of select="concat('Helper.wrap(', $elemgluetype, '.class, getObjMgr(), port, ', $value, ')')"/>
         </xsl:when>
         <xsl:when test="$idltype='octet'">
           <xsl:value-of select="concat('Helper.decodeBase64(', $value, ')')"/>
@@ -1137,7 +1190,7 @@
 
     <xsl:otherwise>
       <xsl:choose>
-        <xsl:when test="//enum[@name=$idltype]">
+        <xsl:when test="count(key('G_keyEnumsByName', $idltype)) > 0">
           <xsl:value-of select="concat($gluetype, '.fromValue(', $value, '.value())')"/>
         </xsl:when>
         <xsl:when test="$idltype='boolean'">
@@ -1168,11 +1221,11 @@
           <xsl:value-of select="$value"/>
         </xsl:when>
         <xsl:when test="$isstruct">
-          <xsl:value-of select="concat('(', $value, ' != null) ? new ', $gluetype, '(', $value, ', port) : null')" />
+          <xsl:value-of select="concat('(', $value, ' != null) ? new ', $gluetype, '(', $value, ', getObjMgr(), port) : null')" />
         </xsl:when>
-        <xsl:when test="//interface[@name=$idltype] or $idltype='$unknown'">
+        <xsl:when test="$idltype = '$unknown' or (count(key('G_keyInterfacesByName', $idltype)) > 0)">
           <!-- if the MOR string is empty, that means NULL, so return NULL instead of an object then -->
-          <xsl:value-of select="concat('(', $value, '.length() > 0) ? new ', $gluetype, '(', $value, ', port) : null')" />
+          <xsl:value-of select="concat('(', $value, '.length() > 0) ? new ', $gluetype, '(', $value, ', getObjMgr(), port) : null')" />
         </xsl:when>
         <xsl:otherwise>
           <xsl:call-template name="fatalError">
@@ -1224,7 +1277,7 @@
   <xsl:param name="idltype"/>
   <xsl:param name="safearray"/>
   <xsl:variable name="isstruct"
-                select="//interface[@name=$idltype]/@wsmap='struct'" />
+                select="key('G_keyInterfacesByName', $idltype)/@wsmap='struct'" />
   <xsl:variable name="gluetype">
     <xsl:call-template name="typeIdl2Glue">
       <xsl:with-param name="type" select="$idltype" />
@@ -1250,7 +1303,7 @@
   </xsl:variable>
 
   <xsl:choose>
-    <xsl:when test="//interface[@name=$idltype]">
+    <xsl:when test="count(key('G_keyInterfacesByName', $idltype)) > 0">
       <xsl:choose>
         <xsl:when test="$safearray='yes'">
           <xsl:variable name="elembacktype">
@@ -1279,7 +1332,7 @@
       </xsl:choose>
     </xsl:when>
 
-    <xsl:when test="//enum[@name=$idltype]">
+    <xsl:when test="count(key('G_keyEnumsByName', $idltype)) > 0">
       <xsl:choose>
         <xsl:when test="$safearray='yes'">
           <xsl:value-of select="concat('Helper.unwrapEnum(', $elemgluetype, '.class, ', $value, ')')"/>
@@ -1356,7 +1409,7 @@
   </xsl:variable>
 
   <xsl:choose>
-    <xsl:when test="//interface[@name=$idltype]">
+    <xsl:when test="count(key('G_keyInterfacesByName', $idltype)) > 0">
       <xsl:choose>
         <xsl:when test="$safearray='yes'">
           <xsl:variable name="elembacktype">
@@ -1388,7 +1441,7 @@
       </xsl:choose>
     </xsl:when>
 
-    <xsl:when test="//enum[@name=$idltype]">
+    <xsl:when test="count(key('G_keyEnumsByName', $idltype)) > 0">
       <xsl:choose>
         <xsl:when test="$safearray='yes'">
           <xsl:value-of select="concat('Helper.unwrapEnum(', $elemgluetype, '.class, ', $value, ')')"/>
@@ -1473,7 +1526,7 @@
   <xsl:param name="idltype"/>
   <xsl:param name="safearray"/>
   <xsl:variable name="isstruct"
-                select="//interface[@name=$idltype]/@wsmap='struct'" />
+                select="key('G_keyInterfacesByName', $idltype)/@wsmap='struct'" />
 
   <xsl:variable name="gluetype">
     <xsl:call-template name="typeIdl2Glue">
@@ -1493,7 +1546,7 @@
   </xsl:variable>
 
   <xsl:choose>
-    <xsl:when test="//interface[@name=$idltype] or $idltype='$unknown'">
+    <xsl:when test="$idltype = '$unknown' or (count(key('G_keyInterfacesByName', $idltype)) > 0)">
       <xsl:choose>
         <xsl:when test="@safearray='yes'">
           <xsl:value-of select="concat('Helper.unwrap(', $value, ')')"/>
@@ -1504,7 +1557,7 @@
       </xsl:choose>
     </xsl:when>
 
-    <xsl:when test="//enum[@name=$idltype]">
+    <xsl:when test="count(key('G_keyEnumsByName', $idltype)) > 0">
       <xsl:choose>
         <xsl:when test="$safearray='yes'">
           <xsl:variable name="elembacktype">
@@ -1661,7 +1714,7 @@
         </xsl:call-template>
       </xsl:variable>
       <xsl:variable name="portArg">
-        <xsl:if test="not(//interface[@name=$ifname]/@wsmap='global')">
+        <xsl:if test="not(key('G_keyInterfacesByName', $ifname)/@wsmap='global')">
           <xsl:text>obj</xsl:text>
         </xsl:if>
       </xsl:variable>
@@ -1809,13 +1862,77 @@
   <xsl:param name="ifname"/>
 
   <xsl:value-of select="concat('    private ', $G_virtualBoxPackageCom, '.', $ifname, ' real;&#10;')"/>
-  <xsl:text>    private VboxPortType port;&#10;&#10;</xsl:text>
+  <xsl:text>    private VboxPortType port;&#10;</xsl:text>
+  <xsl:text>    private ObjectRefManager objMgr;&#10;</xsl:text>
 
-  <xsl:value-of select="concat('    public ', $ifname, '(', $G_virtualBoxPackageCom, '.', $ifname, ' real, VboxPortType port)&#10;')" />
+  <!-- For structs which contain references to other objects we have to create the stub object during construction time
+       or it is possible that the reference was released by the garbage collector because the reference is not
+       accounted for. -->
+  <!-- Create the private members for containing objects here. -->
+  <xsl:for-each select="attribute">
+    <xsl:variable name="attrname"><xsl:value-of select="@name" /></xsl:variable>
+    <xsl:variable name="attrtype"><xsl:value-of select="@type" /></xsl:variable>
+    <xsl:variable name="attrsafearray"><xsl:value-of select="@safearray" /></xsl:variable>
+
+    <xsl:if test="(not(@wsmap = 'suppress')) and ($attrtype = '$unknown' or (count(key('G_keyInterfacesByName', $attrtype)) > 0))">
+      <xsl:variable name="gluegettertype">
+        <xsl:call-template name="typeIdl2Glue">
+          <xsl:with-param name="type" select="$attrtype" />
+          <xsl:with-param name="safearray" select="@safearray" />
+        </xsl:call-template>
+      </xsl:variable>
+      <xsl:value-of select="concat('    private ', $gluegettertype, ' ', $attrname, ';&#10;')" />
+    </xsl:if>
+  </xsl:for-each>
+
+  <xsl:value-of select="concat('&#10;    public ', $ifname, '(', $G_virtualBoxPackageCom, '.', $ifname, ' real, ObjectRefManager objMgr, VboxPortType port)&#10;')" />
   <xsl:text>    {&#10;</xsl:text>
   <xsl:text>        this.real = real;&#10;</xsl:text>
   <xsl:text>        this.port = port;&#10;</xsl:text>
+  <xsl:text>        this.objMgr = objMgr;&#10;</xsl:text>
+  <!-- Construct stub objects for every attribute containing a reference to a webserver side object -->
+  <xsl:for-each select="attribute">
+    <xsl:variable name="attrname"><xsl:value-of select="@name" /></xsl:variable>
+    <xsl:variable name="attrtype"><xsl:value-of select="@type" /></xsl:variable>
+    <xsl:variable name="attrsafearray"><xsl:value-of select="@safearray" /></xsl:variable>
+
+    <xsl:if test="(not(@wsmap = 'suppress')) and ($attrtype = '$unknown' or (count(key('G_keyInterfacesByName', $attrtype)) > 0))">
+      <xsl:variable name="backgettername">
+        <xsl:choose>
+          <!-- Stupid, but backend boolean getters called isFoo(), not getFoo() -->
+          <xsl:when test="$attrtype = 'boolean'">
+            <xsl:variable name="capsname">
+              <xsl:call-template name="capitalize">
+                <xsl:with-param name="str" select="$attrname" />
+              </xsl:call-template>
+            </xsl:variable>
+            <xsl:value-of select="concat('is', $capsname)" />
+          </xsl:when>
+          <xsl:otherwise>
+            <xsl:call-template name="makeGetterName">
+              <xsl:with-param name="attrname" select="$attrname" />
+            </xsl:call-template>
+          </xsl:otherwise>
+        </xsl:choose>
+      </xsl:variable>
+
+      <xsl:variable name="wrapped">
+      <xsl:call-template name="cookOutParam">
+        <xsl:with-param name="value" select="concat('real.', $backgettername, '()')" />
+        <xsl:with-param name="idltype" select="$attrtype" />
+        <xsl:with-param name="safearray" select="@safearray" />
+      </xsl:call-template>
+      </xsl:variable>
+      <xsl:value-of select="concat('        ', $attrname, ' = ', $wrapped, ';&#10;')" />
+    </xsl:if>
+  </xsl:for-each>
   <xsl:text>    }&#10;&#10;</xsl:text>
+
+  <xsl:text><![CDATA[    private ObjectRefManager getObjMgr()
+    {
+        return this.objMgr;
+    }
+]]></xsl:text>
 
   <xsl:for-each select="attribute">
     <xsl:variable name="attrname"><xsl:value-of select="@name" /></xsl:variable>
@@ -1870,18 +1987,26 @@
         </xsl:call-template>
       </xsl:variable>
 
+      <!-- For attributes containing a reference to another object just return the already cerated stub -->
       <xsl:apply-templates select="desc" mode="attribute_get"/>
       <xsl:value-of select="concat('    public ', $gluegettertype, ' ', $gluegettername, '()&#10;')" />
       <xsl:text>    {&#10;</xsl:text>
-      <xsl:value-of select="concat('        ', $backgettertype, ' retVal = real.', $backgettername, '();&#10;')" />
-      <xsl:variable name="wrapped">
-        <xsl:call-template name="cookOutParam">
-          <xsl:with-param name="value" select="'retVal'" />
-          <xsl:with-param name="idltype" select="$attrtype" />
-          <xsl:with-param name="safearray" select="@safearray" />
-        </xsl:call-template>
-      </xsl:variable>
-      <xsl:value-of select="concat('        return ', $wrapped, ';&#10;')" />
+      <xsl:choose>
+        <xsl:when test="$attrtype = '$unknown' or (count(key('G_keyInterfacesByName', $attrtype)) > 0)">
+          <xsl:value-of select="concat('        return ', $attrname, ';&#10;')" />
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:value-of select="concat('        ', $backgettertype, ' retVal = real.', $backgettername, '();&#10;')" />
+          <xsl:variable name="wrapped">
+            <xsl:call-template name="cookOutParam">
+              <xsl:with-param name="value" select="'retVal'" />
+              <xsl:with-param name="idltype" select="$attrtype" />
+              <xsl:with-param name="safearray" select="@safearray" />
+            </xsl:call-template>
+          </xsl:variable>
+          <xsl:value-of select="concat('        return ', $wrapped, ';&#10;')" />
+        </xsl:otherwise>
+      </xsl:choose>
       <xsl:text>    }&#10;</xsl:text>
     </xsl:if>
 
@@ -1903,9 +2028,14 @@
     </xsl:when>
     <xsl:otherwise>
       <xsl:variable name="hasReturnParms" select="param[@dir='return']" />
-      <xsl:variable name="hasOutParms" select="param[@dir='out']" />
+      <xsl:variable name="hasOutParms" select="count(param[@dir='out']) > 0" />
       <xsl:variable name="returnidltype" select="param[@dir='return']/@type" />
       <xsl:variable name="returnidlsafearray" select="param[@dir='return']/@safearray" />
+      <xsl:if test="$hasOutParms and not($hasReturnParms) and (string-length(@wsmap) = 0) and (count(param[@dir='out']) = 1)">
+        <xsl:call-template name="fatalError">
+          <xsl:with-param name="msg" select="concat('genMethod: ', $ifname, $hasOutParms, not($hasReturnParms), 'a', string-length(@wsmap) = 0, 'b', @wsmap, (count(param[@dir='out']) = 1), '::', $methodname, ' has exactly one out parameter and no return parameter, this causes trouble with JAX-WS and the out parameter needs to be converted to return')" />
+        </xsl:call-template>
+      </xsl:if>
       <xsl:variable name="returngluetype">
         <xsl:choose>
           <xsl:when test="$returnidltype">
@@ -1954,7 +2084,9 @@
       <xsl:text>)&#10;</xsl:text>
       <xsl:text>    {&#10;</xsl:text>
 
-      <xsl:call-template name="startExcWrapper"/>
+      <xsl:call-template name="startExcWrapper">
+          <xsl:with-param name="preventObjRelease" select="$hasReturnParms and ($returnidltype = '$unknown' or (count(key('G_keyInterfacesByName', $returnidltype)) > 0))" />
+      </xsl:call-template>
 
       <!-- declare temp out params -->
       <xsl:for-each select="param[@dir='out']">
@@ -2048,9 +2180,11 @@
             <xsl:with-param name="safearray" select="$returnidlsafearray" />
           </xsl:call-template>
         </xsl:variable>
-        <xsl:value-of select="concat('            return ', $wrapped, ';&#10;')" />
+        <xsl:value-of select="concat('           return ', $wrapped, ';&#10;')" />
       </xsl:if>
-      <xsl:call-template name="endExcWrapper"/>
+      <xsl:call-template name="endExcWrapper">
+        <xsl:with-param name="allowObjRelease" select="$hasReturnParms and ($returnidltype = '$unknown' or (count(key('G_keyInterfacesByName', $returnidltype)) > 0))" />
+      </xsl:call-template>
 
       <xsl:text>    }&#10;</xsl:text>
     </xsl:otherwise>
@@ -2135,7 +2269,7 @@
 
     <xsl:when test="$G_vboxGlueStyle='jaxws'">
       <!-- bad, need to check that we really can be casted to this type -->
-      <xsl:value-of select="concat('        return obj == null ?  null : new ', $ifname, '(obj.getWrapped(), obj.getRemoteWSPort());&#10;')" />
+      <xsl:value-of select="concat('        return obj == null ?  null : new ', $ifname, '(obj.getWrapped(), obj.getObjMgr(), obj.getRemoteWSPort());&#10;')" />
     </xsl:when>
 
     <xsl:otherwise>
@@ -2159,7 +2293,6 @@
     </xsl:when>
     <xsl:otherwise>
       <xsl:variable name="hasReturnParms" select="param[@dir='return']" />
-      <xsl:variable name="hasOutParms" select="param[@dir='out']" />
       <xsl:variable name="returnidltype" select="param[@dir='return']/@type" />
       <xsl:variable name="returnidlsafearray" select="param[@dir='return']/@safearray" />
       <xsl:variable name="returnbacktype">
@@ -2332,9 +2465,9 @@
   <!-- Constructor -->
   <xsl:choose>
       <xsl:when test="($G_vboxGlueStyle='jaxws')">
-        <xsl:value-of select="concat('    public ', $ifname, '(String wrapped, VboxPortType port)&#10;')" />
+        <xsl:value-of select="concat('    public ', $ifname, '(String wrapped, ObjectRefManager objMgr, VboxPortType port)&#10;')" />
         <xsl:text>    {&#10;</xsl:text>
-        <xsl:text>        super(wrapped, port);&#10;</xsl:text>
+        <xsl:text>        super(wrapped, objMgr, port);&#10;</xsl:text>
         <xsl:text>    }&#10;</xsl:text>
       </xsl:when>
 
@@ -2401,7 +2534,10 @@
         <xsl:value-of select="concat('    public ', $gluetype, ' ', $gettername, '()&#10;')" />
         <xsl:text>    {&#10;</xsl:text>
 
-        <xsl:call-template name="startExcWrapper"/>
+
+        <xsl:call-template name="startExcWrapper">
+          <xsl:with-param name="preventObjRelease" select="$attrtype = '$unknown' or (count(key('G_keyInterfacesByName', $attrtype)) > 0)" />
+        </xsl:call-template>
 
         <!-- Actual getter implementation -->
         <xsl:call-template name="genGetterCall">
@@ -2412,7 +2548,10 @@
         </xsl:call-template>
 
         <xsl:value-of select="concat('            return ', $wrapped, ';&#10;')" />
-        <xsl:call-template name="endExcWrapper"/>
+
+        <xsl:call-template name="endExcWrapper">
+          <xsl:with-param name="allowObjRelease" select="$attrtype = '$unknown' or (count(key('G_keyInterfacesByName', $attrtype)) > 0)" />
+        </xsl:call-template>
 
         <xsl:text>    }&#10;</xsl:text>
         <xsl:if test="not(@readonly = 'yes')">
@@ -2487,13 +2626,13 @@
       </xsl:when>
 
       <xsl:otherwise>
-        <xsl:variable name="extends" select="//interface[@name=$ifname]/@extends" />
+        <xsl:variable name="extends" select="key('G_keyInterfacesByName', $ifname)/@extends" />
         <xsl:choose>
           <xsl:when test="($extends = '$unknown') or ($extends = '$errorinfo')">
             <xsl:value-of select="concat('public class ', $ifname, ' extends IUnknown&#10;')" />
             <xsl:text>{&#10;&#10;</xsl:text>
           </xsl:when>
-          <xsl:when test="//interface[@name=$extends]">
+          <xsl:when test="count(key('G_keyInterfacesByName', $extends)) > 0">
             <xsl:value-of select="concat('public class ', $ifname, ' extends ', $extends, '&#10;')" />
             <xsl:text>{&#10;&#10;</xsl:text>
           </xsl:when>
@@ -3122,6 +3261,13 @@ public class VirtualBoxManager
 
     public static void deinitPerThread()
     {
+    }
+
+    public String getClientAPIVersion()
+    {
+        return "]]></xsl:text>
+    <xsl:value-of select="substring($G_vboxApiSuffix, 2)" />
+    <xsl:text><![CDATA[";
     }
 
     public IVirtualBox getVBox()
@@ -3790,6 +3936,13 @@ public class VirtualBoxManager
         throw new VBoxException("Disconnect doesn't make sense for local bindings");
     }
 
+    public String getClientAPIVersion()
+    {
+        return "]]></xsl:text>
+    <xsl:value-of select="substring($G_vboxApiSuffix, 2)" />
+    <xsl:text><![CDATA[";
+    }
+
     public IVirtualBox getVBox()
     {
         return this.vbox;
@@ -3832,7 +3985,6 @@ public class VirtualBoxManager
 
     public void waitForEvents(long tmo)
     {
-        // what to do here?
         try
         {
           Thread.sleep(tmo);
@@ -3862,12 +4014,15 @@ public class VirtualBoxManager
 public class IUnknown
 {
     protected String obj;
+    protected ObjectRefManager objMgr;
     protected final VboxPortType port;
 
-    public IUnknown(String obj, VboxPortType port)
+    public IUnknown(String obj, ObjectRefManager objMgr, VboxPortType port)
     {
-        this.obj = obj;
-        this.port = port;
+        this.obj    = obj;
+        this.objMgr = objMgr;
+        this.port   = port;
+        objMgr.registerObj(this);
     }
 
     public final String getWrapped()
@@ -3878,6 +4033,11 @@ public class IUnknown
     public final VboxPortType getRemoteWSPort()
     {
         return this.port;
+    }
+
+    public final ObjectRefManager getObjMgr()
+    {
+        return this.objMgr;
     }
 
     public synchronized void releaseRemote() throws WebServiceException
@@ -3925,18 +4085,18 @@ import java.math.BigInteger;
 
 public class Helper
 {
-    public static <T> List<T> wrap(Class<T> wrapperClass, VboxPortType pt, List<String> values)
+    public static <T> List<T> wrap(Class<T> wrapperClass, ObjectRefManager objMgr, VboxPortType pt, List<String> values)
     {
         try
         {
             if (values == null)
                 return null;
 
-            Constructor<T> c = wrapperClass.getConstructor(String.class, VboxPortType.class);
+            Constructor<T> c = wrapperClass.getConstructor(String.class, ObjectRefManager.class, VboxPortType.class);
             List<T> ret = new ArrayList<T>(values.size());
             for (String v : values)
             {
-                ret.add(c.newInstance(v, pt));
+                ret.add(c.newInstance(v, objMgr, pt));
             }
             return ret;
         }
@@ -3958,18 +4118,18 @@ public class Helper
         }
     }
 
-    public static <T1, T2> List<T1> wrap2(Class<T1> wrapperClass1, Class<T2> wrapperClass2, VboxPortType pt, List<T2> values)
+    public static <T1, T2> List<T1> wrap2(Class<T1> wrapperClass1, Class<T2> wrapperClass2, ObjectRefManager objMgr, VboxPortType pt, List<T2> values)
     {
         try
         {
             if (values == null)
                 return null;
 
-            Constructor<T1> c = wrapperClass1.getConstructor(wrapperClass2, VboxPortType.class);
+            Constructor<T1> c = wrapperClass1.getConstructor(wrapperClass2, ObjectRefManager.class, VboxPortType.class);
             List<T1> ret = new ArrayList<T1>(values.size());
             for (T2 v : values)
             {
-                ret.add(c.newInstance(v, pt));
+                ret.add(c.newInstance(v, objMgr, pt));
             }
             return ret;
         }
@@ -4194,7 +4354,7 @@ public class VBoxException extends RuntimeException
         errorInfo = null;
     }
 
-    public VBoxException(String message, Throwable cause, VboxPortType port)
+    public VBoxException(String message, Throwable cause, ObjectRefManager objMgr, VboxPortType port)
     {
         super(message, cause);
         if (cause instanceof RuntimeFaultMsg)
@@ -4203,7 +4363,7 @@ public class VBoxException extends RuntimeException
             RuntimeFault f = m.getFaultInfo();
             resultCode = f.getResultCode();
             String retVal = f.getReturnval();
-            errorInfo = (retVal.length() > 0) ? new IVirtualBoxErrorInfo(retVal, port) : null;
+            errorInfo = (retVal.length() > 0) ? new IVirtualBoxErrorInfo(retVal, objMgr, port) : null;
         }
         else
             resultCode = -1;
@@ -4234,10 +4394,19 @@ public class VBoxException extends RuntimeException
   <xsl:if test="$filelistonly=''">
     <xsl:text>import java.net.URL;
 import java.math.BigInteger;
+import java.util.Iterator;
 import java.util.List;
+import java.util.LinkedList;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayList;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.lang.Integer;
+import java.lang.ref.WeakReference;
+import java.lang.ref.ReferenceQueue;
 import javax.xml.namespace.QName;
 import javax.xml.ws.BindingProvider;
 import javax.xml.ws.Holder;
@@ -4365,6 +4534,271 @@ class PortPool
 }
 
 
+/**
+ * This class manages the object references between us and the webservice server.
+ * It makes sure that the object on the server side is destroyed when all
+ */
+class ObjectRefManager
+{
+    private final static ReferenceQueue<IUnknown> refQ = new ReferenceQueue<IUnknown>();
+
+    private final ConcurrentMap<String, ManagedObj> map = new ConcurrentHashMap<String, ManagedObj>();
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+    private final ObjRefMgrCleanupThread objRefMgrCleanup;
+
+    public ObjectRefManager()
+    {
+        this.objRefMgrCleanup = new ObjRefMgrCleanupThread(this, 100);
+        this.objRefMgrCleanup.start();
+    }
+
+    /**
+     * Prevents the object reference manager cleanup thread from releasing any
+     * server side objects to avoid a fundamental race in the multi threaded
+     * java environment where it is possible that a wrapper got the object ID
+     * from the server but couldn't create the local stub protecting the object
+     * before the cleanup thread released it.
+     */
+    public void preventObjRelease()
+    {
+        lock.readLock().lock();
+    }
+
+    /**
+     * Allows releasing server side objects from the cleanup thread again.
+     */
+    public void allowObjRelease()
+    {
+        lock.readLock().unlock();
+    }
+
+    /**
+     * Marks the start of a run to release server side objects which don't hold
+     * a reference locally anymore.
+     */
+    public void startObjRelease()
+    {
+        lock.writeLock().lock();
+    }
+
+    /**
+     * Marks the end of a cleanup run.
+     */
+    public void endObjRelease()
+    {
+        lock.writeLock().unlock();
+    }
+
+    /**
+     * Registers a new stub object for automatic reference managing.
+     */
+    public void registerObj(IUnknown obj)
+    {
+        assert lock.getReadLockCount() > 0;
+        ManagedObjRef ref = new ManagedObjRef(obj);
+
+        ManagedObj mgrobj = map.get(obj.getWrapped());
+        if (mgrobj != null)
+        {
+            mgrobj.addObject(ref);
+        }
+        else
+        {
+            /* Create new. */
+            mgrobj = new ManagedObj(obj.getWrapped(), obj.getRemoteWSPort());
+            mgrobj.addObject(ref);
+            map.put(obj.getWrapped(), mgrobj);
+        }
+    }
+
+    /**
+     * Removes a garbage collected object reference from our reference manager.
+     *
+     * Returns the server side object wrapper if there is no stub referencing it
+     * anymore otherwise null is returned.
+     */
+    public ManagedObj unregisterObj(ManagedObjRef objRef)
+    {
+        ManagedObj obj = this.map.get(objRef.objId);
+
+        assert obj != null;
+        obj.removeObject(objRef);
+        if (!obj.isReferenced())
+            return obj;
+
+        return null;
+    }
+
+    public void releaseRemoteObj(ManagedObj obj)
+    {
+        assert lock.isWriteLockedByCurrentThread();
+
+        if (!obj.isReferenced())
+        {
+            try
+            {
+                obj.port.iManagedObjectRefRelease(obj.objId);
+            }
+            catch (InvalidObjectFaultMsg e)
+            {
+                throw new WebServiceException(e);
+            }
+            catch (RuntimeFaultMsg e)
+            {
+                throw new WebServiceException(e);
+            }
+            finally
+            {
+                this.map.remove(obj.objId);
+            }
+        }
+    }
+
+    /**
+     * An object which is living on the server side. This can be referenced
+     * by multiple stub objects here.
+     */
+    static class ManagedObj
+    {
+        private final String                               objId;
+        private final VboxPortType                         port;
+        private final ConcurrentLinkedQueue<ManagedObjRef> refQ;
+
+        ManagedObj(String objId,  VboxPortType port)
+        {
+          this.objId = objId;
+          this.port  = port;
+          this.refQ  = new ConcurrentLinkedQueue<ManagedObjRef>();
+        }
+
+        public void addObject(ManagedObjRef obj)
+        {
+            this.refQ.add(obj);
+        }
+
+        public void removeObject(ManagedObjRef obj)
+        {
+            this.refQ.remove(obj);
+        }
+
+        public boolean isReferenced()
+        {
+            return !this.refQ.isEmpty();
+        }
+    }
+
+    /**
+     * A private class extending WeakReference to get notified about garbage
+     * collected stub objects.
+     */
+    static class ManagedObjRef extends WeakReference<IUnknown>
+    {
+        final String objId;
+
+        ManagedObjRef(IUnknown obj)
+        {
+            super(obj, refQ);
+            this.objId = obj.getWrapped();
+        }
+    }
+
+    /**
+     * A private class implementing a thread getting notified
+     * about garbage collected objects so it can release the object on the
+     * server side if it is not used anymore.
+     */
+    static class ObjRefMgrCleanupThread extends Thread
+    {
+        ObjectRefManager            objRefMgr;
+        int                         cStubsReleased;
+        int                         cStubsReleaseThreshold;
+        HashMap<String, ManagedObj> mapToRelease = new HashMap<String, ManagedObj>();
+
+        ObjRefMgrCleanupThread(ObjectRefManager objRefMgr)
+        {
+            init(objRefMgr, 500);
+        }
+
+        ObjRefMgrCleanupThread(ObjectRefManager objRefMgr, int cStubsReleaseThreshold)
+        {
+            init(objRefMgr, cStubsReleaseThreshold);
+        }
+
+        private void init(ObjectRefManager objRefMgr, int cStubsReleaseThreshold)
+        {
+            this.objRefMgr = objRefMgr;
+            this.cStubsReleased = 0;
+            this.cStubsReleaseThreshold = cStubsReleaseThreshold;
+            setName("ObjectRefManager-VBoxWSObjRefGcThrd");
+            /*
+             * setDaemon() makes sure the jvm exits and is not blocked
+             * if the thread is still running so we don't have to care about
+             * tearing it down.
+             */
+            setDaemon(true);
+        }
+
+        public void run()
+        {
+            while (true)
+            {
+                while (cStubsReleased < cStubsReleaseThreshold)
+                {
+                    try
+                    {
+                        /* Accumulate a few objects before we start. */
+                        while (cStubsReleased < cStubsReleaseThreshold)
+                        {
+                            ManagedObjRef ref = (ManagedObjRef)refQ.remove();
+                            ManagedObj obj = this.objRefMgr.unregisterObj(ref);
+                            /*
+                             * If the server side object is not referenced anymore
+                             * promote to map for releasing later.
+                             */
+                            if (obj != null && !mapToRelease.containsKey(ref.objId))
+                                mapToRelease.put(ref.objId, obj);
+
+                            cStubsReleased++;
+                        }
+                    }
+                    catch (InterruptedException e)
+                    { /* ignore */ }
+                    catch (javax.xml.ws.WebServiceException e)
+                    { /* ignore */ }
+                }
+
+                /*
+                 * After we released enough stubs we go over all non referenced
+                 * server side objects and release them if they were not
+                 * referenced again in between.
+                 */
+                cStubsReleased = 0;
+                if (!mapToRelease.isEmpty())
+                {
+                    this.objRefMgr.startObjRelease();
+                    try
+                    {
+                        Iterator<ManagedObj> it = mapToRelease.values().iterator();
+                        while (it.hasNext())
+                        {
+                            ManagedObj obj = it.next();
+                            this.objRefMgr.releaseRemoteObj(obj);
+                        }
+
+                        mapToRelease.clear();
+                    }
+                    catch (javax.xml.ws.WebServiceException e)
+                    { /* ignore */ }
+                    finally
+                    {
+                        this.objRefMgr.endObjRelease();
+                    }
+                }
+            }
+        }
+    }
+}
+
 class VBoxTLSSocketFactory extends SSLSocketFactory
 {
     private final SSLSocketFactory sf;
@@ -4448,7 +4882,7 @@ class VBoxTLSSocketFactory extends SSLSocketFactory
 
     public String[] getDefaultCipherSuites()
     {
-        return sf.getSupportedCipherSuites();
+        return sf.getDefaultCipherSuites();
     }
 
     public String[] getSupportedCipherSuites()
@@ -4456,11 +4890,12 @@ class VBoxTLSSocketFactory extends SSLSocketFactory
         return sf.getSupportedCipherSuites();
     }
 }
-        
+
 
 public class VirtualBoxManager
 {
     private static PortPool pool = new PortPool(true);
+    private static final ObjectRefManager objMgr = new ObjectRefManager();
     protected VboxPortType port;
 
     private IVirtualBox vbox;
@@ -4500,7 +4935,15 @@ public class VirtualBoxManager
                 put("com.sun.xml.ws.transport.https.client.SSLSocketFactory", sf);
 
             String handle = port.iWebsessionManagerLogon(username, passwd);
-            this.vbox = new IVirtualBox(handle, port);
+            this.objMgr.preventObjRelease();
+            try
+            {
+                this.vbox = new IVirtualBox(handle, this.objMgr, port);
+            }
+            finally
+            {
+                this.objMgr.allowObjRelease();
+            }
         }
         catch (Throwable t)
         {
@@ -4510,7 +4953,7 @@ public class VirtualBoxManager
                 this.port = null;
             }
             // we have to throw smth derived from RuntimeException
-            throw new VBoxException(t.getMessage(), t, this.port);
+            throw new VBoxException(t.getMessage(), t, this.objMgr, this.port);
         }
     }
 
@@ -4518,7 +4961,6 @@ public class VirtualBoxManager
                         Map<String, Object> requestContext, Map<String, Object> responseContext)
     {
         this.port = pool.getPort();
-
         try
         {
             ((BindingProvider)port).getRequestContext();
@@ -4531,7 +4973,15 @@ public class VirtualBoxManager
             ((BindingProvider)port).getRequestContext().
                 put(BindingProvider.ENDPOINT_ADDRESS_PROPERTY, url);
             String handle = port.iWebsessionManagerLogon(username, passwd);
-            this.vbox = new IVirtualBox(handle, port);
+            this.objMgr.preventObjRelease();
+            try
+            {
+                this.vbox = new IVirtualBox(handle, this.objMgr, port);
+            }
+            finally
+            {
+                this.objMgr.allowObjRelease();
+            }
         }
         catch (Throwable t)
         {
@@ -4541,7 +4991,7 @@ public class VirtualBoxManager
                 this.port = null;
             }
             // we have to throw smth derived from RuntimeException
-            throw new VBoxException(t.getMessage(), t, this.port);
+            throw new VBoxException(t.getMessage(), t, this.objMgr, this.port);
         }
     }
 
@@ -4557,11 +5007,11 @@ public class VirtualBoxManager
         }
         catch (InvalidObjectFaultMsg e)
         {
-            throw new VBoxException(e.getMessage(), e, this.port);
+            throw new VBoxException(e.getMessage(), e, this.objMgr, this.port);
         }
         catch (RuntimeFaultMsg e)
         {
-            throw new VBoxException(e.getMessage(), e, this.port);
+            throw new VBoxException(e.getMessage(), e, this.objMgr, this.port);
         }
         finally
         {
@@ -4571,6 +5021,13 @@ public class VirtualBoxManager
                 this.port = null;
             }
         }
+    }
+
+    public String getClientAPIVersion()
+    {
+        return "]]></xsl:text>
+    <xsl:value-of select="substring($G_vboxApiSuffix, 2)" />
+    <xsl:text><![CDATA[";
     }
 
     public IVirtualBox getVBox()
@@ -4585,15 +5042,23 @@ public class VirtualBoxManager
         try
         {
             String handle = port.iWebsessionManagerGetSessionObject(this.vbox.getWrapped());
-            return new ISession(handle, port);
+            this.objMgr.preventObjRelease();
+            try
+            {
+                return new ISession(handle, this.objMgr, port);
+            }
+            finally
+            {
+                this.objMgr.allowObjRelease();
+            }
         }
         catch (InvalidObjectFaultMsg e)
         {
-            throw new VBoxException(e.getMessage(), e, this.port);
+            throw new VBoxException(e.getMessage(), e, this.objMgr, this.port);
         }
         catch (RuntimeFaultMsg e)
         {
-            throw new VBoxException(e.getMessage(), e, this.port);
+            throw new VBoxException(e.getMessage(), e, this.objMgr, this.port);
         }
     }
 
@@ -4628,6 +5093,13 @@ public class VirtualBoxManager
 
     public void waitForEvents(long tmo)
     {
+        try
+        {
+          Thread.sleep(tmo);
+        }
+        catch (InterruptedException ie)
+        {
+        }
     }
 
     protected void finalize() throws Throwable
@@ -4663,7 +5135,7 @@ public class VirtualBoxManager
   </xsl:if>
 
   <xsl:if test="not($filelistonly='')">
-    <xsl:value-of select="concat($filelistonly, ' := \&#10;')"/>
+    <xsl:value-of select="concat($filelistonly, ' :=')"/>
   </xsl:if>
 
   <!-- Handwritten files -->
@@ -4712,9 +5184,19 @@ public class VirtualBoxManager
         </xsl:if>
       </xsl:when>
 
+      <xsl:when test="$G_vboxGlueStyle='xpcom'">
+        <!-- We don't need WSDL-specific nor MIDL-specific interfaces here -->
+        <xsl:if test="not(@internal='yes') and not($self_target='wsdl') and not($module) and not($self_target='midl')">
+          <xsl:call-template name="genIface">
+            <xsl:with-param name="ifname" select="@name" />
+            <xsl:with-param name="filename" select="concat(@name, '.java')" />
+          </xsl:call-template>
+        </xsl:if>
+      </xsl:when>
+
       <xsl:otherwise>
         <!-- We don't need WSDL-specific interfaces here -->
-        <xsl:if test="not($self_target='wsdl') and not($module)">
+        <xsl:if test="not(@internal='yes') and not($self_target='wsdl') and not($module)">
           <xsl:call-template name="genIface">
             <xsl:with-param name="ifname" select="@name" />
             <xsl:with-param name="filename" select="concat(@name, '.java')" />
@@ -4726,7 +5208,7 @@ public class VirtualBoxManager
   </xsl:for-each>
 
   <xsl:if test="not($filelistonly='')">
-    <xsl:value-of select="'&#10;'"/>
+    <xsl:value-of select="concat($G_sNewLine, $G_sNewLine)"/>
   </xsl:if>
 
 </xsl:template>

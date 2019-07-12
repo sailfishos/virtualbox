@@ -28,9 +28,10 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-freebsd-kernel.h"
 
 #include <iprt/thread.h>
@@ -95,6 +96,13 @@ DECLHIDDEN(int) rtThreadNativeAdopt(PRTTHREADINT pThread)
     /* There is nothing special that needs doing here, but the
        user really better know what he's cooking. */
     return VINF_SUCCESS;
+}
+
+
+DECLHIDDEN(void) rtThreadNativeWaitKludge(PRTTHREADINT pThread)
+{
+    /** @todo fix RTThreadWait/RTR0Term race on freebsd. */
+    RTThreadSleep(1);
 }
 
 

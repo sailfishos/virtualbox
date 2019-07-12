@@ -1,11 +1,10 @@
 /* $Id: VBoxDispDriverDDraw.cpp $ */
-
 /** @file
  * VBox XPDM Display driver interface functions related to DirectDraw
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -189,6 +188,7 @@ VBoxDispDrvEnableDirectDraw(DHPDEV dhpdev, DD_CALLBACKS *pCallBacks, DD_SURFACEC
 
 VOID APIENTRY VBoxDispDrvDisableDirectDraw(DHPDEV  dhpdev)
 {
+    RT_NOREF(dhpdev);
     LOGF_ENTER();
     LOGF_LEAVE();
     return;

@@ -1,3 +1,4 @@
+/* $Id: seamless-x11.h $ */
 /** @file
  *
  * Seamless mode:
@@ -5,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -136,7 +137,8 @@ public:
     bool addWindow(Window hWin, bool isMapped, int x, int y, int w, int h, int cRects,
                    XRectangle *pRects)
     {
-        LogRelFlowFunc(("\n"));
+        LogRelFlowFunc(("hWin=%lu, isMapped=%RTbool, x=%d, y=%d, w=%d, h=%d, cRects=%d\n",
+                        (unsigned long) hWin, isMapped, x, y, w, h, cRects));
         VBoxGuestWinInfo *pInfo = new VBoxGuestWinInfo(isMapped, x, y, w, h, cRects,
                                                        pRects);
         pInfo->Core.Key = hWin;
@@ -200,8 +202,8 @@ private:
 public:
     /**
      * Initialise the guest and ensure that it is capable of handling seamless mode
-     * @param   pHost Host interface callback to notify of window configuration
-     *                changes.
+     * @param   pHostCallback Host interface callback to notify of window configuration
+     *                        changes.
      *
      * @returns iprt status code
      */
@@ -241,8 +243,6 @@ public:
     /* Methods to handle X11 events.  These are public so that the unit test
      * can call them. */
     void doConfigureEvent(Window hWin);
-    void doMapEvent(Window hWin);
-    void doUnmapEvent(Window hWin);
     void doShapeEvent(Window hWin);
 
     SeamlessX11(void)

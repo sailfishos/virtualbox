@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,17 +24,18 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SUP
 #ifdef IN_SUP_HARDENED_R3
 # undef DEBUG /* Warning: disables RT_STRICT */
-# define LOG_DISABLED
-  /** @todo RTLOGREL_DISABLED */
+# ifndef LOG_DISABLED
+#  define LOG_DISABLED
+# endif
+# define RTLOG_REL_DISABLED
 # include <iprt/log.h>
-# undef LogRelIt
-# define LogRelIt(pvInst, fFlags, iGroup, fmtargs) do { } while (0)
 #endif
 
 #include <VBox/types.h>
@@ -63,9 +64,9 @@
 #include <zone.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Solaris device link - system. */
 #define DEVICE_NAME_SYS       "/devices/pseudo/vboxdrv@0:vboxdrv"
 /** Solaris device link - user. */
@@ -152,8 +153,6 @@ int suplibOsInit(PSUPLIBDATA pThis, bool fPreInited, bool fUnrestricted, SUPINIT
 }
 
 
-#ifndef IN_SUP_HARDENED_R3
-
 int suplibOsTerm(PSUPLIBDATA pThis)
 {
     /*
@@ -181,6 +180,8 @@ int suplibOsTerm(PSUPLIBDATA pThis)
     return VINF_SUCCESS;
 }
 
+
+#ifndef IN_SUP_HARDENED_R3
 
 int suplibOsInstall(void)
 {

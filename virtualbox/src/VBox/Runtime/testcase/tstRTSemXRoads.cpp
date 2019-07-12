@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/semaphore.h>
 
 #include <iprt/asm.h>
@@ -38,9 +38,9 @@
 #include <iprt/time.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTTEST g_hTest;
 
 static uint32_t volatile    g_cNSCrossings;
@@ -52,12 +52,14 @@ static RTSEMXROADS          g_hXRoads;
 
 static int tstTrafficThreadCommon(uintptr_t iThread, bool fNS)
 {
+    RT_NOREF_PV(iThread);
+
     for (uint32_t iLoop = 0; RTTimeMilliTS() - g_u64StartMilliTS < g_cSecs*1000; iLoop++)
     {
         /* fudge */
-        if ((iLoop % 223) == 223)
+        if ((iLoop % 223) == 222)
             RTThreadYield();
-        else if ((iLoop % 16127) == 16127)
+        else if ((iLoop % 16127) == 16126)
             RTThreadSleep(1);
 
         if (fNS)
@@ -79,6 +81,8 @@ static int tstTrafficThreadCommon(uintptr_t iThread, bool fNS)
 
 static DECLCALLBACK(int) tstTrafficNSThread(RTTHREAD hSelf, void *pvUser)
 {
+    RT_NOREF_PV(hSelf);
+
     uintptr_t iThread = (uintptr_t)pvUser;
     return tstTrafficThreadCommon(iThread, true);
 }
@@ -86,6 +90,8 @@ static DECLCALLBACK(int) tstTrafficNSThread(RTTHREAD hSelf, void *pvUser)
 
 static DECLCALLBACK(int) tstTrafficEWThread(RTTHREAD hSelf, void *pvUser)
 {
+    RT_NOREF_PV(hSelf);
+
     uintptr_t iThread = (uintptr_t)pvUser;
     return tstTrafficThreadCommon(iThread, false);
 }

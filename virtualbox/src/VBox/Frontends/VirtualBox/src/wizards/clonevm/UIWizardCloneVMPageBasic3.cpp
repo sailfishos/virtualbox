@@ -1,12 +1,10 @@
 /* $Id: UIWizardCloneVMPageBasic3.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardCloneVMPageBasic3 class implementation
+ * VBox Qt GUI - UIWizardCloneVMPageBasic3 class implementation.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,14 +15,21 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QVBoxLayout>
-#include <QRadioButton>
+# include <QVBoxLayout>
+# include <QRadioButton>
 
 /* Local includes: */
-#include "UIWizardCloneVMPageBasic3.h"
-#include "UIWizardCloneVM.h"
-#include "QIRichTextLabel.h"
+# include "UIWizardCloneVMPageBasic3.h"
+# include "UIWizardCloneVM.h"
+# include "QIRichTextLabel.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardCloneVMPage3::UIWizardCloneVMPage3(bool fShowChildsOption)
     : m_fShowChildsOption(fShowChildsOption)
@@ -47,6 +52,7 @@ void UIWizardCloneVMPage3::setCloneMode(KCloneMode cloneMode)
         case KCloneMode_MachineState: m_pMachineRadio->setChecked(true); break;
         case KCloneMode_MachineAndChildStates: m_pMachineAndChildsRadio->setChecked(true); break;
         case KCloneMode_AllStates: m_pAllRadio->setChecked(true); break;
+        case KCloneMode_Max: break; /* Shut up, MSC! */
     }
 }
 

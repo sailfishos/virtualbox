@@ -1,10 +1,11 @@
+/* $Id: MediumLock.cpp $ */
 /** @file
  *
  * Medium lock management helper classes
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,6 +29,9 @@ MediumLock::MediumLock()
 
 MediumLock::~MediumLock()
 {
+    // destroying medium locks is routinely done as part of error handling
+    // and it's not expected to lose error info
+    ErrorInfoKeeper eik;
     Unlock();
 }
 
@@ -95,7 +99,7 @@ HRESULT MediumLock::Lock(bool aIgnoreLockedMedia)
     MediumState_T state;
     {
         AutoReadLock alock(mMedium COMMA_LOCKVAL_SRC_POS);
-        state = mMedium->getState();
+        state = mMedium->i_getState();
     }
     switch (state)
     {
@@ -154,6 +158,9 @@ MediumLockList::MediumLockList()
 
 MediumLockList::~MediumLockList()
 {
+    // destroying medium lock lists is routinely done as part of error handling
+    // and it's not expected to lose error info
+    ErrorInfoKeeper eik;
     Clear();
     // rest is done by the list object's destructor
 }
@@ -183,7 +190,7 @@ HRESULT MediumLockList::Update(const ComObjPtr<Medium> &aMedium, bool aLockWrite
 {
     for (MediumLockList::Base::iterator it = mMediumLocks.begin();
          it != mMediumLocks.end();
-         it++)
+         ++it)
     {
         if (it->GetMedium() == aMedium)
             return it->UpdateLock(aLockWrite);
@@ -222,14 +229,14 @@ HRESULT MediumLockList::Lock(bool fSkipOverLockedMedia /* = false */)
     HRESULT rc = S_OK;
     for (MediumLockList::Base::iterator it = mMediumLocks.begin();
          it != mMediumLocks.end();
-         it++)
+         ++it)
     {
         rc = it->Lock(fSkipOverLockedMedia);
         if (FAILED(rc))
         {
             for (MediumLockList::Base::iterator it2 = mMediumLocks.begin();
                  it2 != it;
-                 it2++)
+                 ++it2)
             {
                 HRESULT rc2 = it2->Unlock();
                 AssertComRC(rc2);
@@ -249,7 +256,7 @@ HRESULT MediumLockList::Unlock()
     HRESULT rc = S_OK;
     for (MediumLockList::Base::iterator it = mMediumLocks.begin();
          it != mMediumLocks.end();
-         it++)
+         ++it)
     {
         HRESULT rc2 = it->Unlock();
         if (SUCCEEDED(rc) && FAILED(rc2))
@@ -267,6 +274,9 @@ MediumLockListMap::MediumLockListMap()
 
 MediumLockListMap::~MediumLockListMap()
 {
+    // destroying medium lock list maps is routinely done as part of
+    // error handling and it's not expected to lose error info
+    ErrorInfoKeeper eik;
     Clear();
     // rest is done by the map object's destructor
 }
@@ -313,13 +323,12 @@ HRESULT MediumLockListMap::Clear()
     HRESULT rc = Unlock();
     for (MediumLockListMap::Base::iterator it = mMediumLocks.begin();
          it != mMediumLocks.end();
-         )
+         ++it)
     {
         MediumLockList *pMediumLockList = it->second;
-        // need an incremented iterator as otherwise erasing invalidates it
-        mMediumLocks.erase(it++);
         delete pMediumLockList;
     }
+    mMediumLocks.clear();
     return rc;
 }
 
@@ -343,14 +352,14 @@ HRESULT MediumLockListMap::Lock()
     HRESULT rc = S_OK;
     for (MediumLockListMap::Base::const_iterator it = mMediumLocks.begin();
          it != mMediumLocks.end();
-         it++)
+         ++it)
     {
         rc = it->second->Lock();
         if (FAILED(rc))
         {
             for (MediumLockListMap::Base::const_iterator it2 = mMediumLocks.begin();
                  it2 != it;
-                 it2++)
+                 ++it2)
             {
                 HRESULT rc2 = it2->second->Unlock();
                 AssertComRC(rc2);
@@ -370,7 +379,7 @@ HRESULT MediumLockListMap::Unlock()
     HRESULT rc = S_OK;
     for (MediumLockListMap::Base::const_iterator it = mMediumLocks.begin();
          it != mMediumLocks.end();
-         it++)
+         ++it)
     {
         MediumLockList *pMediumLockList = it->second;
         HRESULT rc2 = pMediumLockList->Unlock();

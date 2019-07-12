@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_INTNET
 #include <VBox/vmm/pdmdrv.h>
 #include <VBox/vmm/pdmnetinline.h>
@@ -48,16 +49,16 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Enables the ring-0 part. */
 #define VBOX_WITH_DRVINTNET_IN_R0
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The state of the asynchronous thread.
  */
@@ -260,13 +261,14 @@ static int drvR3IntNetSetActive(PDRVINTNET pThis, bool fActive)
 
 /* -=-=-=-=- PDMINETWORKUP -=-=-=-=- */
 
+#ifndef IN_RING3
 /**
  * Helper for signalling the xmit thread.
  *
  * @returns VERR_TRY_AGAIN (convenience).
  * @param   pThis               The instance data..
  */
-DECLINLINE(int) drvIntNetSignalXmit(PDRVINTNET pThis)
+DECLINLINE(int) drvR0IntNetSignalXmit(PDRVINTNET pThis)
 {
     /// @todo if (!ASMAtomicXchgBool(&pThis->fXmitSignalled, true)) - needs careful optimizing.
     {
@@ -276,6 +278,7 @@ DECLINLINE(int) drvIntNetSignalXmit(PDRVINTNET pThis)
     }
     return VERR_TRY_AGAIN;
 }
+#endif /* !IN_RING3 */
 
 
 /**
@@ -302,7 +305,7 @@ DECLINLINE(int) drvIntNetProcessXmit(PDRVINTNET pThis)
     if (rc == VERR_TRY_AGAIN)
     {
         ASMAtomicUoWriteBool(&pThis->fXmitProcessRing, true);
-        drvIntNetSignalXmit(pThis);
+        drvR0IntNetSignalXmit(pThis);
         rc = VINF_SUCCESS;
     }
 #endif
@@ -347,7 +350,7 @@ PDMBOTHCBDECL(int) drvIntNetUp_BeginXmit(PPDMINETWORKUP pInterface, bool fOnWork
         }
         rc = VERR_TRY_AGAIN;
 #else  /* IN_RING0 */
-        rc = drvIntNetSignalXmit(pThis);
+        rc = drvR0IntNetSignalXmit(pThis);
 #endif /* IN_RING0 */
     }
     return rc;
@@ -377,7 +380,7 @@ PDMBOTHCBDECL(int) drvIntNetUp_AllocBuf(PPDMINETWORKUP pInterface, size_t cbMin,
 #else
     PPDMSCATTERGATHER pSgBuf = &pThis->u.Sg;
     if (RT_UNLIKELY(pSgBuf->fFlags != 0))
-        return drvIntNetSignalXmit(pThis);
+        return drvR0IntNetSignalXmit(pThis);
 #endif
 
     /*
@@ -440,7 +443,7 @@ PDMBOTHCBDECL(int) drvIntNetUp_AllocBuf(PPDMINETWORKUP pInterface, size_t cbMin,
     if (pThis->CTX_SUFF(pBuf)->cbSend >= cbMin * 2 + sizeof(INTNETHDR))
     {
         pThis->fXmitProcessRing = true;
-        rc = drvIntNetSignalXmit(pThis);
+        rc = drvR0IntNetSignalXmit(pThis);
     }
     else
         rc = VERR_NO_MEMORY;
@@ -486,6 +489,7 @@ PDMBOTHCBDECL(int) drvIntNetUp_SendBuf(PPDMINETWORKUP pInterface, PPDMSCATTERGAT
 {
     PDRVINTNET  pThis = RT_FROM_MEMBER(pInterface, DRVINTNET, CTX_SUFF(INetworkUp));
     STAM_PROFILE_START(&pThis->StatTransmit, a);
+    RT_NOREF_PV(fOnWorkerThread);
 
     AssertPtr(pSgBuf);
     Assert(pSgBuf->fFlags == (PDMSCATTERGATHER_FLAGS_MAGIC | PDMSCATTERGATHER_FLAGS_OWNER_1));
@@ -570,6 +574,7 @@ static DECLCALLBACK(void) drvR3IntNetUp_NotifyLinkChanged(PPDMINETWORKUP pInterf
             break;
         default:
             AssertMsgFailed(("enmLinkState=%d\n", enmLinkState));
+            RT_FALL_THRU();
         case PDMNETWORKLINKSTATE_UP:
             fLinkDown = false;
             break;
@@ -639,6 +644,7 @@ static DECLCALLBACK(int) drvR3IntNetXmitThread(PPDMDRVINS pDrvIns, PPDMTHREAD pT
  */
 static DECLCALLBACK(int) drvR3IntNetXmitWakeUp(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
 {
+    RT_NOREF(pThread);
     PDRVINTNET pThis = PDMINS_2_DATA(pDrvIns, PDRVINTNET);
     return SUPSemEventSignal(pThis->pSupDrvSession, pThis->hXmitEvt);
 }
@@ -774,15 +780,15 @@ static int drvR3IntNetRecvRun(PDRVINTNET pThis)
                                           cbFrame - sizeof(*pGso), pGso + 1));
                                 }
 #endif
-                                for (size_t iSeg = 0; iSeg < cSegs; iSeg++)
+                                for (uint32_t iSeg = 0; iSeg < cSegs; iSeg++)
                                 {
                                     uint32_t cbSegFrame;
-                                    void    *pvSegFrame = PDMNetGsoCarveSegmentQD(pGso, (uint8_t *)(pGso + 1), cbFrame, abHdrScratch,
-                                                                                  iSeg, cSegs, &cbSegFrame);
+                                    void    *pvSegFrame = PDMNetGsoCarveSegmentQD(pGso, (uint8_t *)(pGso + 1), cbFrame,
+                                                                                  abHdrScratch, iSeg, cSegs, &cbSegFrame);
                                     rc = drvR3IntNetRecvWaitForSpace(pThis);
                                     if (RT_FAILURE(rc))
                                     {
-                                        Log(("drvR3IntNetRecvRun: drvR3IntNetRecvWaitForSpace -> %Rrc; iSeg=%u cSegs=%u\n", iSeg, cSegs));
+                                        Log(("drvR3IntNetRecvRun: drvR3IntNetRecvWaitForSpace -> %Rrc; iSeg=%u cSegs=%u\n", rc, iSeg, cSegs));
                                         break; /* we drop the rest. */
                                     }
                                     rc = pThis->pIAboveNet->pfnReceive(pThis->pIAboveNet, pvSegFrame, cbSegFrame);
@@ -869,11 +875,12 @@ static int drvR3IntNetRecvRun(PDRVINTNET pThis)
  * Asynchronous I/O thread for handling receive.
  *
  * @returns VINF_SUCCESS (ignored).
- * @param   ThreadSelf      Thread handle.
+ * @param   hThreadSelf     Thread handle.
  * @param   pvUser          Pointer to a DRVINTNET structure.
  */
-static DECLCALLBACK(int) drvR3IntNetRecvThread(RTTHREAD ThreadSelf, void *pvUser)
+static DECLCALLBACK(int) drvR3IntNetRecvThread(RTTHREAD hThreadSelf, void *pvUser)
 {
+    RT_NOREF(hThreadSelf);
     PDRVINTNET pThis = (PDRVINTNET)pvUser;
     LogFlow(("drvR3IntNetRecvThread: pThis=%p\n", pThis));
     STAM_PROFILE_ADV_START(&pThis->StatReceive, a);
@@ -912,6 +919,7 @@ static DECLCALLBACK(int) drvR3IntNetRecvThread(RTTHREAD ThreadSelf, void *pvUser
 
             default:
                 AssertMsgFailed(("Invalid state %d\n", enmRecvState));
+                RT_FALL_THRU();
             case RECVSTATE_TERMINATE:
                 LogFlow(("drvR3IntNetRecvThread: returns VINF_SUCCESS\n"));
                 return VINF_SUCCESS;
@@ -931,6 +939,8 @@ static DECLCALLBACK(RTRCPTR) drvR3IntNetIBaseRC_QueryInterface(PPDMIBASERC pInte
 
 #if 0
     PDMIBASERC_RETURN_INTERFACE(pThis->pDrvInsR3, pszIID, PDMINETWORKUP, &pThis->INetworkUpRC);
+#else
+    RT_NOREF(pThis, pszIID);
 #endif
     return NIL_RTRCPTR;
 }
@@ -1146,6 +1156,7 @@ static DECLCALLBACK(void) drvR3IntNetPowerOn(PPDMDRVINS pDrvIns)
 static DECLCALLBACK(void) drvR3IntNetRelocate(PPDMDRVINS pDrvIns, RTGCINTPTR offDelta)
 {
     /* nothing to do here yet */
+    RT_NOREF(pDrvIns, offDelta);
 }
 
 
@@ -1183,7 +1194,7 @@ static DECLCALLBACK(void) drvR3IntNetDestruct(PPDMDRVINS pDrvIns)
         AbortWaitReq.hIf          = pThis->hIf;
         AbortWaitReq.fNoMoreWaits = true;
         int rc = PDMDrvHlpSUPCallVMMR0Ex(pDrvIns, VMMR0_DO_INTNET_IF_ABORT_WAIT, &AbortWaitReq, sizeof(AbortWaitReq));
-        AssertMsg(RT_SUCCESS(rc) || rc == VERR_SEM_DESTROYED, ("%Rrc\n", rc));
+        AssertMsg(RT_SUCCESS(rc) || rc == VERR_SEM_DESTROYED, ("%Rrc\n", rc)); RT_NOREF_PV(rc);
     }
 
     /*
@@ -1222,12 +1233,16 @@ static DECLCALLBACK(void) drvR3IntNetDestruct(PPDMDRVINS pDrvIns)
         PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->pBufR3->StatSend2);
         PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->pBufR3->StatRecv1);
         PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->pBufR3->StatRecv2);
+        PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->pBufR3->StatReserved);
         PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->StatReceivedGso);
         PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->StatSentGso);
 #ifdef VBOX_WITH_STATISTICS
         PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->StatReceive);
         PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->StatTransmit);
 #endif
+        PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->StatXmitWakeupR0);
+        PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->StatXmitWakeupR3);
+        PDMDrvHlpSTAMDeregister(pDrvIns, &pThis->StatXmitProcessRing);
     }
 
     /*
@@ -1340,9 +1355,10 @@ static int drvIntNetR3CfgGetPolicy(PPDMDRVINS pDrvIns, const char *pszName, PCDR
  */
 static DECLCALLBACK(int) drvR3IntNetConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uint32_t fFlags)
 {
+    RT_NOREF(fFlags);
+    PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
     PDRVINTNET pThis = PDMINS_2_DATA(pDrvIns, PDRVINTNET);
     bool f;
-    PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
 
     /*
      * Init the static parts.
@@ -1860,7 +1876,7 @@ const PDMDRVREG g_DrvIntNet =
     /* szName */
     "IntNet",
     /* szRCMod */
-    "VBoxDDGC.rc",
+    "VBoxDDRC.rc",
     /* szR0Mod */
     "VBoxDDR0.r0",
     /* pszDescription */

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/dbg.h>
 #include "internal/iprt.h"
 
@@ -42,9 +42,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to a module table entry. */
 typedef struct RTDBGASMOD *PRTDBGASMOD;
 /** Pointer to an address space mapping node. */
@@ -127,9 +127,9 @@ typedef struct RTDBGASINT
 typedef RTDBGASINT *PRTDBGASINT;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Validates an address space handle and returns rc if not valid. */
 #define RTDBGAS_VALID_RETURN_RC(pDbgAs, rc) \
     do { \
@@ -167,9 +167,9 @@ typedef RTDBGASINT *PRTDBGASINT;
     } while (0)
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void rtDbgAsModuleUnlinkMod(PRTDBGASINT pDbgAs, PRTDBGASMOD pMod);
 static void rtDbgAsModuleUnlinkByMap(PRTDBGASINT pDbgAs, PRTDBGASMAP pMap);
 
@@ -197,7 +197,7 @@ RTDECL(int) RTDbgAsCreate(PRTDBGAS phDbgAs, RTUINTPTR FirstAddr, RTUINTPTR LastA
      * Allocate memory for the instance data.
      */
     size_t cchName = strlen(pszName);
-    PRTDBGASINT pDbgAs = (PRTDBGASINT)RTMemAllocVar(RT_OFFSETOF(RTDBGASINT, szName[cchName + 1]));
+    PRTDBGASINT pDbgAs = (PRTDBGASINT)RTMemAllocVar(RT_UOFFSETOF_DYN(RTDBGASINT, szName[cchName + 1]));
     if (!pDbgAs)
         return VERR_NO_MEMORY;
 
@@ -341,6 +341,8 @@ static void rtDbgAsDestroy(PRTDBGASINT pDbgAs)
         }
         pDbgAs->papModules[i] = NULL;
     }
+    RTSemRWDestroy(pDbgAs->hLock);
+    pDbgAs->hLock = NIL_RTSEMRW;
     RTMemFree(pDbgAs->papModules);
     pDbgAs->papModules = NULL;
 
@@ -496,7 +498,7 @@ RT_EXPORT_SYMBOL(RTDbgAsModuleCount);
 /**
  * Common worker for RTDbgAsModuleLink and RTDbgAsModuleLinkSeg.
  *
- * @returns IPRT status.
+ * @returns IPRT status code.
  * @param   pDbgAs          Pointer to the address space instance data.
  * @param   hDbgMod         The module to link.
  * @param   iSeg            The segment to link or NIL if all.

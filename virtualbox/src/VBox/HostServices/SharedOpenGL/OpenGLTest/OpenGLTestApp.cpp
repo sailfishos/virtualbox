@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -22,7 +22,7 @@
 #include <iprt/initterm.h>
 #include <iprt/stream.h>
 #ifdef RT_OS_WINDOWS
-# include <Windows.h>
+# include <iprt/win/windows.h>
 #endif
 #if !defined(RT_OS_WINDOWS) && !defined(RT_OS_OS2)
 # include <sys/resource.h>
@@ -114,7 +114,6 @@ static int vboxInitLogging(const char *pszFilename, bool bGenNameSuffix)
 #if defined(RT_OS_WINDOWS) || defined(RT_OS_OS2)
     fFlags |= RTLOGFLAGS_USECRLF;
 #endif
-    char szError[RTPATH_MAX + 128] = "";
     const char * pszFilenameFmt;
     RTLOGDEST enmLogDest;
     if(pszFilename)
@@ -134,7 +133,7 @@ static int vboxInitLogging(const char *pszFilename, bool bGenNameSuffix)
     int vrc = RTLogCreateEx(&loggerRelease, fFlags, "all",
                             "VBOX_RELEASE_LOG", RT_ELEMENTS(s_apszGroups), s_apszGroups, enmLogDest,
                             NULL /* pfnBeginEnd */, 0 /* cHistory */, 0 /* cbHistoryFileMax */, 0 /* uHistoryTimeMax */,
-                            szError, sizeof(szError), pszFilenameFmt, pszFilename, RTTimeMilliTS());
+                            NULL /* pErrInfo */, pszFilenameFmt, pszFilename, RTTimeMilliTS());
     if (RT_SUCCESS(vrc))
     {
         /* some introductory information */
@@ -303,7 +302,7 @@ int main(int argc, char **argv)
                     break;
 
                 case 'V':
-                    RTPrintf("$Revision: $\n");
+                    RTPrintf("$Revision: 119149 $\n");
                     return 0;
 
                 case VERR_GETOPT_UNKNOWN_OPTION:
@@ -355,9 +354,9 @@ int main(int argc, char **argv)
 }
 
 #ifdef RT_OS_WINDOWS
-extern "C" int WINAPI WinMain(HINSTANCE hInstance,
-    HINSTANCE /*hPrevInstance*/, LPSTR lpCmdLine, int /*nShowCmd*/)
+extern "C" int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
+    RT_NOREF(hInstance, hPrevInstance, lpCmdLine, nShowCmd);
     return main(__argc, __argv);
 }
 #endif

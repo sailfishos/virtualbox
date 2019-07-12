@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -45,9 +45,10 @@
  *        explanation would be nice, esp. seeing what Linus is quoted saying
  *        about it in the open man page... */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_FILE
 #include <iprt/asm.h>
 #include <iprt/mem.h>
@@ -65,9 +66,9 @@
 #include <iprt/file.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** The async I/O context handle */
 typedef unsigned long LNXKAIOCONTEXT;
 
@@ -216,9 +217,9 @@ typedef struct RTFILEAIOREQINTERNAL
 typedef RTFILEAIOREQINTERNAL *PRTFILEAIOREQINTERNAL;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The max number of events to get in one call. */
 #define AIO_MAXIMUM_REQUESTS_PER_CONTEXT 64
 
@@ -230,7 +231,12 @@ DECLINLINE(int) rtFileAsyncIoLinuxCreate(unsigned cEvents, LNXKAIOCONTEXT *pAioC
 {
     int rc = syscall(__NR_io_setup, cEvents, pAioContext);
     if (RT_UNLIKELY(rc == -1))
-        return RTErrConvertFromErrno(errno);
+    {
+        if (errno == EAGAIN)
+            return VERR_FILE_AIO_INSUFFICIENT_EVENTS;
+        else
+            return RTErrConvertFromErrno(errno);
+    }
 
     return VINF_SUCCESS;
 }

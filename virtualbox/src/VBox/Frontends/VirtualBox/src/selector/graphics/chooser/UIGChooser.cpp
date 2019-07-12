@@ -1,12 +1,10 @@
 /* $Id: UIGChooser.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGChooser class implementation
+ * VBox Qt GUI - UIGChooser class implementation.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,22 +15,31 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QVBoxLayout>
-#include <QStatusBar>
+# include <QVBoxLayout>
+# include <QStatusBar>
+# include <QStyle>
 
 /* GUI includes: */
-#include "UIGChooser.h"
-#include "UIGChooserModel.h"
-#include "UIGChooserView.h"
-#include "VBoxGlobal.h"
+# include "UIGChooser.h"
+# include "UIGChooserModel.h"
+# include "UIGChooserView.h"
+# include "UISelectorWindow.h"
+# include "VBoxGlobal.h"
 
-UIGChooser::UIGChooser(QWidget *pParent)
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+
+UIGChooser::UIGChooser(UISelectorWindow *pParent)
     : QWidget(pParent)
+    , m_pSelectorWindow(pParent)
     , m_pMainLayout(0)
     , m_pChooserModel(0)
     , m_pChooserView(0)
-    , m_pStatusBar(0)
 {
     /* Prepare palette: */
     preparePalette();
@@ -59,6 +66,11 @@ UIGChooser::~UIGChooser()
     save();
 }
 
+UIActionPool* UIGChooser::actionPool() const
+{
+    return selector()->actionPool();
+}
+
 UIVMItem* UIGChooser::currentItem() const
 {
     return m_pChooserModel->currentMachineItem();
@@ -79,20 +91,6 @@ bool UIGChooser::isAllItemsOfOneGroupSelected() const
     return m_pChooserModel->isAllItemsOfOneGroupSelected();
 }
 
-void UIGChooser::setStatusBar(QStatusBar *pStatusBar)
-{
-    /* Old status-bar set? */
-    if (m_pStatusBar)
-       m_pChooserModel->disconnect(m_pStatusBar);
-
-    /* Connect new status-bar: */
-    m_pStatusBar = pStatusBar;
-    connect(m_pChooserModel, SIGNAL(sigClearStatusMessage()),
-            m_pStatusBar, SLOT(clearMessage()));
-    connect(m_pChooserModel, SIGNAL(sigShowStatusMessage(const QString&)),
-            m_pStatusBar, SLOT(showMessage(const QString&)));
-}
-
 bool UIGChooser::isGroupSavingInProgress() const
 {
     return m_pChooserModel->isGroupSavingInProgress();
@@ -111,7 +109,8 @@ void UIGChooser::prepareLayout()
 {
     /* Setup main-layout: */
     m_pMainLayout = new QVBoxLayout(this);
-    m_pMainLayout->setContentsMargins(0, 0, 2, 0);
+    const int iR = qApp->style()->pixelMetric(QStyle::PM_LayoutRightMargin) / 9;
+    m_pMainLayout->setContentsMargins(0, 0, iR, 0);
     m_pMainLayout->setSpacing(0);
 }
 

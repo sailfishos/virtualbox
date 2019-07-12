@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,8 +15,8 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#define LOG_GROUP_MAIN_OVERRIDE LOG_GROUP_HGCM
-#include "Logging.h"
+#define LOG_GROUP LOG_GROUP_HGCM
+#include "LoggingNew.h"
 
 #include "HGCMThread.h"
 
@@ -286,7 +286,8 @@ int HGCMThread::Initialize (HGCMTHREADHANDLE handle, const char *pszThreadName, 
                 m_fu32ThreadFlags = HGCMMSG_TF_INITIALIZING;
 
                 RTTHREAD thread;
-                rc = RTThreadCreate (&thread, hgcmWorkerThreadFunc, this, 0, /* default stack size; some service may need quite a bit */
+                rc = RTThreadCreate (&thread, hgcmWorkerThreadFunc, this, 0, /* default stack size; some service
+                                                                                may need quite a bit */
                                      RTTHREADTYPE_IO, RTTHREADFLAGS_WAITABLE,
                                      pszThreadName);
 
@@ -695,7 +696,8 @@ int hgcmThreadWait (HGCMTHREADHANDLE hThread)
 
 int hgcmMsgAlloc (HGCMTHREADHANDLE hThread, HGCMMSGHANDLE *pHandle, uint32_t u32MsgId, PFNHGCMNEWMSGALLOC pfnNewMessage)
 {
-    LogFlow(("hgcmMsgAlloc: thread handle = 0x%08X, pHandle = %p, sizeof (HGCMMsgCore) = %d\n", hThread, pHandle, sizeof (HGCMMsgCore)));
+    LogFlow(("hgcmMsgAlloc: thread handle = 0x%08X, pHandle = %p, sizeof (HGCMMsgCore) = %d\n",
+             hThread, pHandle, sizeof (HGCMMsgCore)));
 
     if (!pHandle)
     {

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_CPUM
 #include <VBox/vmm/cpum.h>
 #include <VBox/vmm/vmm.h>
@@ -30,11 +30,12 @@
 #include <VBox/err.h>
 #include <iprt/assert.h>
 #include <VBox/log.h>
+#include <iprt/asm-amd64-x86.h>
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 RT_C_DECLS_BEGIN /* addressed from asm (not called so no DECLASM). */
 DECLCALLBACK(int) cpumRCHandleNPAndGP(PVM pVM, PCPUMCTXCORE pRegFrame, uintptr_t uUser);
 RT_C_DECLS_END
@@ -45,7 +46,7 @@ RT_C_DECLS_END
  * context execution.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pRegFrame   The register frame.
  * @param   uUser       User argument. In this case a combination of the
  *                      CPUM_HANDLER_* \#defines.
@@ -73,7 +74,7 @@ DECLCALLBACK(int) cpumRCHandleNPAndGP(PVM pVM, PCPUMCTXCORE pRegFrame, uintptr_t
             break;
     }
 
-    AssertMsgFailed(("uUser=%#x eip=%#x\n", uUser, pRegFrame->eip));
+    AssertMsgFailed(("uUser=%#x eip=%#x\n", uUser, pRegFrame->eip)); RT_NOREF_PV(pRegFrame);
     return VERR_TRPM_DONT_PANIC;
 }
 
@@ -82,10 +83,11 @@ DECLCALLBACK(int) cpumRCHandleNPAndGP(PVM pVM, PCPUMCTXCORE pRegFrame, uintptr_t
  * Called by TRPM and CPUM assembly code to make sure the guest state is
  * ready for execution.
  *
- * @param   pVM                 The VM handle.
+ * @param   pVM                 The cross context VM structure.
  */
 DECLASM(void) CPUMRCAssertPreExecutionSanity(PVM pVM)
 {
+#ifdef VBOX_STRICT
     /*
      * Check some important assumptions before resuming guest execution.
      */
@@ -105,6 +107,9 @@ DECLASM(void) CPUMRCAssertPreExecutionSanity(PVM pVM)
     }
     AssertMsg(CPUMIsGuestInRawMode(pVCpu),           ("cs:eip=%04x:%08x ss:esp=%04x:%08x cpl=%u raw/efl=%#x/%#x%s\n", pCtx->cs.Sel, pCtx->eip, pCtx->ss.Sel, pCtx->esp, uRawCpl, u32EFlags, pCtx->eflags.u, fPatch ? " patch" : ""));
     //Log2(("cs:eip=%04x:%08x ss:esp=%04x:%08x cpl=%u raw/efl=%#x/%#x%s\n", pCtx->cs.Sel, pCtx->eip, pCtx->ss.Sel, pCtx->esp, uRawCpl, u32EFlags, pCtx->eflags.u, fPatch ? " patch" : ""));
+#else
+    RT_NOREF_PV(pVM);
+#endif
 }
 
 
@@ -112,7 +117,7 @@ DECLASM(void) CPUMRCAssertPreExecutionSanity(PVM pVM)
  * Get the current privilege level of the guest.
  *
  * @returns CPL
- * @param   pVCpu       The current virtual CPU.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  * @param   pRegFrame   Pointer to the register frame.
  *
  * @todo    r=bird: This is very similar to CPUMGetGuestCPL and I cannot quite
@@ -172,7 +177,7 @@ VMMDECL(uint32_t) CPUMRCGetGuestCPL(PVMCPU pVCpu, PCPUMCTXCORE pRegFrame)
  *
  * Used by emInterpretIret() after the new state has been loaded.
  *
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pCtxCore    The context core (for trap usage).
  * @see     @ref pg_raw
  * @remarks Will be probably obsoleted by #5653 (it will leave and reenter raw
@@ -218,4 +223,33 @@ VMMDECL(void) CPUMRCRecheckRawState(PVMCPU pVCpu, PCPUMCTXCORE pCtxCore)
     pCtxCore->eflags.u32        |= X86_EFL_IF; /* paranoia */
 }
 #endif /* VBOX_WITH_RAW_RING1 */
+
+
+/**
+ * Called by trpmGCExitTrap when VMCPU_FF_CPUM is set (by CPUMRZ.cpp).
+ *
+ * We can be called unecessarily here if we returned to ring-3 for some other
+ * reason before we tried to resume executed guest code.  This is detected and
+ * ignored.
+ *
+ * @param   pVCpu   The cross context CPU structure for the calling EMT.
+ */
+VMMRCDECL(void) CPUMRCProcessForceFlag(PVMCPU pVCpu)
+{
+    /* Only modify CR0 if we're in the post IEM state (host state saved, guest no longer active). */
+    if ((pVCpu->cpum.s.fUseFlags & (CPUM_USED_FPU_GUEST | CPUM_USED_FPU_HOST)) == CPUM_USED_FPU_HOST)
+    {
+        /*
+         * Doing the same CR0 calculation as in AMD64andLegacy.mac so that we'll
+         * catch guest FPU accesses and load the FPU/SSE/AVX register state as needed.
+         */
+        uint32_t cr0 = ASMGetCR0();
+        cr0 |= pVCpu->cpum.s.Guest.cr0 & X86_CR0_EM;
+        cr0 |= X86_CR0_TS | X86_CR0_MP;
+        ASMSetCR0(cr0);
+        Log6(("CPUMRCProcessForceFlag: cr0=%#x\n", cr0));
+    }
+    else
+        Log6(("CPUMRCProcessForceFlag: no change -  cr0=%#x\n", ASMGetCR0()));
+}
 

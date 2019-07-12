@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VMM
 #include <VBox/vmm/vmm.h>
 #include <VBox/vmm/pgm.h>
@@ -41,17 +41,18 @@
 #include <iprt/ctype.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+#if defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64)
 /** Array of switcher definitions.
  * The type and index shall match!
  */
 static PVMMSWITCHERDEF g_apRawModeSwitchers[VMMSWITCHER_MAX] =
 {
     NULL, /* invalid entry */
-#ifdef VBOX_WITH_RAW_MODE
-# ifndef RT_ARCH_AMD64
+# ifdef VBOX_WITH_RAW_MODE
+#  ifndef RT_ARCH_AMD64
     &vmmR3Switcher32BitTo32Bit_Def,
     &vmmR3Switcher32BitToPAE_Def,
     NULL,   //&vmmR3Switcher32BitToAMD64_Def,
@@ -59,13 +60,9 @@ static PVMMSWITCHERDEF g_apRawModeSwitchers[VMMSWITCHER_MAX] =
     &vmmR3SwitcherPAEToPAE_Def,
     NULL,   //&vmmR3SwitcherPAEToAMD64_Def,
     NULL,   //&vmmR3SwitcherPAETo32Bit_Def,
-#  ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-    &vmmR3SwitcherAMD64ToPAE_Def,
-#  else
     NULL,   //&vmmR3SwitcherAMD64ToPAE_Def,
-#  endif
     NULL,   //&vmmR3SwitcherAMD64ToAMD64_Def,
-# else  /* RT_ARCH_AMD64 */
+#  else  /* RT_ARCH_AMD64 */
     NULL,   //&vmmR3Switcher32BitTo32Bit_Def,
     NULL,   //&vmmR3Switcher32BitToPAE_Def,
     NULL,   //&vmmR3Switcher32BitToAMD64_Def,
@@ -75,8 +72,8 @@ static PVMMSWITCHERDEF g_apRawModeSwitchers[VMMSWITCHER_MAX] =
     &vmmR3SwitcherAMD64To32Bit_Def,
     &vmmR3SwitcherAMD64ToPAE_Def,
     NULL,   //&vmmR3SwitcherAMD64ToAMD64_Def,
-# endif /* RT_ARCH_AMD64 */
-#else  /* !VBOX_WITH_RAW_MODE */
+#  endif /* RT_ARCH_AMD64 */
+# else  /* !VBOX_WITH_RAW_MODE */
     NULL,
     NULL,
     NULL,
@@ -86,15 +83,17 @@ static PVMMSWITCHERDEF g_apRawModeSwitchers[VMMSWITCHER_MAX] =
     NULL,
     NULL,
     NULL,
-#endif /* !VBOX_WITH_RAW_MODE */
-#ifndef RT_ARCH_AMD64
+# endif /* !VBOX_WITH_RAW_MODE */
+# ifndef RT_ARCH_AMD64
     &vmmR3SwitcherX86Stub_Def,
     NULL,
-#else
+# else
     NULL,
     &vmmR3SwitcherAMD64Stub_Def,
-#endif
+# endif
 };
+#endif /* VBOX_WITH_RAW_MODE || (HC_ARCH_BITS != 64) */
+
 
 /** Array of switcher definitions.
  * The type and index shall match!
@@ -102,7 +101,7 @@ static PVMMSWITCHERDEF g_apRawModeSwitchers[VMMSWITCHER_MAX] =
 static PVMMSWITCHERDEF g_apHmSwitchers[VMMSWITCHER_MAX] =
 {
     NULL, /* invalid entry */
-#if HC_ARCH_BITS == 32 && !defined(VBOX_WITH_HYBRID_32BIT_KERNEL)
+#if HC_ARCH_BITS == 32
     NULL,   //&vmmR3Switcher32BitTo32Bit_Def,
     NULL,   //&vmmR3Switcher32BitToPAE_Def,
     &vmmR3Switcher32BitToAMD64_Def,
@@ -140,7 +139,7 @@ static PVMMSWITCHERDEF g_apHmSwitchers[VMMSWITCHER_MAX] =
  * This is only used as a debugging aid when we cannot find out why something
  * goes haywire in the intermediate context.
  *
- * @param   pVM         The cross context VM structure.
+ * @param   pVM        The cross context VM structure.
  * @param   pSwitcher   The switcher descriptor.
  * @param   pbDst       Where the switcher code was just copied.
  * @param   HCPhysDst   The host physical address corresponding to @a pbDst.
@@ -180,7 +179,7 @@ static void vmmR3Switcher32On64IdtInit(PVM pVM, PVMMSWITCHERDEF pSwitcher, uint8
 /**
  * Relocates the 64-bit IDT for 64-bit guest on 32-bit host switchers.
  *
- * @param   pVM         The cross context VM structure.
+ * @param   pVM        The cross context VM structure.
  * @param   pSwitcher   The switcher descriptor.
  * @param   pbDst       Where the switcher code was just copied.
  * @param   HCPhysDst   The host physical address corresponding to @a pbDst.
@@ -212,11 +211,12 @@ static void vmmR3Switcher32On64IdtRelocate(PVM pVM, PVMMSWITCHERDEF pSwitcher, u
  * put on linear contiguous backing.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 int vmmR3SwitcherInit(PVM pVM)
 {
-#if !defined(VBOX_WITH_RAW_MODE) && (HC_ARCH_BITS == 64 || defined(VBOX_WITH_HYBRID_32BIT_KERNEL))
+#if !defined(VBOX_WITH_RAW_MODE) && (HC_ARCH_BITS == 64)
+    RT_NOREF(pVM);
     return VINF_SUCCESS;
 #else
 
@@ -282,11 +282,11 @@ int vmmR3SwitcherInit(PVM pVM)
                 paBadTries[i].HCPhys = pVM->vmm.s.HCPhysCoreCode;
                 paBadTries[i].cb     = pVM->vmm.s.cbCoreCode;
                 i++;
-                LogRel(("Failed to allocated and map core code: rc=%Rrc\n", rc));
+                LogRel(("VMM: Failed to allocated and map core code: rc=%Rrc\n", rc));
             }
             while (i-- > 0)
             {
-                LogRel(("Core code alloc attempt #%d: pvR3=%p pvR0=%p HCPhys=%RHp\n",
+                LogRel(("VMM: Core code alloc attempt #%d: pvR3=%p pvR0=%RKv HCPhys=%RHp\n",
                         i, paBadTries[i].pvR3, paBadTries[i].pvR0, paBadTries[i].HCPhys));
                 SUPR3ContFree(paBadTries[i].pvR3, paBadTries[i].cb >> PAGE_SHIFT);
             }
@@ -324,7 +324,7 @@ int vmmR3SwitcherInit(PVM pVM)
         {
             pVM->vmm.s.pvCoreCodeRC = GCPtr;
             MMR3HyperReserve(pVM, PAGE_SIZE, "fence", NULL);
-            LogRel(("CoreCode: R3=%RHv R0=%RHv RC=%RRv Phys=%RHp cb=%#x\n",
+            LogRel(("VMM: CoreCode: R3=%RHv R0=%RKv RC=%RRv Phys=%RHp cb=%#x\n",
                     pVM->vmm.s.pvCoreCodeR3, pVM->vmm.s.pvCoreCodeR0, pVM->vmm.s.pvCoreCodeRC, pVM->vmm.s.HCPhysCoreCode, pVM->vmm.s.cbCoreCode));
 
             /*
@@ -356,12 +356,12 @@ int vmmR3SwitcherInit(PVM pVM)
 /**
  * Relocate the switchers, called by VMMR#Relocate.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   offDelta    The relocation delta.
  */
 void vmmR3SwitcherRelocate(PVM pVM, RTGCINTPTR offDelta)
 {
-#if defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64 && !defined(VBOX_WITH_HYBRID_32BIT_KERNEL))
+#if defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64)
     /*
      * Relocate all the switchers.
      */
@@ -410,12 +410,12 @@ void vmmR3SwitcherRelocate(PVM pVM, RTGCINTPTR offDelta)
 }
 
 
-#if defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64 && !defined(VBOX_WITH_HYBRID_32BIT_KERNEL))
+#if defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64)
 
 /**
  * Generic switcher code relocator.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pSwitcher   The switcher definition.
  * @param   pu8CodeR3   Pointer to the core code block for the switcher, ring-3 mapping.
  * @param   R0PtrCode   Pointer to the core code block for the switcher, ring-0 mapping.
@@ -590,7 +590,7 @@ static void vmmR3SwitcherGenericRelocate(PVM pVM, PVMMSWITCHERDEF pSwitcher,
             {
                 uint32_t offCPUM = *u.pu32++;
                 Assert(offCPUM < sizeof(pVM->cpum));
-                *uSrc.pu32 = (uint32_t)pVM->pVMR0 + RT_OFFSETOF(VM, cpum) + offCPUM;
+                *uSrc.pu32 = (uint32_t)pVM->pVMR0 + RT_UOFFSETOF(VM, cpum) + offCPUM;
                 break;
             }
 
@@ -689,6 +689,7 @@ static void vmmR3SwitcherGenericRelocate(PVM pVM, PVMMSWITCHERDEF pSwitcher,
                 break;
             }
 
+#if 0 /* Reusable for XSAVE. */
             /*
              * Insert relative jump to specified target it FXSAVE/FXRSTOR isn't supported by the cpu.
              */
@@ -696,7 +697,7 @@ static void vmmR3SwitcherGenericRelocate(PVM pVM, PVMMSWITCHERDEF pSwitcher,
             {
                 uint32_t offTrg = *u.pu32++;
                 Assert(offTrg < pSwitcher->cbCode);
-                if (!CPUMSupportsFXSR(pVM))
+                if (!CPUMSupportsXSave(pVM))
                 {
                     *uSrc.pu8++ = 0xe9; /* jmp rel32 */
                     *uSrc.pu32++ = offTrg - (offSrc + 5);
@@ -708,6 +709,7 @@ static void vmmR3SwitcherGenericRelocate(PVM pVM, PVMMSWITCHERDEF pSwitcher,
                 }
                 break;
             }
+#endif
 
             /*
              * Insert relative jump to specified target it SYSENTER isn't used by the host.
@@ -761,18 +763,14 @@ static void vmmR3SwitcherGenericRelocate(PVM pVM, PVMMSWITCHERDEF pSwitcher,
                 break;
             }
 
-# if defined(RT_ARCH_AMD64) || defined(VBOX_WITH_HYBRID_32BIT_KERNEL)
+# if defined(RT_ARCH_AMD64)
             /*
              * 64-bit HC Code Selector (no argument).
              */
             case FIX_HC_64BIT_CS:
             {
                 Assert(offSrc < pSwitcher->cbCode);
-#  if defined(RT_OS_DARWIN) && defined(VBOX_WITH_HYBRID_32BIT_KERNEL)
-                *uSrc.pu16 = 0x80; /* KERNEL64_CS from i386/seg.h */
-#  else
                 AssertFatalMsgFailed(("FIX_HC_64BIT_CS not implemented for this host\n"));
-#  endif
                 break;
             }
 
@@ -782,7 +780,7 @@ static void vmmR3SwitcherGenericRelocate(PVM pVM, PVMMSWITCHERDEF pSwitcher,
             case FIX_HC_64BIT_CPUM:
             {
                 Assert(offSrc < pSwitcher->cbCode);
-                *uSrc.pu64 = pVM->pVMR0 + RT_OFFSETOF(VM, cpum);
+                *uSrc.pu64 = pVM->pVMR0 + RT_UOFFSETOF(VM, cpum);
                 break;
             }
 # endif
@@ -1007,13 +1005,13 @@ static void vmmR3SwitcherGenericRelocate(PVM pVM, PVMMSWITCHERDEF pSwitcher,
  * is not initialized.
  *
  * @returns Raw-mode contet GDT address. Null pointer if not applicable.
- * @param   pVM         The cross context VM structure.
+ * @param   pVM        The cross context VM structure.
  */
 static RTRCPTR vmmR3SwitcherGetHyperGDT(PVM pVM)
 {
     if (HMIsRawModeCtxNeeded(pVM))
         return SELMGetHyperGDT(pVM);
-# if HC_ARCH_BITS != 32 || defined(VBOX_WITH_HYBRID_32BIT_KERNEL)
+# if HC_ARCH_BITS != 32
     AssertFailed(); /* This path is only applicable to some 32-bit hosts. */
 # endif
     return NIL_RTRCPTR;
@@ -1102,7 +1100,7 @@ DECLCALLBACK(void) vmmR3SwitcherAMD64ToPAE_Relocate(PVM pVM, PVMMSWITCHERDEF pSw
  * Selects the switcher to be used for switching to raw-mode context.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   enmSwitcher     The new switcher.
  * @remark  This function may be called before the VMM is initialized.
  */
@@ -1148,14 +1146,14 @@ VMMR3_INT_DECL(int) VMMR3SelectSwitcher(PVM pVM, VMMSWITCHER enmSwitcher)
     return VERR_NOT_IMPLEMENTED;
 }
 
-#endif /* #defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64 && !defined(VBOX_WITH_HYBRID_32BIT_KERNEL)) */
+#endif /* #defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64) */
 
 
 /**
  * Gets the switcher to be used for switching to GC.
  *
  * @returns host to guest ring 0 switcher entrypoint
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   enmSwitcher     The new switcher.
  */
 VMMR3_INT_DECL(RTR0PTR) VMMR3GetHostToGuestSwitcher(PVM pVM, VMMSWITCHER enmSwitcher)

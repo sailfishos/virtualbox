@@ -2,8 +2,9 @@
 /** @file
  * VBoxUsbDev.h - USB device.
  */
+
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -12,10 +13,22 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
+
 #ifndef ___VBoxUsbDev_h___
 #define ___VBoxUsbDev_h___
+
 #include "VBoxUsbCmn.h"
+#include <VBox/cdefs.h>
 #include <iprt/assert.h>
 
 typedef struct VBOXUSB_GLOBALS
@@ -42,11 +55,11 @@ typedef enum
 } ENMVBOXUSB_PNPSTATE;
 AssertCompile(sizeof (ENMVBOXUSB_PNPSTATE) == sizeof (uint32_t));
 
-#ifdef DEBUG
+#ifdef VBOX_STRICT
 DECLHIDDEN(VOID) vboxUsbPnPStateGbgChange(ENMVBOXUSB_PNPSTATE enmOld, ENMVBOXUSB_PNPSTATE enmNew);
 # define VBOXUSB_PNP_GBG_STATE_CHANGE(_old, _new) vboxUsbPnPStateGbgChange((_old), (_new))
 #else
-# define VBOXUSB_PNP_GBG_STATE_CHANGE(_old, _new) do {} while(0)
+# define VBOXUSB_PNP_GBG_STATE_CHANGE(_old, _new) do { } while (0)
 #endif
 
 
@@ -84,12 +97,12 @@ typedef struct VBOXUSBDEV_EXT
 } VBOXUSBDEV_EXT, *PVBOXUSBDEV_EXT;
 
 /* pnp state api */
-static DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbPnPStateGet(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbPnPStateGet(PVBOXUSBDEV_EXT pDevExt)
 {
     return (ENMVBOXUSB_PNPSTATE)ASMAtomicUoReadU32((volatile uint32_t*)&pDevExt->DdiState.PnPState.Curr);
 }
 
-static DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbPnPStateSet(PVBOXUSBDEV_EXT pDevExt, ENMVBOXUSB_PNPSTATE enmState)
+DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbPnPStateSet(PVBOXUSBDEV_EXT pDevExt, ENMVBOXUSB_PNPSTATE enmState)
 {
     KIRQL Irql;
     ENMVBOXUSB_PNPSTATE enmOldState;
@@ -103,7 +116,7 @@ static DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbPnPStateSet(PVBOXUSBDEV_EXT pDevEx
     return enmState;
 }
 
-static DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbPnPStateRestore(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbPnPStateRestore(PVBOXUSBDEV_EXT pDevExt)
 {
     ENMVBOXUSB_PNPSTATE enmNewState, enmOldState;
     KIRQL Irql;
@@ -119,12 +132,12 @@ static DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbPnPStateRestore(PVBOXUSBDEV_EXT pD
     return enmNewState;
 }
 
-static DECLINLINE(VOID) vboxUsbPnPStateInit(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(VOID) vboxUsbPnPStateInit(PVBOXUSBDEV_EXT pDevExt)
 {
     pDevExt->DdiState.PnPState.Curr = pDevExt->DdiState.PnPState.Prev = ENMVBOXUSB_PNPSTATE_START_PENDING;
 }
 
-static DECLINLINE(VOID) vboxUsbDdiStateInit(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(VOID) vboxUsbDdiStateInit(PVBOXUSBDEV_EXT pDevExt)
 {
     KeInitializeSpinLock(&pDevExt->DdiState.Lock);
     VBoxDrvToolRefInit(&pDevExt->DdiState.Ref);
@@ -132,7 +145,7 @@ static DECLINLINE(VOID) vboxUsbDdiStateInit(PVBOXUSBDEV_EXT pDevExt)
     vboxUsbPnPStateInit(pDevExt);
 }
 
-static DECLINLINE(bool) vboxUsbDdiStateRetainIfStarted(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(bool) vboxUsbDdiStateRetainIfStarted(PVBOXUSBDEV_EXT pDevExt)
 {
     KIRQL oldIrql;
     bool bRetained = true;
@@ -153,7 +166,7 @@ static DECLINLINE(bool) vboxUsbDdiStateRetainIfStarted(PVBOXUSBDEV_EXT pDevExt)
  * otherwise increments a ref counter and returns the current pnp state
  * NOTE: never returns ENMVBOXUSB_PNPSTATE_REMOVED
  * */
-static DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbDdiStateRetainIfNotRemoved(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbDdiStateRetainIfNotRemoved(PVBOXUSBDEV_EXT pDevExt)
 {
     KIRQL oldIrql;
     ENMVBOXUSB_PNPSTATE enmState;
@@ -167,38 +180,26 @@ static DECLINLINE(ENMVBOXUSB_PNPSTATE) vboxUsbDdiStateRetainIfNotRemoved(PVBOXUS
     return enmState != ENMVBOXUSB_PNPSTATE_REMOVED ? enmState : (ENMVBOXUSB_PNPSTATE)0;
 }
 
-static DECLINLINE(uint32_t) vboxUsbDdiStateRetain(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(uint32_t) vboxUsbDdiStateRetain(PVBOXUSBDEV_EXT pDevExt)
 {
     return VBoxDrvToolRefRetain(&pDevExt->DdiState.Ref);
 }
 
-static DECLINLINE(uint32_t) vboxUsbDdiStateRelease(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(uint32_t) vboxUsbDdiStateRelease(PVBOXUSBDEV_EXT pDevExt)
 {
     return VBoxDrvToolRefRelease(&pDevExt->DdiState.Ref);
 }
 
-static DECLINLINE(VOID) vboxUsbDdiStateReleaseAndWaitCompleted(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(VOID) vboxUsbDdiStateReleaseAndWaitCompleted(PVBOXUSBDEV_EXT pDevExt)
 {
     VBoxDrvToolRefRelease(&pDevExt->DdiState.Ref);
     VBoxDrvToolRefWaitEqual(&pDevExt->DdiState.Ref, 1);
 }
 
-static DECLINLINE(VOID) vboxUsbDdiStateReleaseAndWaitRemoved(PVBOXUSBDEV_EXT pDevExt)
+DECLINLINE(VOID) vboxUsbDdiStateReleaseAndWaitRemoved(PVBOXUSBDEV_EXT pDevExt)
 {
     VBoxDrvToolRefRelease(&pDevExt->DdiState.Ref);
     VBoxDrvToolRefWaitEqual(&pDevExt->DdiState.Ref, 0);
-}
-
-static DECLHIDDEN(VOID) vboxUsbDdiStateWaitOtherCompleted(PVBOXUSBDEV_EXT pDevExt)
-{
-    /* Earlier we assumed that 1 request will be pending while we service
-       Device Power IRP which was leading to host hang when USB is connected
-       to VM.
-       With debugging found that at the point when host goes to sleep
-       state and USB is connected to VM,  two Power IRP requests are pending :
-       One for SYSTEM and other for DEVICE.
-    */
-    VBoxDrvToolRefWaitEqual(&pDevExt->DdiState.Ref, 3);
 }
 
 #endif /* #ifndef ___VBoxUsbDev_h___ */

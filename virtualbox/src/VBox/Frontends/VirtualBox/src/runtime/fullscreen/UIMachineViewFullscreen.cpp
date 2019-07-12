@@ -1,12 +1,10 @@
 /* $Id: UIMachineViewFullscreen.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineViewFullscreen class implementation
+ * VBox Qt GUI - UIMachineViewFullscreen class implementation.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,26 +15,37 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/* Global includes */
-#include <QApplication>
-#include <QDesktopWidget>
-#include <QMainWindow>
-#include <QTimer>
-#ifdef Q_WS_MAC
-#include <QMenuBar>
-#endif
-#ifdef Q_WS_X11
-#include <limits.h>
-#endif
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
-/* Local includes */
-#include "VBoxGlobal.h"
-#include "UISession.h"
-#include "UIActionPoolRuntime.h"
-#include "UIMachineLogicFullscreen.h"
-#include "UIMachineWindow.h"
-#include "UIMachineViewFullscreen.h"
-#include "UIFrameBuffer.h"
+/* Qt includes: */
+# include <QApplication>
+# include <QMainWindow>
+# include <QTimer>
+# ifdef VBOX_WS_MAC
+#  include <QMenuBar>
+# endif /* VBOX_WS_MAC */
+
+/* GUI includes: */
+# include "UISession.h"
+# include "UIActionPoolRuntime.h"
+# include "UIMachineLogicFullscreen.h"
+# include "UIMachineWindow.h"
+# include "UIMachineViewFullscreen.h"
+# include "UIFrameBuffer.h"
+# include "UIExtraDataManager.h"
+# include "UIDesktopWidgetWatchdog.h"
+
+/* Other VBox includes: */
+# include "VBox/log.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+#ifdef VBOX_WS_X11
+# include <limits.h>
+#endif /* VBOX_WS_X11 */
+
 
 UIMachineViewFullscreen::UIMachineViewFullscreen(  UIMachineWindow *pMachineWindow
                                                  , ulong uScreenId
@@ -50,14 +59,8 @@ UIMachineViewFullscreen::UIMachineViewFullscreen(  UIMachineWindow *pMachineWind
                     , bAccelerate2DVideo
 #endif
                     )
-    , m_bIsGuestAutoresizeEnabled(gActionPool->action(UIActionIndexRuntime_Toggle_GuestAutoresize)->isChecked())
+    , m_bIsGuestAutoresizeEnabled(actionPool()->action(UIActionIndexRT_M_View_T_GuestAutoresize)->isChecked())
 {
-}
-
-UIMachineViewFullscreen::~UIMachineViewFullscreen()
-{
-    /* Cleanup frame buffer: */
-    cleanupFrameBuffer();
 }
 
 void UIMachineViewFullscreen::sltAdditionsStateChanged()
@@ -80,9 +83,7 @@ bool UIMachineViewFullscreen::eventFilter(QObject *pWatched, QEvent *pEvent)
 
                 /* Recalculate max guest size: */
                 setMaxGuestSize();
-                /* And resize guest to that size: */
-                if (m_bIsGuestAutoresizeEnabled && uisession()->isGuestSupportsGraphics())
-                    QTimer::singleShot(0, this, SLOT(sltPerformGuestResize()));
+
                 break;
             }
             default:
@@ -130,24 +131,80 @@ void UIMachineViewFullscreen::setGuestAutoresizeEnabled(bool fEnabled)
     {
         m_bIsGuestAutoresizeEnabled = fEnabled;
 
-        if (uisession()->isGuestSupportsGraphics())
+        if (m_bIsGuestAutoresizeEnabled && uisession()->isGuestSupportsGraphics())
             sltPerformGuestResize();
     }
 }
 
 void UIMachineViewFullscreen::adjustGuestScreenSize()
 {
-    /* Check if we should adjust guest-screen to new size: */
-    if (frameBuffer()->isAutoEnabled() ||
-        (int)frameBuffer()->width() != workingArea().size().width() ||
-        (int)frameBuffer()->height() != workingArea().size().height())
-        if (m_bIsGuestAutoresizeEnabled &&
-            uisession()->isGuestSupportsGraphics() &&
-            uisession()->isScreenVisible(screenId()))
+    /* Should we adjust guest-screen size? Logging paranoia is required here to reveal the truth. */
+    LogRel(("GUI: UIMachineViewFullscreen::adjustGuestScreenSize: Adjust guest-screen size if necessary.\n"));
+    bool fAdjust = false;
+
+    /* Step 1: Was the guest-screen enabled automatically? */
+    if (!fAdjust)
+    {
+        if (frameBuffer()->isAutoEnabled())
         {
-            frameBuffer()->setAutoEnabled(false);
-            sltPerformGuestResize(workingArea().size());
+            LogRel2(("GUI: UIMachineViewFullscreen::adjustGuestScreenSize: Guest-screen was enabled automatically, adjustment is required.\n"));
+            fAdjust = true;
         }
+    }
+    /* Step 2: Is the guest-screen of another size than necessary? */
+    if (!fAdjust)
+    {
+        /* Acquire frame-buffer size: */
+        QSize frameBufferSize(frameBuffer()->width(), frameBuffer()->height());
+        /* Take the scale-factor(s) into account: */
+        frameBufferSize = scaledForward(frameBufferSize);
+
+        /* Acquire working-area size: */
+        const QSize workingAreaSize = workingArea().size();
+
+        if (frameBufferSize != workingAreaSize)
+        {
+            LogRel2(("GUI: UIMachineViewFullscreen::adjustGuestScreenSize: Guest-screen is of another size than necessary, adjustment is required.\n"));
+            fAdjust = true;
+        }
+    }
+
+    /* Step 3: Is guest-additions supports graphics? */
+    if (fAdjust)
+    {
+        if (!uisession()->isGuestSupportsGraphics())
+        {
+            LogRel2(("GUI: UIMachineViewFullscreen::adjustGuestScreenSize: Guest-additions are not supporting graphics, adjustment is omitted.\n"));
+            fAdjust = false;
+        }
+    }
+    /* Step 4: Is guest-screen visible? */
+    if (fAdjust)
+    {
+        if (!uisession()->isScreenVisible(screenId()))
+        {
+            LogRel2(("GUI: UIMachineViewFullscreen::adjustGuestScreenSize: Guest-screen is not visible, adjustment is omitted.\n"));
+            fAdjust = false;
+        }
+    }
+    /* Step 5: Is guest-screen auto-resize enabled? */
+    if (fAdjust)
+    {
+        if (!m_bIsGuestAutoresizeEnabled)
+        {
+            LogRel2(("GUI: UIMachineViewFullscreen::adjustGuestScreenSize: Guest-screen auto-resize is disabled, adjustment is omitted.\n"));
+            fAdjust = false;
+        }
+    }
+
+    /* Final step: Adjust if requested/allowed. */
+    if (fAdjust)
+    {
+        frameBuffer()->setAutoEnabled(false);
+        sltPerformGuestResize(workingArea().size());
+        /* And remember the size to know what we are resizing out of when we exit: */
+        uisession()->setLastFullScreenSize(screenId(), scaledForward(scaledBackward(workingArea().size())));
+    }
 }
 
 QRect UIMachineViewFullscreen::workingArea() const
@@ -155,7 +212,7 @@ QRect UIMachineViewFullscreen::workingArea() const
     /* Get corresponding screen: */
     int iScreen = static_cast<UIMachineLogicFullscreen*>(machineLogic())->hostScreenForGuestScreen(screenId());
     /* Return available geometry for that screen: */
-    return QApplication::desktop()->screenGeometry(iScreen);
+    return gpDesktop->screenGeometry(iScreen);
 }
 
 QSize UIMachineViewFullscreen::calculateMaxGuestSize() const

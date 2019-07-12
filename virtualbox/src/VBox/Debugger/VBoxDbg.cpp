@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,11 +15,17 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGG
 #define VBOX_COM_NO_ATL
+#ifdef RT_OS_WINDOWS
+# include <VirtualBox.h>
+#else /* !RT_OS_WINDOWS */
+# include <VirtualBox_XPCOM.h>
+#endif /* !RT_OS_WINDOWS */
 #include <VBox/dbggui.h>
 #include <VBox/vmm/vm.h>
 #include <VBox/err.h>
@@ -29,9 +35,9 @@
 #include "VBoxDbgGui.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Debugger GUI instance data.
  */
@@ -49,9 +55,9 @@ typedef struct DBGGUI
 #define DBGGUI_MAGIC_DEAD   0x19760201
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Virtual method table for simplifying dynamic linking. */
 static const DBGGUIVT g_dbgGuiVT =
 {

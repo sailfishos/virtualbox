@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGC
 #include <VBox/dbg.h>
 #include <VBox/vmm/dbgf.h>
@@ -32,9 +33,9 @@
 
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Pointer to head of the list of exteranl functions. */
 static PDBGCEXTFUNCS    g_pExtFuncsHead;
 
@@ -42,7 +43,7 @@ static PDBGCEXTFUNCS    g_pExtFuncsHead;
 
 
 /**
- * @callback_method_impl{The randu32() function implementation.}
+ * @callback_method_impl{FNDBGCFUNC, The randu32() function implementation.}
  */
 static DECLCALLBACK(int) dbgcFuncRandU32(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
                                          PDBGCVAR pResult)

@@ -1,12 +1,10 @@
 /* $Id: QIAdvancedSlider.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: QIAdvancedSlider class implementation
+ * VBox Qt GUI - VirtualBox Qt extensions: QIAdvancedSlider class implementation.
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,18 +15,27 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include "QIAdvancedSlider.h"
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+# include "QIAdvancedSlider.h"
 
 /* Qt includes */
-#include <QVBoxLayout>
-#include <QPainter>
-#include <QStyle>
+# include <QVBoxLayout>
+# include <QPainter>
+# include <QStyle>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 #include <QStyleOptionSlider>
 
 /* System includes */
 #include <math.h>
 
-class CPrivateSlider: public QSlider
+
+
+class CPrivateSlider : public QSlider
 {
 public:
     CPrivateSlider(Qt::Orientation fOrientation, QWidget *pParent = 0)
@@ -69,13 +76,13 @@ public:
 
         /* We want to acquire SC_SliderTickmarks sub-control rectangle
          * and fill it with necessary background colors: */
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
         /* Under MacOS X SC_SliderTickmarks is not fully reliable
          * source of the information we need, providing us with incorrect width.
          * So we have to calculate tickmarks rectangle ourself: */
         QRect ticks = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderTickmarks, this);
         ticks.setRect((s.width() - available) / 2, s.height() - ticks.y(), available, ticks.height());
-#else /* Q_WS_MAC */
+#else /* VBOX_WS_MAC */
         /* Under Windows SC_SliderTickmarks is fully unreliable
          * source of the information we need, providing us with empty rectangle.
          * Under X11 SC_SliderTickmarks is not fully reliable
@@ -85,7 +92,7 @@ public:
         QRect ticks = style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderHandle, this) |
                       style()->subControlRect(QStyle::CC_Slider, &opt, QStyle::SC_SliderGroove, this);
         ticks.setRect((s.width() - available) / 2, ticks.bottom() + 1, available, s.height() - ticks.bottom() - 1);
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 
         if ((m_minOpt != -1 &&
              m_maxOpt != -1) &&
@@ -265,10 +272,10 @@ void QIAdvancedSlider::init(Qt::Orientation fOrientation /* = Qt::Horizontal */)
     m_pSlider = new CPrivateSlider(fOrientation, this);
     pMainLayout->addWidget(m_pSlider);
 
-    connect(m_pSlider, SIGNAL(sliderMoved(int)), this, SLOT(sltSliderMoved(int)));
-    connect(m_pSlider, SIGNAL(valueChanged(int)), this, SIGNAL(valueChanged(int)));
-    connect(m_pSlider, SIGNAL(sliderPressed()), this, SIGNAL(sliderPressed()));
-    connect(m_pSlider, SIGNAL(sliderReleased()), this, SIGNAL(sliderReleased()));
+    connect(m_pSlider, &CPrivateSlider::sliderMoved,    this, &QIAdvancedSlider::sltSliderMoved);
+    connect(m_pSlider, &CPrivateSlider::valueChanged,   this, &QIAdvancedSlider::valueChanged);
+    connect(m_pSlider, &CPrivateSlider::sliderPressed,  this, &QIAdvancedSlider::sliderPressed);
+    connect(m_pSlider, &CPrivateSlider::sliderReleased, this, &QIAdvancedSlider::sliderReleased);
 }
 
 int QIAdvancedSlider::snapValue(int val)

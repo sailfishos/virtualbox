@@ -1,12 +1,10 @@
 /* $Id: UIWizardCloneVDPageBasic2.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardCloneVDPageBasic2 class implementation
+ * VBox Qt GUI - UIWizardCloneVDPageBasic2 class implementation.
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,51 +15,67 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QVBoxLayout>
-#include <QButtonGroup>
-#include <QRadioButton>
+# include <QVBoxLayout>
+# include <QButtonGroup>
+# include <QRadioButton>
 
 /* GUI includes: */
-#include "UIWizardCloneVDPageBasic2.h"
-#include "UIWizardCloneVD.h"
-#include "VBoxGlobal.h"
-#include "QIRichTextLabel.h"
+# include "UIWizardCloneVDPageBasic2.h"
+# include "UIWizardCloneVD.h"
+# include "VBoxGlobal.h"
+# include "QIRichTextLabel.h"
 
 /* COM includes: */
-#include "CSystemProperties.h"
+# include "CSystemProperties.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardCloneVDPage2::UIWizardCloneVDPage2()
 {
 }
 
-void UIWizardCloneVDPage2::addFormatButton(QWidget *pParent, QVBoxLayout *pFormatLayout, CMediumFormat medFormat)
+void UIWizardCloneVDPage2::addFormatButton(QWidget *pParent, QVBoxLayout *pFormatLayout, KDeviceType enmDeviceType, CMediumFormat comMediumFormat, bool fPreferred /* = false */)
 {
     /* Check that medium format supports creation: */
-    //ULONG uFormatCapabilities = medFormat.GetCapabilities();
     ULONG uFormatCapabilities = 0;
     QVector<KMediumFormatCapabilities> capabilities;
-    capabilities = medFormat.GetCapabilities();
+    capabilities = comMediumFormat.GetCapabilities();
     for (int i = 0; i < capabilities.size(); i++)
         uFormatCapabilities |= capabilities[i];
 
-    if (!(uFormatCapabilities & MediumFormatCapabilities_CreateFixed ||
-          uFormatCapabilities & MediumFormatCapabilities_CreateDynamic))
+    if (!(uFormatCapabilities & KMediumFormatCapabilities_CreateFixed ||
+          uFormatCapabilities & KMediumFormatCapabilities_CreateDynamic))
         return;
 
-    /* Check that medium format supports creation of virtual hard-disks: */
+    /* Check that medium format supports creation of virtual disk images: */
     QVector<QString> fileExtensions;
     QVector<KDeviceType> deviceTypes;
-    medFormat.DescribeFileExtensions(fileExtensions, deviceTypes);
-    if (!deviceTypes.contains(KDeviceType_HardDisk))
+    comMediumFormat.DescribeFileExtensions(fileExtensions, deviceTypes);
+    if (!deviceTypes.contains(enmDeviceType))
         return;
 
     /* Create/add corresponding radio-button: */
     QRadioButton *pFormatButton = new QRadioButton(pParent);
-    pFormatLayout->addWidget(pFormatButton);
-    m_formats << medFormat;
-    m_formatNames << medFormat.GetName();
-    m_pFormatButtonGroup->addButton(pFormatButton, m_formatNames.size() - 1);
+    AssertPtrReturnVoid(pFormatButton);
+    {
+        /* Make the preferred button font bold: */
+        if (fPreferred)
+        {
+            QFont font = pFormatButton->font();
+            font.setBold(true);
+            pFormatButton->setFont(font);
+        }
+        pFormatLayout->addWidget(pFormatButton);
+        m_formats << comMediumFormat;
+        m_formatNames << comMediumFormat.GetName();
+        m_pFormatButtonGroup->addButton(pFormatButton, m_formatNames.size() - 1);
+    }
 }
 
 CMediumFormat UIWizardCloneVDPage2::mediumFormat() const
@@ -69,9 +83,9 @@ CMediumFormat UIWizardCloneVDPage2::mediumFormat() const
     return m_pFormatButtonGroup->checkedButton() ? m_formats[m_pFormatButtonGroup->checkedId()] : CMediumFormat();
 }
 
-void UIWizardCloneVDPage2::setMediumFormat(const CMediumFormat &mediumFormat)
+void UIWizardCloneVDPage2::setMediumFormat(const CMediumFormat &comMediumFormat)
 {
-    int iPosition = m_formats.indexOf(mediumFormat);
+    int iPosition = m_formats.indexOf(comMediumFormat);
     if (iPosition >= 0)
     {
         m_pFormatButtonGroup->button(iPosition)->click();
@@ -79,7 +93,7 @@ void UIWizardCloneVDPage2::setMediumFormat(const CMediumFormat &mediumFormat)
     }
 }
 
-UIWizardCloneVDPageBasic2::UIWizardCloneVDPageBasic2()
+UIWizardCloneVDPageBasic2::UIWizardCloneVDPageBasic2(KDeviceType enmDeviceType)
 {
     /* Create widgets: */
     QVBoxLayout *pMainLayout = new QVBoxLayout(this);
@@ -89,20 +103,36 @@ UIWizardCloneVDPageBasic2::UIWizardCloneVDPageBasic2()
         {
             m_pFormatButtonGroup = new QButtonGroup(this);
             {
-                CSystemProperties systemProperties = vboxGlobal().virtualBox().GetSystemProperties();
-                const QVector<CMediumFormat> &medFormats = systemProperties.GetMediumFormats();
-                for (int i = 0; i < medFormats.size(); ++i)
+                /* Enumerate medium formats in special order: */
+                CSystemProperties properties = vboxGlobal().virtualBox().GetSystemProperties();
+                const QVector<CMediumFormat> &formats = properties.GetMediumFormats();
+                QMap<QString, CMediumFormat> vdi, preferred, others;
+                foreach (const CMediumFormat &format, formats)
                 {
-                    const CMediumFormat &medFormat = medFormats[i];
-                    if (medFormat.GetName() == "VDI")
-                        addFormatButton(this, pFormatLayout, medFormat);
+                    /* VDI goes first: */
+                    if (format.GetName() == "VDI")
+                        vdi[format.GetId()] = format;
+                    else
+                    {
+                        const QVector<KMediumFormatCapabilities> &capabilities = format.GetCapabilities();
+                        /* Then preferred: */
+                        if (capabilities.contains(KMediumFormatCapabilities_Preferred))
+                            preferred[format.GetId()] = format;
+                        /* Then others: */
+                        else
+                            others[format.GetId()] = format;
+                    }
                 }
-                for (int i = 0; i < medFormats.size(); ++i)
-                {
-                    const CMediumFormat &medFormat = medFormats[i];
-                    if (medFormat.GetName() != "VDI")
-                        addFormatButton(this, pFormatLayout, medFormat);
-                }
+
+                /* Create buttons for VDI and preferred: */
+                foreach (const QString &strId, vdi.keys())
+                    addFormatButton(this, pFormatLayout, enmDeviceType, vdi.value(strId));
+                foreach (const QString &strId, preferred.keys())
+                    addFormatButton(this, pFormatLayout, enmDeviceType, preferred.value(strId));
+                if (enmDeviceType == KDeviceType_DVD || enmDeviceType == KDeviceType_Floppy)
+                    foreach (const QString &strId, others.keys())
+                        addFormatButton(this, pFormatLayout, enmDeviceType, others.value(strId));
+
                 if (!m_pFormatButtonGroup->buttons().isEmpty())
                 {
                     m_pFormatButtonGroup->button(0)->click();
@@ -127,11 +157,11 @@ UIWizardCloneVDPageBasic2::UIWizardCloneVDPageBasic2()
 void UIWizardCloneVDPageBasic2::retranslateUi()
 {
     /* Translate page: */
-    setTitle(UIWizardCloneVD::tr("Hard drive file type"));
+    setTitle(UIWizardCloneVD::tr("Disk image file type"));
 
     /* Translate widgets: */
     m_pLabel->setText(UIWizardCloneVD::tr("Please choose the type of file that you would like to use "
-                                          "for the new virtual hard drive. If you do not need to use it "
+                                          "for the new virtual disk image. If you do not need to use it "
                                           "with other virtualization software you can leave this setting unchanged."));
     QList<QAbstractButton*> buttons = m_pFormatButtonGroup->buttons();
     for (int i = 0; i < buttons.size(); ++i)

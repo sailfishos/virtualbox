@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2006-2014 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -32,6 +32,10 @@ PROGRAMS += \
 	SUPUninstall \
 	SUPLoggerCtl
 ifdef VBOX_WITH_TESTCASES
+ if defined(VBOX_WITH_HARDENING)
+PROGRAMS += \
+	tstSupVerify
+ endif
  if !defined(VBOX_WITH_HARDENING) || "$(KBUILD_TARGET)" != "win"
 PROGRAMS += \
 	tstPage \
@@ -40,11 +44,11 @@ PROGRAMS += \
 	tstInt \
 	tstLow \
 	tstPin \
-	tstGIP-2 \
 	tstGetPagingMode \
 	tstSupLoadModule \
 	tstSupSem \
-	tstSupSem-Zombie
+	tstSupSem-Zombie \
+	tstSupTscDelta
  endif
 PROGRAMS.win += \
 	tstNtQueryStuff
@@ -85,8 +89,29 @@ tstPin_SOURCES        = tstPin.cpp
 tstPage_TEMPLATE      = VBOXR3TSTEXE
 tstPage_SOURCES       = tstPage.cpp
 
-tstGIP-2_TEMPLATE     = VBOXR3TSTEXE
-tstGIP-2_SOURCES      = tstGIP-2.cpp
+#
+# tstGIP-2
+#
+ifdef VBOX_WITH_TESTCASES
+ if defined(VBOX_WITH_HARDENING) && "$(KBUILD_TARGET)" == "win"
+  PROGRAMS += tstGIP-2Hardened
+  DLLS += tstGIP-2
+ else
+  PROGRAMS += tstGIP-2
+ endif
+endif
+
+tstGIP-2Hardened_TEMPLATE = VBoxR3HardenedTstExe
+tstGIP-2Hardened_DEFS = PROGRAM_NAME_STR=\"tstGIP-2\"
+tstGIP-2Hardened_SOURCES = ../SUPR3HardenedMainTemplateTestcase.cpp
+tstGIP-2Hardened_NAME = tstGIP-2
+
+if defined(VBOX_WITH_HARDENING) && "$(KBUILD_TARGET)" == "win"
+  tstGIP-2_TEMPLATE := VBoxR3HardenedTstDll
+else
+  tstGIP-2_TEMPLATE := VBOXR3TSTEXE
+endif
+tstGIP-2_SOURCES = tstGIP-2.cpp
 
 tstGetPagingMode_TEMPLATE = VBOXR3TSTEXE
 tstGetPagingMode_SOURCES = tstGetPagingMode.cpp
@@ -99,6 +124,15 @@ tstSupSem_SOURCES     = tstSupSem.cpp
 
 tstSupSem-Zombie_TEMPLATE = VBOXR3TSTEXE
 tstSupSem-Zombie_SOURCES  = tstSupSem-Zombie.cpp
+
+tstSupTscDelta_TEMPLATE = VBOXR3TSTEXE
+tstSupTscDelta_SOURCES  = tstSupTscDelta.cpp
+
+# For testing supR3HardenedVerifyFile on windows.
+tstSupVerify_TEMPLATE = VBOXR3TSTEXE
+tstSupVerify_SOURCES  = tstSupVerify.cpp
+
+
 
 include $(FILE_KBUILD_SUB_FOOTER)
 

@@ -1,12 +1,10 @@
 /* $Id: UIModalWindowManager.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIModalWindowManager class implementation
+ * VBox Qt GUI - UIModalWindowManager class implementation.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,18 +15,25 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* GUI includes: */
-#include "UIModalWindowManager.h"
-#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
-# include "UINetworkManagerDialog.h"
-# include "UINetworkManager.h"
-#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
-#include "UISelectorWindow.h"
-#include "UIProgressDialog.h"
-#include "VBoxGlobal.h"
+# include "UIModalWindowManager.h"
+# ifdef VBOX_GUI_WITH_NETWORK_MANAGER
+#  include "UINetworkManagerDialog.h"
+#  include "UINetworkManager.h"
+# endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
+# include "UISelectorWindow.h"
+# include "UIProgressDialog.h"
+# include "VBoxGlobal.h"
 
 /* Other VBox includes: */
-#include <VBox/sup.h>
+# include <VBox/sup.h>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 /* static */
 UIModalWindowManager* UIModalWindowManager::m_spInstance = 0;
@@ -94,8 +99,9 @@ QWidget* UIModalWindowManager::mainWindowShown() const
     else
     {
         /* It will be the selector window if visible: */
-        if (vboxGlobal().selectorWnd().isVisible())
-            return &vboxGlobal().selectorWnd();
+        if (gpSelectorWindow &&
+            gpSelectorWindow->isVisible())
+            return gpSelectorWindow;
     }
 
     /* NULL by default: */
@@ -204,7 +210,7 @@ void UIModalWindowManager::registerNewParent(QWidget *pWindow, QWidget *pParentW
                     }
                     /* Register passed-window as the new 'top' in iterated-window-stack: */
                     iteratedWindowStack << pWindow;
-                    connect(pWindow, SIGNAL(destroyed(QObject*)), this, SLOT(sltRemoveFromStack(QObject*)));
+                    connect(pWindow, &QWidget::destroyed, this, &UIModalWindowManager::sltRemoveFromStack);
                     return;
                 }
             }
@@ -219,8 +225,11 @@ void UIModalWindowManager::registerNewParent(QWidget *pWindow, QWidget *pParentW
         /* Register passed-window as the only one item in new-window-stack: */
         QList<QWidget*> newWindowStack(QList<QWidget*>() << pWindow);
         m_windows << newWindowStack;
-        connect(pWindow, SIGNAL(destroyed(QObject*)), this, SLOT(sltRemoveFromStack(QObject*)));
+        connect(pWindow, &QWidget::destroyed, this, &UIModalWindowManager::sltRemoveFromStack);
     }
+
+    /* Notify listeners that their stack may have changed: */
+    emit sigStackChanged();
 }
 
 void UIModalWindowManager::sltRemoveFromStack(QObject *pObject)
@@ -257,6 +266,9 @@ void UIModalWindowManager::sltRemoveFromStack(QObject *pObject)
             }
         }
     }
+
+    /* Notify listeners that their stack may have changed: */
+    emit sigStackChanged();
 }
 
 bool UIModalWindowManager::contains(QWidget *pParentWindow, bool fAsTheTopOfStack /* = false*/)

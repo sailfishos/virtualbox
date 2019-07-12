@@ -44,7 +44,9 @@
 #define SHCROGL_SSM_VERSION_WITH_SCREEN_MAP                         45
 #define SHCROGL_SSM_VERSION_WITH_SCREEN_MAP_REORDERED               46
 #define SHCROGL_SSM_VERSION_WITH_PEND_CMD_INFO                      47
-#define SHCROGL_SSM_VERSION                                         47
+#define SHCROGL_SSM_VERSION_WITH_SEPARATE_DEPTH_STENCIL_BUFFERS     48
+#define SHCROGL_SSM_VERSION_WITH_DISPLAY_LISTS                      49
+#define SHCROGL_SSM_VERSION                                         49
 
 /* These define the Chromium release number.
  * Alpha Release = 0.1.0, Beta Release = 0.2.0
@@ -175,5 +177,10 @@
 #define CR_EXT_stencil_two_side 1
 
 #define CR_GREMEDY_string_marker 1
+
+#define CR_ARB_texture_float 1
+#define CR_ARB_draw_buffers 1
+
+#define CR_ARB_shader_texture_lod 1
 
 #endif /* CR_VERSION_H */

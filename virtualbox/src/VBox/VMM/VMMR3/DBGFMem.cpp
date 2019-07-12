@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2013 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGF
 #include <VBox/vmm/dbgf.h>
 #include <VBox/vmm/pgm.h>
@@ -140,6 +140,7 @@ VMMR3DECL(int) DBGFR3MemScan(PUVM pUVM, VMCPUID idCpu, PCDBGFADDRESS pAddress, R
  *
  * @returns VBox status code.
  * @param   pUVM        The user mode VM handle.
+ * @param   idCpu       The ID of the CPU context to read memory from.
  * @param   pAddress    Where to start reading.
  * @param   pvBuf       Where to store the data we've read.
  * @param   cbRead      The number of bytes to read.
@@ -159,7 +160,7 @@ static DECLCALLBACK(int) dbgfR3MemRead(PUVM pUVM, VMCPUID idCpu, PCDBGFADDRESS p
         return VERR_INVALID_POINTER;
 
     /*
-     * HMA is special
+     * HMA is special.
      */
     int rc;
     if (DBGFADDRESS_IS_HMA(pAddress))
@@ -172,7 +173,7 @@ static DECLCALLBACK(int) dbgfR3MemRead(PUVM pUVM, VMCPUID idCpu, PCDBGFADDRESS p
     else
     {
         /*
-         * Select DBGF worker by addressing mode.
+         * Select PGM worker by addressing mode.
          */
         PVMCPU  pVCpu   = VMMGetCpuById(pVM, idCpu);
         PGMMODE enmMode = PGMGetGuestMode(pVCpu);
@@ -369,7 +370,7 @@ static DECLCALLBACK(int) dbgfR3MemWrite(PUVM pUVM, VMCPUID idCpu, PCDBGFADDRESS 
  * @param   idCpu       The ID of the target CPU context (for the address).
  * @param   pAddress    Where to start writing.
  * @param   pvBuf       The data to write.
- * @param   cbRead      The number of bytes to write.
+ * @param   cbWrite     The number of bytes to write.
  */
 VMMR3DECL(int) DBGFR3MemWrite(PUVM pUVM, VMCPUID idCpu, PCDBGFADDRESS pAddress, void const *pvBuf, size_t cbWrite)
 {

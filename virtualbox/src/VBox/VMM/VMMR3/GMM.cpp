@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_GMM
 #include <VBox/vmm/gmm.h>
 #include <VBox/vmm/vmm.h>
@@ -70,14 +70,14 @@ GMMR3DECL(int)  GMMR3UpdateReservation(PVM pVM, uint64_t cBasePages, uint32_t cS
  * Prepares a GMMR0AllocatePages request.
  *
  * @returns VINF_SUCCESS or VERR_NO_TMP_MEMORY.
- * @param       pVM         Pointer to the VM.
+ * @param       pVM         The cross context VM structure.
  * @param[out]  ppReq       Where to store the pointer to the request packet.
  * @param       cPages      The number of pages that's to be allocated.
  * @param       enmAccount  The account to charge.
  */
 GMMR3DECL(int) GMMR3AllocatePagesPrepare(PVM pVM, PGMMALLOCATEPAGESREQ *ppReq, uint32_t cPages, GMMACCOUNT enmAccount)
 {
-    uint32_t cb = RT_OFFSETOF(GMMALLOCATEPAGESREQ, aPages[cPages]);
+    uint32_t cb = RT_UOFFSETOF_DYN(GMMALLOCATEPAGESREQ, aPages[cPages]);
     PGMMALLOCATEPAGESREQ pReq = (PGMMALLOCATEPAGESREQ)RTMemTmpAllocZ(cb);
     if (!pReq)
         return VERR_NO_TMP_MEMORY;
@@ -94,10 +94,11 @@ GMMR3DECL(int) GMMR3AllocatePagesPrepare(PVM pVM, PGMMALLOCATEPAGESREQ *ppReq, u
 
 /**
  * Performs a GMMR0AllocatePages request.
+ *
  * This will call VMSetError on failure.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pReq        Pointer to the request (returned by GMMR3AllocatePagesPrepare).
  */
 GMMR3DECL(int) GMMR3AllocatePagesPerform(PVM pVM, PGMMALLOCATEPAGESREQ pReq)
@@ -151,14 +152,14 @@ GMMR3DECL(void) GMMR3AllocatePagesCleanup(PGMMALLOCATEPAGESREQ pReq)
  * Prepares a GMMR0FreePages request.
  *
  * @returns VINF_SUCCESS or VERR_NO_TMP_MEMORY.
- * @param       pVM         Pointer to the VM.
+ * @param       pVM         The cross context VM structure.
  * @param[out]  ppReq       Where to store the pointer to the request packet.
  * @param       cPages      The number of pages that's to be freed.
  * @param       enmAccount  The account to charge.
  */
 GMMR3DECL(int) GMMR3FreePagesPrepare(PVM pVM, PGMMFREEPAGESREQ *ppReq, uint32_t cPages, GMMACCOUNT enmAccount)
 {
-    uint32_t cb = RT_OFFSETOF(GMMFREEPAGESREQ, aPages[cPages]);
+    uint32_t cb = RT_UOFFSETOF_DYN(GMMFREEPAGESREQ, aPages[cPages]);
     PGMMFREEPAGESREQ pReq = (PGMMFREEPAGESREQ)RTMemTmpAllocZ(cb);
     if (!pReq)
         return VERR_NO_TMP_MEMORY;
@@ -177,7 +178,7 @@ GMMR3DECL(int) GMMR3FreePagesPrepare(PVM pVM, PGMMFREEPAGESREQ *ppReq, uint32_t 
  * Re-prepares a GMMR0FreePages request.
  *
  * @returns VINF_SUCCESS or VERR_NO_TMP_MEMORY.
- * @param       pVM         Pointer to the VM.
+ * @param       pVM         The cross context VM structure.
  * @param       pReq        A request buffer previously returned by
  *                          GMMR3FreePagesPrepare().
  * @param       cPages      The number of pages originally passed to
@@ -187,7 +188,7 @@ GMMR3DECL(int) GMMR3FreePagesPrepare(PVM pVM, PGMMFREEPAGESREQ *ppReq, uint32_t 
 GMMR3DECL(void) GMMR3FreePagesRePrep(PVM pVM, PGMMFREEPAGESREQ pReq, uint32_t cPages, GMMACCOUNT enmAccount)
 {
     Assert(pReq->Hdr.u32Magic == SUPVMMR0REQHDR_MAGIC);
-    pReq->Hdr.cbReq     = RT_OFFSETOF(GMMFREEPAGESREQ, aPages[cPages]);
+    pReq->Hdr.cbReq     = RT_UOFFSETOF_DYN(GMMFREEPAGESREQ, aPages[cPages]);
     pReq->enmAccount    = enmAccount;
     pReq->cPages        = cPages;
     NOREF(pVM);
@@ -199,7 +200,7 @@ GMMR3DECL(void) GMMR3FreePagesRePrep(PVM pVM, PGMMFREEPAGESREQ pReq, uint32_t cP
  * This will call VMSetError on failure.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pReq            Pointer to the request (returned by GMMR3FreePagesPrepare).
  * @param   cActualPages    The number of pages actually freed.
  */
@@ -214,7 +215,7 @@ GMMR3DECL(int) GMMR3FreePagesPerform(PVM pVM, PGMMFREEPAGESREQ pReq, uint32_t cA
         if (!cActualPages)
             return VINF_SUCCESS;
         pReq->cPages = cActualPages;
-        pReq->Hdr.cbReq = RT_OFFSETOF(GMMFREEPAGESREQ, aPages[cActualPages]);
+        pReq->Hdr.cbReq = RT_UOFFSETOF_DYN(GMMFREEPAGESREQ, aPages[cActualPages]);
     }
 
     /*
@@ -245,12 +246,12 @@ GMMR3DECL(void) GMMR3FreePagesCleanup(PGMMFREEPAGESREQ pReq)
  *
  * This will not call VMSetError on failure but will use AssertLogRel instead.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pAllocReq   The allocation request to undo.
  */
 GMMR3DECL(void) GMMR3FreeAllocatedPages(PVM pVM, GMMALLOCATEPAGESREQ const *pAllocReq)
 {
-    uint32_t cb = RT_OFFSETOF(GMMFREEPAGESREQ, aPages[pAllocReq->cPages]);
+    uint32_t cb = RT_UOFFSETOF_DYN(GMMFREEPAGESREQ, aPages[pAllocReq->cPages]);
     PGMMFREEPAGESREQ pReq = (PGMMFREEPAGESREQ)RTMemTmpAllocZ(cb);
     AssertLogRelReturnVoid(pReq);
 
@@ -391,7 +392,7 @@ GMMR3DECL(int)  GMMR3SeedChunk(PVM pVM, RTR3PTR pvR3)
 GMMR3DECL(int) GMMR3RegisterSharedModule(PVM pVM, PGMMREGISTERSHAREDMODULEREQ pReq)
 {
     pReq->Hdr.u32Magic  = SUPVMMR0REQHDR_MAGIC;
-    pReq->Hdr.cbReq     = RT_OFFSETOF(GMMREGISTERSHAREDMODULEREQ, aRegions[pReq->cRegions]);
+    pReq->Hdr.cbReq     = RT_UOFFSETOF_DYN(GMMREGISTERSHAREDMODULEREQ, aRegions[pReq->cRegions]);
     int rc = VMMR3CallR0(pVM, VMMR0_DO_GMM_REGISTER_SHARED_MODULE, 0, &pReq->Hdr);
     if (rc == VINF_SUCCESS)
         rc = pReq->rc;

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/req.h>
 #include "internal/iprt.h"
 
@@ -44,9 +44,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 
 /**
@@ -283,9 +283,9 @@ RTDECL(int) RTReqWait(PRTREQ hReq, RTMSINTERVAL cMillies)
     PRTREQINT pReq = hReq;
     AssertPtrReturn(pReq, VERR_INVALID_HANDLE);
     AssertReturn(pReq->u32Magic == RTREQ_MAGIC, VERR_INVALID_HANDLE);
-    AssertMsgReturn(   pReq->enmState != RTREQSTATE_QUEUED
-                    || pReq->enmState != RTREQSTATE_PROCESSING
-                    || pReq->enmState != RTREQSTATE_COMPLETED,
+    AssertMsgReturn(   pReq->enmState == RTREQSTATE_QUEUED
+                    || pReq->enmState == RTREQSTATE_PROCESSING
+                    || pReq->enmState == RTREQSTATE_COMPLETED,
                     ("Invalid state %d\n", pReq->enmState),
                     VERR_RT_REQUEST_STATE);
     AssertMsgReturn(pReq->uOwner.hQueue && pReq->EventSem != NIL_RTSEMEVENT,

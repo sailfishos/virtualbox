@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/strcache.h>
 
 #include <iprt/asm.h>
@@ -173,33 +174,33 @@ static void tst1(RTSTRCACHE hStrCache)
     {
         void *pv2;
         RTTESTI_CHECK_RETV(psz = RTStrCacheEnterN(hStrCache, szTest, i));
-        RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemIsAll8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz));
+        RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemFirstMismatchingU8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz));
         RTTESTI_CHECK(RTStrCacheRetain(psz) == 2);
         RTTESTI_CHECK(RTStrCacheRetain(psz) == 3);
         RTTESTI_CHECK(RTStrCacheRetain(psz) == 4);
-        RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemIsAll8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz));
+        RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemFirstMismatchingU8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz));
         RTTESTI_CHECK(RTStrCacheRelease(hStrCache, psz) == 3);
-        RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemIsAll8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz));
+        RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemFirstMismatchingU8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz));
         RTTESTI_CHECK(RTStrCacheRetain(psz) == 4);
         RTTESTI_CHECK(RTStrCacheRetain(psz) == 5);
         RTTESTI_CHECK(RTStrCacheRetain(psz) == 6);
         RTTESTI_CHECK(RTStrCacheRelease(hStrCache, psz) == 5);
         RTTESTI_CHECK(RTStrCacheRelease(hStrCache, psz) == 4);
-        RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemIsAll8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz));
+        RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemFirstMismatchingU8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz));
 
         for (uint32_t cRefs = 3;; cRefs--)
         {
             RTTESTI_CHECK(RTStrCacheRelease(hStrCache, psz) == cRefs);
             if (cRefs == 0)
                 break;
-            RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemIsAll8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x cRefs=%d\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz, cRefs));
+            RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemFirstMismatchingU8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x cRefs=%d\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz, cRefs));
             for (uint32_t j = 0; j < 42; j++)
             {
                 const char *psz2;
                 RTTESTI_CHECK_RETV(psz2 = RTStrCacheEnterN(hStrCache, szTest2, i));
                 RTTESTI_CHECK_RETV(psz2 != psz);
                 RTTESTI_CHECK(RTStrCacheRelease(hStrCache, psz2) == 0);
-                RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemIsAll8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x cRefs=%d\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz, cRefs));
+                RTTESTI_CHECK_MSG_RETV((pv2 = ASMMemFirstMismatchingU8(psz, i, 'a')) == NULL && !psz[i], ("i=%#x psz=%p off=%#x cRefs=%d\n", i, psz, (uintptr_t)pv2 - (uintptr_t)psz, cRefs));
             }
         }
     }

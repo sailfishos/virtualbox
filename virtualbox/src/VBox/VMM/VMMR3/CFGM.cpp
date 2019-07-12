@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -51,9 +51,10 @@
  *
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_CFGM
 #include <VBox/vmm/cfgm.h>
 #include <VBox/vmm/dbgf.h>
@@ -71,9 +72,9 @@
 #include <iprt/uuid.h>
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void cfgmR3DumpPath(PCFGMNODE pNode, PCDBGFINFOHLP pHlp);
 static void cfgmR3Dump(PCFGMNODE pRoot, unsigned iLevel, PCDBGFINFOHLP pHlp);
 static DECLCALLBACK(void) cfgmR3Info(PVM pVM, PCDBGFINFOHLP pHlp, const char *pszArgs);
@@ -84,13 +85,16 @@ static void cfgmR3RemoveLeaf(PCFGMNODE pNode, PCFGMLEAF pLeaf);
 static void cfgmR3FreeValue(PVM pVM, PCFGMLEAF pLeaf);
 
 
+/** @todo replace pVM for pUVM !*/
+
 /**
  * Allocator wrapper.
  *
  * @returns Pointer to the allocated memory, NULL on failure.
- * @param   pVM                 The VM handle, if tree associated with one.
- * @param   enmTag              The allocation tag.
- * @param   cb                  The size of the allocation.
+ * @param   pVM         The cross context VM structure, if the tree
+ *                      is associated with one.
+ * @param   enmTag      The allocation tag.
+ * @param   cb          The size of the allocation.
  */
 static void *cfgmR3MemAlloc(PVM pVM, MMTAG enmTag, size_t cb)
 {
@@ -104,8 +108,9 @@ static void *cfgmR3MemAlloc(PVM pVM, MMTAG enmTag, size_t cb)
  * Free wrapper.
  *
  * @returns Pointer to the allocated memory, NULL on failure.
- * @param   pVM                 The VM handle, if tree associated with one.
- * @param   pv                  The memory block to free.
+ * @param   pVM         The cross context VM structure, if the tree
+ *                      is associated with one.
+ * @param   pv          The memory block to free.
  */
 static void cfgmR3MemFree(PVM pVM, void *pv)
 {
@@ -120,9 +125,10 @@ static void cfgmR3MemFree(PVM pVM, void *pv)
  * String allocator wrapper.
  *
  * @returns Pointer to the allocated memory, NULL on failure.
- * @param   pVM                 The VM handle, if tree associated with one.
- * @param   enmTag              The allocation tag.
- * @param   cbString            The size of the allocation, terminator included.
+ * @param   pVM         The cross context VM structure, if the tree
+ *                      is associated with one.
+ * @param   enmTag      The allocation tag.
+ * @param   cbString    The size of the allocation, terminator included.
  */
 static char *cfgmR3StrAlloc(PVM pVM, MMTAG enmTag,  size_t cbString)
 {
@@ -136,8 +142,9 @@ static char *cfgmR3StrAlloc(PVM pVM, MMTAG enmTag,  size_t cbString)
  * String free wrapper.
  *
  * @returns Pointer to the allocated memory, NULL on failure.
- * @param   pVM                 The VM handle, if tree associated with one.
- * @param   pszString           The memory block to free.
+ * @param   pVM         The cross context VM structure, if the tree
+ *                      is associated with one.
+ * @param   pszString   The memory block to free.
  */
 static void cfgmR3StrFree(PVM pVM, char *pszString)
 {
@@ -174,10 +181,13 @@ static void cfgmR3FreeNodeOnly(PCFGMNODE pNode)
 /**
  * Constructs the configuration for the VM.
  *
+ * This should only be called used once.
+ *
  * @returns VBox status code.
- * @param   pVM                 Pointer to VM which configuration has not yet been loaded.
- * @param   pfnCFGMConstructor  Pointer to callback function for constructing the VM configuration tree.
- *                              This is called in the EM.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pfnCFGMConstructor  Pointer to callback function for constructing
+ *                              the VM configuration tree.  This is called on
+ *                              the EMT.
  * @param   pvUser              The user argument passed to pfnCFGMConstructor.
  * @thread  EMT.
  * @internal
@@ -231,7 +241,7 @@ VMMR3DECL(int) CFGMR3Init(PVM pVM, PFNCFGMCONSTRUCTOR pfnCFGMConstructor, void *
  * Terminates the configuration manager.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @internal
  */
 VMMR3DECL(int) CFGMR3Term(PVM pVM)
@@ -246,7 +256,7 @@ VMMR3DECL(int) CFGMR3Term(PVM pVM)
  * Gets the root node for the VM.
  *
  * @returns Pointer to root node.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  */
 VMMR3DECL(PCFGMNODE) CFGMR3GetRoot(PVM pVM)
 {
@@ -258,7 +268,7 @@ VMMR3DECL(PCFGMNODE) CFGMR3GetRoot(PVM pVM)
  * Gets the root node for the VM.
  *
  * @returns Pointer to root node.
- * @param   pVM             Pointer to the VM.
+ * @param   pUVM        The user mode VM structure.
  */
 VMMR3DECL(PCFGMNODE) CFGMR3GetRootU(PUVM pUVM)
 {
@@ -274,7 +284,7 @@ VMMR3DECL(PCFGMNODE) CFGMR3GetRootU(PUVM pUVM)
  *
  * @returns Pointer to the parent node.
  * @returns NULL if pNode is Root or pNode is the start of a
- *          restricted subtree (use CFGMr3GetParentEx() for that).
+ *          restricted subtree (use CFGMR3GetParentEx() for that).
  *
  * @param   pNode           The node which parent we query.
  */
@@ -292,7 +302,8 @@ VMMR3DECL(PCFGMNODE) CFGMR3GetParent(PCFGMNODE pNode)
  * @returns Pointer to the parent node.
  * @returns NULL if pNode is Root or pVM is not correct.
  *
- * @param   pVM             The VM handle, used as token that the caller is trusted.
+ * @param   pVM             The cross context VM structure.  Used as token that
+ *                          the caller is trusted.
  * @param   pNode           The node which parent we query.
  */
 VMMR3DECL(PCFGMNODE) CFGMR3GetParentEx(PVM pVM, PCFGMNODE pNode)
@@ -570,7 +581,7 @@ VMMR3DECL(CFGMVALUETYPE) CFGMR3GetValueType(PCFGMLEAF pCur)
 /**
  * Validates that the values are within a set of valid names.
  *
- * @returns true if all names are found in pszzAllowed.
+ * @returns true if all names are found in pszzValid.
  * @returns false if not.
  * @param   pNode           The node which values should be examined.
  * @param   pszzValid       List of valid names separated by '\\0' and ending with
@@ -609,6 +620,20 @@ VMMR3DECL(bool) CFGMR3AreValuesValid(PCFGMNODE pNode, const char *pszzValid)
     return true;
 }
 
+
+/**
+ * Checks if the given value exists.
+ *
+ * @returns true if it exists, false if not.
+ * @param   pNode           Which node to search for pszName in.
+ * @param   pszName         The name of the value we seek.
+ */
+VMMR3DECL(bool) CFGMR3Exists(PCFGMNODE pNode, const char *pszName)
+{
+    PCFGMLEAF pLeaf;
+    int rc = cfgmR3ResolveLeaf(pNode, pszName, &pLeaf);
+    return RT_SUCCESS_NP(rc);
+}
 
 
 /**
@@ -878,7 +903,7 @@ VMMR3DECL(int) CFGMR3ValidateConfig(PCFGMNODE pNode, const char *pszNode,
     if (pNode)
     {
         /*
-         * Enumerate the leafs and check them against pszValidValues.
+         * Enumerate the leaves and check them against pszValidValues.
          */
         for (PCFGMLEAF pLeaf = pNode->pFirstLeaf; pLeaf; pLeaf = pLeaf->pNext)
         {
@@ -886,10 +911,10 @@ VMMR3DECL(int) CFGMR3ValidateConfig(PCFGMNODE pNode, const char *pszNode,
                                               pLeaf->szName, pLeaf->cchName,
                                               NULL))
             {
-                AssertLogRelMsgFailed(("%s/%u: Value '%s/%s' didn't match '%s'\n",
+                AssertLogRelMsgFailed(("%s/%u: Value '%s%s' didn't match '%s'\n",
                                        pszWho, uInstance, pszNode, pLeaf->szName, pszValidValues));
                 return VMSetError(pNode->pVM, VERR_CFGM_CONFIG_UNKNOWN_VALUE, RT_SRC_POS,
-                                  N_("Unknown configuration value '%s/%s' found in the configuration of %s instance #%u"),
+                                  N_("Unknown configuration value '%s%s' found in the configuration of %s instance #%u"),
                                   pszNode, pLeaf->szName, pszWho, uInstance);
             }
 
@@ -904,10 +929,10 @@ VMMR3DECL(int) CFGMR3ValidateConfig(PCFGMNODE pNode, const char *pszNode,
                                               pChild->szName, pChild->cchName,
                                               NULL))
             {
-                AssertLogRelMsgFailed(("%s/%u: Node '%s/%s' didn't match '%s'\n",
+                AssertLogRelMsgFailed(("%s/%u: Node '%s%s' didn't match '%s'\n",
                                        pszWho, uInstance, pszNode, pChild->szName, pszValidNodes));
                 return VMSetError(pNode->pVM, VERR_CFGM_CONFIG_UNKNOWN_NODE, RT_SRC_POS,
-                                  N_("Unknown configuration node '%s/%s' found in the configuration of %s instance #%u"),
+                                  N_("Unknown configuration node '%s%s' found in the configuration of %s instance #%u"),
                                   pszNode, pChild->szName, pszWho, uInstance);
             }
         }
@@ -926,7 +951,7 @@ VMMR3DECL(int) CFGMR3ValidateConfig(PCFGMNODE pNode, const char *pszNode,
  * need to do very small adjustments to the config.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @internal
  */
 VMMR3DECL(int) CFGMR3ConstructDefaultTree(PVM pVM)
@@ -1014,10 +1039,6 @@ VMMR3DECL(int) CFGMR3ConstructDefaultTree(PVM pVM)
     rc = CFGMR3InsertInteger(pInst, "Trusted",              1);         /* boolean */
     UPDATERC();
     rc = CFGMR3InsertNode(pInst,    "Config", &pCfg);
-    UPDATERC();
-    rc = CFGMR3InsertInteger(pCfg,  "RamSize",              128U * _1M);
-    UPDATERC();
-    rc = CFGMR3InsertInteger(pCfg,  "RamHoleSize",          512U * _1M);
     UPDATERC();
     rc = CFGMR3InsertString(pCfg,   "BootDevice0",          "IDE");
     UPDATERC();
@@ -1169,6 +1190,17 @@ VMMR3DECL(int) CFGMR3ConstructDefaultTree(PVM pVM)
     rc = CFGMR3InsertNode(pInst,    "Config", &pCfg);
     UPDATERC();
 
+    /*
+     * VMMDev.
+     */
+    rc = CFGMR3InsertNode(pDevices, "VMMDev", &pDev);
+    UPDATERC();
+    rc = CFGMR3InsertNode(pDev,     "0", &pInst);
+    UPDATERC();
+    rc = CFGMR3InsertNode(pInst,    "Config", &pCfg);
+    UPDATERC();
+    rc = CFGMR3InsertInteger(pInst, "Trusted",              1); /* boolean */
+    UPDATERC();
 
 
     /*
@@ -1455,7 +1487,7 @@ VMMR3DECL(int) CFGMR3InsertSubTree(PCFGMNODE pNode, const char *pszName, PCFGMNO
 
     /*
      * Use CFGMR3InsertNode to create a new node and then
-     * re-attach the children and leafs of the subtree to it.
+     * re-attach the children and leaves of the subtree to it.
      */
     PCFGMNODE pNewChild;
     int rc = CFGMR3InsertNode(pNode, pszName, &pNewChild);
@@ -1925,7 +1957,7 @@ VMMR3DECL(void) CFGMR3RemoveNode(PCFGMNODE pNode)
             CFGMR3RemoveNode(pNode->pFirstChild);
 
         /*
-         * Free leafs.
+         * Free leaves.
          */
         while (pNode->pFirstLeaf)
             cfgmR3RemoveLeaf(pNode, pNode->pFirstLeaf);
@@ -1991,7 +2023,8 @@ static void cfgmR3RemoveLeaf(PCFGMNODE pNode, PCFGMLEAF pLeaf)
  * Use this before assigning a new value to a leaf.
  * The caller must either free the leaf or assign a new value to it.
  *
- * @param   pVM         Used to select the heap.
+ * @param   pVM         The cross context VM structure, if the tree
+ *                      is associated with one.
  * @param   pLeaf       Pointer to the leaf which value should be free.
  */
 static void cfgmR3FreeValue(PVM pVM, PCFGMLEAF pLeaf)
@@ -2516,7 +2549,7 @@ VMMR3DECL(int) CFGMR3QueryU16(PCFGMNODE pNode, const char *pszName, uint16_t *pu
  * @param   pNode           Which node to search for pszName in.
  * @param   pszName         Name of an integer value.
  * @param   pu16            Where to store the value. Set to default on failure.
- * @param   i16Def          The default value.
+ * @param   u16Def          The default value.
  */
 VMMR3DECL(int) CFGMR3QueryU16Def(PCFGMNODE pNode, const char *pszName, uint16_t *pu16, uint16_t u16Def)
 {
@@ -3132,7 +3165,7 @@ VMMR3DECL(void) CFGMR3Dump(PCFGMNODE pRoot)
 /**
  * Info handler, internal version.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pHlp        Callback functions for doing output.
  * @param   pszArgs     Argument string. Optional and specific to the handler.
  */
@@ -3204,12 +3237,14 @@ static void cfgmR3Dump(PCFGMNODE pRoot, unsigned iLevel, PCDBGFINFOHLP pHlp)
                     || (   pLeaf->cchName >= 2
                         && !RTStrNCmp(pLeaf->szName, "cb", 2)) )
                 {
-                    if (pLeaf->Value.Integer.u64 > _2G)
-                        pHlp->pfnPrintf(pHlp, ", %'lld GB", pLeaf->Value.Integer.u64 / _1G);
-                    else if (pLeaf->Value.Integer.u64 > _2M)
+                    if (pLeaf->Value.Integer.u64 > _2M)
                         pHlp->pfnPrintf(pHlp, ", %'lld MB", pLeaf->Value.Integer.u64 / _1M);
                     else if (pLeaf->Value.Integer.u64 > _2K)
                         pHlp->pfnPrintf(pHlp, ", %'lld KB", pLeaf->Value.Integer.u64 / _1K);
+                    if (pLeaf->Value.Integer.u64 > _2G)
+                        pHlp->pfnPrintf(pHlp, ", %'lld.%lld GB",
+                                              pLeaf->Value.Integer.u64 / _1G,
+                                              (pLeaf->Value.Integer.u64 % _1G) / (_1G / 10));
                 }
                 pHlp->pfnPrintf(pHlp, ")\n");
                 break;

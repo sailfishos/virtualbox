@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -21,8 +21,8 @@
 #define __VBOXTRAYIPCSERVER__H
 
 int                VBoxIPCInit    (const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread);
-unsigned __stdcall VBoxIPCThread  (void *pInstance);
+unsigned __stdcall VBoxIPCWorker  (void *pInstance);
 void               VBoxIPCStop    (const VBOXSERVICEENV *pEnv, void *pInstance);
 void               VBoxIPCDestroy (const VBOXSERVICEENV *pEnv, void *pInstance);
 
-#endif /* __VBOXTRAYIPCSERVER__H */
+#endif /* !__VBOXTRAYIPCSERVER__H */

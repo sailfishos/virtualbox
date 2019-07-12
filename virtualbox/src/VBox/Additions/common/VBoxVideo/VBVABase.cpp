@@ -5,23 +5,33 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
- * This file is part of VirtualBox Open Source Edition (OSE), as
- * available from http://www.virtualbox.org. This file is free software;
- * you can redistribute it and/or modify it under the terms of the GNU
- * General Public License (GPL) as published by the Free Software
- * Foundation, in version 2 as it comes in the "COPYING" file of the
- * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
- * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <VBox/VBoxVideoGuest.h>
-#include <VBox/VBoxVideo.h>
-#include <VBox/err.h>
-#include <VBox/log.h>
-#include <iprt/assert.h>
-#include <iprt/string.h>
+#include <VBoxVideoGuest.h>
+#include <VBoxVideoIPRT.h>
+#include <HGSMIChannels.h>
 
 /*
  * There is a hardware ring buffer in the graphics device video RAM, formerly
@@ -45,29 +55,20 @@ static bool vboxHwBufferWrite(PVBVABUFFERCONTEXT pCtx,
                               const void *p, uint32_t cb);
 
 
-static bool vboxVBVAInformHost(PVBVABUFFERCONTEXT pCtx,
-                               PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx,
-                               int32_t cScreen, bool bEnable)
+static bool vboxVBVAInformHost(PVBVABUFFERCONTEXT pCtx, PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx, int32_t cScreen, bool fEnable)
 {
-    bool bRc = false;
+    bool fRc = false;
 
 #if 0  /* All callers check this */
     if (ppdev->bHGSMISupported)
 #endif
     {
-        void *p = VBoxHGSMIBufferAlloc(pHGSMICtx,
-                                       sizeof (VBVAENABLE_EX),
-                                       HGSMI_CH_VBVA,
-                                       VBVA_ENABLE);
-        if (!p)
+        VBVAENABLE_EX RT_UNTRUSTED_VOLATILE_HOST *pEnable =
+            (VBVAENABLE_EX RT_UNTRUSTED_VOLATILE_HOST *)VBoxHGSMIBufferAlloc(pHGSMICtx, sizeof(VBVAENABLE_EX),
+                                                                             HGSMI_CH_VBVA, VBVA_ENABLE);
+        if (pEnable != NULL)
         {
-            LogFunc(("HGSMIHeapAlloc failed\n"));
-        }
-        else
-        {
-            VBVAENABLE_EX *pEnable = (VBVAENABLE_EX *)p;
-
-            pEnable->Base.u32Flags  = bEnable? VBVA_F_ENABLE: VBVA_F_DISABLE;
+            pEnable->Base.u32Flags  = fEnable ? VBVA_F_ENABLE : VBVA_F_DISABLE;
             pEnable->Base.u32Offset = pCtx->offVRAMBuffer;
             pEnable->Base.i32Result = VERR_NOT_SUPPORTED;
             if (cScreen >= 0)
@@ -76,40 +77,40 @@ static bool vboxVBVAInformHost(PVBVABUFFERCONTEXT pCtx,
                 pEnable->u32ScreenId    = cScreen;
             }
 
-            VBoxHGSMIBufferSubmit(pHGSMICtx, p);
+            VBoxHGSMIBufferSubmit(pHGSMICtx, pEnable);
 
-            if (bEnable)
-            {
-                bRc = RT_SUCCESS(pEnable->Base.i32Result);
-            }
+            if (fEnable)
+                fRc = RT_SUCCESS(pEnable->Base.i32Result);
             else
-            {
-                bRc = true;
-            }
+                fRc = true;
 
-            VBoxHGSMIBufferFree(pHGSMICtx, p);
+            VBoxHGSMIBufferFree(pHGSMICtx, pEnable);
+        }
+        else
+        {
+            // LogFunc(("HGSMIHeapAlloc failed\n"));
         }
     }
 
-    return bRc;
+    return fRc;
 }
 
 /*
  * Public hardware buffer methods.
  */
-RTDECL(bool) VBoxVBVAEnable(PVBVABUFFERCONTEXT pCtx,
-                            PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx,
-                            VBVABUFFER *pVBVA, int32_t cScreen)
+DECLHIDDEN(bool) VBoxVBVAEnable(PVBVABUFFERCONTEXT pCtx,
+                                PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx,
+                                VBVABUFFER *pVBVA, int32_t cScreen)
 {
-    bool bRc = false;
+    bool fRc = false;
 
-    LogFlowFunc(("pVBVA %p\n", pVBVA));
+    // LogFlowFunc(("pVBVA %p\n", pVBVA));
 
 #if 0  /* All callers check this */
     if (ppdev->bHGSMISupported)
 #endif
     {
-        LogFunc(("pVBVA %p vbva off 0x%x\n", pVBVA, pCtx->offVRAMBuffer));
+        // LogFunc(("pVBVA %p vbva off 0x%x\n", pVBVA, pCtx->offVRAMBuffer));
 
         pVBVA->hostFlags.u32HostEvents      = 0;
         pVBVA->hostFlags.u32SupportedOrders = 0;
@@ -125,36 +126,34 @@ RTDECL(bool) VBoxVBVAEnable(PVBVABUFFERCONTEXT pCtx,
         pCtx->pRecord    = NULL;
         pCtx->pVBVA      = pVBVA;
 
-        bRc = vboxVBVAInformHost(pCtx, pHGSMICtx, cScreen, true);
+        fRc = vboxVBVAInformHost(pCtx, pHGSMICtx, cScreen, true);
     }
 
-    if (!bRc)
+    if (!fRc)
     {
         VBoxVBVADisable(pCtx, pHGSMICtx, cScreen);
     }
 
-    return bRc;
+    return fRc;
 }
 
-RTDECL(void) VBoxVBVADisable(PVBVABUFFERCONTEXT pCtx,
-                             PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx,
-                             int32_t cScreen)
+DECLHIDDEN(void) VBoxVBVADisable(PVBVABUFFERCONTEXT pCtx,
+                                 PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx,
+                                 int32_t cScreen)
 {
-    LogFlowFunc(("\n"));
+    // LogFlowFunc(("\n"));
 
     pCtx->fHwBufferOverflow = false;
     pCtx->pRecord           = NULL;
     pCtx->pVBVA             = NULL;
 
     vboxVBVAInformHost(pCtx, pHGSMICtx, cScreen, false);
-
-    return;
 }
 
-RTDECL(bool) VBoxVBVABufferBeginUpdate(PVBVABUFFERCONTEXT pCtx,
-                                       PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx)
+DECLHIDDEN(bool) VBoxVBVABufferBeginUpdate(PVBVABUFFERCONTEXT pCtx,
+                                           PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx)
 {
-    bool bRc = false;
+    bool fRc = false;
 
     // LogFunc(("flags = 0x%08X\n", pCtx->pVBVA? pCtx->pVBVA->u32HostEvents: -1));
 
@@ -177,8 +176,8 @@ RTDECL(bool) VBoxVBVABufferBeginUpdate(PVBVABUFFERCONTEXT pCtx,
         if (indexRecordNext == pCtx->pVBVA->indexRecordFirst)
         {
             /* Even after flush there is no place. Fail the request. */
-            LogFunc(("no space in the queue of records!!! first %d, last %d\n",
-                     pCtx->pVBVA->indexRecordFirst, pCtx->pVBVA->indexRecordFree));
+            // LogFunc(("no space in the queue of records!!! first %d, last %d\n",
+            //          pCtx->pVBVA->indexRecordFirst, pCtx->pVBVA->indexRecordFree));
         }
         else
         {
@@ -194,14 +193,14 @@ RTDECL(bool) VBoxVBVABufferBeginUpdate(PVBVABUFFERCONTEXT pCtx,
             /* Remember which record we are using. */
             pCtx->pRecord = pRecord;
 
-            bRc = true;
+            fRc = true;
         }
     }
 
-    return bRc;
+    return fRc;
 }
 
-RTDECL(void) VBoxVBVABufferEndUpdate(PVBVABUFFERCONTEXT pCtx)
+DECLHIDDEN(void) VBoxVBVABufferEndUpdate(PVBVABUFFERCONTEXT pCtx)
 {
     VBVARECORD *pRecord;
 
@@ -217,8 +216,6 @@ RTDECL(void) VBoxVBVABufferEndUpdate(PVBVABUFFERCONTEXT pCtx)
 
     pCtx->fHwBufferOverflow = false;
     pCtx->pRecord = NULL;
-
-    return;
 }
 
 /*
@@ -234,26 +231,20 @@ static uint32_t vboxHwBufferAvail (const VBVABUFFER *pVBVA)
 static void vboxHwBufferFlush(PHGSMIGUESTCOMMANDCONTEXT pCtx)
 {
     /* Issue the flush command. */
-    void *p = VBoxHGSMIBufferAlloc(pCtx,
-                                   sizeof (VBVAFLUSH),
-                                   HGSMI_CH_VBVA,
-                                   VBVA_FLUSH);
-    if (!p)
+    VBVAFLUSH RT_UNTRUSTED_VOLATILE_HOST *pFlush =
+        (VBVAFLUSH RT_UNTRUSTED_VOLATILE_HOST * )VBoxHGSMIBufferAlloc(pCtx, sizeof(VBVAFLUSH), HGSMI_CH_VBVA, VBVA_FLUSH);
+    if (pFlush != NULL)
     {
-        LogFunc(("HGSMIHeapAlloc failed\n"));
+        pFlush->u32Reserved = 0;
+
+        VBoxHGSMIBufferSubmit(pCtx, pFlush);
+
+        VBoxHGSMIBufferFree(pCtx, pFlush);
     }
     else
     {
-        VBVAFLUSH *pFlush = (VBVAFLUSH *)p;
-
-        pFlush->u32Reserved = 0;
-
-        VBoxHGSMIBufferSubmit(pCtx, p);
-
-        VBoxHGSMIBufferFree(pCtx, p);
+        // LogFunc(("HGSMIHeapAlloc failed\n"));
     }
-
-    return;
 }
 
 static void vboxHwBufferPlaceDataAt(PVBVABUFFERCONTEXT pCtx, const void *p,
@@ -275,8 +266,6 @@ static void vboxHwBufferPlaceDataAt(PVBVABUFFERCONTEXT pCtx, const void *p,
         memcpy (dst, p, u32BytesTillBoundary);
         memcpy (&pVBVA->au8Data[0], (uint8_t *)p + u32BytesTillBoundary, i32Diff);
     }
-
-    return;
 }
 
 static bool vboxHwBufferWrite(PVBVABUFFERCONTEXT pCtx,
@@ -314,7 +303,7 @@ static bool vboxHwBufferWrite(PVBVABUFFERCONTEXT pCtx,
 
         if (cbChunk >= cbHwBufferAvail)
         {
-            LogFunc(("1) avail %d, chunk %d\n", cbHwBufferAvail, cbChunk));
+            // LogFunc(("1) avail %d, chunk %d\n", cbHwBufferAvail, cbChunk));
 
             vboxHwBufferFlush (pHGSMICtx);
 
@@ -322,12 +311,12 @@ static bool vboxHwBufferWrite(PVBVABUFFERCONTEXT pCtx,
 
             if (cbChunk >= cbHwBufferAvail)
             {
-                LogFunc(("no place for %d bytes. Only %d bytes available after flush. Going to partial writes.\n",
-                            cb, cbHwBufferAvail));
+                // LogFunc(("no place for %d bytes. Only %d bytes available after flush. Going to partial writes.\n",
+                //             cb, cbHwBufferAvail));
 
                 if (cbHwBufferAvail <= pVBVA->cbPartialWriteThreshold)
                 {
-                    LogFunc(("Buffer overflow!!!\n"));
+                    // LogFunc(("Buffer overflow!!!\n"));
                     pCtx->fHwBufferOverflow = true;
                     Assert(false);
                     return false;
@@ -356,14 +345,14 @@ static bool vboxHwBufferWrite(PVBVABUFFERCONTEXT pCtx,
 /*
  * Public writer to the hardware buffer.
  */
-RTDECL(bool) VBoxVBVAWrite(PVBVABUFFERCONTEXT pCtx,
-                           PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx,
-                           const void *pv, uint32_t cb)
+DECLHIDDEN(bool) VBoxVBVAWrite(PVBVABUFFERCONTEXT pCtx,
+                               PHGSMIGUESTCOMMANDCONTEXT pHGSMICtx,
+                               const void *pv, uint32_t cb)
 {
     return vboxHwBufferWrite (pCtx, pHGSMICtx, pv, cb);
 }
 
-RTDECL(bool) VBoxVBVAOrderSupported(PVBVABUFFERCONTEXT pCtx, unsigned code)
+DECLHIDDEN(bool) VBoxVBVAOrderSupported(PVBVABUFFERCONTEXT pCtx, unsigned code)
 {
     VBVABUFFER *pVBVA = pCtx->pVBVA;
 
@@ -380,9 +369,9 @@ RTDECL(bool) VBoxVBVAOrderSupported(PVBVABUFFERCONTEXT pCtx, unsigned code)
     return false;
 }
 
-RTDECL(void) VBoxVBVASetupBufferContext(PVBVABUFFERCONTEXT pCtx,
-                                        uint32_t offVRAMBuffer,
-                                        uint32_t cbBuffer)
+DECLHIDDEN(void) VBoxVBVASetupBufferContext(PVBVABUFFERCONTEXT pCtx,
+                                            uint32_t offVRAMBuffer,
+                                            uint32_t cbBuffer)
 {
     pCtx->offVRAMBuffer = offVRAMBuffer;
     pCtx->cbBuffer      = cbBuffer;

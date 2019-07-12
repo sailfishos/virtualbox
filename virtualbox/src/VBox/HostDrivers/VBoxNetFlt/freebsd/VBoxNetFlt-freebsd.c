@@ -28,9 +28,10 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <sys/param.h>
 #undef PVM
 #include <sys/types.h>
@@ -449,7 +450,7 @@ static void vboxNetFltFreeBSDinput(void *arg, int pending)
 #endif
 
         /* Create a copy and deliver to the virtual switch */
-        pSG = RTMemTmpAlloc(RT_OFFSETOF(INTNETSG, aSegs[cSegs]));
+        pSG = RTMemTmpAlloc(RT_UOFFSETOF_DYN(INTNETSG, aSegs[cSegs]));
         vboxNetFltFreeBSDMBufToSG(pThis, m, pSG, cSegs, 0);
         fDropIt = pThis->pSwitchPort->pfnRecv(pThis->pSwitchPort, NULL /* pvIf */, pSG, INTNETTRUNKDIR_WIRE);
         RTMemTmpFree(pSG);
@@ -493,7 +494,7 @@ static void vboxNetFltFreeBSDoutput(void *arg, int pending)
             cSegs++;
 #endif
         /* Create a copy and deliver to the virtual switch */
-        pSG = RTMemTmpAlloc(RT_OFFSETOF(INTNETSG, aSegs[cSegs]));
+        pSG = RTMemTmpAlloc(RT_UOFFSETOF_DYN(INTNETSG, aSegs[cSegs]));
         vboxNetFltFreeBSDMBufToSG(pThis, m, pSG, cSegs, 0);
         fDropIt = pThis->pSwitchPort->pfnRecv(pThis->pSwitchPort, NULL /* pvIf */, pSG, INTNETTRUNKDIR_HOST);
         RTMemTmpFree(pSG);
@@ -608,7 +609,7 @@ int vboxNetFltOsInitInstance(PVBOXNETFLTINS pThis, void *pvContext)
     mtx_init(&pThis->u.s.outq.ifq_mtx, "vboxnetflt outq", NULL, MTX_SPIN);
     TASK_INIT(&pThis->u.s.tskout, 0, vboxNetFltFreeBSDoutput, pThis);
 
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     NG_NODE_SET_PRIVATE(node, pThis);
 

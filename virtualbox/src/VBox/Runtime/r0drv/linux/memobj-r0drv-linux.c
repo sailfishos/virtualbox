@@ -1,10 +1,10 @@
-/* $Revision: 94832 $ */
+/* $Id: memobj-r0drv-linux.c $ */
 /** @file
  * IPRT - Ring-0 Memory Objects, Linux.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-linux-kernel.h"
 
 #include <iprt/memobj.h>
@@ -39,9 +39,9 @@
 #include "internal/memobj.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /* early 2.6 kernels */
 #ifndef PAGE_SHARED_EXEC
 # define PAGE_SHARED_EXEC PAGE_SHARED
@@ -66,9 +66,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The Darwin version of the memory object structure.
  */
@@ -188,7 +188,8 @@ static void *rtR0MemObjLinuxDoMmap(RTR3PTR R3PtrFixed, size_t cb, size_t uAlignm
     unsigned fLnxProt;
     unsigned long ulAddr;
 
-    Assert((pTask == current)); /* do_mmap */
+    Assert(pTask == current); /* do_mmap */
+    RT_NOREF_PV(pTask);
 
     /*
      * Convert from IPRT protection to mman.h PROT_ and call do_mmap.
@@ -256,7 +257,7 @@ static void *rtR0MemObjLinuxDoMmap(RTR3PTR R3PtrFixed, size_t cb, size_t uAlignm
 static void rtR0MemObjLinuxDoMunmap(void *pv, size_t cb, struct task_struct *pTask)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
-    Assert(pTask == current);
+    Assert(pTask == current); RT_NOREF_PV(pTask);
     vm_munmap((unsigned long)pv, cb);
 #elif defined(USE_RHEL4_MUNMAP)
     down_write(&pTask->mm->mmap_sem);
@@ -294,7 +295,7 @@ static int rtR0MemObjLinuxAllocPages(PRTR0MEMOBJLNX *ppMemLnx, RTR0MEMOBJTYPE en
      * Allocate a memory object structure that's large enough to contain
      * the page pointer array.
      */
-    PRTR0MEMOBJLNX  pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(RT_OFFSETOF(RTR0MEMOBJLNX, apPages[cPages]), enmType, NULL, cb);
+    PRTR0MEMOBJLNX  pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(RT_UOFFSETOF_DYN(RTR0MEMOBJLNX, apPages[cPages]), enmType, NULL, cb);
     if (!pMemLnx)
         return VERR_NO_MEMORY;
     pMemLnx->cPages = cPages;
@@ -372,11 +373,17 @@ static int rtR0MemObjLinuxAllocPages(PRTR0MEMOBJLNX *ppMemLnx, RTR0MEMOBJTYPE en
 #endif /* < 2.4.22 */
     pMemLnx->fContiguous = fContiguous;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0)
     /*
      * Reserve the pages.
+     *
+     * Linux >= 4.5 with CONFIG_DEBUG_VM panics when setting PG_reserved on compound
+     * pages. According to Michal Hocko this shouldn't be necessary anyway because
+     * as pages which are not on the LRU list are never evictable.
      */
     for (iPage = 0; iPage < cPages; iPage++)
         SetPageReserved(pMemLnx->apPages[iPage]);
+#endif
 
     /*
      * Note that the physical address of memory allocated with alloc_pages(flags, order)
@@ -423,7 +430,12 @@ static void rtR0MemObjLinuxFreePages(PRTR0MEMOBJLNX pMemLnx)
          */
         while (iPage-- > 0)
         {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0)
+            /*
+             * See SetPageReserved() in rtR0MemObjLinuxAllocPages()
+             */
             ClearPageReserved(pMemLnx->apPages[iPage]);
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 4, 22)
 #else
             MY_SET_PAGES_NOEXEC(pMemLnx->apPages[iPage], 1);
@@ -547,6 +559,7 @@ static void rtR0MemObjLinuxVUnmap(PRTR0MEMOBJLNX pMemLnx)
 
 DECLHIDDEN(int) rtR0MemObjNativeFree(RTR0MEMOBJ pMem)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     PRTR0MEMOBJLNX pMemLnx = (PRTR0MEMOBJLNX)pMem;
 
     /*
@@ -577,7 +590,11 @@ DECLHIDDEN(int) rtR0MemObjNativeFree(RTR0MEMOBJ pMem)
                 {
                     if (!PageReserved(pMemLnx->apPages[iPage]))
                         SetPageDirty(pMemLnx->apPages[iPage]);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
+                    put_page(pMemLnx->apPages[iPage]);
+#else
                     page_cache_release(pMemLnx->apPages[iPage]);
+#endif
                 }
 
                 if (pTask && pTask->mm)
@@ -625,12 +642,14 @@ DECLHIDDEN(int) rtR0MemObjNativeFree(RTR0MEMOBJ pMem)
             AssertMsgFailed(("enmType=%d\n", pMemLnx->Core.enmType));
             return VERR_INTERNAL_ERROR;
     }
+    IPRT_LINUX_RESTORE_EFL_ONLY_AC();
     return VINF_SUCCESS;
 }
 
 
 DECLHIDDEN(int) rtR0MemObjNativeAllocPage(PPRTR0MEMOBJINTERNAL ppMem, size_t cb, bool fExecutable)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     PRTR0MEMOBJLNX pMemLnx;
     int rc;
 
@@ -647,6 +666,7 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocPage(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
         if (RT_SUCCESS(rc))
         {
             *ppMem = &pMemLnx->Core;
+            IPRT_LINUX_RESTORE_EFL_AC();
             return rc;
         }
 
@@ -654,12 +674,14 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocPage(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
         rtR0MemObjDelete(&pMemLnx->Core);
     }
 
+    IPRT_LINUX_RESTORE_EFL_AC();
     return rc;
 }
 
 
 DECLHIDDEN(int) rtR0MemObjNativeAllocLow(PPRTR0MEMOBJINTERNAL ppMem, size_t cb, bool fExecutable)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     PRTR0MEMOBJLNX pMemLnx;
     int rc;
 
@@ -687,6 +709,7 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocLow(PPRTR0MEMOBJINTERNAL ppMem, size_t cb, 
         if (RT_SUCCESS(rc))
         {
             *ppMem = &pMemLnx->Core;
+            IPRT_LINUX_RESTORE_EFL_AC();
             return rc;
         }
 
@@ -694,12 +717,14 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocLow(PPRTR0MEMOBJINTERNAL ppMem, size_t cb, 
         rtR0MemObjDelete(&pMemLnx->Core);
     }
 
+    IPRT_LINUX_RESTORE_EFL_AC();
     return rc;
 }
 
 
 DECLHIDDEN(int) rtR0MemObjNativeAllocCont(PPRTR0MEMOBJINTERNAL ppMem, size_t cb, bool fExecutable)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     PRTR0MEMOBJLNX pMemLnx;
     int rc;
 
@@ -730,6 +755,7 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocCont(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
 #endif
             pMemLnx->Core.u.Cont.Phys = page_to_phys(pMemLnx->apPages[0]);
             *ppMem = &pMemLnx->Core;
+            IPRT_LINUX_RESTORE_EFL_AC();
             return rc;
         }
 
@@ -737,6 +763,7 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocCont(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
         rtR0MemObjDelete(&pMemLnx->Core);
     }
 
+    IPRT_LINUX_RESTORE_EFL_AC();
     return rc;
 }
 
@@ -744,7 +771,7 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocCont(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
 /**
  * Worker for rtR0MemObjLinuxAllocPhysSub that tries one allocation strategy.
  *
- * @returns IPRT status.
+ * @returns IPRT status code.
  * @param   ppMemLnx    Where to
  * @param   enmType     The object type.
  * @param   cb          The size of the allocation.
@@ -796,7 +823,7 @@ static int rtR0MemObjLinuxAllocPhysSub2(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJTY
 /**
  * Worker for rtR0MemObjNativeAllocPhys and rtR0MemObjNativeAllocPhysNC.
  *
- * @returns IPRT status.
+ * @returns IPRT status code.
  * @param   ppMem       Where to store the memory object pointer on success.
  * @param   enmType     The object type.
  * @param   cb          The size of the allocation.
@@ -808,6 +835,7 @@ static int rtR0MemObjLinuxAllocPhysSub(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJTYP
                                        size_t cb, size_t uAlignment, RTHCPHYS PhysHighest)
 {
     int rc;
+    IPRT_LINUX_SAVE_EFL_AC();
 
     /*
      * There are two clear cases and that's the <=16MB and anything-goes ones.
@@ -843,6 +871,7 @@ static int rtR0MemObjLinuxAllocPhysSub(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJTYP
             /* ZONE_DMA: 0-16MB */
             rc = rtR0MemObjLinuxAllocPhysSub2(ppMem, enmType, cb, uAlignment, PhysHighest, GFP_DMA);
     }
+    IPRT_LINUX_RESTORE_EFL_AC();
     return rc;
 }
 
@@ -873,6 +902,9 @@ static struct page *rtR0MemObjLinuxVirtToPage(void *pv)
     union
     {
         pgd_t       Global;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+        p4d_t       Four;
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 11)
         pud_t       Upper;
 #endif
@@ -888,9 +920,24 @@ static struct page *rtR0MemObjLinuxVirtToPage(void *pv)
     u.Global = *pgd_offset(current->active_mm, ulAddr);
     if (RT_UNLIKELY(pgd_none(u.Global)))
         return NULL;
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 11)
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+    u.Four  = *p4d_offset(&u.Global, ulAddr);
+    if (RT_UNLIKELY(p4d_none(u.Four)))
+        return NULL;
+    if (p4d_large(u.Four))
+    {
+        pPage = p4d_page(u.Four);
+        AssertReturn(pPage, NULL);
+        pfn   = page_to_pfn(pPage);      /* doing the safe way... */
+        AssertCompile(P4D_SHIFT - PAGE_SHIFT < 31);
+        pfn  += (ulAddr >> PAGE_SHIFT) & ((UINT32_C(1) << (P4D_SHIFT - PAGE_SHIFT)) - 1);
+        return pfn_to_page(pfn);
+    }
+    u.Upper = *pud_offset(&u.Four, ulAddr);
+# else /* < 4.12 */
     u.Upper = *pud_offset(&u.Global, ulAddr);
+# endif /* < 4.12 */
     if (RT_UNLIKELY(pud_none(u.Upper)))
         return NULL;
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25)
@@ -903,7 +950,6 @@ static struct page *rtR0MemObjLinuxVirtToPage(void *pv)
         return pfn_to_page(pfn);
     }
 # endif
-
     u.Middle = *pmd_offset(&u.Upper, ulAddr);
 #else  /* < 2.6.11 */
     u.Middle = *pmd_offset(&u.Global, ulAddr);
@@ -953,6 +999,8 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocPhysNC(PPRTR0MEMOBJINTERNAL ppMem, size_t c
 
 DECLHIDDEN(int) rtR0MemObjNativeEnterPhys(PPRTR0MEMOBJINTERNAL ppMem, RTHCPHYS Phys, size_t cb, uint32_t uCachePolicy)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
+
     /*
      * All we need to do here is to validate that we can use
      * ioremap on the specified address (32/64-bit dma_addr_t).
@@ -963,19 +1011,32 @@ DECLHIDDEN(int) rtR0MemObjNativeEnterPhys(PPRTR0MEMOBJINTERNAL ppMem, RTHCPHYS P
 
     pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(sizeof(*pMemLnx), RTR0MEMOBJTYPE_PHYS, NULL, cb);
     if (!pMemLnx)
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VERR_NO_MEMORY;
+    }
 
     pMemLnx->Core.u.Phys.PhysBase = PhysAddr;
     pMemLnx->Core.u.Phys.fAllocated = false;
     pMemLnx->Core.u.Phys.uCachePolicy = uCachePolicy;
     Assert(!pMemLnx->cPages);
     *ppMem = &pMemLnx->Core;
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
+/* openSUSE Leap 42.3 detection :-/ */
+#if    LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0) \
+    && LINUX_VERSION_CODE <  KERNEL_VERSION(4, 6, 0) \
+    && defined(FAULT_FLAG_REMOTE)
+# define GET_USER_PAGES_API     KERNEL_VERSION(4, 10, 0) /* no typo! */
+#else
+# define GET_USER_PAGES_API     LINUX_VERSION_CODE
+#endif
 
 DECLHIDDEN(int) rtR0MemObjNativeLockUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR R3Ptr, size_t cb, uint32_t fAccess, RTR0PROCESS R0Process)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     const int cPages = cb >> PAGE_SHIFT;
     struct task_struct *pTask = rtR0ProcessToLinuxTask(R0Process);
     struct vm_area_struct **papVMAs;
@@ -994,9 +1055,12 @@ DECLHIDDEN(int) rtR0MemObjNativeLockUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR R3P
     /*
      * Allocate the memory object and a temporary buffer for the VMAs.
      */
-    pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(RT_OFFSETOF(RTR0MEMOBJLNX, apPages[cPages]), RTR0MEMOBJTYPE_LOCK, (void *)R3Ptr, cb);
+    pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(RT_UOFFSETOF_DYN(RTR0MEMOBJLNX, apPages[cPages]), RTR0MEMOBJTYPE_LOCK, (void *)R3Ptr, cb);
     if (!pMemLnx)
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VERR_NO_MEMORY;
+    }
 
     papVMAs = (struct vm_area_struct **)RTMemAlloc(sizeof(*papVMAs) * cPages);
     if (papVMAs)
@@ -1006,14 +1070,62 @@ DECLHIDDEN(int) rtR0MemObjNativeLockUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR R3P
         /*
          * Get user pages.
          */
-        rc = get_user_pages(pTask,                  /* Task for fault accounting. */
-                            pTask->mm,              /* Whose pages. */
-                            R3Ptr,                  /* Where from. */
-                            cPages,                 /* How many pages. */
-                            fWrite,                 /* Write to memory. */
-                            fWrite,                 /* force write access. */
-                            &pMemLnx->apPages[0],   /* Page array. */
-                            papVMAs);               /* vmas */
+#if GET_USER_PAGES_API >= KERNEL_VERSION(4, 6, 0)
+        if (R0Process == RTR0ProcHandleSelf())
+            rc = get_user_pages(R3Ptr,                  /* Where from. */
+                                cPages,                 /* How many pages. */
+# if GET_USER_PAGES_API >= KERNEL_VERSION(4, 9, 0)
+                                fWrite ? FOLL_WRITE |   /* Write to memory. */
+                                         FOLL_FORCE     /* force write access. */
+                                       : 0,             /* Write to memory. */
+# else
+                                fWrite,                 /* Write to memory. */
+                                fWrite,                 /* force write access. */
+# endif
+                                &pMemLnx->apPages[0],   /* Page array. */
+                                papVMAs);               /* vmas */
+        /*
+         * Actually this should not happen at the moment as call this function
+         * only for our own process.
+         */
+        else
+            rc = get_user_pages_remote(
+                                pTask,                  /* Task for fault accounting. */
+                                pTask->mm,              /* Whose pages. */
+                                R3Ptr,                  /* Where from. */
+                                cPages,                 /* How many pages. */
+# if GET_USER_PAGES_API >= KERNEL_VERSION(4, 9, 0)
+                                fWrite ? FOLL_WRITE |   /* Write to memory. */
+                                         FOLL_FORCE     /* force write access. */
+                                       : 0,             /* Write to memory. */
+# else
+                                fWrite,                 /* Write to memory. */
+                                fWrite,                 /* force write access. */
+# endif
+                                &pMemLnx->apPages[0],   /* Page array. */
+                                papVMAs                 /* vmas */
+# if GET_USER_PAGES_API >= KERNEL_VERSION(4, 10, 0)
+                                , NULL                  /* locked */
+# endif
+                                );
+#else /* GET_USER_PAGES_API < KERNEL_VERSION(4, 6, 0) */
+            rc = get_user_pages(pTask,                  /* Task for fault accounting. */
+                                pTask->mm,              /* Whose pages. */
+                                R3Ptr,                  /* Where from. */
+                                cPages,                 /* How many pages. */
+/* The get_user_pages API change was back-ported to 4.4.168. */
+# if    LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 168) \
+      && LINUX_VERSION_CODE <  KERNEL_VERSION(4, 5, 0)
+                                fWrite ? FOLL_WRITE |   /* Write to memory. */
+                                         FOLL_FORCE     /* force write access. */
+                                       : 0,             /* Write to memory. */
+# else
+                                fWrite,                 /* Write to memory. */
+                                fWrite,                 /* force write access. */
+# endif
+                                &pMemLnx->apPages[0],   /* Page array. */
+                                papVMAs);               /* vmas */
+#endif /* GET_USER_PAGES_API < KERNEL_VERSION(4, 6, 0) */
         if (rc == cPages)
         {
             /*
@@ -1047,6 +1159,7 @@ DECLHIDDEN(int) rtR0MemObjNativeLockUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR R3P
             Assert(!pMemLnx->fMappedToRing0);
             *ppMem = &pMemLnx->Core;
 
+            IPRT_LINUX_RESTORE_EFL_AC();
             return VINF_SUCCESS;
         }
 
@@ -1057,7 +1170,11 @@ DECLHIDDEN(int) rtR0MemObjNativeLockUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR R3P
         {
             if (!PageReserved(pMemLnx->apPages[rc]))
                 SetPageDirty(pMemLnx->apPages[rc]);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
+            put_page(pMemLnx->apPages[rc]);
+#else
             page_cache_release(pMemLnx->apPages[rc]);
+#endif
         }
 
         up_read(&pTask->mm->mmap_sem);
@@ -1067,12 +1184,14 @@ DECLHIDDEN(int) rtR0MemObjNativeLockUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR R3P
     }
 
     rtR0MemObjDelete(&pMemLnx->Core);
+    IPRT_LINUX_RESTORE_EFL_AC();
     return rc;
 }
 
 
 DECLHIDDEN(int) rtR0MemObjNativeLockKernel(PPRTR0MEMOBJINTERNAL ppMem, void *pv, size_t cb, uint32_t fAccess)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     void           *pvLast = (uint8_t *)pv + cb - 1;
     size_t const    cPages = cb >> PAGE_SHIFT;
     PRTR0MEMOBJLNX  pMemLnx;
@@ -1103,9 +1222,12 @@ DECLHIDDEN(int) rtR0MemObjNativeLockKernel(PPRTR0MEMOBJINTERNAL ppMem, void *pv,
     /*
      * Allocate the memory object.
      */
-    pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(RT_OFFSETOF(RTR0MEMOBJLNX, apPages[cPages]), RTR0MEMOBJTYPE_LOCK, pv, cb);
+    pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(RT_UOFFSETOF_DYN(RTR0MEMOBJLNX, apPages[cPages]), RTR0MEMOBJTYPE_LOCK, pv, cb);
     if (!pMemLnx)
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VERR_NO_MEMORY;
+    }
 
     /*
      * Gather the pages.
@@ -1146,10 +1268,12 @@ DECLHIDDEN(int) rtR0MemObjNativeLockKernel(PPRTR0MEMOBJINTERNAL ppMem, void *pv,
         Assert(!pMemLnx->fMappedToRing0);
         *ppMem = &pMemLnx->Core;
 
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VINF_SUCCESS;
     }
 
     rtR0MemObjDelete(&pMemLnx->Core);
+    IPRT_LINUX_RESTORE_EFL_AC();
     return rc;
 }
 
@@ -1157,6 +1281,7 @@ DECLHIDDEN(int) rtR0MemObjNativeLockKernel(PPRTR0MEMOBJINTERNAL ppMem, void *pv,
 DECLHIDDEN(int) rtR0MemObjNativeReserveKernel(PPRTR0MEMOBJINTERNAL ppMem, void *pvFixed, size_t cb, size_t uAlignment)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 4, 22)
+    IPRT_LINUX_SAVE_EFL_AC();
     const size_t cPages = cb >> PAGE_SHIFT;
     struct page *pDummyPage;
     struct page **papPages;
@@ -1171,36 +1296,39 @@ DECLHIDDEN(int) rtR0MemObjNativeReserveKernel(PPRTR0MEMOBJINTERNAL ppMem, void *
      * the dummy page is mapped all over the reserved area.
      */
     pDummyPage = alloc_page(GFP_HIGHUSER | __GFP_NOWARN);
-    if (!pDummyPage)
-        return VERR_NO_MEMORY;
-    papPages = RTMemAlloc(sizeof(*papPages) * cPages);
-    if (papPages)
+    if (pDummyPage)
     {
-        void *pv;
-        size_t iPage = cPages;
-        while (iPage-- > 0)
-            papPages[iPage] = pDummyPage;
-# ifdef VM_MAP
-        pv = vmap(papPages, cPages, VM_MAP, PAGE_KERNEL_RO);
-# else
-        pv = vmap(papPages, cPages, VM_ALLOC, PAGE_KERNEL_RO);
-# endif
-        RTMemFree(papPages);
-        if (pv)
+        papPages = RTMemAlloc(sizeof(*papPages) * cPages);
+        if (papPages)
         {
-            PRTR0MEMOBJLNX pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(sizeof(*pMemLnx), RTR0MEMOBJTYPE_RES_VIRT, pv, cb);
-            if (pMemLnx)
+            void *pv;
+            size_t iPage = cPages;
+            while (iPage-- > 0)
+                papPages[iPage] = pDummyPage;
+# ifdef VM_MAP
+            pv = vmap(papPages, cPages, VM_MAP, PAGE_KERNEL_RO);
+# else
+            pv = vmap(papPages, cPages, VM_ALLOC, PAGE_KERNEL_RO);
+# endif
+            RTMemFree(papPages);
+            if (pv)
             {
-                pMemLnx->Core.u.ResVirt.R0Process = NIL_RTR0PROCESS;
-                pMemLnx->cPages = 1;
-                pMemLnx->apPages[0] = pDummyPage;
-                *ppMem = &pMemLnx->Core;
-                return VINF_SUCCESS;
+                PRTR0MEMOBJLNX pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(sizeof(*pMemLnx), RTR0MEMOBJTYPE_RES_VIRT, pv, cb);
+                if (pMemLnx)
+                {
+                    pMemLnx->Core.u.ResVirt.R0Process = NIL_RTR0PROCESS;
+                    pMemLnx->cPages = 1;
+                    pMemLnx->apPages[0] = pDummyPage;
+                    *ppMem = &pMemLnx->Core;
+                    IPRT_LINUX_RESTORE_EFL_AC();
+                    return VINF_SUCCESS;
+                }
+                vunmap(pv);
             }
-            vunmap(pv);
         }
+        __free_page(pDummyPage);
     }
-    __free_page(pDummyPage);
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VERR_NO_MEMORY;
 
 #else   /* < 2.4.22 */
@@ -1215,6 +1343,7 @@ DECLHIDDEN(int) rtR0MemObjNativeReserveKernel(PPRTR0MEMOBJINTERNAL ppMem, void *
 
 DECLHIDDEN(int) rtR0MemObjNativeReserveUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR R3PtrFixed, size_t cb, size_t uAlignment, RTR0PROCESS R0Process)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     PRTR0MEMOBJLNX      pMemLnx;
     void               *pv;
     struct task_struct *pTask = rtR0ProcessToLinuxTask(R0Process);
@@ -1232,17 +1361,22 @@ DECLHIDDEN(int) rtR0MemObjNativeReserveUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR 
      */
     pv = rtR0MemObjLinuxDoMmap(R3PtrFixed, cb, uAlignment, pTask, RTMEM_PROT_NONE);
     if (pv == (void *)-1)
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VERR_NO_MEMORY;
+    }
 
     pMemLnx = (PRTR0MEMOBJLNX)rtR0MemObjNew(sizeof(*pMemLnx), RTR0MEMOBJTYPE_RES_VIRT, pv, cb);
     if (!pMemLnx)
     {
         rtR0MemObjLinuxDoMunmap(pv, cb, pTask);
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VERR_NO_MEMORY;
     }
 
     pMemLnx->Core.u.ResVirt.R0Process = R0Process;
     *ppMem = &pMemLnx->Core;
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -1254,6 +1388,7 @@ DECLHIDDEN(int) rtR0MemObjNativeMapKernel(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ
     int rc = VERR_NO_MEMORY;
     PRTR0MEMOBJLNX pMemLnxToMap = (PRTR0MEMOBJLNX)pMemToMap;
     PRTR0MEMOBJLNX pMemLnx;
+    IPRT_LINUX_SAVE_EFL_AC();
 
     /* Fail if requested to do something we can't. */
     AssertMsgReturn(!offSub && !cbSub, ("%#x %#x\n", offSub, cbSub), VERR_NOT_SUPPORTED);
@@ -1325,11 +1460,13 @@ DECLHIDDEN(int) rtR0MemObjNativeMapKernel(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ
         {
             pMemLnx->Core.u.Mapping.R0Process = NIL_RTR0PROCESS;
             *ppMem = &pMemLnx->Core;
+            IPRT_LINUX_RESTORE_EFL_AC();
             return VINF_SUCCESS;
         }
         rtR0MemObjDelete(&pMemLnx->Core);
     }
 
+    IPRT_LINUX_RESTORE_EFL_AC();
     return rc;
 }
 
@@ -1394,6 +1531,7 @@ DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ p
     struct page        *pDummyPage;
     RTHCPHYS            DummyPhys;
 #endif
+    IPRT_LINUX_SAVE_EFL_AC();
 
     /*
      * Check for restrictions.
@@ -1409,7 +1547,10 @@ DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ p
      */
     pDummyPage = alloc_page(GFP_USER | __GFP_NOWARN);
     if (!pDummyPage)
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VERR_NO_MEMORY;
+    }
     SetPageReserved(pDummyPage);
     DummyPhys = page_to_phys(pDummyPage);
 #endif
@@ -1563,6 +1704,7 @@ DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ p
                 pMemLnx->Core.pv = pv;
                 pMemLnx->Core.u.Mapping.R0Process = R0Process;
                 *ppMem = &pMemLnx->Core;
+                IPRT_LINUX_RESTORE_EFL_AC();
                 return VINF_SUCCESS;
             }
 
@@ -1577,6 +1719,7 @@ DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ p
     __free_page(pDummyPage);
 #endif
 
+    IPRT_LINUX_RESTORE_EFL_AC();
     return rc;
 }
 

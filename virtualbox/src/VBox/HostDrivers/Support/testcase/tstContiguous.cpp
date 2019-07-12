@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/sup.h>
 #include <VBox/param.h>
 #include <iprt/initterm.h>
@@ -51,12 +51,12 @@ int main(int argc, char **argv)
          * Allocate a bit of contiguous memory.
          */
         RTHCPHYS HCPhys;
-        void *pv = SUPR3ContAlloc(8, NIL_RTR0PTR, &HCPhys);
+        void *pv = SUPR3ContAlloc(8, NULL, &HCPhys);
         rcRet += pv == NULL || HCPhys == 0;
         if (pv && HCPhys)
         {
             memset(pv, 0xff, PAGE_SIZE * 8);
-            pv = SUPR3ContAlloc(5, NIL_RTR0PTR, &HCPhys);
+            pv = SUPR3ContAlloc(5, NULL, &HCPhys);
             rcRet += pv == NULL || HCPhys == 0;
             if (pv && HCPhys)
             {
@@ -69,11 +69,19 @@ int main(int argc, char **argv)
                 void *apv[128];
                 for (unsigned i = 0; i < RT_ELEMENTS(apv); i++)
                 {
-                    apv[i] = SUPR3ContAlloc(1 + (i % 11), NIL_RTR0PTR, &HCPhys);
+                    apv[i] = SUPR3ContAlloc(1 + (i % 11), NULL, &HCPhys);
                     if (!apv[i])
                     {
-                        RTPrintf("tstContiguous: i=%d: failed to allocate %d pages\n", i, 1 + (i % 11));
-                        rcRet++;
+                        RTPrintf("tstContiguous: i=%d: failed to allocate %d pages", i, 1 + (i % 11));
+#if defined(RT_ARCH_X86) && defined(RT_OS_LINUX)
+                        /* With 32-bit address spaces it's sometimes difficult
+                         * to find bigger chunks of contiguous memory */
+                        if (i % 11 > 7)
+                            RTPrintf(" => ignoring (32-bit host)");
+                        else
+#endif
+                            rcRet++;
+                        RTPrintf("\n");
                     }
                 }
                 for (unsigned i = 0; i < RT_ELEMENTS(apv); i++)

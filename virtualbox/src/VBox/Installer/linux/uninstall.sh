@@ -4,7 +4,7 @@
 # VirtualBox linux uninstallation script
 
 #
-# Copyright (C) 2009-2012 Oracle Corporation
+# Copyright (C) 2009-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -15,7 +15,10 @@
 # hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
 #
 
-. `dirname $0`/routines.sh
+# The below is GNU-specific.  See VBox.sh for the longer Solaris/OS X version.
+TARGET=`readlink -e -- "${0}"` || exit 1
+MY_PATH="${TARGET%/[!/]*}"
+. "${MY_PATH}/routines.sh"
 
 if [ -z "$ro_LOG_FILE" ]; then
     create_log "/var/log/vbox-uninstall.log"
@@ -29,7 +32,6 @@ fi
 
 check_root
 
-[ -z "$DKMS"       ]    && DKMS=`which dkms 2> /dev/null`
 [ -z "$CONFIG_DIR" ]    && CONFIG_DIR="/etc/vbox"
 [ -z "$CONFIG" ]        && CONFIG="vbox.cfg"
 [ -z "$CONFIG_FILES" ]  && CONFIG_FILES="filelist"
@@ -47,47 +49,17 @@ if [ "$PREV_INSTALLATION" = "" ]; then
     abort "Couldn't find a VirtualBox installation to uninstall."
 fi
 
-# Stop the ballon control service
-stop_init_script vboxballoonctrl-service
-# Stop the autostart service
-stop_init_script vboxautostart-service
-# Stop the web service
-stop_init_script vboxweb-service
-# Do this check here after we terminated the web service
-check_running
-# Terminate VBoxNetDHCP if running
-terminate_proc VBoxNetDHCP
-# Terminate VBoxNetNAT if running
-terminate_proc VBoxNetNAT
-delrunlevel vboxballoonctrl-service > /dev/null 2>&1
-remove_init_script vboxballoonctrl-service
-delrunlevel vboxautostart-service > /dev/null 2>&1
-remove_init_script vboxautostart-service
-delrunlevel vboxweb-service > /dev/null 2>&1
-remove_init_script vboxweb-service
-# Stop kernel module and uninstall runlevel script
-stop_init_script vboxdrv
-delrunlevel vboxdrv > /dev/null 2>&1
-remove_init_script vboxdrv
-# Stop host networking and uninstall runlevel script (obsolete)
-stop_init_script vboxnet
-delrunlevel vboxnet > /dev/null 2>&1
-remove_init_script vboxnet
+# Do pre-removal common to all installer types, currently service script
+# clean-up.
+"${MY_PATH}/prerm-common.sh" || exit 1
+
 # Remove kernel module installed
-if [ -n "$DKMS" ]; then
-    $DKMS remove -m vboxhost -v $INSTALL_VER --all > /dev/null 2>&1
-fi
 if [ -z "$VBOX_DONT_REMOVE_OLD_MODULES" ]; then
-    find /lib/modules/`uname -r` -name "vboxdrv\.*" 2>/dev/null|xargs rm -f 2> /dev/null
-    find /lib/modules/`uname -r` -name "vboxnetflt\.*" 2>/dev/null|xargs rm -f 2> /dev/null
-    find /lib/modules/`uname -r` -name "vboxnetadp\.*" 2>/dev/null|xargs rm -f 2> /dev/null
-    # Remove directories we have installed to in the past
-    find /lib/modules/`uname -r` -name vbox\* 2>/dev/null|xargs rmdir -p 2> /dev/null
-    find /lib/modules/`uname -r` -name misc\* 2>/dev/null|xargs rmdir -p 2> /dev/null
     rm -f /usr/src/vboxhost-$INSTALL_VER 2> /dev/null
     rm -f /usr/src/vboxdrv-$INSTALL_VER 2> /dev/null
     rm -f /usr/src/vboxnetflt-$INSTALL_VER 2> /dev/null
     rm -f /usr/src/vboxnetadp-$INSTALL_VER 2> /dev/null
+    rm -f /usr/src/vboxpci-$INSTALL_VER 2> /dev/null
 fi
 
 # Remove symlinks
@@ -97,11 +69,14 @@ rm -f \
   /usr/bin/VBoxSDL \
   /usr/bin/VBoxVRDP \
   /usr/bin/VBoxHeadless \
+  /usr/bin/VBoxDTrace \
+  /usr/bin/VBoxBugReport \
   /usr/bin/VBoxBalloonCtrl \
   /usr/bin/VBoxAutostart \
   /usr/bin/VBoxNetDHCP \
   /usr/bin/VBoxNetNAT \
   /usr/bin/vboxwebsrv \
+  /usr/bin/vbox-img \
   /usr/bin/VBoxAddIF \
   /usr/bin/VBoxDeleteIf \
   /usr/bin/VBoxTunctl \
@@ -115,23 +90,14 @@ rm -f \
   /usr/bin/vboxmanage \
   /usr/bin/vboxsdl \
   /usr/bin/vboxheadless \
+  /usr/bin/vboxdtrace \
+  /usr/bin/vboxbugreport \
   $PREV_INSTALLATION/components/VBoxVMM.so \
   $PREV_INSTALLATION/components/VBoxREM.so \
   $PREV_INSTALLATION/components/VBoxRT.so \
   $PREV_INSTALLATION/components/VBoxDDU.so \
   $PREV_INSTALLATION/components/VBoxXPCOM.so \
   2> /dev/null
-
-# Remove udev description file
-if [ -f /etc/udev/rules.d/60-vboxdrv.rules ]; then
-    rm -f /etc/udev/rules.d/60-vboxdrv.rules 2> /dev/null
-fi
-if [ -f /etc/udev/rules.d/10-vboxdrv.rules ]; then
-    rm -f /etc/udev/rules.d/10-vboxdrv.rules 2> /dev/null
-fi
-
-# Remove our USB device tree
-rm -rf /dev/vboxusb 2> /dev/null
 
 cwd=`pwd`
 if [ -f $PREV_INSTALLATION/src/Makefile ]; then
@@ -148,6 +114,10 @@ if [ -f $PREV_INSTALLATION/src/vboxnetflt/Makefile ]; then
 fi
 if [ -f $PREV_INSTALLATION/src/vboxnetadp/Makefile ]; then
     cd $PREV_INSTALLATION/src/vboxnetadp
+    make clean > /dev/null 2>&1
+fi
+if [ -f $PREV_INSTALLATION/src/vboxpci/Makefile ]; then
+    cd $PREV_INSTALLATION/src/vboxpci
     make clean > /dev/null 2>&1
 fi
 cd $PREV_INSTALLATION

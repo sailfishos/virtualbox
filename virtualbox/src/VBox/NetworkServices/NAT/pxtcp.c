@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -267,7 +267,7 @@ static void pxtcp_pcb_write_inbound(void *);
 static void pxtcp_pcb_pull_inbound(void *);
 
 /* tcp pcb callbacks */
-static err_t pxtcp_pcb_heard(void *, struct tcp_pcb *, err_t); /* global */
+static err_t pxtcp_pcb_heard(void *, struct tcp_pcb *, struct pbuf *); /* global */
 static err_t pxtcp_pcb_accept(void *, struct tcp_pcb *, err_t);
 static err_t pxtcp_pcb_connected(void *, struct tcp_pcb *, err_t);
 static err_t pxtcp_pcb_recv(void *, struct tcp_pcb *, struct pbuf *, err_t);
@@ -286,7 +286,7 @@ DECLINLINE(int) pxtcp_pcb_forward_inbound_done(const struct pxtcp *);
 static void pxtcp_pcb_schedule_poll(struct pxtcp *);
 static void pxtcp_pcb_cancel_poll(struct pxtcp *);
 
-static void pxtcp_pcb_reject(struct netif *, struct tcp_pcb *, struct pbuf *, int);
+static void pxtcp_pcb_reject(struct tcp_pcb *, int, struct netif *, struct pbuf *);
 DECLINLINE(void) pxtcp_pcb_maybe_deferred_delete(struct pxtcp *);
 
 /* poll manager handlers for pxtcp channels */
@@ -400,7 +400,11 @@ pxtcp_pmgr_add(struct pxtcp *pxtcp)
     int status;
 
     LWIP_ASSERT1(pxtcp != NULL);
+#ifdef RT_OS_WINDOWS
+    LWIP_ASSERT1(pxtcp->sock != INVALID_SOCKET);
+#else
     LWIP_ASSERT1(pxtcp->sock >= 0);
+#endif
     LWIP_ASSERT1(pxtcp->pmhdl.callback != NULL);
     LWIP_ASSERT1(pxtcp->pmhdl.data == (void *)pxtcp);
     LWIP_ASSERT1(pxtcp->pmhdl.slot < 0);
@@ -903,40 +907,45 @@ pxtcp_schedule_reset(struct pxtcp *pxtcp)
  * send TCP reset.
  */
 static void
-pxtcp_pcb_reject(struct netif *netif, struct tcp_pcb *pcb,
-                 struct pbuf *p, int sockerr)
+pxtcp_pcb_reject(struct tcp_pcb *pcb, int sockerr,
+                 struct netif *netif,  struct pbuf *p)
 {
-    struct netif *oif;
     int reset = 0;
-
-    oif = ip_current_netif();
-    ip_current_netif() = netif;
 
     if (sockerr == ECONNREFUSED) {
         reset = 1;
     }
-    else if (PCB_ISIPV6(pcb)) {
-        if (sockerr == EHOSTDOWN) {
-            icmp6_dest_unreach(p, ICMP6_DUR_ADDRESS); /* XXX: ??? */
-        }
-        else if (sockerr == EHOSTUNREACH
-                 || sockerr == ENETDOWN
-                 || sockerr == ENETUNREACH)
-        {
-            icmp6_dest_unreach(p, ICMP6_DUR_NO_ROUTE);
-        }
-    }
-    else {
-        if (sockerr == EHOSTDOWN
-            || sockerr == EHOSTUNREACH
-            || sockerr == ENETDOWN
-            || sockerr == ENETUNREACH)
-        {
-            icmp_dest_unreach(p, ICMP_DUR_HOST);
-        }
-    }
+    else if (p != NULL) {
+        struct netif *oif;
 
-    ip_current_netif() = oif;
+        LWIP_ASSERT1(netif != NULL);
+
+        oif = ip_current_netif();
+        ip_current_netif() = netif;
+
+        if (PCB_ISIPV6(pcb)) {
+            if (sockerr == EHOSTDOWN) {
+                icmp6_dest_unreach(p, ICMP6_DUR_ADDRESS); /* XXX: ??? */
+            }
+            else if (sockerr == EHOSTUNREACH
+                     || sockerr == ENETDOWN
+                     || sockerr == ENETUNREACH)
+            {
+                icmp6_dest_unreach(p, ICMP6_DUR_NO_ROUTE);
+            }
+        }
+        else {
+            if (sockerr == EHOSTDOWN
+                || sockerr == EHOSTUNREACH
+                || sockerr == ENETDOWN
+                || sockerr == ENETUNREACH)
+            {
+                icmp_dest_unreach(p, ICMP_DUR_HOST);
+            }
+        }
+
+        ip_current_netif() = oif;
+    }
 
     tcp_abandon(pcb, reset);
 }
@@ -965,7 +974,7 @@ pxtcp_pcb_accept_refuse(void *ctx)
     if (pxtcp->pcb != NULL) {
         struct tcp_pcb *pcb = pxtcp->pcb;
         pxtcp_pcb_dissociate(pxtcp);
-        pxtcp_pcb_reject(pxtcp->netif, pcb, pxtcp->unsent, pxtcp->sockerr);
+        pxtcp_pcb_reject(pcb,  pxtcp->sockerr, pxtcp->netif, pxtcp->unsent);
     }
 
     pollmgr_refptr_unref(pxtcp->rp);
@@ -995,17 +1004,25 @@ pxtcp_schedule_reject(struct pxtcp *pxtcp)
  * connections from guest(s).
  */
 static err_t
-pxtcp_pcb_heard(void *arg, struct tcp_pcb *newpcb, err_t error)
+pxtcp_pcb_heard(void *arg, struct tcp_pcb *newpcb, struct pbuf *syn)
 {
-    struct pbuf *p = (struct pbuf *)arg;
+    LWIP_UNUSED_ARG(arg);
+
+    return pxtcp_pcb_accept_outbound(newpcb, syn,
+               PCB_ISIPV6(newpcb), &newpcb->local_ip, newpcb->local_port);
+}
+
+
+err_t
+pxtcp_pcb_accept_outbound(struct tcp_pcb *newpcb, struct pbuf *p,
+                          int is_ipv6, ipX_addr_t *dst_addr, u16_t dst_port)
+{
     struct pxtcp *pxtcp;
-    ipX_addr_t dst_addr;
+    ipX_addr_t mapped_dst_addr;
     int sdom;
     SOCKET sock;
     ssize_t nsent;
     int sockerr = 0;
-
-    LWIP_UNUSED_ARG(error);     /* always ERR_OK */
 
     /*
      * TCP first calls accept callback when it receives the first SYN
@@ -1020,11 +1037,11 @@ pxtcp_pcb_heard(void *arg, struct tcp_pcb *newpcb, err_t error)
 
     tcp_setprio(newpcb, TCP_PRIO_MAX);
 
-    pxremap_outbound_ipX(PCB_ISIPV6(newpcb), &dst_addr, &newpcb->local_ip);
+    pxremap_outbound_ipX(is_ipv6, &mapped_dst_addr, dst_addr);
 
-    sdom = PCB_ISIPV6(newpcb) ? PF_INET6 : PF_INET;
+    sdom = is_ipv6 ? PF_INET6 : PF_INET;
     sock = proxy_connected_socket(sdom, SOCK_STREAM,
-                                  &dst_addr, newpcb->local_port);
+                                  &mapped_dst_addr, dst_port);
     if (sock == INVALID_SOCKET) {
         sockerr = SOCKERRNO();
         goto abort;
@@ -1037,9 +1054,11 @@ pxtcp_pcb_heard(void *arg, struct tcp_pcb *newpcb, err_t error)
     }
 
     /* save initial datagram in case we need to reply with ICMP */
-    pbuf_ref(p);
-    pxtcp->unsent = p;
-    pxtcp->netif = ip_current_netif();
+    if (p != NULL) {
+        pbuf_ref(p);
+        pxtcp->unsent = p;
+        pxtcp->netif = ip_current_netif();
+    }
 
     pxtcp_pcb_associate(pxtcp, newpcb);
     pxtcp->sock = sock;
@@ -1060,7 +1079,7 @@ pxtcp_pcb_heard(void *arg, struct tcp_pcb *newpcb, err_t error)
   abort:
     DPRINTF0(("%s: pcb %p, sock %d: %R[sockerr]\n",
               __func__, (void *)newpcb, sock, sockerr));
-    pxtcp_pcb_reject(ip_current_netif(), newpcb, p, sockerr);
+    pxtcp_pcb_reject(newpcb, sockerr, ip_current_netif(), p);
     return ERR_ABRT;
 }
 
@@ -1100,36 +1119,69 @@ static int
 pxtcp_pmgr_connect(struct pollmgr_handler *handler, SOCKET fd, int revents)
 {
     struct pxtcp *pxtcp;
+    RT_NOREF(fd);
 
     pxtcp = (struct pxtcp *)handler->data;
     LWIP_ASSERT1(handler == &pxtcp->pmhdl);
     LWIP_ASSERT1(fd == pxtcp->sock);
+    LWIP_ASSERT1(pxtcp->sockerr == 0);
 
-    if (revents & (POLLNVAL | POLLHUP | POLLERR)) {
-        if (revents & POLLNVAL) {
-            pxtcp->sock = INVALID_SOCKET;
+    if (revents & POLLNVAL) {
+        pxtcp->sock = INVALID_SOCKET;
+        pxtcp->sockerr = ETIMEDOUT;
+        return pxtcp_schedule_reject(pxtcp);
+    }
+
+    /*
+     * Solaris and NetBSD don't report either POLLERR or POLLHUP when
+     * connect(2) fails, just POLLOUT.  In that case we always need to
+     * check SO_ERROR.
+     */
+#if defined(RT_OS_SOLARIS) || defined(RT_OS_NETBSD)
+# define CONNECT_CHECK_ERROR POLLOUT
+#else
+# define CONNECT_CHECK_ERROR (POLLERR | POLLHUP)
+#endif
+
+    /*
+     * Check the cause of the failure so that pxtcp_pcb_reject() may
+     * behave accordingly.
+     */
+    if (revents & CONNECT_CHECK_ERROR) {
+        socklen_t optlen = (socklen_t)sizeof(pxtcp->sockerr);
+        int status;
+        SOCKET s;
+
+        status = getsockopt(pxtcp->sock, SOL_SOCKET, SO_ERROR,
+                            (char *)&pxtcp->sockerr, &optlen);
+        if (RT_UNLIKELY(status == SOCKET_ERROR)) { /* should not happen */
+            DPRINTF(("%s: sock %d: SO_ERROR failed: %R[sockerr]\n",
+                     __func__, fd, SOCKERRNO()));
             pxtcp->sockerr = ETIMEDOUT;
         }
         else {
-            socklen_t optlen = (socklen_t)sizeof(pxtcp->sockerr);
-            int status;
-            SOCKET s;
-
-            status = getsockopt(pxtcp->sock, SOL_SOCKET, SO_ERROR,
-                                (char *)&pxtcp->sockerr, &optlen);
-            if (status == SOCKET_ERROR) { /* should not happen */
-                DPRINTF(("%s: sock %d: SO_ERROR failed: %R[sockerr]\n",
-                         __func__, fd, SOCKERRNO()));
-            }
-            else {
+            /* don't spam this log on successful connect(2) */
+            if ((revents & (POLLERR | POLLHUP)) /* we were told it's failed */
+                || pxtcp->sockerr != 0)         /* we determined it's failed */
+            {
                 DPRINTF(("%s: sock %d: connect: %R[sockerr]\n",
                          __func__, fd, pxtcp->sockerr));
             }
+
+            if ((revents & (POLLERR | POLLHUP))
+                && RT_UNLIKELY(pxtcp->sockerr == 0))
+            {
+                /* if we're told it's failed, make sure it's marked as such */
+                pxtcp->sockerr = ETIMEDOUT;
+            }
+        }
+
+        if (pxtcp->sockerr != 0) {
             s = pxtcp->sock;
             pxtcp->sock = INVALID_SOCKET;
             closesocket(s);
+            return pxtcp_schedule_reject(pxtcp);
         }
-        return pxtcp_schedule_reject(pxtcp);
     }
 
     if (revents & POLLOUT) { /* connect is successful */
@@ -1175,9 +1227,10 @@ pxtcp_pcb_accept_confirm(void *ctx)
     }
 
     /* we are not going to reply with ICMP, so we can drop initial pbuf */
-    LWIP_ASSERT1(pxtcp->unsent != NULL);
-    pbuf_free(pxtcp->unsent);
-    pxtcp->unsent = NULL;
+    if (pxtcp->unsent != NULL) {
+        pbuf_free(pxtcp->unsent);
+        pxtcp->unsent = NULL;
+    }
 
     error = tcp_proxy_accept_confirm(pxtcp->pcb);
 
@@ -1239,7 +1292,7 @@ pxtcp_pcb_connect(struct pxtcp *pxtcp, const struct fwspec *fwspec)
         goto reset;
     }
 
-    /* nit: comapres PF and AF, but they are the same everywhere */
+    /* nit: compares PF and AF, but they are the same everywhere */
     LWIP_ASSERT1(ss.ss_family == fwspec->sdom);
 
     status = fwany_ipX_addr_set_src(&src_addr, (const struct sockaddr *)&ss);
@@ -1511,6 +1564,8 @@ pxtcp_pcb_forward_outbound(struct pxtcp *pxtcp, struct pbuf *p)
     }
 
     if (forwarded > 0) {
+        DPRINTF2(("forward_outbound: pxtcp %p, pcb %p: sent %d bytes\n",
+                  (void *)pxtcp, (void *)pxtcp->pcb, (int)forwarded));
         tcp_recved(pxtcp->pcb, (u16_t)forwarded);
     }
 
@@ -1535,6 +1590,8 @@ pxtcp_pcb_forward_outbound(struct pxtcp *pxtcp, struct pbuf *p)
             pbuf_header(q, -(s16_t)qoff);
         }
         pxtcp->unsent = q;
+        DPRINTF2(("forward_outbound: pxtcp %p, pcb %p: kept %d bytes\n",
+                  (void *)pxtcp, (void *)pxtcp->pcb, (int)q->tot_len));
 
         /*
          * Have sendmsg() failed?
@@ -1547,6 +1604,9 @@ pxtcp_pcb_forward_outbound(struct pxtcp *pxtcp, struct pbuf *p)
          */
         if (sockerr != 0 && sockerr != ECONNRESET) {
             struct tcp_pcb *pcb = pxtcp->pcb;
+            DPRINTF2(("forward_outbound: pxtcp %p, pcb %p: %R[sockerr]\n",
+                      (void *)pxtcp, (void *)pcb, sockerr));
+
             pxtcp_pcb_dissociate(pxtcp);
 
             tcp_abort(pcb);
@@ -1634,6 +1694,7 @@ pxtcp_pmgr_pump(struct pollmgr_handler *handler, SOCKET fd, int revents)
     struct pxtcp *pxtcp;
     int status;
     int sockerr;
+    RT_NOREF(fd);
 
     pxtcp = (struct pxtcp *)handler->data;
     LWIP_ASSERT1(handler == &pxtcp->pmhdl);
@@ -1650,11 +1711,11 @@ pxtcp_pmgr_pump(struct pollmgr_handler *handler, SOCKET fd, int revents)
         status = getsockopt(pxtcp->sock, SOL_SOCKET, SO_ERROR,
                             (char *)&sockerr, &optlen);
         if (status == SOCKET_ERROR) { /* should not happen */
-            DPRINTF(("sock %d: SO_ERROR failed: %R[sockerr]\n",
+            DPRINTF(("sock %d: POLLERR: SO_ERROR failed: %R[sockerr]\n",
                      fd, SOCKERRNO()));
         }
         else {
-            DPRINTF0(("sock %d: %R[sockerr]\n", fd, sockerr));
+            DPRINTF0(("sock %d: POLLERR: %R[sockerr]\n", fd, sockerr));
         }
         return pxtcp_schedule_reset(pxtcp);
     }
@@ -1671,7 +1732,7 @@ pxtcp_pmgr_pump(struct pollmgr_handler *handler, SOCKET fd, int revents)
         nread = pxtcp_sock_read(pxtcp, &stop_pollin);
         if (nread < 0) {
             sockerr = -(int)nread;
-            DPRINTF0(("sock %d: %R[sockerr]\n", fd, sockerr));
+            DPRINTF0(("sock %d: POLLIN: %R[sockerr]\n", fd, sockerr));
             return pxtcp_schedule_reset(pxtcp);
         }
 
@@ -1699,12 +1760,45 @@ pxtcp_pmgr_pump(struct pollmgr_handler *handler, SOCKET fd, int revents)
 #else
     if (revents & POLLHUP) {
         DPRINTF(("sock %d: HUP\n", fd));
+
 #if HAVE_TCP_POLLHUP == POLLIN
+        /*
+         * XXX: OSX reports POLLHUP once more when inbound is already
+         * half-closed (which has already been reported as a "normal"
+         * POLLHUP, handled below), the socket is polled for POLLOUT
+         * (guest sends a lot of data that we can't push out fast
+         * enough), and remote sends a reset - e.g. an http client
+         * that half-closes after request and then aborts the transfer.
+         *
+         * It really should have been reported as POLLERR, but it
+         * seems OSX never reports POLLERR for sockets.
+         */
+#if defined(RT_OS_DARWIN)
+        {
+            socklen_t optlen = (socklen_t)sizeof(sockerr);
+
+            status = getsockopt(pxtcp->sock, SOL_SOCKET, SO_ERROR,
+                                (char *)&sockerr, &optlen);
+            if (status == SOCKET_ERROR) { /* should not happen */
+                DPRINTF(("sock %d: POLLHUP: SO_ERROR failed: %R[sockerr]\n",
+                         fd, SOCKERRNO()));
+                sockerr = ECONNRESET;
+            }
+            else if (sockerr != 0) {
+                DPRINTF0(("sock %d: POLLHUP: %R[sockerr]\n", fd, sockerr));
+            }
+
+            if (sockerr != 0) { /* XXX: should have been POLLERR */
+                return pxtcp_schedule_reset(pxtcp);
+            }
+        }
+#endif  /* RT_OS_DARWIN */
+
         /*
          * Remote closed inbound.
          */
         if (!pxtcp->outbound_close_done) {
-            /* 
+            /*
              * We might still need to poll for POLLOUT, but we can not
              * poll for POLLIN anymore (even if not all data are read)
              * because we will be spammed by POLLHUP.
@@ -2055,7 +2149,8 @@ pxtcp_pcb_forward_inbound(struct pxtcp *pxtcp)
                 maybemore = TCP_WRITE_FLAG_MORE;
             }
 
-            error = tcp_write(pcb, &pxtcp->inbuf.buf[beg], toeob, maybemore);
+            Assert(toeob == (u16_t)toeob);
+            error = tcp_write(pcb, &pxtcp->inbuf.buf[beg], (u16_t)toeob, maybemore);
             if (error != ERR_OK) {
                 goto writeerr;
             }
@@ -2251,12 +2346,20 @@ pxtcp_pcb_sent(void *arg, struct tcp_pcb *pcb, u16_t len)
                 DPRINTF0(("%s: sock %d: %R[sockerr]\n",
                           __func__, pxtcp->sock, sockerr));
 
+#if HAVE_TCP_POLLHUP == POLLIN /* see counterpart in pxtcp_pmgr_pump() */
                 /*
-                 * Since we are pulling, pxtcp is no longer registered
-                 * with poll manager so we can kill it directly.
+                 * It may still be registered with poll manager for POLLOUT.
+                 */
+                pxtcp_chan_send_weak(POLLMGR_CHAN_PXTCP_RESET, pxtcp);
+                return ERR_OK;
+#else
+                /*
+                 * It is no longer registered with poll manager so we
+                 * can kill it directly.
                  */
                 pxtcp_pcb_reset_pxtcp(pxtcp);
                 return ERR_ABRT;
+#endif
             }
         }
     }
@@ -2324,7 +2427,7 @@ pxtcp_pcb_pull_inbound(void *ctx)
     }
 
     pxtcp->inbound_pull = 1;
-    if (pxtcp->outbound_close_done) {
+    if (pxtcp->pmhdl.slot < 0) {
         DPRINTF(("%s: pxtcp %p: pcb %p (deferred delete)\n",
                  __func__, (void *)pxtcp, (void *)pxtcp->pcb));
         pxtcp->deferred_delete = 1;

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGC
 #include <VBox/dbg.h>
 #include <VBox/vmm/dbgf.h>
@@ -33,9 +33,9 @@
 #include "DBGCInternal.h"
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int) dbgcOpMinus(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult);
 static DECLCALLBACK(int) dbgcOpPluss(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult);
 static DECLCALLBACK(int) dbgcOpBooleanNot(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult);
@@ -60,9 +60,9 @@ static DECLCALLBACK(int) dbgcOpRangeLengthBytes(PDBGC pDbgc, PCDBGCVAR pArg1, PC
 static DECLCALLBACK(int) dbgcOpRangeTo(PDBGC pDbgc, PCDBGCVAR pArg1, PCDBGCVAR pArg2, PDBGCVAR pResult);
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /**
  * Generic implementation of a binary operator.
  *
@@ -149,9 +149,9 @@ static DECLCALLBACK(int) dbgcOpRangeTo(PDBGC pDbgc, PCDBGCVAR pArg1, PCDBGCVAR p
     } while (0)
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Operators. */
 const DBGCOP g_aDbgcOps[] =
 {
@@ -225,8 +225,8 @@ static int dbgcOpHelperGetNumber(PDBGC pDbgc, PCDBGCVAR pArg, uint64_t *pu64Ret)
             int rc = dbgcSymbolGet(pDbgc, Var.u.pszString, DBGCVAR_TYPE_NUMBER, &Var);
             if (RT_FAILURE(rc))
                 return rc;
-            /* fall thru */
         }
+        RT_FALL_THRU();
         case DBGCVAR_TYPE_STRING:
         default:
             return VERR_DBGC_PARSE_INCORRECT_ARG_TYPE;
@@ -236,17 +236,11 @@ static int dbgcOpHelperGetNumber(PDBGC pDbgc, PCDBGCVAR pArg, uint64_t *pu64Ret)
 
 
 /**
- * Minus (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Negate (unary).}
  */
 static DECLCALLBACK(int) dbgcOpMinus(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCat);
     LogFlow(("dbgcOpMinus\n"));
     *pResult = *pArg;
     switch (pArg->enmType)
@@ -281,17 +275,11 @@ static DECLCALLBACK(int) dbgcOpMinus(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enm
 
 
 /**
- * Plus (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Plus (unary).}
  */
 static DECLCALLBACK(int) dbgcOpPluss(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCat);
     LogFlow(("dbgcOpPluss\n"));
     *pResult = *pArg;
     switch (pArg->enmType)
@@ -315,17 +303,11 @@ static DECLCALLBACK(int) dbgcOpPluss(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enm
 
 
 /**
- * Boolean not (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Boolean not (unary).}
  */
 static DECLCALLBACK(int) dbgcOpBooleanNot(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCat);
     LogFlow(("dbgcOpBooleanNot\n"));
     *pResult = *pArg;
     switch (pArg->enmType)
@@ -364,17 +346,11 @@ static DECLCALLBACK(int) dbgcOpBooleanNot(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCA
 
 
 /**
- * Bitwise not (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Bitwise not (unary).}
  */
 static DECLCALLBACK(int) dbgcOpBitwiseNot(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCat);
     LogFlow(("dbgcOpBitwiseNot\n"));
     *pResult = *pArg;
     switch (pArg->enmType)
@@ -409,17 +385,11 @@ static DECLCALLBACK(int) dbgcOpBitwiseNot(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCA
 
 
 /**
- * Reference variable (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Reference variable (unary).}
  */
 static DECLCALLBACK(int) dbgcOpVar(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCat);
     LogFlow(("dbgcOpVar: %s\n", pArg->u.pszString));
     AssertReturn(pArg->enmType == DBGCVAR_TYPE_SYMBOL, VERR_DBGC_PARSE_BUG);
 
@@ -441,14 +411,7 @@ static DECLCALLBACK(int) dbgcOpVar(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCa
 
 
 /**
- * Reference register (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Reference register (unary).}
  */
 DECLCALLBACK(int) dbgcOpRegister(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
@@ -506,6 +469,14 @@ DECLCALLBACK(int) dbgcOpRegister(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat,
                 DBGCVAR_INIT_NUMBER(pResult, Value.u128.s.Lo);
                 return VINF_SUCCESS;
 
+            case DBGFREGVALTYPE_U256:
+                DBGCVAR_INIT_NUMBER(pResult, Value.u256.QWords.qw0);
+                return VINF_SUCCESS;
+
+            case DBGFREGVALTYPE_U512:
+                DBGCVAR_INIT_NUMBER(pResult, Value.u512.QWords.qw0);
+                return VINF_SUCCESS;
+
             case DBGFREGVALTYPE_R80:
 #ifdef RT_COMPILER_WITH_80BIT_LONG_DOUBLE
                 DBGCVAR_INIT_NUMBER(pResult, (uint64_t)Value.r80Ex.lrd);
@@ -530,17 +501,11 @@ DECLCALLBACK(int) dbgcOpRegister(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat,
 
 
 /**
- * Flat address (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Flat address (unary).}
  */
 DECLCALLBACK(int) dbgcOpAddrFlat(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCat);
     LogFlow(("dbgcOpAddrFlat\n"));
     DBGCVARTYPE enmType = DBGCVAR_ISHCPOINTER(pArg->enmType) ? DBGCVAR_TYPE_HC_FLAT : DBGCVAR_TYPE_GC_FLAT;
     return DBGCCmdHlpConvert(&pDbgc->CmdHlp, pArg, enmType, true /*fConvSyms*/, pResult);
@@ -548,17 +513,11 @@ DECLCALLBACK(int) dbgcOpAddrFlat(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat,
 
 
 /**
- * Physical address (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Physical address (unary).}
  */
 DECLCALLBACK(int) dbgcOpAddrPhys(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCat);
     LogFlow(("dbgcOpAddrPhys\n"));
     DBGCVARTYPE enmType = DBGCVAR_ISHCPOINTER(pArg->enmType) ? DBGCVAR_TYPE_HC_PHYS : DBGCVAR_TYPE_GC_PHYS;
     return DBGCCmdHlpConvert(&pDbgc->CmdHlp, pArg, enmType, true /*fConvSyms*/, pResult);
@@ -566,48 +525,29 @@ DECLCALLBACK(int) dbgcOpAddrPhys(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat,
 
 
 /**
- * Physical host address (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Physical host address (unary).}
  */
 DECLCALLBACK(int) dbgcOpAddrHostPhys(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCat);
     LogFlow(("dbgcOpAddrPhys\n"));
     return DBGCCmdHlpConvert(&pDbgc->CmdHlp, pArg, DBGCVAR_TYPE_HC_PHYS, true /*fConvSyms*/, pResult);
 }
 
 
 /**
- * Host address (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Host address (unary).}
  */
 DECLCALLBACK(int) dbgcOpAddrHost(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enmCat, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCat);
     LogFlow(("dbgcOpAddrHost\n"));
     return DBGCCmdHlpConvert(&pDbgc->CmdHlp, pArg, DBGCVAR_TYPE_HC_FLAT, true /*fConvSyms*/, pResult);
 }
 
 
 /**
- * Bitwise not (unary).
- *
- * @returns VINF_SUCCESS on success.
- * @returns VBox evaluation / parsing error code on failure.
- *          The caller does the bitching.
- * @param   pDbgc       Debugger console instance data.
- * @param   pArg        The argument.
- * @param   pResult     Where to store the result.
+ * @callback_method_impl{FNDBGCOPUNARY, Far address (unary).}
  */
 static DECLCALLBACK(int) dbgcOpAddrFar(PDBGC pDbgc, PCDBGCVAR pArg1, PCDBGCVAR pArg2, PDBGCVAR pResult)
 {
@@ -874,6 +814,7 @@ static DECLCALLBACK(int) dbgcOpAdd(PDBGC pDbgc, PCDBGCVAR pArg1, PCDBGCVAR pArg2
                     rc = dbgcSymbolGet(pDbgc, pArg2->u.pszString, DBGCVAR_TYPE_NUMBER, &Var);
                     if (RT_FAILURE(rc))
                         return rc;
+                    RT_FALL_THRU();
                 case DBGCVAR_TYPE_NUMBER:
                     pResult->u.u64Number += pArg2->u.u64Number;
                     break;
@@ -1093,6 +1034,7 @@ static DECLCALLBACK(int) dbgcOpSub(PDBGC pDbgc, PCDBGCVAR pArg1, PCDBGCVAR pArg2
                     rc = dbgcSymbolGet(pDbgc, pArg2->u.pszString, DBGCVAR_TYPE_NUMBER, &Var);
                     if (RT_FAILURE(rc))
                         return rc;
+                    RT_FALL_THRU();
                 case DBGCVAR_TYPE_NUMBER:
                     pResult->u.u64Number -= pArg2->u.u64Number;
                     break;

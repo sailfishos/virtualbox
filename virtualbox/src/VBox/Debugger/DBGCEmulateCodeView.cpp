@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGC
 #include <VBox/dbg.h>
 #include <VBox/vmm/dbgf.h>
@@ -40,9 +41,9 @@
 #include "DBGCInternal.h"
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static FNDBGCCMD dbgcCmdBrkAccess;
 static FNDBGCCMD dbgcCmdBrkClear;
 static FNDBGCCMD dbgcCmdBrkDisable;
@@ -59,8 +60,11 @@ static FNDBGCCMD dbgcCmdDumpPageHierarchy;
 static FNDBGCCMD dbgcCmdDumpPageTable;
 static FNDBGCCMD dbgcCmdDumpPageTableBoth;
 static FNDBGCCMD dbgcCmdDumpTSS;
+static FNDBGCCMD dbgcCmdDumpTypeInfo;
+static FNDBGCCMD dbgcCmdDumpTypedVal;
 static FNDBGCCMD dbgcCmdEditMem;
 static FNDBGCCMD dbgcCmdGo;
+static FNDBGCCMD dbgcCmdGoUp;
 static FNDBGCCMD dbgcCmdListModules;
 static FNDBGCCMD dbgcCmdListNear;
 static FNDBGCCMD dbgcCmdListSource;
@@ -71,14 +75,20 @@ static FNDBGCCMD dbgcCmdRegHyper;
 static FNDBGCCMD dbgcCmdRegTerse;
 static FNDBGCCMD dbgcCmdSearchMem;
 static FNDBGCCMD dbgcCmdSearchMemType;
+static FNDBGCCMD dbgcCmdStepTrace;
+static FNDBGCCMD dbgcCmdStepTraceTo;
+static FNDBGCCMD dbgcCmdStepTraceToggle;
+static FNDBGCCMD dbgcCmdEventCtrl;
+static FNDBGCCMD dbgcCmdEventCtrlList;
+static FNDBGCCMD dbgcCmdEventCtrlReset;
 static FNDBGCCMD dbgcCmdStack;
-static FNDBGCCMD dbgcCmdTrace;
 static FNDBGCCMD dbgcCmdUnassemble;
+static FNDBGCCMD dbgcCmdUnassembleCfg;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** 'ba' arguments. */
 static const DBGCVARDESC    g_aArgBrkAcc[] =
 {
@@ -200,6 +210,25 @@ static const DBGCVARDESC    g_aArgDumpTSS[] =
 };
 
 
+/** 'dti' arguments. */
+static const DBGCVARDESC    g_aArgDumpTypeInfo[] =
+{
+    /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
+    {  1,           1,          DBGCVAR_CAT_STRING,     0,                              "type",         "The type to dump" },
+    {  0,           1,          DBGCVAR_CAT_NUMBER,     0,                              "levels",       "How many levels to dump the type information" }
+};
+
+
+/** 'dtv' arguments. */
+static const DBGCVARDESC    g_aArgDumpTypedVal[] =
+{
+    /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
+    {  1,           1,          DBGCVAR_CAT_STRING,     0,                              "type",         "The type to use" },
+    {  1,           1,          DBGCVAR_CAT_POINTER,    0,                              "address",      "Address to start dumping from." },
+    {  0,           1,          DBGCVAR_CAT_NUMBER,     0,                              "levels",       "How many levels to dump" }
+};
+
+
 /** 'e?' arguments. */
 static const DBGCVARDESC    g_aArgEditMem[] =
 {
@@ -242,6 +271,24 @@ static const DBGCVARDESC    g_aArgMemoryInfo[] =
 };
 
 
+/** 'p', 'pc', 'pt', 't', 'tc' and 'tt' arguments. */
+static const DBGCVARDESC    g_aArgStepTrace[] =
+{
+    /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
+    {  0,           1,          DBGCVAR_CAT_NUMBER,     0,                              "count",        "Number of instructions or source lines to step." },
+    {  0,           1,          DBGCVAR_CAT_STRING,     0,                              "cmds",         "String of commands to be executed afterwards. Quote it!" },
+};
+
+
+/** 'pa' and 'ta' arguments. */
+static const DBGCVARDESC    g_aArgStepTraceTo[] =
+{
+    /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
+    {  1,           1,          DBGCVAR_CAT_POINTER,    0,                              "address",      "Where to stop" },
+    {  0,           1,          DBGCVAR_CAT_STRING,     0,                              "cmds",         "String of commands to be executed afterwards. Quote it!" },
+};
+
+
 /** 'r' arguments. */
 static const DBGCVARDESC    g_aArgReg[] =
 {
@@ -277,8 +324,31 @@ static const DBGCVARDESC    g_aArgSearchMemType[] =
 };
 
 
+/** 'sxe', 'sxn', 'sxi', 'sx-' arguments. */
+static const DBGCVARDESC    g_aArgEventCtrl[] =
+{
+    /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
+    {  0,           1,          DBGCVAR_CAT_STRING,     0,                              "-c",           "The -c option, requires <cmds>." },
+    {  0,           1,          DBGCVAR_CAT_STRING,     DBGCVD_FLAGS_DEP_PREV,          "cmds",         "Command to execute on this event." },
+    {  0 /*weird*/, ~0U,        DBGCVAR_CAT_STRING,     0,                              "event",        "One or more events, 'all' refering to all events." },
+};
+
+/** 'sx' and 'sr' arguments. */
+static const DBGCVARDESC    g_aArgEventCtrlOpt[] =
+{
+    /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
+    {  0,           ~0U,        DBGCVAR_CAT_STRING,     0,                              "event",        "Zero or more events, 'all' refering to all events and being the default." },
+};
+
 /** 'u' arguments. */
 static const DBGCVARDESC    g_aArgUnassemble[] =
+{
+    /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
+    {  0,           1,          DBGCVAR_CAT_POINTER,    0,                              "address",      "Address where to start disassembling." },
+};
+
+/** 'ucfg' arguments. */
+static const DBGCVARDESC    g_aArgUnassembleCfg[] =
 {
     /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
     {  0,           1,          DBGCVAR_CAT_POINTER,    0,                              "address",      "Address where to start disassembling." },
@@ -330,6 +400,8 @@ const DBGCCMD    g_aCmdsCodeView[] =
     { "dt16",       0,        1,        &g_aArgDumpTSS[0],  RT_ELEMENTS(g_aArgDumpTSS),     0,       dbgcCmdDumpTSS,     "[tss|tss:ign|addr]",   "Dump the 16-bit task state segment (TSS)." },
     { "dt32",       0,        1,        &g_aArgDumpTSS[0],  RT_ELEMENTS(g_aArgDumpTSS),     0,       dbgcCmdDumpTSS,     "[tss|tss:ign|addr]",   "Dump the 32-bit task state segment (TSS)." },
     { "dt64",       0,        1,        &g_aArgDumpTSS[0],  RT_ELEMENTS(g_aArgDumpTSS),     0,       dbgcCmdDumpTSS,     "[tss|tss:ign|addr]",   "Dump the 64-bit task state segment (TSS)." },
+    { "dti",        1,        2,        &g_aArgDumpTypeInfo[0],RT_ELEMENTS(g_aArgDumpTypeInfo), 0,   dbgcCmdDumpTypeInfo,"<type> [levels]",      "Dump type information." },
+    { "dtv",        2,        3,        &g_aArgDumpTypedVal[0],RT_ELEMENTS(g_aArgDumpTypedVal), 0,   dbgcCmdDumpTypedVal,"<type> <addr> [levels]", "Dump a memory buffer using the information in the given type." },
     { "dw",         0,        1,        &g_aArgDumpMem[0],  RT_ELEMENTS(g_aArgDumpMem),     0,       dbgcCmdDumpMem,     "[addr]",               "Dump memory in words." },
     /** @todo add 'e', 'ea str', 'eza str', 'eu str' and 'ezu str'. See also
      *        dbgcCmdSearchMem and its dbgcVarsToBytes usage. */
@@ -338,6 +410,7 @@ const DBGCCMD    g_aCmdsCodeView[] =
     { "ed",         2,        2,        &g_aArgEditMem[0],  RT_ELEMENTS(g_aArgEditMem),     0,       dbgcCmdEditMem,     "<addr> <value>",       "Write a 4-byte value to memory." },
     { "eq",         2,        2,        &g_aArgEditMem[0],  RT_ELEMENTS(g_aArgEditMem),     0,       dbgcCmdEditMem,     "<addr> <value>",       "Write a 8-byte value to memory." },
     { "g",          0,        0,        NULL,               0,                              0,       dbgcCmdGo,          "",                     "Continue execution." },
+    { "gu",         0,        0,        NULL,               0,                              0,       dbgcCmdGoUp,        "",                     "Go up - continue execution till after return." },
     { "k",          0,        0,        NULL,               0,                              0,       dbgcCmdStack,       "",                     "Callstack." },
     { "kg",         0,        0,        NULL,               0,                              0,       dbgcCmdStack,       "",                     "Callstack - guest." },
     { "kh",         0,        0,        NULL,               0,                              0,       dbgcCmdStack,       "",                     "Callstack - hypervisor." },
@@ -348,6 +421,11 @@ const DBGCCMD    g_aCmdsCodeView[] =
     { "ln",         0,        ~0U,      &g_aArgListNear[0], RT_ELEMENTS(g_aArgListNear),    0,       dbgcCmdListNear,    "[addr/sym [..]]",      "List symbols near to the address. Default address is CS:EIP." },
     { "ls",         0,        1,        &g_aArgListSource[0],RT_ELEMENTS(g_aArgListSource), 0,       dbgcCmdListSource,  "[addr]",               "Source." },
     { "m",          1,        1,        &g_aArgMemoryInfo[0],RT_ELEMENTS(g_aArgMemoryInfo), 0,       dbgcCmdMemoryInfo,  "<addr>",               "Display information about that piece of memory." },
+    { "p",          0,        2,        &g_aArgStepTrace[0], RT_ELEMENTS(g_aArgStepTrace),  0,       dbgcCmdStepTrace,   "[count] [cmds]",       "Step over." },
+    { "pr",         0,        0,        NULL,               0,                              0,       dbgcCmdStepTraceToggle, "",                 "Toggle displaying registers for tracing & stepping (no code executed)." },
+    { "pa",         1,        1,        &g_aArgStepTraceTo[0], RT_ELEMENTS(g_aArgStepTraceTo), 0,    dbgcCmdStepTraceTo, "<addr> [count] [cmds]","Step to the given address." },
+    { "pc",         0,        0,        &g_aArgStepTrace[0], RT_ELEMENTS(g_aArgStepTrace),  0,       dbgcCmdStepTrace,   "[count] [cmds]",       "Step to the next call instruction." },
+    { "pt",         0,        0,        &g_aArgStepTrace[0], RT_ELEMENTS(g_aArgStepTrace),  0,       dbgcCmdStepTrace,   "[count] [cmds]",       "Step to the next return instruction." },
     { "r",          0,        3,        &g_aArgReg[0],      RT_ELEMENTS(g_aArgReg),         0,       dbgcCmdReg,         "[reg [[=] newval]]",   "Show or set register(s) - active reg set." },
     { "rg",         0,        3,        &g_aArgReg[0],      RT_ELEMENTS(g_aArgReg),         0,       dbgcCmdRegGuest,    "[reg [[=] newval]]",   "Show or set register(s) - guest reg set." },
     { "rg32",       0,        0,        NULL,               0,                              0,       dbgcCmdRegGuest,    "",                     "Show 32-bit guest registers." },
@@ -361,22 +439,193 @@ const DBGCCMD    g_aCmdsCodeView[] =
     { "sq",         2,       ~0U,       &g_aArgSearchMemType[0], RT_ELEMENTS(g_aArgSearchMemType),0, dbgcCmdSearchMemType, "<range> <pattern>",  "Search memory for one or more quad words." },
     { "su",         2,       ~0U,       &g_aArgSearchMemType[0], RT_ELEMENTS(g_aArgSearchMemType),0, dbgcCmdSearchMemType, "<range> <pattern>",  "Search memory for an unicode string." },
     { "sw",         2,       ~0U,       &g_aArgSearchMemType[0], RT_ELEMENTS(g_aArgSearchMemType),0, dbgcCmdSearchMemType, "<range> <pattern>",  "Search memory for one or more words." },
-    { "t",          0,        0,        NULL,               0,                              0,       dbgcCmdTrace,       "",                     "Instruction trace (step into)." },
+    { "sx",         0,       ~0U,       &g_aArgEventCtrlOpt[0], RT_ELEMENTS(g_aArgEventCtrlOpt), 0,  dbgcCmdEventCtrlList,  "[<event> [..]]", "Lists settings for exceptions, exits and other events.  All if no filter is specified." },
+    { "sx-",        3,       ~0U,       &g_aArgEventCtrl[0], RT_ELEMENTS(g_aArgEventCtrl),  0,       dbgcCmdEventCtrl,      "-c <cmd> <event> [..]", "Modifies the command for one or more exceptions, exits or other event.  'all' addresses all." },
+    { "sxe",        1,       ~0U,       &g_aArgEventCtrl[0], RT_ELEMENTS(g_aArgEventCtrl),  0,       dbgcCmdEventCtrl,      "[-c <cmd>] <event> [..]", "Enable: Break into the debugger on the specified exceptions, exits and other events.  'all' addresses all." },
+    { "sxn",        1,       ~0U,       &g_aArgEventCtrl[0], RT_ELEMENTS(g_aArgEventCtrl),  0,       dbgcCmdEventCtrl,      "[-c <cmd>] <event> [..]", "Notify: Display info in the debugger and continue on the specified exceptions, exits and other events. 'all' addresses all." },
+    { "sxi",        1,       ~0U,       &g_aArgEventCtrl[0], RT_ELEMENTS(g_aArgEventCtrl),  0,       dbgcCmdEventCtrl,      "[-c <cmd>] <event> [..]", "Ignore: Ignore the specified exceptions, exits and other events ('all' = all of them).  Without the -c option, the guest runs like normal." },
+    { "sxr",        0,        0,        &g_aArgEventCtrlOpt[0], RT_ELEMENTS(g_aArgEventCtrlOpt), 0,  dbgcCmdEventCtrlReset, "",                    "Reset the settings to default for exceptions, exits and other events. All if no filter is specified." },
+    { "t",          0,        2,        &g_aArgStepTrace[0], RT_ELEMENTS(g_aArgStepTrace),  0,       dbgcCmdStepTrace,   "[count] [cmds]",       "Trace ." },
+    { "tr",         0,        0,        NULL,               0,                              0,       dbgcCmdStepTraceToggle, "",                 "Toggle displaying registers for tracing & stepping (no code executed)." },
+    { "ta",         1,        1,        &g_aArgStepTraceTo[0], RT_ELEMENTS(g_aArgStepTraceTo), 0,    dbgcCmdStepTraceTo, "<addr> [count] [cmds]","Trace to the given address." },
+    { "tc",         0,        0,        &g_aArgStepTrace[0], RT_ELEMENTS(g_aArgStepTrace),  0,       dbgcCmdStepTrace,   "[count] [cmds]",       "Trace to the next call instruction." },
+    { "tt",         0,        0,        &g_aArgStepTrace[0], RT_ELEMENTS(g_aArgStepTrace),  0,       dbgcCmdStepTrace,   "[count] [cmds]",       "Trace to the next return instruction." },
     { "u",          0,        1,        &g_aArgUnassemble[0],RT_ELEMENTS(g_aArgUnassemble), 0,       dbgcCmdUnassemble,  "[addr]",               "Unassemble." },
     { "u64",        0,        1,        &g_aArgUnassemble[0],RT_ELEMENTS(g_aArgUnassemble), 0,       dbgcCmdUnassemble,  "[addr]",               "Unassemble 64-bit code." },
     { "u32",        0,        1,        &g_aArgUnassemble[0],RT_ELEMENTS(g_aArgUnassemble), 0,       dbgcCmdUnassemble,  "[addr]",               "Unassemble 32-bit code." },
     { "u16",        0,        1,        &g_aArgUnassemble[0],RT_ELEMENTS(g_aArgUnassemble), 0,       dbgcCmdUnassemble,  "[addr]",               "Unassemble 16-bit code." },
     { "uv86",       0,        1,        &g_aArgUnassemble[0],RT_ELEMENTS(g_aArgUnassemble), 0,       dbgcCmdUnassemble,  "[addr]",               "Unassemble 16-bit code with v8086/real mode addressing." },
+    { "ucfg",       0,        1,        &g_aArgUnassembleCfg[0], RT_ELEMENTS(g_aArgUnassembleCfg), 0, dbgcCmdUnassembleCfg,  "[addr]",               "Unassemble creating a control flow graph." },
+    { "ucfgc",      0,        1,        &g_aArgUnassembleCfg[0], RT_ELEMENTS(g_aArgUnassembleCfg), 0, dbgcCmdUnassembleCfg,  "[addr]",               "Unassemble creating a control flow graph with colors." },
 };
 
 /** The number of commands in the CodeView/WinDbg emulation. */
 const uint32_t g_cCmdsCodeView = RT_ELEMENTS(g_aCmdsCodeView);
 
 
+/**
+ * Selectable debug event descriptors.
+ *
+ * @remarks  Sorted by DBGCSXEVT::enmType value.
+ */
+const DBGCSXEVT g_aDbgcSxEvents[] =
+{
+    { DBGFEVENT_INTERRUPT_HARDWARE,     "hwint",                NULL,       kDbgcSxEventKind_Interrupt, kDbgcEvtState_Disabled, 0,                    "Hardware interrupt" },
+    { DBGFEVENT_INTERRUPT_SOFTWARE,     "swint",                NULL,       kDbgcSxEventKind_Interrupt, kDbgcEvtState_Disabled, 0,                    "Software interrupt" },
+    { DBGFEVENT_TRIPLE_FAULT,           "triplefault",          NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Enabled,  0,                    "Triple fault "},
+    { DBGFEVENT_XCPT_DE,                "xcpt_de",              "de",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#DE (integer divide error)" },
+    { DBGFEVENT_XCPT_DB,                "xcpt_db",              "db",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#DB (debug)" },
+    { DBGFEVENT_XCPT_02,                "xcpt_02",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_BP,                "xcpt_bp",              "bp",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#BP (breakpoint)" },
+    { DBGFEVENT_XCPT_OF,                "xcpt_of",              "of",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#OF (overflow (INTO))" },
+    { DBGFEVENT_XCPT_BR,                "xcpt_br",              "br",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#BR (bound range exceeded)" },
+    { DBGFEVENT_XCPT_UD,                "xcpt_ud",              "ud",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#UD (undefined opcode)" },
+    { DBGFEVENT_XCPT_NM,                "xcpt_nm",              "nm",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#NM (FPU not available)" },
+    { DBGFEVENT_XCPT_DF,                "xcpt_df",              "df",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#DF (double fault)" },
+    { DBGFEVENT_XCPT_09,                "xcpt_09",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "Coprocessor segment overrun" },
+    { DBGFEVENT_XCPT_TS,                "xcpt_ts",              "ts",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, "#TS (task switch)" },
+    { DBGFEVENT_XCPT_NP,                "xcpt_np",              "np",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, "#NP (segment not present)" },
+    { DBGFEVENT_XCPT_SS,                "xcpt_ss",              "ss",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, "#SS (stack segment fault)" },
+    { DBGFEVENT_XCPT_GP,                "xcpt_gp",              "gp",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, "#GP (general protection fault)" },
+    { DBGFEVENT_XCPT_PF,                "xcpt_pf",              "pf",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, "#PF (page fault)" },
+    { DBGFEVENT_XCPT_0f,                "xcpt_0f",              "xcpt0f",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_MF,                "xcpt_mf",              "mf",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#MF (math fault)" },
+    { DBGFEVENT_XCPT_AC,                "xcpt_ac",              "ac",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#AC (alignment check)" },
+    { DBGFEVENT_XCPT_MC,                "xcpt_mc",              "mc",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#MC (machine check)" },
+    { DBGFEVENT_XCPT_XF,                "xcpt_xf",              "xf",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#XF (SIMD floating-point exception)" },
+    { DBGFEVENT_XCPT_VE,                "xcpt_vd",              "ve",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    "#VE (virtualization exception)" },
+    { DBGFEVENT_XCPT_15,                "xcpt_15",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_16,                "xcpt_16",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_17,                "xcpt_17",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_18,                "xcpt_18",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_19,                "xcpt_19",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_1a,                "xcpt_1a",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_1b,                "xcpt_1b",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_1c,                "xcpt_1c",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_1d,                "xcpt_1d",              NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_XCPT_SX,                "xcpt_sx",              "sx",       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, "#SX (security exception)" },
+    { DBGFEVENT_XCPT_1f,                "xcpt_1f",              "xcpt1f",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_HALT,             "instr_halt",           "hlt",      kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_MWAIT,            "instr_mwait",          "mwait",    kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_MONITOR,          "instr_monitor",        "monitor",  kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_CPUID,            "instr_cpuid",          "cpuid",    kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_INVD,             "instr_invd",           "invd",     kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_WBINVD,           "instr_wbinvd",         "wbinvd",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_INVLPG,           "instr_invlpg",         "invlpg",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_RDTSC,            "instr_rdtsc",          "rdtsc",    kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_RDTSCP,           "instr_rdtscp",         "rdtscp",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_RDPMC,            "instr_rdpmc",          "rdpmc",    kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_RDMSR,            "instr_rdmsr",          "rdmsr",    kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_WRMSR,            "instr_wrmsr",          "wrmsr",    kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_CRX_READ,         "instr_crx_read",       "crx_read", kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, NULL },
+    { DBGFEVENT_INSTR_CRX_WRITE,        "instr_crx_write",      "crx_write",kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, NULL },
+    { DBGFEVENT_INSTR_DRX_READ,         "instr_drx_read",       "drx_read", kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, NULL },
+    { DBGFEVENT_INSTR_DRX_WRITE,        "instr_drx_write",      "drx_write",kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, DBGCSXEVT_F_TAKE_ARG, NULL },
+    { DBGFEVENT_INSTR_PAUSE,            "instr_pause",          "pause",    kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_XSETBV,           "instr_xsetbv",         "xsetbv",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_SIDT,             "instr_sidt",           "sidt",     kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_LIDT,             "instr_lidt",           "lidt",     kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_SGDT,             "instr_sgdt",           "sgdt",     kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_LGDT,             "instr_lgdt",           "lgdt",     kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_SLDT,             "instr_sldt",           "sldt",     kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_LLDT,             "instr_lldt",           "lldt",     kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_STR,              "instr_str",            "str",      kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_LTR,              "instr_ltr",            "ltr",      kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_GETSEC,           "instr_getsec",         "getsec",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_RSM,              "instr_rsm",            "rsm",      kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_RDRAND,           "instr_rdrand",         "rdrand",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_RDSEED,           "instr_rdseed",         "rdseed",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_XSAVES,           "instr_xsaves",         "xsaves",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_XRSTORS,          "instr_xrstors",        "xrstors",  kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMM_CALL,         "instr_vmm_call",       "vmm_call", kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMCLEAR,      "instr_vmx_vmclear",    "vmclear",  kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMLAUNCH,     "instr_vmx_vmlaunch",   "vmlaunch", kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMPTRLD,      "instr_vmx_vmptrld",    "vmptrld",  kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMPTRST,      "instr_vmx_vmptrst",    "vmptrst",  kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMREAD,       "instr_vmx_vmread",     "vmread",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMRESUME,     "instr_vmx_vmresume",   "vmresume", kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMWRITE,      "instr_vmx_vmwrite",    "vmwrite",  kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMXOFF,       "instr_vmx_vmxoff",     "vmxoff",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMXON,        "instr_vmx_vmxon",      "vmxon",    kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_VMFUNC,       "instr_vmx_vmfunc",     "vmfunc",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_INVEPT,       "instr_vmx_invept",     "invept",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_INVVPID,      "instr_vmx_invvpid",    "invvpid",  kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_VMX_INVPCID,      "instr_vmx_invpcid",    "invpcid",  kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_SVM_VMRUN,        "instr_svm_vmrun",      "vmrun",    kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_SVM_VMLOAD,       "instr_svm_vmload",     "vmload",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_SVM_VMSAVE,       "instr_svm_vmsave",     "vmsave",   kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_SVM_STGI,         "instr_svm_stgi",       "stgi",     kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_INSTR_SVM_CLGI,         "instr_svm_clgi",       "clgi",     kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_TASK_SWITCH,       "exit_task_switch",  "task_switch", kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_HALT,              "exit_halt",            NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_MWAIT,             "exit_mwait",           NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_MONITOR,           "exit_monitor",         NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_CPUID,             "exit_cpuid",           NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_INVD,              "exit_invd",            NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_WBINVD,            "exit_wbinvd",          NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_INVLPG,            "exit_invlpg",          NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_RDTSC,             "exit_rdtsc",           NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_RDTSCP,            "exit_rdtscp",          NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_RDPMC,             "exit_rdpmc",           NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_RDMSR,             "exit_rdmsr",           NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_WRMSR,             "exit_wrmsr",           NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_CRX_READ,          "exit_crx_read",        NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_CRX_WRITE,         "exit_crx_write",       NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_DRX_READ,          "exit_drx_read",        NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_DRX_WRITE,         "exit_drx_write",       NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_PAUSE,             "exit_pause",           NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_XSETBV,            "exit_xsetbv",          NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_SIDT,              "exit_sidt",            NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_LIDT,              "exit_lidt",            NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_SGDT,              "exit_sgdt",            NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_LGDT,              "exit_lgdt",            NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_SLDT,              "exit_sldt",            NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_LLDT,              "exit_lldt",            NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_STR,               "exit_str",             NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_LTR,               "exit_ltr",             NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_GETSEC,            "exit_getsec",          NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_RSM,               "exit_rsm",             NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_RDRAND,            "exit_rdrand",          NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_RDSEED,            "exit_rdseed",          NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_XSAVES,            "exit_xsaves",          NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_XRSTORS,           "exit_xrstors",         NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMM_CALL,          "exit_vmm_call",        NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMCLEAR,       "exit_vmx_vmclear",     NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMLAUNCH,      "exit_vmx_vmlaunch",    NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMPTRLD,       "exit_vmx_vmptrld",     NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMPTRST,       "exit_vmx_vmptrst",     NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMREAD,        "exit_vmx_vmread",      NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMRESUME,      "exit_vmx_vmresume",    NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMWRITE,       "exit_vmx_vmwrite",     NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMXOFF,        "exit_vmx_vmxoff",      NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMXON,         "exit_vmx_vmxon",       NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VMFUNC,        "exit_vmx_vmfunc",      NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_INVEPT,        "exit_vmx_invept",      NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_INVVPID,       "exit_vmx_invvpid",     NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_INVPCID,       "exit_vmx_invpcid",     NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_EPT_VIOLATION, "exit_vmx_ept_violation", "eptvio", kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_EPT_MISCONFIG, "exit_vmx_ept_misconfig", "eptmis", kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VAPIC_ACCESS,  "exit_vmx_vapic_access", NULL,      kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_VMX_VAPIC_WRITE,   "exit_vmx_vapic_write", NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_SVM_VMRUN,         "exit_svm_vmrun",       NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_SVM_VMLOAD,        "exit_svm_vmload",      NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_SVM_VMSAVE,        "exit_svm_vmsave",      NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_SVM_STGI,          "exit_svm_stgi",        NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_EXIT_SVM_CLGI,          "exit_svm_clgi",        NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_IOPORT_UNASSIGNED,      "pio_unassigned",       NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_IOPORT_UNUSED,          "pio_unused",           NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_MEMORY_UNASSIGNED,      "mmio_unassigned",      NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_MEMORY_ROM_WRITE,       "rom_write",            NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_BSOD_MSR,               "bsod_msr",             NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+    { DBGFEVENT_BSOD_EFI,               "bsod_efi",             NULL,       kDbgcSxEventKind_Plain,     kDbgcEvtState_Disabled, 0,                    NULL },
+};
+/** Number of entries in g_aDbgcSxEvents.  */
+const uint32_t   g_cDbgcSxEvents = RT_ELEMENTS(g_aDbgcSxEvents);
+
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'go' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'g' command.}
  */
 static DECLCALLBACK(int) dbgcCmdGo(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -398,7 +647,27 @@ static DECLCALLBACK(int) dbgcCmdGo(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUV
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'ba' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'gu' command.}
+ */
+static DECLCALLBACK(int) dbgcCmdGoUp(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
+    RT_NOREF(pCmd, paArgs, cArgs);
+
+    /* The simple way out. */
+    PDBGFADDRESS pStackPop  = NULL; /** @todo try set up some stack limitations */
+    RTGCPTR      cbStackPop = 0;
+    int rc = DBGFR3StepEx(pUVM, pDbgc->idCpu, DBGF_STEP_F_OVER | DBGF_STEP_F_STOP_AFTER_RET, NULL, pStackPop, cbStackPop, _512K);
+    if (RT_SUCCESS(rc))
+        pDbgc->fReady = false;
+    else
+        return DBGCCmdHlpFailRc(pCmdHlp, pCmd, rc, "DBGFR3StepEx(,,DBGF_STEP_F_OVER | DBGF_STEP_F_STOP_AFTER_RET,) failed");
+    return rc;
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'ba' command.}
  */
 static DECLCALLBACK(int) dbgcCmdBrkAccess(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -451,7 +720,7 @@ static DECLCALLBACK(int) dbgcCmdBrkAccess(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, P
      * Pick out the optional arguments.
      */
     uint64_t iHitTrigger = 0;
-    uint64_t iHitDisable = ~0;
+    uint64_t iHitDisable = UINT64_MAX;
     const char *pszCmds = NULL;
     unsigned iArg = 3;
     if (iArg < cArgs && paArgs[iArg].enmType == DBGCVAR_TYPE_NUMBER)
@@ -495,7 +764,7 @@ static DECLCALLBACK(int) dbgcCmdBrkAccess(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, P
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'bc' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'bc' command.}
  */
 static DECLCALLBACK(int) dbgcCmdBrkClear(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -547,7 +816,7 @@ static DECLCALLBACK(int) dbgcCmdBrkClear(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'bd' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'bd' command.}
  */
 static DECLCALLBACK(int) dbgcCmdBrkDisable(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -589,7 +858,7 @@ static DECLCALLBACK(int) dbgcCmdBrkDisable(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'be' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'be' command.}
  */
 static DECLCALLBACK(int) dbgcCmdBrkEnable(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -648,14 +917,17 @@ static DECLCALLBACK(int) dbgcEnumBreakpointsCallback(PUVM pUVM, void *pvUser, PC
     /*
      * BP type and size.
      */
-    char chType;
-    char cb = 1;
+    DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%#4x %c ", pBp->iBp, pBp->fEnabled ? 'e' : 'd');
+    bool fHasAddress = false;
     switch (pBp->enmType)
     {
         case DBGFBPTYPE_INT3:
-            chType = 'p';
+            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, " p %RGv", pBp->u.Int3.GCPtr);
+            fHasAddress = true;
             break;
         case DBGFBPTYPE_REG:
+        {
+            char chType;
             switch (pBp->u.Reg.fType)
             {
                 case X86_DR7_RW_EO: chType = 'x'; break;
@@ -665,40 +937,74 @@ static DECLCALLBACK(int) dbgcEnumBreakpointsCallback(PUVM pUVM, void *pvUser, PC
                 default:            chType = '?'; break;
 
             }
-            cb = pBp->u.Reg.cb;
+            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%d %c %RGv", pBp->u.Reg.cb, chType, pBp->u.Reg.GCPtr);
+            fHasAddress = true;
             break;
-        case DBGFBPTYPE_REM:
-            chType = 'r';
-            break;
-        default:
-            chType = '?';
-            break;
-    }
+        }
 
-    DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%#4x %c %d %c %RGv %04RX64 (%04RX64 to ",
-                     pBp->iBp, pBp->fEnabled ? 'e' : 'd', (int)cb, chType,
-                     pBp->GCPtr, pBp->cHits, pBp->iHitTrigger);
+        case DBGFBPTYPE_REM:
+            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, " r %RGv", pBp->u.Rem.GCPtr);
+            fHasAddress = true;
+            break;
+
+/** @todo realign the list when I/O and MMIO breakpoint command have been added and it's possible to test this code. */
+        case DBGFBPTYPE_PORT_IO:
+        case DBGFBPTYPE_MMIO:
+        {
+            uint32_t fAccess = pBp->enmType == DBGFBPTYPE_PORT_IO ? pBp->u.PortIo.fAccess : pBp->u.Mmio.fAccess;
+            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, pBp->enmType == DBGFBPTYPE_PORT_IO ?  " i" : " m");
+            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, " %c%c%c%c%c%c",
+                             fAccess & DBGFBPIOACCESS_READ_MASK   ? 'r' : '-',
+                             fAccess & DBGFBPIOACCESS_READ_BYTE   ? '1' : '-',
+                             fAccess & DBGFBPIOACCESS_READ_WORD   ? '2' : '-',
+                             fAccess & DBGFBPIOACCESS_READ_DWORD  ? '4' : '-',
+                             fAccess & DBGFBPIOACCESS_READ_QWORD  ? '8' : '-',
+                             fAccess & DBGFBPIOACCESS_READ_OTHER  ? '+' : '-');
+            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, " %c%c%c%c%c%c",
+                             fAccess & DBGFBPIOACCESS_WRITE_MASK  ? 'w' : '-',
+                             fAccess & DBGFBPIOACCESS_WRITE_BYTE  ? '1' : '-',
+                             fAccess & DBGFBPIOACCESS_WRITE_WORD  ? '2' : '-',
+                             fAccess & DBGFBPIOACCESS_WRITE_DWORD ? '4' : '-',
+                             fAccess & DBGFBPIOACCESS_WRITE_QWORD ? '8' : '-',
+                             fAccess & DBGFBPIOACCESS_WRITE_OTHER ? '+' : '-');
+            if (pBp->enmType == DBGFBPTYPE_PORT_IO)
+                DBGCCmdHlpPrintf(&pDbgc->CmdHlp, " %04x-%04x",
+                                 pBp->u.PortIo.uPort, pBp->u.PortIo.uPort + pBp->u.PortIo.cPorts - 1);
+            else
+                DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%RGp LB %03x", pBp->u.Mmio.PhysAddr, pBp->u.Mmio.cb);
+            break;
+        }
+
+        default:
+            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, " unknown type %d!!", pBp->enmType);
+            AssertFailed();
+            break;
+
+    }
     if (pBp->iHitDisable == ~(uint64_t)0)
-        DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "~0)  ");
+        DBGCCmdHlpPrintf(&pDbgc->CmdHlp, " %04RX64 (%04RX64 to ~0)  ", pBp->cHits, pBp->iHitTrigger);
     else
-        DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%04RX64)", pBp->iHitDisable);
+        DBGCCmdHlpPrintf(&pDbgc->CmdHlp, " %04RX64 (%04RX64 to %04RX64)", pBp->cHits, pBp->iHitTrigger, pBp->iHitDisable);
 
     /*
-     * Try resolve the address.
+     * Try resolve the address if it has one.
      */
-    RTDBGSYMBOL Sym;
-    RTINTPTR    off;
-    DBGFADDRESS Addr;
-    int rc = DBGFR3AsSymbolByAddr(pUVM, pDbgc->hDbgAs, DBGFR3AddrFromFlat(pDbgc->pUVM, &Addr, pBp->GCPtr),
-                                  RTDBGSYMADDR_FLAGS_LESS_OR_EQUAL, &off, &Sym, NULL);
-    if (RT_SUCCESS(rc))
+    if (fHasAddress)
     {
-        if (!off)
-            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%s", Sym.szName);
-        else if (off > 0)
-            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%s+%RGv", Sym.szName, off);
-        else
-            DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%s-%RGv", Sym.szName, -off);
+        RTDBGSYMBOL Sym;
+        RTINTPTR    off;
+        DBGFADDRESS Addr;
+        int rc = DBGFR3AsSymbolByAddr(pUVM, pDbgc->hDbgAs, DBGFR3AddrFromFlat(pDbgc->pUVM, &Addr, pBp->u.GCPtr),
+                                      RTDBGSYMADDR_FLAGS_LESS_OR_EQUAL, &off, &Sym, NULL);
+        if (RT_SUCCESS(rc))
+        {
+            if (!off)
+                DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%s", Sym.szName);
+            else if (off > 0)
+                DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%s+%RGv", Sym.szName, off);
+            else
+                DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "%s-%RGv", Sym.szName, -off);
+        }
     }
 
     /*
@@ -719,7 +1025,7 @@ static DECLCALLBACK(int) dbgcEnumBreakpointsCallback(PUVM pUVM, void *pvUser, PC
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'bl' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'bl' command.}
  */
 static DECLCALLBACK(int) dbgcCmdBrkList(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -739,7 +1045,7 @@ static DECLCALLBACK(int) dbgcCmdBrkList(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'bp' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'bp' command.}
  */
 static DECLCALLBACK(int) dbgcCmdBrkSet(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -755,7 +1061,7 @@ static DECLCALLBACK(int) dbgcCmdBrkSet(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM
      * Pick out the optional arguments.
      */
     uint64_t iHitTrigger = 0;
-    uint64_t iHitDisable = ~0;
+    uint64_t iHitDisable = UINT64_MAX;
     const char *pszCmds = NULL;
     unsigned iArg = 1;
     if (iArg < cArgs && paArgs[iArg].enmType == DBGCVAR_TYPE_NUMBER)
@@ -778,10 +1084,10 @@ static DECLCALLBACK(int) dbgcCmdBrkSet(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM
      * Try set the breakpoint.
      */
     uint32_t iBp;
-    rc = DBGFR3BpSet(pUVM, &Address, iHitTrigger, iHitDisable, &iBp);
+    PDBGC    pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
+    rc = DBGFR3BpSetInt3(pUVM, pDbgc->idCpu, &Address, iHitTrigger, iHitDisable, &iBp);
     if (RT_SUCCESS(rc))
     {
-        PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
         rc = dbgcBpAdd(pDbgc, iBp, pszCmds);
         if (RT_SUCCESS(rc))
             return DBGCCmdHlpPrintf(pCmdHlp, "Set breakpoint %u at %RGv\n", iBp, Address.FlatPtr);
@@ -799,7 +1105,7 @@ static DECLCALLBACK(int) dbgcCmdBrkSet(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'br' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'br' command.}
  */
 static DECLCALLBACK(int) dbgcCmdBrkREM(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -815,7 +1121,7 @@ static DECLCALLBACK(int) dbgcCmdBrkREM(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM
      * Pick out the optional arguments.
      */
     uint64_t iHitTrigger = 0;
-    uint64_t iHitDisable = ~0;
+    uint64_t iHitDisable = UINT64_MAX;
     const char *pszCmds = NULL;
     unsigned iArg = 1;
     if (iArg < cArgs && paArgs[iArg].enmType == DBGCVAR_TYPE_NUMBER)
@@ -881,17 +1187,17 @@ static void dbgcCmdUnassambleHelpListNear(PUVM pUVM, PDBGCCMDHLP pCmdHlp, RTDBGA
         if (!offDispSym)
         {
             DBGCCmdHlpPrintf(pCmdHlp, "%s:\n", Symbol.szName);
-            *pcbCallAgain = Symbol.cb;
+            *pcbCallAgain = !Symbol.cb ? 64 : Symbol.cb;
         }
         else if (offDispSym > 0)
         {
             DBGCCmdHlpPrintf(pCmdHlp, "%s+%#llx:\n", Symbol.szName, (uint64_t)offDispSym);
-            *pcbCallAgain = Symbol.cb > (RTGCUINTPTR)offDispSym ? Symbol.cb - (RTGCUINTPTR)offDispSym : 1;
+            *pcbCallAgain = !Symbol.cb ? 64 : Symbol.cb > (RTGCUINTPTR)offDispSym ? Symbol.cb - (RTGCUINTPTR)offDispSym : 1;
         }
         else
         {
             DBGCCmdHlpPrintf(pCmdHlp, "%s-%#llx:\n", Symbol.szName, (uint64_t)-offDispSym);
-            *pcbCallAgain = (RTGCUINTPTR)-offDispSym + Symbol.cb;
+            *pcbCallAgain = !Symbol.cb ? 64 : (RTGCUINTPTR)-offDispSym + Symbol.cb;
         }
     }
     else
@@ -900,7 +1206,7 @@ static void dbgcCmdUnassambleHelpListNear(PUVM pUVM, PDBGCCMDHLP pCmdHlp, RTDBGA
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'u' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'u' command.}
  */
 static DECLCALLBACK(int) dbgcCmdUnassemble(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -922,7 +1228,7 @@ static DECLCALLBACK(int) dbgcCmdUnassemble(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
     unsigned fFlags = DBGF_DISAS_FLAGS_NO_ADDRESS | DBGF_DISAS_FLAGS_UNPATCHED_BYTES | DBGF_DISAS_FLAGS_ANNOTATE_PATCHED;
     switch (pCmd->pszCmd[1])
     {
-        default: AssertFailed();
+        default: AssertFailed(); RT_FALL_THRU();
         case '\0':  fFlags |= DBGF_DISAS_FLAGS_DEFAULT_MODE;    break;
         case '6':   fFlags |= DBGF_DISAS_FLAGS_64BIT_MODE;      break;
         case '3':   fFlags |= DBGF_DISAS_FLAGS_32BIT_MODE;      break;
@@ -1013,6 +1319,7 @@ static DECLCALLBACK(int) dbgcCmdUnassemble(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
             break;
         case DBGCVAR_TYPE_GC_PHYS:
             hDbgAs = DBGF_AS_PHYS;
+            RT_FALL_THRU();
         case DBGCVAR_TYPE_HC_FLAT:
         case DBGCVAR_TYPE_HC_PHYS:
         {
@@ -1123,7 +1430,711 @@ static DECLCALLBACK(int) dbgcCmdUnassemble(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'ls' command.}
+ * @callback_method_impl{FNDGCSCREENBLIT}
+ */
+static DECLCALLBACK(int) dbgcCmdUnassembleCfgBlit(const char *psz, void *pvUser)
+{
+    PDBGCCMDHLP pCmdHlp = (PDBGCCMDHLP)pvUser;
+    return DBGCCmdHlpPrintf(pCmdHlp, "%s", psz);
+}
+
+
+/**
+ * Checks whether both addresses are equal.
+ *
+ * @returns true if both addresses point to the same location, false otherwise.
+ * @param   pAddr1              First address.
+ * @param   pAddr2              Second address.
+ */
+static bool dbgcCmdUnassembleCfgAddrEqual(PDBGFADDRESS pAddr1, PDBGFADDRESS pAddr2)
+{
+    return    pAddr1->Sel == pAddr2->Sel
+           && pAddr1->off == pAddr2->off;
+}
+
+
+/**
+ * Checks whether the first given address is lower than the second one.
+ *
+ * @returns true if both addresses point to the same location, false otherwise.
+ * @param   pAddr1              First address.
+ * @param   pAddr2              Second address.
+ */
+static bool dbgcCmdUnassembleCfgAddrLower(PDBGFADDRESS pAddr1, PDBGFADDRESS pAddr2)
+{
+    return    pAddr1->Sel == pAddr2->Sel
+           && pAddr1->off < pAddr2->off;
+}
+
+
+/**
+ * Calculates the size required for the given basic block including the
+ * border and spacing on the edges.
+ *
+ * @returns nothing.
+ * @param   hFlowBb              The basic block handle.
+ * @param   pDumpBb             The dumper state to fill in for the basic block.
+ */
+static void dbgcCmdUnassembleCfgDumpCalcBbSize(DBGFFLOWBB hFlowBb, PDBGCFLOWBBDUMP pDumpBb)
+{
+    uint32_t fFlags = DBGFR3FlowBbGetFlags(hFlowBb);
+    uint32_t cInstr = DBGFR3FlowBbGetInstrCount(hFlowBb);
+
+    pDumpBb->hFlowBb   = hFlowBb;
+    pDumpBb->cchHeight = cInstr + 4; /* Include spacing and border top and bottom. */
+    pDumpBb->cchWidth  = 0;
+    DBGFR3FlowBbGetStartAddress(hFlowBb, &pDumpBb->AddrStart);
+
+    DBGFFLOWBBENDTYPE enmType = DBGFR3FlowBbGetType(hFlowBb);
+    if (   enmType == DBGFFLOWBBENDTYPE_COND
+        || enmType == DBGFFLOWBBENDTYPE_UNCOND_JMP
+        || enmType == DBGFFLOWBBENDTYPE_UNCOND_INDIRECT_JMP)
+        DBGFR3FlowBbGetBranchAddress(hFlowBb, &pDumpBb->AddrTarget);
+
+    if (fFlags & DBGF_FLOW_BB_F_INCOMPLETE_ERR)
+    {
+        const char *pszErr = NULL;
+        DBGFR3FlowBbQueryError(hFlowBb, &pszErr);
+        if (pszErr)
+        {
+            pDumpBb->cchHeight++;
+            pDumpBb->cchWidth = RT_MAX(pDumpBb->cchWidth, (uint32_t)strlen(pszErr));
+        }
+    }
+    for (unsigned i = 0; i < cInstr; i++)
+    {
+        const char *pszInstr = NULL;
+        int rc = DBGFR3FlowBbQueryInstr(hFlowBb, i, NULL, NULL, &pszInstr);
+        AssertRC(rc);
+        pDumpBb->cchWidth = RT_MAX(pDumpBb->cchWidth, (uint32_t)strlen(pszInstr));
+    }
+    pDumpBb->cchWidth += 4; /* Include spacing and border left and right. */
+}
+
+
+/**
+ * Dumps a top or bottom boundary line.
+ *
+ * @returns nothing.
+ * @param   hScreen             The screen to draw to.
+ * @param   uStartX             Where to start drawing the boundary.
+ * @param   uStartY             Y coordinate.
+ * @param   cchWidth            Width of the boundary.
+ * @param   enmColor            The color to use for drawing.
+ */
+static void dbgcCmdUnassembleCfgDumpBbBoundary(DBGCSCREEN hScreen, uint32_t uStartX, uint32_t uStartY, uint32_t cchWidth,
+                                               DBGCSCREENCOLOR enmColor)
+{
+    dbgcScreenAsciiDrawCharacter(hScreen, uStartX, uStartY, '+', enmColor);
+    dbgcScreenAsciiDrawLineHorizontal(hScreen, uStartX + 1, uStartX + 1 + cchWidth - 2,
+                                      uStartY, '-', enmColor);
+    dbgcScreenAsciiDrawCharacter(hScreen, uStartX + cchWidth - 1, uStartY, '+', enmColor);
+}
+
+
+/**
+ * Dumps a spacing line between the top or bottom boundary and the actual disassembly.
+ *
+ * @returns nothing.
+ * @param   hScreen             The screen to draw to.
+ * @param   uStartX             Where to start drawing the spacing.
+ * @param   uStartY             Y coordinate.
+ * @param   cchWidth            Width of the spacing.
+ * @param   enmColor            The color to use for drawing.
+ */
+static void dbgcCmdUnassembleCfgDumpBbSpacing(DBGCSCREEN hScreen, uint32_t uStartX, uint32_t uStartY, uint32_t cchWidth,
+                                              DBGCSCREENCOLOR enmColor)
+{
+    dbgcScreenAsciiDrawCharacter(hScreen, uStartX, uStartY, '|', enmColor);
+    dbgcScreenAsciiDrawLineHorizontal(hScreen, uStartX + 1, uStartX + 1 + cchWidth - 2,
+                                      uStartY, ' ', enmColor);
+    dbgcScreenAsciiDrawCharacter(hScreen, uStartX + cchWidth - 1, uStartY, '|', enmColor);
+}
+
+
+/**
+ * Writes a given text to the screen.
+ *
+ * @returns nothing.
+ * @param   hScreen             The screen to draw to.
+ * @param   uStartX             Where to start drawing the line.
+ * @param   uStartY             Y coordinate.
+ * @param   cchWidth            Maximum width of the text.
+ * @param   pszText             The text to write.
+ * @param   enmTextColor        The color to use for drawing the text.
+ * @param   enmBorderColor      The color to use for drawing the border.
+ */
+static void dbgcCmdUnassembleCfgDumpBbText(DBGCSCREEN hScreen, uint32_t uStartX, uint32_t uStartY,
+                                           uint32_t cchWidth, const char *pszText,
+                                           DBGCSCREENCOLOR enmTextColor, DBGCSCREENCOLOR enmBorderColor)
+{
+    dbgcScreenAsciiDrawCharacter(hScreen, uStartX, uStartY, '|', enmBorderColor);
+    dbgcScreenAsciiDrawCharacter(hScreen, uStartX + 1, uStartY, ' ', enmTextColor);
+    dbgcScreenAsciiDrawString(hScreen, uStartX + 2, uStartY, pszText, enmTextColor);
+    dbgcScreenAsciiDrawCharacter(hScreen, uStartX + cchWidth - 1, uStartY, '|', enmBorderColor);
+}
+
+
+/**
+ * Dumps one basic block using the dumper callback.
+ *
+ * @returns nothing.
+ * @param   pDumpBb             The basic block dump state to dump.
+ * @param   hScreen             The screen to draw to.
+ */
+static void dbgcCmdUnassembleCfgDumpBb(PDBGCFLOWBBDUMP pDumpBb, DBGCSCREEN hScreen)
+{
+    uint32_t uStartY = pDumpBb->uStartY;
+    bool fError = RT_BOOL(DBGFR3FlowBbGetFlags(pDumpBb->hFlowBb) & DBGF_FLOW_BB_F_INCOMPLETE_ERR);
+    DBGCSCREENCOLOR enmColor = fError ? DBGCSCREENCOLOR_RED_BRIGHT : DBGCSCREENCOLOR_DEFAULT;
+
+    dbgcCmdUnassembleCfgDumpBbBoundary(hScreen, pDumpBb->uStartX, uStartY, pDumpBb->cchWidth, enmColor);
+    uStartY++;
+    dbgcCmdUnassembleCfgDumpBbSpacing(hScreen, pDumpBb->uStartX, uStartY, pDumpBb->cchWidth, enmColor);
+    uStartY++;
+
+    uint32_t cInstr = DBGFR3FlowBbGetInstrCount(pDumpBb->hFlowBb);
+    for (unsigned i = 0; i < cInstr; i++)
+    {
+        const char *pszInstr = NULL;
+        DBGFR3FlowBbQueryInstr(pDumpBb->hFlowBb, i, NULL, NULL, &pszInstr);
+        dbgcCmdUnassembleCfgDumpBbText(hScreen, pDumpBb->uStartX, uStartY + i,
+                                       pDumpBb->cchWidth, pszInstr, DBGCSCREENCOLOR_DEFAULT,
+                                       enmColor);
+    }
+    uStartY += cInstr;
+
+    if (fError)
+    {
+        const char *pszErr = NULL;
+        DBGFR3FlowBbQueryError(pDumpBb->hFlowBb, &pszErr);
+        if (pszErr)
+            dbgcCmdUnassembleCfgDumpBbText(hScreen, pDumpBb->uStartX, uStartY,
+                                           pDumpBb->cchWidth, pszErr, enmColor,
+                                           enmColor);
+        uStartY++;
+    }
+
+    dbgcCmdUnassembleCfgDumpBbSpacing(hScreen, pDumpBb->uStartX, uStartY, pDumpBb->cchWidth, enmColor);
+    uStartY++;
+    dbgcCmdUnassembleCfgDumpBbBoundary(hScreen, pDumpBb->uStartX, uStartY, pDumpBb->cchWidth, enmColor);
+    uStartY++;
+}
+
+
+/**
+ * Dumps one branch table using the dumper callback.
+ *
+ * @returns nothing.
+ * @param   pDumpBranchTbl      The basic block dump state to dump.
+ * @param   hScreen             The screen to draw to.
+ */
+static void dbgcCmdUnassembleCfgDumpBranchTbl(PDBGCFLOWBRANCHTBLDUMP pDumpBranchTbl, DBGCSCREEN hScreen)
+{
+    uint32_t uStartY = pDumpBranchTbl->uStartY;
+    DBGCSCREENCOLOR enmColor = DBGCSCREENCOLOR_CYAN_BRIGHT;
+
+    dbgcCmdUnassembleCfgDumpBbBoundary(hScreen, pDumpBranchTbl->uStartX, uStartY, pDumpBranchTbl->cchWidth, enmColor);
+    uStartY++;
+    dbgcCmdUnassembleCfgDumpBbSpacing(hScreen, pDumpBranchTbl->uStartX, uStartY, pDumpBranchTbl->cchWidth, enmColor);
+    uStartY++;
+
+    uint32_t cSlots = DBGFR3FlowBranchTblGetSlots(pDumpBranchTbl->hFlowBranchTbl);
+    for (unsigned i = 0; i < cSlots; i++)
+    {
+        DBGFADDRESS Addr;
+        char szAddr[128];
+
+        RT_ZERO(szAddr);
+        DBGFR3FlowBranchTblGetAddrAtSlot(pDumpBranchTbl->hFlowBranchTbl, i, &Addr);
+
+        if (Addr.Sel == DBGF_SEL_FLAT)
+            RTStrPrintf(&szAddr[0], sizeof(szAddr), "%RGv", Addr.FlatPtr);
+        else
+            RTStrPrintf(&szAddr[0], sizeof(szAddr), "%04x:%RGv", Addr.Sel, Addr.off);
+
+        dbgcCmdUnassembleCfgDumpBbText(hScreen, pDumpBranchTbl->uStartX, uStartY + i,
+                                       pDumpBranchTbl->cchWidth, &szAddr[0], DBGCSCREENCOLOR_DEFAULT,
+                                       enmColor);
+    }
+    uStartY += cSlots;
+
+    dbgcCmdUnassembleCfgDumpBbSpacing(hScreen, pDumpBranchTbl->uStartX, uStartY, pDumpBranchTbl->cchWidth, enmColor);
+    uStartY++;
+    dbgcCmdUnassembleCfgDumpBbBoundary(hScreen, pDumpBranchTbl->uStartX, uStartY, pDumpBranchTbl->cchWidth, enmColor);
+    uStartY++;
+}
+
+
+/**
+ * Fills in the dump states for the basic blocks and branch tables.
+ *
+ * @returns VBox status code.
+ * @param   hFlowIt             The control flow graph iterator handle.
+ * @param   hFlowBranchTblIt    The control flow graph branch table iterator handle.
+ * @param   paDumpBb            The array of basic block dump states.
+ * @param   paDumpBranchTbl     The array of branch table dump states.
+ * @param   cBbs                Number of basic blocks.
+ * @param   cBranchTbls         Number of branch tables.
+ */
+static int dbgcCmdUnassembleCfgDumpCalcDimensions(DBGFFLOWIT hFlowIt, DBGFFLOWBRANCHTBLIT hFlowBranchTblIt,
+                                                  PDBGCFLOWBBDUMP paDumpBb, PDBGCFLOWBRANCHTBLDUMP paDumpBranchTbl,
+                                                  uint32_t cBbs, uint32_t cBranchTbls)
+{
+    RT_NOREF2(cBbs, cBranchTbls);
+
+    /* Calculate the sizes of each basic block first. */
+    DBGFFLOWBB hFlowBb = DBGFR3FlowItNext(hFlowIt);
+    uint32_t idx = 0;
+    while (hFlowBb)
+    {
+        dbgcCmdUnassembleCfgDumpCalcBbSize(hFlowBb, &paDumpBb[idx]);
+        idx++;
+        hFlowBb = DBGFR3FlowItNext(hFlowIt);
+    }
+
+    if (paDumpBranchTbl)
+    {
+        idx = 0;
+        DBGFFLOWBRANCHTBL hFlowBranchTbl = DBGFR3FlowBranchTblItNext(hFlowBranchTblIt);
+        while (hFlowBranchTbl)
+        {
+            paDumpBranchTbl[idx].hFlowBranchTbl = hFlowBranchTbl;
+            paDumpBranchTbl[idx].cchHeight      = DBGFR3FlowBranchTblGetSlots(hFlowBranchTbl) + 4; /* Spacing and border. */
+            paDumpBranchTbl[idx].cchWidth       = 25 + 4; /* Spacing and border. */
+            idx++;
+            hFlowBranchTbl = DBGFR3FlowBranchTblItNext(hFlowBranchTblIt);
+        }
+    }
+
+    return VINF_SUCCESS;
+}
+
+/**
+ * Dumps the given control flow graph to the output.
+ *
+ * @returns VBox status code.
+ * @param   hCfg                The control flow graph handle.
+ * @param   fUseColor           Flag whether the output should be colorized.
+ * @param   pCmdHlp             The command helper callback table.
+ */
+static int dbgcCmdUnassembleCfgDump(DBGFFLOW hCfg, bool fUseColor, PDBGCCMDHLP pCmdHlp)
+{
+    int rc = VINF_SUCCESS;
+    DBGFFLOWIT hCfgIt = NULL;
+    DBGFFLOWBRANCHTBLIT hFlowBranchTblIt = NULL;
+    uint32_t cBbs = DBGFR3FlowGetBbCount(hCfg);
+    uint32_t cBranchTbls = DBGFR3FlowGetBranchTblCount(hCfg);
+    PDBGCFLOWBBDUMP paDumpBb = (PDBGCFLOWBBDUMP)RTMemTmpAllocZ(cBbs * sizeof(DBGCFLOWBBDUMP));
+    PDBGCFLOWBRANCHTBLDUMP paDumpBranchTbl = NULL;
+
+    if (cBranchTbls)
+        paDumpBranchTbl = (PDBGCFLOWBRANCHTBLDUMP)RTMemAllocZ(cBranchTbls * sizeof(DBGCFLOWBRANCHTBLDUMP));
+
+    if (RT_UNLIKELY(!paDumpBb || (!paDumpBranchTbl && cBranchTbls > 0)))
+        rc = VERR_NO_MEMORY;
+    if (RT_SUCCESS(rc))
+        rc = DBGFR3FlowItCreate(hCfg, DBGFFLOWITORDER_BY_ADDR_LOWEST_FIRST, &hCfgIt);
+    if (RT_SUCCESS(rc) && cBranchTbls > 0)
+        rc = DBGFR3FlowBranchTblItCreate(hCfg, DBGFFLOWITORDER_BY_ADDR_LOWEST_FIRST, &hFlowBranchTblIt);
+
+    if (RT_SUCCESS(rc))
+    {
+        rc = dbgcCmdUnassembleCfgDumpCalcDimensions(hCfgIt, hFlowBranchTblIt, paDumpBb, paDumpBranchTbl,
+                                                    cBbs, cBranchTbls);
+
+        /* Calculate the ASCII screen dimensions and create one. */
+        uint32_t cchWidth = 0;
+        uint32_t cchLeftExtra = 5;
+        uint32_t cchRightExtra = 5;
+        uint32_t cchHeight = 0;
+        for (unsigned i = 0; i < cBbs; i++)
+        {
+            PDBGCFLOWBBDUMP pDumpBb = &paDumpBb[i];
+            cchWidth = RT_MAX(cchWidth, pDumpBb->cchWidth);
+            cchHeight += pDumpBb->cchHeight;
+
+            /* Incomplete blocks don't have a successor. */
+            if (DBGFR3FlowBbGetFlags(pDumpBb->hFlowBb) & DBGF_FLOW_BB_F_INCOMPLETE_ERR)
+                continue;
+
+            switch (DBGFR3FlowBbGetType(pDumpBb->hFlowBb))
+            {
+                case DBGFFLOWBBENDTYPE_EXIT:
+                case DBGFFLOWBBENDTYPE_LAST_DISASSEMBLED:
+                    break;
+                case DBGFFLOWBBENDTYPE_UNCOND_JMP:
+                    if (   dbgcCmdUnassembleCfgAddrLower(&pDumpBb->AddrTarget, &pDumpBb->AddrStart)
+                        || dbgcCmdUnassembleCfgAddrEqual(&pDumpBb->AddrTarget, &pDumpBb->AddrStart))
+                        cchLeftExtra++;
+                    else
+                        cchRightExtra++;
+                    break;
+                case DBGFFLOWBBENDTYPE_UNCOND:
+                    cchHeight += 2; /* For the arrow down to the next basic block. */
+                    break;
+                case DBGFFLOWBBENDTYPE_COND:
+                    cchHeight += 2; /* For the arrow down to the next basic block. */
+                    if (   dbgcCmdUnassembleCfgAddrLower(&pDumpBb->AddrTarget, &pDumpBb->AddrStart)
+                        || dbgcCmdUnassembleCfgAddrEqual(&pDumpBb->AddrTarget, &pDumpBb->AddrStart))
+                        cchLeftExtra++;
+                    else
+                        cchRightExtra++;
+                    break;
+                case DBGFFLOWBBENDTYPE_UNCOND_INDIRECT_JMP:
+                default:
+                    AssertFailed();
+            }
+        }
+
+        for (unsigned i = 0; i < cBranchTbls; i++)
+        {
+            PDBGCFLOWBRANCHTBLDUMP pDumpBranchTbl = &paDumpBranchTbl[i];
+            cchWidth = RT_MAX(cchWidth, pDumpBranchTbl->cchWidth);
+            cchHeight += pDumpBranchTbl->cchHeight;
+        }
+
+        cchWidth += 2;
+
+        DBGCSCREEN hScreen = NULL;
+        rc = dbgcScreenAsciiCreate(&hScreen, cchWidth + cchLeftExtra + cchRightExtra, cchHeight);
+        if (RT_SUCCESS(rc))
+        {
+            uint32_t uY = 0;
+
+            /* Dump the branch tables first. */
+            for (unsigned i = 0; i < cBranchTbls; i++)
+            {
+                paDumpBranchTbl[i].uStartX = cchLeftExtra + (cchWidth - paDumpBranchTbl[i].cchWidth) / 2;
+                paDumpBranchTbl[i].uStartY = uY;
+                dbgcCmdUnassembleCfgDumpBranchTbl(&paDumpBranchTbl[i], hScreen);
+                uY += paDumpBranchTbl[i].cchHeight;
+            }
+
+            /* Dump the basic blocks and connections to the immediate successor. */
+            for (unsigned i = 0; i < cBbs; i++)
+            {
+                paDumpBb[i].uStartX = cchLeftExtra + (cchWidth - paDumpBb[i].cchWidth) / 2;
+                paDumpBb[i].uStartY = uY;
+                dbgcCmdUnassembleCfgDumpBb(&paDumpBb[i], hScreen);
+                uY += paDumpBb[i].cchHeight;
+
+                /* Incomplete blocks don't have a successor. */
+                if (DBGFR3FlowBbGetFlags(paDumpBb[i].hFlowBb) & DBGF_FLOW_BB_F_INCOMPLETE_ERR)
+                    continue;
+
+                switch (DBGFR3FlowBbGetType(paDumpBb[i].hFlowBb))
+                {
+                    case DBGFFLOWBBENDTYPE_EXIT:
+                    case DBGFFLOWBBENDTYPE_LAST_DISASSEMBLED:
+                    case DBGFFLOWBBENDTYPE_UNCOND_JMP:
+                    case DBGFFLOWBBENDTYPE_UNCOND_INDIRECT_JMP:
+                        break;
+                    case DBGFFLOWBBENDTYPE_UNCOND:
+                        /* Draw the arrow down to the next block. */
+                        dbgcScreenAsciiDrawCharacter(hScreen, cchLeftExtra + cchWidth / 2, uY,
+                                                     '|', DBGCSCREENCOLOR_BLUE_BRIGHT);
+                        uY++;
+                        dbgcScreenAsciiDrawCharacter(hScreen, cchLeftExtra + cchWidth / 2, uY,
+                                                     'V', DBGCSCREENCOLOR_BLUE_BRIGHT);
+                        uY++;
+                        break;
+                    case DBGFFLOWBBENDTYPE_COND:
+                        /* Draw the arrow down to the next block. */
+                        dbgcScreenAsciiDrawCharacter(hScreen, cchLeftExtra + cchWidth / 2, uY,
+                                                     '|', DBGCSCREENCOLOR_RED_BRIGHT);
+                        uY++;
+                        dbgcScreenAsciiDrawCharacter(hScreen, cchLeftExtra + cchWidth / 2, uY,
+                                                     'V', DBGCSCREENCOLOR_RED_BRIGHT);
+                        uY++;
+                        break;
+                    default:
+                        AssertFailed();
+                }
+            }
+
+            /* Last pass, connect all remaining branches. */
+            uint32_t uBackConns = 0;
+            uint32_t uFwdConns = 0;
+            for (unsigned i = 0; i < cBbs; i++)
+            {
+                PDBGCFLOWBBDUMP pDumpBb = &paDumpBb[i];
+                DBGFFLOWBBENDTYPE enmEndType = DBGFR3FlowBbGetType(pDumpBb->hFlowBb);
+
+                /* Incomplete blocks don't have a successor. */
+                if (DBGFR3FlowBbGetFlags(pDumpBb->hFlowBb) & DBGF_FLOW_BB_F_INCOMPLETE_ERR)
+                    continue;
+
+                switch (enmEndType)
+                {
+                    case DBGFFLOWBBENDTYPE_EXIT:
+                    case DBGFFLOWBBENDTYPE_LAST_DISASSEMBLED:
+                    case DBGFFLOWBBENDTYPE_UNCOND:
+                        break;
+                    case DBGFFLOWBBENDTYPE_COND:
+                    case DBGFFLOWBBENDTYPE_UNCOND_JMP:
+                    {
+                        /* Find the target first to get the coordinates. */
+                        PDBGCFLOWBBDUMP pDumpBbTgt = NULL;
+                        for (unsigned idxDumpBb = 0; idxDumpBb < cBbs; idxDumpBb++)
+                        {
+                            pDumpBbTgt = &paDumpBb[idxDumpBb];
+                            if (dbgcCmdUnassembleCfgAddrEqual(&pDumpBb->AddrTarget, &pDumpBbTgt->AddrStart))
+                                break;
+                        }
+
+                        DBGCSCREENCOLOR enmColor =   enmEndType == DBGFFLOWBBENDTYPE_UNCOND_JMP
+                                                   ? DBGCSCREENCOLOR_YELLOW_BRIGHT
+                                                   : DBGCSCREENCOLOR_GREEN_BRIGHT;
+
+                        /*
+                         * Use the right side for targets with higher addresses,
+                         * left when jumping backwards.
+                         */
+                        if (   dbgcCmdUnassembleCfgAddrLower(&pDumpBb->AddrTarget, &pDumpBb->AddrStart)
+                            || dbgcCmdUnassembleCfgAddrEqual(&pDumpBb->AddrTarget, &pDumpBb->AddrStart))
+                        {
+                            /* Going backwards. */
+                            uint32_t uXVerLine = /*cchLeftExtra - 1 -*/ uBackConns + 1;
+                            uint32_t uYHorLine = pDumpBb->uStartY + pDumpBb->cchHeight - 1 - 2;
+                            uBackConns++;
+
+                            /* Draw the arrow pointing to the target block. */
+                            dbgcScreenAsciiDrawCharacter(hScreen, pDumpBbTgt->uStartX - 1, pDumpBbTgt->uStartY,
+                                                         '>', enmColor);
+                            /* Draw the horizontal line. */
+                            dbgcScreenAsciiDrawLineHorizontal(hScreen, uXVerLine + 1, pDumpBbTgt->uStartX - 2,
+                                                              pDumpBbTgt->uStartY, '-', enmColor);
+                            dbgcScreenAsciiDrawCharacter(hScreen, uXVerLine, pDumpBbTgt->uStartY, '+',
+                                                         enmColor);
+                            /* Draw the vertical line down to the source block. */
+                            dbgcScreenAsciiDrawLineVertical(hScreen, uXVerLine, pDumpBbTgt->uStartY + 1, uYHorLine - 1,
+                                                            '|', enmColor);
+                            dbgcScreenAsciiDrawCharacter(hScreen, uXVerLine, uYHorLine, '+', enmColor);
+                            /* Draw the horizontal connection between the source block and vertical part. */
+                            dbgcScreenAsciiDrawLineHorizontal(hScreen, uXVerLine + 1, pDumpBb->uStartX - 1,
+                                                              uYHorLine, '-', enmColor);
+
+                        }
+                        else
+                        {
+                            /* Going forward. */
+                            uint32_t uXVerLine = cchWidth + cchLeftExtra + (cchRightExtra - uFwdConns) - 1;
+                            uint32_t uYHorLine = pDumpBb->uStartY + pDumpBb->cchHeight - 1 - 2;
+                            uFwdConns++;
+
+                            /* Draw the horizontal line. */
+                            dbgcScreenAsciiDrawLineHorizontal(hScreen, pDumpBb->uStartX + pDumpBb->cchWidth,
+                                                              uXVerLine - 1, uYHorLine, '-', enmColor);
+                            dbgcScreenAsciiDrawCharacter(hScreen, uXVerLine, uYHorLine, '+', enmColor);
+                            /* Draw the vertical line down to the target block. */
+                            dbgcScreenAsciiDrawLineVertical(hScreen, uXVerLine, uYHorLine + 1, pDumpBbTgt->uStartY - 1,
+                                                            '|', enmColor);
+                            /* Draw the horizontal connection between the target block and vertical part. */
+                            dbgcScreenAsciiDrawLineHorizontal(hScreen, pDumpBbTgt->uStartX + pDumpBbTgt->cchWidth,
+                                                              uXVerLine, pDumpBbTgt->uStartY, '-', enmColor);
+                            dbgcScreenAsciiDrawCharacter(hScreen, uXVerLine, pDumpBbTgt->uStartY, '+',
+                                                         enmColor);
+                            /* Draw the arrow pointing to the target block. */
+                            dbgcScreenAsciiDrawCharacter(hScreen, pDumpBbTgt->uStartX + pDumpBbTgt->cchWidth,
+                                                         pDumpBbTgt->uStartY, '<', enmColor);
+                        }
+                        break;
+                    }
+                    case DBGFFLOWBBENDTYPE_UNCOND_INDIRECT_JMP:
+                    default:
+                        AssertFailed();
+                }
+            }
+
+            rc = dbgcScreenAsciiBlit(hScreen, dbgcCmdUnassembleCfgBlit, pCmdHlp, fUseColor);
+            dbgcScreenAsciiDestroy(hScreen);
+        }
+    }
+
+    if (paDumpBb)
+    {
+        for (unsigned i = 0; i < cBbs; i++)
+            DBGFR3FlowBbRelease(paDumpBb[i].hFlowBb);
+        RTMemTmpFree(paDumpBb);
+    }
+
+    if (paDumpBranchTbl)
+    {
+        for (unsigned i = 0; i < cBranchTbls; i++)
+            DBGFR3FlowBranchTblRelease(paDumpBranchTbl[i].hFlowBranchTbl);
+        RTMemTmpFree(paDumpBranchTbl);
+    }
+
+    if (hCfgIt)
+        DBGFR3FlowItDestroy(hCfgIt);
+    if (hFlowBranchTblIt)
+        DBGFR3FlowBranchTblItDestroy(hFlowBranchTblIt);
+
+    return rc;
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'ucfg' command.}
+ */
+static DECLCALLBACK(int) dbgcCmdUnassembleCfg(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
+
+    /*
+     * Validate input.
+     */
+    DBGC_CMDHLP_REQ_UVM_RET(pCmdHlp, pCmd, pUVM);
+    DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, -1, cArgs <= 1);
+    DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, cArgs == 0 || DBGCVAR_ISPOINTER(paArgs[0].enmType));
+
+    if (!cArgs && !DBGCVAR_ISPOINTER(pDbgc->DisasmPos.enmType))
+        return DBGCCmdHlpFail(pCmdHlp, pCmd, "Don't know where to start disassembling");
+
+    /*
+     * Check the desired mode.
+     */
+    unsigned fFlags =  DBGF_DISAS_FLAGS_UNPATCHED_BYTES | DBGF_DISAS_FLAGS_ANNOTATE_PATCHED;
+    bool fUseColor = false;
+    switch (pCmd->pszCmd[4])
+    {
+        default: AssertFailed(); RT_FALL_THRU();
+        case '\0':  fFlags |= DBGF_DISAS_FLAGS_DEFAULT_MODE;    break;
+        case '6':   fFlags |= DBGF_DISAS_FLAGS_64BIT_MODE;      break;
+        case '3':   fFlags |= DBGF_DISAS_FLAGS_32BIT_MODE;      break;
+        case '1':   fFlags |= DBGF_DISAS_FLAGS_16BIT_MODE;      break;
+        case 'v':   fFlags |= DBGF_DISAS_FLAGS_16BIT_REAL_MODE; break;
+        case 'c':   fUseColor = true; break;
+    }
+
+    /** @todo should use DBGFADDRESS for everything */
+
+    /*
+     * Find address.
+     */
+    if (!cArgs)
+    {
+        if (!DBGCVAR_ISPOINTER(pDbgc->DisasmPos.enmType))
+        {
+            /** @todo Batch query CS, RIP, CPU mode and flags. */
+            PVMCPU pVCpu = VMMR3GetCpuByIdU(pUVM, pDbgc->idCpu);
+            if (    pDbgc->fRegCtxGuest
+                &&  CPUMIsGuestIn64BitCode(pVCpu))
+            {
+                pDbgc->DisasmPos.enmType    = DBGCVAR_TYPE_GC_FLAT;
+                pDbgc->SourcePos.u.GCFlat   = CPUMGetGuestRIP(pVCpu);
+            }
+            else
+            {
+                pDbgc->DisasmPos.enmType     = DBGCVAR_TYPE_GC_FAR;
+                pDbgc->SourcePos.u.GCFar.off = pDbgc->fRegCtxGuest ? CPUMGetGuestEIP(pVCpu) : CPUMGetHyperEIP(pVCpu);
+                pDbgc->SourcePos.u.GCFar.sel = pDbgc->fRegCtxGuest ? CPUMGetGuestCS(pVCpu)  : CPUMGetHyperCS(pVCpu);
+                if (   (fFlags & DBGF_DISAS_FLAGS_MODE_MASK) == DBGF_DISAS_FLAGS_DEFAULT_MODE
+                    && pDbgc->fRegCtxGuest
+                    && (CPUMGetGuestEFlags(pVCpu) & X86_EFL_VM))
+                {
+                    fFlags &= ~DBGF_DISAS_FLAGS_MODE_MASK;
+                    fFlags |= DBGF_DISAS_FLAGS_16BIT_REAL_MODE;
+                }
+            }
+
+            if (pDbgc->fRegCtxGuest)
+                fFlags |= DBGF_DISAS_FLAGS_CURRENT_GUEST;
+            else
+                fFlags |= DBGF_DISAS_FLAGS_CURRENT_HYPER | DBGF_DISAS_FLAGS_HYPER;
+        }
+        else if ((fFlags & DBGF_DISAS_FLAGS_MODE_MASK) == DBGF_DISAS_FLAGS_DEFAULT_MODE && pDbgc->fDisasm)
+        {
+            fFlags &= ~DBGF_DISAS_FLAGS_MODE_MASK;
+            fFlags |= pDbgc->fDisasm & (DBGF_DISAS_FLAGS_MODE_MASK | DBGF_DISAS_FLAGS_HYPER);
+        }
+        pDbgc->DisasmPos.enmRangeType = DBGCVAR_RANGE_NONE;
+    }
+    else
+        pDbgc->DisasmPos = paArgs[0];
+    pDbgc->pLastPos = &pDbgc->DisasmPos;
+
+    /*
+     * Range.
+     */
+    switch (pDbgc->DisasmPos.enmRangeType)
+    {
+        case DBGCVAR_RANGE_NONE:
+            pDbgc->DisasmPos.enmRangeType = DBGCVAR_RANGE_ELEMENTS;
+            pDbgc->DisasmPos.u64Range     = 10;
+            break;
+
+        case DBGCVAR_RANGE_ELEMENTS:
+            if (pDbgc->DisasmPos.u64Range > 2048)
+                return DBGCCmdHlpFail(pCmdHlp, pCmd, "Too many lines requested. Max is 2048 lines");
+            break;
+
+        case DBGCVAR_RANGE_BYTES:
+            if (pDbgc->DisasmPos.u64Range > 65536)
+                return DBGCCmdHlpFail(pCmdHlp, pCmd, "The requested range is too big. Max is 64KB");
+            break;
+
+        default:
+            return DBGCCmdHlpFail(pCmdHlp, pCmd, "Unknown range type %d", pDbgc->DisasmPos.enmRangeType);
+    }
+
+    /*
+     * Convert physical and host addresses to guest addresses.
+     */
+    RTDBGAS hDbgAs = pDbgc->hDbgAs;
+    int rc;
+    switch (pDbgc->DisasmPos.enmType)
+    {
+        case DBGCVAR_TYPE_GC_FLAT:
+        case DBGCVAR_TYPE_GC_FAR:
+            break;
+        case DBGCVAR_TYPE_GC_PHYS:
+            hDbgAs = DBGF_AS_PHYS;
+            RT_FALL_THRU();
+        case DBGCVAR_TYPE_HC_FLAT:
+        case DBGCVAR_TYPE_HC_PHYS:
+        {
+            DBGCVAR VarTmp;
+            rc = DBGCCmdHlpEval(pCmdHlp, &VarTmp, "%%(%Dv)", &pDbgc->DisasmPos);
+            if (RT_FAILURE(rc))
+                return DBGCCmdHlpFailRc(pCmdHlp, pCmd, rc, "failed to evaluate '%%(%Dv)'", &pDbgc->DisasmPos);
+            pDbgc->DisasmPos = VarTmp;
+            break;
+        }
+        default: AssertFailed(); break;
+    }
+
+    DBGFADDRESS CurAddr;
+    if (   (fFlags & DBGF_DISAS_FLAGS_MODE_MASK) == DBGF_DISAS_FLAGS_16BIT_REAL_MODE
+        && pDbgc->DisasmPos.enmType == DBGCVAR_TYPE_GC_FAR)
+        DBGFR3AddrFromFlat(pUVM, &CurAddr, ((uint32_t)pDbgc->DisasmPos.u.GCFar.sel << 4) + pDbgc->DisasmPos.u.GCFar.off);
+    else
+    {
+        rc = DBGCCmdHlpVarToDbgfAddr(pCmdHlp, &pDbgc->DisasmPos, &CurAddr);
+        if (RT_FAILURE(rc))
+            return DBGCCmdHlpFailRc(pCmdHlp, pCmd, rc, "DBGCCmdHlpVarToDbgfAddr failed on '%Dv'", &pDbgc->DisasmPos);
+    }
+
+    DBGFFLOW hCfg;
+    rc = DBGFR3FlowCreate(pUVM, pDbgc->idCpu, &CurAddr, 0 /*cbDisasmMax*/,
+                          DBGF_FLOW_CREATE_F_TRY_RESOLVE_INDIRECT_BRANCHES, fFlags, &hCfg);
+    if (RT_SUCCESS(rc))
+    {
+        /* Dump the graph. */
+        rc = dbgcCmdUnassembleCfgDump(hCfg, fUseColor, pCmdHlp);
+        DBGFR3FlowRelease(hCfg);
+    }
+    else
+        rc = DBGCCmdHlpFailRc(pCmdHlp, pCmd, rc, "DBGFR3FlowCreate failed on '%Dv'", &pDbgc->DisasmPos);
+
+    NOREF(pCmd);
+    return rc;
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'ls' command.}
  */
 static DECLCALLBACK(int) dbgcCmdListSource(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1272,7 +2283,7 @@ static DECLCALLBACK(int) dbgcCmdListSource(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
 
                         rc = DBGCCmdHlpPrintf(pCmdHlp, "         %4d: %s\n", Line.uLineNo - cBefore - 1, szLine);
                         szLine[0] = '\0';
-                        fgets(szLine, sizeof(szLine), phFile);
+                        const char *pszShutUpGcc = fgets(szLine, sizeof(szLine), phFile); NOREF(pszShutUpGcc);
                         cLines++;
                     }
                     /* print the actual line */
@@ -1312,7 +2323,7 @@ static DECLCALLBACK(int) dbgcCmdListSource(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'r' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'r' command.}
  */
 static DECLCALLBACK(int) dbgcCmdReg(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1324,7 +2335,7 @@ static DECLCALLBACK(int) dbgcCmdReg(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, Common worker for the dbgcCmdReg*()
+ * @callback_method_impl{FNDBGCCMD, Common worker for the dbgcCmdReg*()
  *                       commands.}
  */
 static DECLCALLBACK(int) dbgcCmdRegCommon(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs,
@@ -1432,8 +2443,8 @@ static DECLCALLBACK(int) dbgcCmdRegCommon(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, P
 
 
 /**
- * @interface_method_impl{FNDBCCMD,
- * The 'rg', 'rg64' and 'rg32' commands, worker for 'r'.}
+ * @callback_method_impl{FNDBGCCMD,
+ *      The 'rg'\, 'rg64' and 'rg32' commands\, worker for 'r'.}
  */
 static DECLCALLBACK(int) dbgcCmdRegGuest(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1524,7 +2535,7 @@ static DECLCALLBACK(int) dbgcCmdRegGuest(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
         /*
          * Disassemble one instruction at cs:[r|e]ip.
          */
-        if (!f64BitMode && strstr(pszRegs, " vm ")) /* a big ugly... */
+        if (!f64BitMode && strstr(pszRegs, " vm ")) /* a bit ugly... */
             return pCmdHlp->pfnExec(pCmdHlp, "uv86 %s", szDisAndRegs + 2);
         return pCmdHlp->pfnExec(pCmdHlp, "%s", szDisAndRegs);
     }
@@ -1533,7 +2544,7 @@ static DECLCALLBACK(int) dbgcCmdRegGuest(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'rh' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'rh' command.}
  */
 static DECLCALLBACK(int) dbgcCmdRegHyper(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1583,7 +2594,7 @@ static DECLCALLBACK(int) dbgcCmdRegHyper(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'rt' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'rt' command.}
  */
 static DECLCALLBACK(int) dbgcCmdRegTerse(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1596,17 +2607,58 @@ static DECLCALLBACK(int) dbgcCmdRegTerse(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 't' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'pr' and 'tr' commands.}
  */
-static DECLCALLBACK(int) dbgcCmdTrace(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+static DECLCALLBACK(int) dbgcCmdStepTraceToggle(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
+    Assert(cArgs == 0); NOREF(pCmd); NOREF(pUVM); NOREF(paArgs); NOREF(cArgs);
+
+    /* Note! windbg accepts 'r' as a flag to 'p', 'pa', 'pc', 'pt', 't',
+             'ta', 'tc' and 'tt'.  We've simplified it.  */
+    pDbgc->fStepTraceRegs = !pDbgc->fStepTraceRegs;
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'p'\, 'pc'\, 'pt'\, 't'\, 'tc'\, and 'tt' commands.}
+ */
+static DECLCALLBACK(int) dbgcCmdStepTrace(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
     PDBGC   pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
+    if (cArgs != 0)
+        return DBGCCmdHlpFail(pCmdHlp, pCmd,
+                              "Sorry, but the '%s' command does not currently implement any arguments.\n", pCmd->pszCmd);
 
-    int rc = DBGFR3Step(pUVM, pDbgc->idCpu);
+    /* The 'count' has to be implemented by DBGC, whereas the
+       filtering is taken care of by DBGF. */
+
+    /*
+     * Convert the command to DBGF_STEP_F_XXX and other API input.
+     */
+    //DBGFADDRESS StackPop;
+    PDBGFADDRESS pStackPop  = NULL;
+    RTGCPTR      cbStackPop = 0;
+    uint32_t     cMaxSteps  = pCmd->pszCmd[0] == 'p' ? _512K : _64K;
+    uint32_t     fFlags     = pCmd->pszCmd[0] == 'p' ? DBGF_STEP_F_OVER : DBGF_STEP_F_INTO;
+    if (pCmd->pszCmd[1] == 'c')
+        fFlags |= DBGF_STEP_F_STOP_ON_CALL;
+    else if (pCmd->pszCmd[1] == 't')
+        fFlags |= DBGF_STEP_F_STOP_ON_RET;
+    else if (pCmd->pszCmd[0] != 'p')
+        cMaxSteps = 1;
+    else
+    {
+        /** @todo consider passing RSP + 1 in for 'p' and something else sensible for
+         *        the 'pt' command. */
+    }
+
+    int rc = DBGFR3StepEx(pUVM, pDbgc->idCpu, fFlags, NULL, pStackPop, cbStackPop, cMaxSteps);
     if (RT_SUCCESS(rc))
         pDbgc->fReady = false;
     else
-        rc = pDbgc->CmdHlp.pfnVBoxError(&pDbgc->CmdHlp, rc, "When trying to single step VM %p\n", pDbgc->pVM);
+        return DBGCCmdHlpFailRc(pCmdHlp, pCmd, rc, "DBGFR3StepEx(,,%#x,) failed", fFlags);
 
     NOREF(pCmd); NOREF(paArgs); NOREF(cArgs);
     return rc;
@@ -1614,7 +2666,32 @@ static DECLCALLBACK(int) dbgcCmdTrace(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM 
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'k', 'kg' and 'kh' commands.}
+ * @callback_method_impl{FNDBGCCMD, The 'pa' and 'ta' commands.}
+ */
+static DECLCALLBACK(int) dbgcCmdStepTraceTo(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
+    if (cArgs != 1)
+        return DBGCCmdHlpFail(pCmdHlp, pCmd,
+                              "Sorry, but the '%s' command only implements a single argument at present.\n", pCmd->pszCmd);
+    DBGFADDRESS Address;
+    int rc = pCmdHlp->pfnVarToDbgfAddr(pCmdHlp, &paArgs[0], &Address);
+    if (RT_FAILURE(rc))
+        return pCmdHlp->pfnVBoxError(pCmdHlp, rc, "VarToDbgfAddr(,%Dv,)\n", &paArgs[0]);
+
+    uint32_t cMaxSteps = pCmd->pszCmd[0] == 'p' ? _512K : 1;
+    uint32_t fFlags    = pCmd->pszCmd[0] == 'p' ? DBGF_STEP_F_OVER : DBGF_STEP_F_INTO;
+    rc = DBGFR3StepEx(pUVM, pDbgc->idCpu, fFlags, &Address, NULL, 0, cMaxSteps);
+    if (RT_SUCCESS(rc))
+        pDbgc->fReady = false;
+    else
+        return DBGCCmdHlpFailRc(pCmdHlp, pCmd, rc, "DBGFR3StepEx(,,%#x,) failed", fFlags);
+    return rc;
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'k'\, 'kg' and 'kh' commands.}
  */
 static DECLCALLBACK(int) dbgcCmdStack(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1836,13 +2913,13 @@ static int dbgcCmdDumpDTWorker64(PDBGCCMDHLP pCmdHlp, PCX86DESC64 pDesc, unsigne
             case X86_SEL_TYPE_SYS_386_INT_GATE:
             case X86_SEL_TYPE_SYS_386_TRAP_GATE:
             {
-                RTSEL sel = pDesc->au16[1];
-                uint64_t off =    pDesc->au16[0]
-                                | ((uint64_t)pDesc->au16[3] << 16)
-                                | ((uint64_t)pDesc->Gen.u32BaseHigh3 << 32);
-                rc = DBGCCmdHlpPrintf(pCmdHlp, "%04x %s Sel:Off=%04x:%016RX64     DPL=%d %s%s\n",
-                                        iEntry, s_apszTypes[pDesc->Gen.u4Type], sel, off,
-                                        pDesc->Gen.u2Dpl, pszPresent, pszHyper);
+                RTSEL sel = pDesc->Gate.u16Sel;
+                uint64_t off =            pDesc->Gate.u16OffsetLow
+                             | ((uint64_t)pDesc->Gate.u16OffsetHigh << 16)
+                             | ((uint64_t)pDesc->Gate.u32OffsetTop  << 32);
+                rc = DBGCCmdHlpPrintf(pCmdHlp, "%04x %s Sel:Off=%04x:%016RX64     DPL=%u %s IST=%u%s\n",
+                                        iEntry, s_apszTypes[pDesc->Gate.u4Type], sel, off,
+                                        pDesc->Gate.u2Dpl, pszPresent, pDesc->Gate.u3IST, pszHyper);
                 if (pfDblEntry)
                     *pfDblEntry = true;
                 break;
@@ -2009,7 +3086,7 @@ static int dbgcCmdDumpDTWorker32(PDBGCCMDHLP pCmdHlp, PCX86DESC pDesc, unsigned 
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'dg', 'dga', 'dl' and 'dla' commands.}
+ * @callback_method_impl{FNDBGCCMD, The 'dg'\, 'dga'\, 'dl' and 'dla' commands.}
  */
 static DECLCALLBACK(int) dbgcCmdDumpDT(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -2122,7 +3199,7 @@ static DECLCALLBACK(int) dbgcCmdDumpDT(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'di' and 'dia' commands.}
+ * @callback_method_impl{FNDBGCCMD, The 'di' and 'dia' commands.}
  */
 static DECLCALLBACK(int) dbgcCmdDumpIDT(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -2236,8 +3313,8 @@ static DECLCALLBACK(int) dbgcCmdDumpIDT(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'da', 'dq', 'dd', 'dw' and 'db'
- *                       commands.}
+ * @callback_method_impl{FNDBGCCMD,
+ *      The 'da'\, 'dq'\, 'dd'\, 'dw' and 'db' commands.}
  */
 static DECLCALLBACK(int) dbgcCmdDumpMem(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -2497,8 +3574,8 @@ static RTHCPHYS dbgcGetShadowPageMode(PDBGC pDbgc, bool *pfPAE, bool *pfLME, boo
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'dpd', 'dpda', 'dpdb', 'dpdg' and 'dpdh'
- *                       commands.}
+ * @callback_method_impl{FNDBGCCMD,
+ *      The 'dpd'\, 'dpda'\, 'dpdb'\, 'dpdg' and 'dpdh' commands.}
  */
 static DECLCALLBACK(int) dbgcCmdDumpPageDir(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -2574,7 +3651,7 @@ static DECLCALLBACK(int) dbgcCmdDumpPageDir(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp,
      * hierarchy to find the intended PDE.
      */
     unsigned    iEntry = ~0U;           /* The page directory index. ~0U for 'dpta'. */
-    DBGCVAR     VarGCPtr;               /* The GC address corresponding to the current PDE (iEntry != ~0U). */
+    DBGCVAR     VarGCPtr = { NULL, };   /* The GC address corresponding to the current PDE (iEntry != ~0U). */
     DBGCVAR     VarPDEAddr;             /* The address of the current PDE. */
     unsigned    cEntries;               /* The number of entries to display. */
     unsigned    cEntriesMax;            /* The max number of entries to display. */
@@ -2751,7 +3828,7 @@ static DECLCALLBACK(int) dbgcCmdDumpPageDir(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp,
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'dpdb' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'dpdb' command.}
  */
 static DECLCALLBACK(int) dbgcCmdDumpPageDirBoth(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -2766,7 +3843,7 @@ static DECLCALLBACK(int) dbgcCmdDumpPageDirBoth(PCDBGCCMD pCmd, PDBGCCMDHLP pCmd
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'dph*' commands and main part of 'm'.}
+ * @callback_method_impl{FNDBGCCMD, The 'dph*' commands and main part of 'm'.}
  */
 static DECLCALLBACK(int) dbgcCmdDumpPageHierarchy(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -2882,7 +3959,7 @@ static DECLCALLBACK(int) dbgcCmdDumpPageHierarchy(PCDBGCCMD pCmd, PDBGCCMDHLP pC
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'dpg*' commands.}
+ * @callback_method_impl{FNDBGCCMD, The 'dpg*' commands.}
  */
 static DECLCALLBACK(int) dbgcCmdDumpPageTable(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -3103,7 +4180,7 @@ static DECLCALLBACK(int) dbgcCmdDumpPageTable(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHl
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'dptb' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'dptb' command.}
  */
 static DECLCALLBACK(int) dbgcCmdDumpPageTableBoth(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -3118,7 +4195,7 @@ static DECLCALLBACK(int) dbgcCmdDumpPageTableBoth(PCDBGCCMD pCmd, PDBGCCMDHLP pC
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'dt' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'dt' command.}
  */
 static DECLCALLBACK(int) dbgcCmdDumpTSS(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -3243,14 +4320,14 @@ static DECLCALLBACK(int) dbgcCmdDumpTSS(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
     switch (enmTssType)
     {
         case kTss16:
-            cbTssMin = cbTssMax = sizeof(X86TSS16);
+            cbTssMin = cbTssMax = X86_SEL_TYPE_SYS_286_TSS_LIMIT_MIN + 1;
             break;
         case kTss32:
-            cbTssMin = RT_OFFSETOF(X86TSS32, IntRedirBitmap);
+            cbTssMin = X86_SEL_TYPE_SYS_386_TSS_LIMIT_MIN + 1;
             cbTssMax = _64K;
             break;
         case kTss64:
-            cbTssMin = RT_OFFSETOF(X86TSS64, IntRedirBitmap);
+            cbTssMin = X86_SEL_TYPE_SYS_386_TSS_LIMIT_MIN + 1;
             cbTssMax = _64K;
             break;
         default:
@@ -3320,7 +4397,7 @@ static DECLCALLBACK(int) dbgcCmdDumpTSS(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
             else
                 DBGCCmdHlpPrintf(pCmdHlp, "TSS32 at %Dv  (min=%04x)\n", &VarTssAddr, cbTssMin);
             DBGCCmdHlpPrintf(pCmdHlp,
-                             "eax=%08x bx=%08x ecx=%08x edx=%08x esi=%08x edi=%08x\n"
+                             "eax=%08x ebx=%08x ecx=%08x edx=%08x esi=%08x edi=%08x\n"
                              "eip=%08x esp=%08x ebp=%08x\n"
                              "cs=%04x  ss=%04x  ds=%04x  es=%04x  fs=%04x  gs=%04x         eflags=%08x\n"
                              "ss:esp0=%04x:%08x ss:esp1=%04x:%08x ss:esp2=%04x:%08x\n"
@@ -3345,11 +4422,11 @@ static DECLCALLBACK(int) dbgcCmdDumpTSS(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
             else
                 DBGCCmdHlpPrintf(pCmdHlp, "TSS64 at %Dv (min=%04x)\n", &VarTssAddr, cbTssMin);
             DBGCCmdHlpPrintf(pCmdHlp,
-                             "rsp0=%016RX16 rsp1=%016RX16 rsp2=%016RX16\n"
-                             "ist1=%016RX16 ist2=%016RX16\n"
-                             "ist3=%016RX16 ist4=%016RX16\n"
-                             "ist5=%016RX16 ist6=%016RX16\n"
-                             "ist7=%016RX16 iomap=%04x\n"
+                             "rsp0=%016RX64 rsp1=%016RX64 rsp2=%016RX64\n"
+                             "ist1=%016RX64 ist2=%016RX64\n"
+                             "ist3=%016RX64 ist4=%016RX64\n"
+                             "ist5=%016RX64 ist6=%016RX64\n"
+                             "ist7=%016RX64 iomap=%04x\n"
                              ,
                              pTss->rsp0, pTss->rsp1, pTss->rsp2,
                              pTss->ist1, pTss->ist2,
@@ -3444,7 +4521,184 @@ static DECLCALLBACK(int) dbgcCmdDumpTSS(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'm' command.}
+ * @callback_method_impl{FNDBGFR3TYPEDUMP, The 'dti' command dumper callback.}
+ */
+static DECLCALLBACK(int) dbgcCmdDumpTypeInfoCallback(uint32_t off, const char *pszField, uint32_t iLvl,
+                                                     const char *pszType, uint32_t fTypeFlags,
+                                                     uint32_t cElements, void *pvUser)
+{
+    PDBGCCMDHLP pCmdHlp = (PDBGCCMDHLP)pvUser;
+
+    /* Pad with spaces to match the level. */
+    for (uint32_t i = 0; i < iLvl; i++)
+        DBGCCmdHlpPrintf(pCmdHlp, "    ");
+
+    size_t cbWritten = 0;
+    DBGCCmdHlpPrintfEx(pCmdHlp, &cbWritten, "+0x%04x %s", off, pszField);
+    while (cbWritten < 32)
+    {
+        /* Fill with spaces to get proper aligning. */
+        DBGCCmdHlpPrintf(pCmdHlp, " ");
+        cbWritten++;
+    }
+
+    DBGCCmdHlpPrintf(pCmdHlp, ": ");
+    if (fTypeFlags & DBGFTYPEREGMEMBER_F_ARRAY)
+        DBGCCmdHlpPrintf(pCmdHlp, "[%u] ", cElements);
+    if (fTypeFlags & DBGFTYPEREGMEMBER_F_POINTER)
+        DBGCCmdHlpPrintf(pCmdHlp, "Ptr ");
+    DBGCCmdHlpPrintf(pCmdHlp, "%s\n", pszType);
+
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'dti' command.}
+ */
+static DECLCALLBACK(int) dbgcCmdDumpTypeInfo(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    DBGC_CMDHLP_REQ_UVM_RET(pCmdHlp, pCmd, pUVM);
+    DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, cArgs == 1 || cArgs == 2);
+    DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, paArgs[0].enmType == DBGCVAR_TYPE_STRING);
+    if (cArgs == 2)
+        DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, paArgs[1].enmType == DBGCVAR_TYPE_NUMBER);
+
+    uint32_t cLvlMax = cArgs == 2 ? (uint32_t)paArgs[1].u.u64Number : UINT32_MAX;
+    return DBGFR3TypeDumpEx(pUVM, paArgs[0].u.pszString, 0 /* fFlags */, cLvlMax,
+                            dbgcCmdDumpTypeInfoCallback, pCmdHlp);
+}
+
+
+static void dbgcCmdDumpTypedValCallbackBuiltin(PDBGCCMDHLP pCmdHlp, DBGFTYPEBUILTIN enmType, size_t cbType,
+                                               PDBGFTYPEVALBUF pValBuf)
+{
+    switch (enmType)
+    {
+        case DBGFTYPEBUILTIN_UINT8:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RU8", pValBuf->u8);
+            break;
+        case DBGFTYPEBUILTIN_INT8:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RI8", pValBuf->i8);
+            break;
+        case DBGFTYPEBUILTIN_UINT16:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RU16", pValBuf->u16);
+            break;
+        case DBGFTYPEBUILTIN_INT16:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RI16", pValBuf->i16);
+            break;
+        case DBGFTYPEBUILTIN_UINT32:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RU32", pValBuf->u32);
+            break;
+        case DBGFTYPEBUILTIN_INT32:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RI32", pValBuf->i32);
+            break;
+        case DBGFTYPEBUILTIN_UINT64:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RU64", pValBuf->u64);
+            break;
+        case DBGFTYPEBUILTIN_INT64:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RI64", pValBuf->i64);
+            break;
+        case DBGFTYPEBUILTIN_PTR32:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RX32", pValBuf->GCPtr);
+            break;
+        case DBGFTYPEBUILTIN_PTR64:
+            DBGCCmdHlpPrintf(pCmdHlp, "%RX64", pValBuf->GCPtr);
+            break;
+        case DBGFTYPEBUILTIN_PTR:
+            if (cbType == sizeof(uint32_t))
+                DBGCCmdHlpPrintf(pCmdHlp, "%RX32", pValBuf->GCPtr);
+            else if (cbType == sizeof(uint64_t))
+                DBGCCmdHlpPrintf(pCmdHlp, "%RX64", pValBuf->GCPtr);
+            else
+                DBGCCmdHlpPrintf(pCmdHlp, "<Unsupported pointer width %u>", cbType);
+            break;
+        case DBGFTYPEBUILTIN_SIZE:
+            if (cbType == sizeof(uint32_t))
+                DBGCCmdHlpPrintf(pCmdHlp, "%RU32", pValBuf->size);
+            else if (cbType == sizeof(uint64_t))
+                DBGCCmdHlpPrintf(pCmdHlp, "%RU64", pValBuf->size);
+            else
+                DBGCCmdHlpPrintf(pCmdHlp, "<Unsupported size width %u>", cbType);
+            break;
+        case DBGFTYPEBUILTIN_FLOAT32:
+        case DBGFTYPEBUILTIN_FLOAT64:
+        case DBGFTYPEBUILTIN_COMPOUND:
+        default:
+            AssertMsgFailed(("Invalid built-in type: %d\n", enmType));
+    }
+}
+
+/**
+ * @callback_method_impl{FNDBGFR3TYPEDUMP, The 'dtv' command dumper callback.}
+ */
+static DECLCALLBACK(int) dbgcCmdDumpTypedValCallback(uint32_t off, const char *pszField, uint32_t iLvl,
+                                                     DBGFTYPEBUILTIN enmType, size_t cbType,
+                                                     PDBGFTYPEVALBUF pValBuf, uint32_t cValBufs,
+                                                     void *pvUser)
+{
+    PDBGCCMDHLP pCmdHlp = (PDBGCCMDHLP)pvUser;
+
+    /* Pad with spaces to match the level. */
+    for (uint32_t i = 0; i < iLvl; i++)
+        DBGCCmdHlpPrintf(pCmdHlp, "    ");
+
+    size_t cbWritten = 0;
+    DBGCCmdHlpPrintfEx(pCmdHlp, &cbWritten, "+0x%04x %s", off, pszField);
+    while (cbWritten < 32)
+    {
+        /* Fill with spaces to get proper aligning. */
+        DBGCCmdHlpPrintf(pCmdHlp, " ");
+        cbWritten++;
+    }
+
+    DBGCCmdHlpPrintf(pCmdHlp, ": ");
+    if (cValBufs > 1)
+        DBGCCmdHlpPrintf(pCmdHlp, "[%u] [ ", cValBufs);
+
+    for (uint32_t i = 0; i < cValBufs; i++)
+    {
+        dbgcCmdDumpTypedValCallbackBuiltin(pCmdHlp, enmType, cbType, pValBuf);
+        if (i < cValBufs - 1)
+            DBGCCmdHlpPrintf(pCmdHlp, " , ");
+        pValBuf++;
+    }
+
+    if (cValBufs > 1)
+        DBGCCmdHlpPrintf(pCmdHlp, " ]");
+    DBGCCmdHlpPrintf(pCmdHlp, "\n");
+
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'dtv' command.}
+ */
+static DECLCALLBACK(int) dbgcCmdDumpTypedVal(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    DBGC_CMDHLP_REQ_UVM_RET(pCmdHlp, pCmd, pUVM);
+    DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, cArgs == 2 || cArgs == 3);
+    DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, paArgs[0].enmType == DBGCVAR_TYPE_STRING);
+    DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, DBGCVAR_ISGCPOINTER(paArgs[1].enmType));
+    if (cArgs == 3)
+        DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, paArgs[2].enmType == DBGCVAR_TYPE_NUMBER);
+
+    /*
+     * Make DBGF address and fix the range.
+     */
+    DBGFADDRESS Address;
+    int rc = pCmdHlp->pfnVarToDbgfAddr(pCmdHlp, &paArgs[1], &Address);
+    if (RT_FAILURE(rc))
+        return pCmdHlp->pfnVBoxError(pCmdHlp, rc, "VarToDbgfAddr(,%Dv,)\n", &paArgs[1]);
+
+    uint32_t cLvlMax = cArgs == 3 ? (uint32_t)paArgs[2].u.u64Number : UINT32_MAX;
+    return DBGFR3TypeValDumpEx(pUVM, &Address, paArgs[0].u.pszString, 0 /* fFlags */, cLvlMax,
+                            dbgcCmdDumpTypedValCallback, pCmdHlp);
+}
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'm' command.}
  */
 static DECLCALLBACK(int) dbgcCmdMemoryInfo(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -3463,6 +4717,7 @@ static DECLCALLBACK(int) dbgcCmdMemoryInfo(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
  * @retval  VERR_INTERNAL_ERROR on bad variable type, bitched.
  * @retval  VINF_SUCCESS on success.
  *
+ * @param   pCmdHlp The command helper callback table.
  * @param   pvBuf   The buffer to convert into.
  * @param   pcbBuf  The buffer size on input. The size of the result on output.
  * @param   cbUnit  The unit size to apply when converting.
@@ -3592,19 +4847,16 @@ int dbgcVarsToBytes(PDBGCCMDHLP pCmdHlp, void *pvBuf, uint32_t *pcbBuf, size_t c
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'eb', 'ew', 'ed' and 'eq' commands.}
+ * @callback_method_impl{FNDBGCCMD, The 'eb'\, 'ew'\, 'ed' and 'eq' commands.}
  */
 static DECLCALLBACK(int) dbgcCmdEditMem(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
-    PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
-    unsigned iArg;
-
     /*
      * Validate input.
      */
     DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, cArgs >= 2);
     DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, DBGCVAR_ISPOINTER(paArgs[0].enmType));
-    for (iArg = 1; iArg < cArgs; iArg++)
+    for (unsigned iArg = 1; iArg < cArgs; iArg++)
         DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, paArgs[iArg].enmType == DBGCVAR_TYPE_NUMBER);
     DBGC_CMDHLP_REQ_UVM_RET(pCmdHlp, pCmd, pUVM);
 
@@ -3625,7 +4877,7 @@ static DECLCALLBACK(int) dbgcCmdEditMem(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
      * Do setting.
      */
     DBGCVAR Addr = paArgs[0];
-    for (iArg = 1;;)
+    for (unsigned iArg = 1;;)
     {
         size_t cbWritten;
         int rc = pCmdHlp->pfnMemWrite(pCmdHlp, &paArgs[iArg].u, cbElement, &Addr, &cbWritten);
@@ -3779,7 +5031,7 @@ static int dbgcCmdWorkerSearchMemResume(PDBGCCMDHLP pCmdHlp, PUVM pUVM, PDBGCVAR
 /**
  * Search memory, worker for the 's' and 's?' functions.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pCmdHlp     Pointer to the command helper functions.
  * @param   pUVM        The user mode VM handle.
  * @param   pAddress    Where to start searching. If no range, search till end of address space.
@@ -3855,10 +5107,12 @@ static int dbgcCmdWorkerSearchMem(PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR pAdd
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 's' command.}
+ * @callback_method_impl{FNDBGCCMD, The 's' command.}
  */
 static DECLCALLBACK(int) dbgcCmdSearchMem(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
+    RT_NOREF2(pCmd, paArgs);
+
     /* check that the parser did what it's supposed to do. */
     //if (    cArgs <= 2
     //    &&  paArgs[0].enmType != DBGCVAR_TYPE_STRING)
@@ -3879,7 +5133,7 @@ static DECLCALLBACK(int) dbgcCmdSearchMem(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, P
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 's?' command.}
+ * @callback_method_impl{FNDBGCCMD, The 's?' command.}
  */
 static DECLCALLBACK(int) dbgcCmdSearchMemType(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -3887,6 +5141,632 @@ static DECLCALLBACK(int) dbgcCmdSearchMemType(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHl
     DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, 0, cArgs >= 2 && DBGCVAR_ISGCPOINTER(paArgs[0].enmType));
     return dbgcCmdWorkerSearchMem(pCmdHlp, pUVM, &paArgs[0], 25, pCmd->pszCmd[1], paArgs + 1, cArgs - 1, NULL);
 }
+
+
+/**
+ * Matching function for interrupts event names.
+ *
+ * This parses the interrupt number and length.
+ *
+ * @returns True if match, false if not.
+ * @param   pPattern    The user specified pattern to match.
+ * @param   pszEvtName  The event name.
+ * @param   pCmdHlp     Command helpers for warning about malformed stuff.
+ * @param   piFirst     Where to return start interrupt number on success.
+ * @param   pcInts      Where to return the number of interrupts on success.
+ */
+static bool dbgcEventIsMatchingInt(PCDBGCVAR pPattern, const char *pszEvtName, PDBGCCMDHLP pCmdHlp,
+                                   uint8_t *piFirst, uint16_t *pcInts)
+{
+    /*
+     * Ignore trailing hex digits when comparing with the event base name.
+     */
+    const char *pszPattern = pPattern->u.pszString;
+    const char *pszEnd = RTStrEnd(pszPattern, RTSTR_MAX);
+    while (   (uintptr_t)pszEnd > (uintptr_t)pszPattern
+           && RT_C_IS_XDIGIT(pszEnd[-1]))
+        pszEnd -= 1;
+    if (RTStrSimplePatternNMatch(pszPattern, pszEnd - pszPattern, pszEvtName, RTSTR_MAX))
+    {
+        /*
+         * Parse the index and length.
+         */
+        if (!*pszEnd)
+            *piFirst = 0;
+        else
+        {
+            int rc = RTStrToUInt8Full(pszEnd, 16, piFirst);
+            if (rc != VINF_SUCCESS)
+            {
+                if (RT_FAILURE(rc))
+                    *piFirst = 0;
+                DBGCCmdHlpPrintf(pCmdHlp, "Warning: %Rrc parsing '%s' - interpreting it as %#x\n", rc, pszEnd, *piFirst);
+            }
+        }
+
+        if (pPattern->enmRangeType == DBGCVAR_RANGE_NONE)
+            *pcInts = 1;
+        else
+            *pcInts = RT_MAX(RT_MIN((uint16_t)pPattern->u64Range, 256 - *piFirst), 1);
+        return true;
+    }
+    return false;
+}
+
+
+/**
+ * Updates a DBGC event config.
+ *
+ * @returns VINF_SUCCESS or VERR_NO_MEMORY.
+ * @param   ppEvtCfg        The event configuration entry to update.
+ * @param   pszCmd          The new command. Leave command alone if NULL.
+ * @param   enmEvtState     The new event state.
+ * @param   fChangeCmdOnly  Whether to only update the command.
+ */
+static int dbgcEventUpdate(PDBGCEVTCFG *ppEvtCfg, const char *pszCmd, DBGCEVTSTATE enmEvtState, bool fChangeCmdOnly)
+{
+    PDBGCEVTCFG pEvtCfg = *ppEvtCfg;
+
+    /*
+     * If we've got a command string, update the command too.
+     */
+    if (pszCmd)
+    {
+        size_t cchCmd = strlen(pszCmd);
+        if (   !cchCmd
+            && (  !fChangeCmdOnly
+                ? enmEvtState == kDbgcEvtState_Disabled
+                : !pEvtCfg || pEvtCfg->enmState == kDbgcEvtState_Disabled))
+        {
+            /* NULL entry is fine if no command and disabled. */
+            RTMemFree(pEvtCfg);
+            *ppEvtCfg = NULL;
+        }
+        else
+        {
+            if (!pEvtCfg || pEvtCfg->cchCmd < cchCmd)
+            {
+                RTMemFree(pEvtCfg);
+                *ppEvtCfg = pEvtCfg = (PDBGCEVTCFG)RTMemAlloc(RT_UOFFSETOF_DYN(DBGCEVTCFG, szCmd[cchCmd + 1]));
+                if (!pEvtCfg)
+                    return VERR_NO_MEMORY;
+            }
+            pEvtCfg->enmState = enmEvtState;
+            pEvtCfg->cchCmd   = cchCmd;
+            memcpy(pEvtCfg->szCmd, pszCmd, cchCmd + 1);
+        }
+    }
+    /*
+     * Update existing or enable new.  If NULL and not enabled, we can keep it that way.
+     */
+    else if (pEvtCfg || enmEvtState != kDbgcEvtState_Disabled)
+    {
+        if (!pEvtCfg)
+        {
+            *ppEvtCfg = pEvtCfg = (PDBGCEVTCFG)RTMemAlloc(sizeof(DBGCEVTCFG));
+            if (!pEvtCfg)
+                return VERR_NO_MEMORY;
+            pEvtCfg->cchCmd = 0;
+            pEvtCfg->szCmd[0] = '\0';
+        }
+        pEvtCfg->enmState = enmEvtState;
+    }
+
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * Record one settings change for a plain event.
+ *
+ * @returns The new @a cIntCfgs value.
+ * @param   paEventCfgs The event setttings array.  Must have DBGFEVENT_END
+ *                      entries.
+ * @param   cEventCfgs  The current number of entries in @a paEventCfgs.
+ * @param   enmType     The event to change the settings for.
+ * @param   enmEvtState The new event state.
+ * @param   iSxEvt      Index into the g_aDbgcSxEvents array.
+ *
+ * @remarks We use abUnused[0] for the enmEvtState, while abUnused[1] and
+ *          abUnused[2] are used for iSxEvt.
+ */
+static uint32_t dbgcEventAddPlainConfig(PDBGFEVENTCONFIG paEventCfgs, uint32_t cEventCfgs, DBGFEVENTTYPE enmType,
+                                        DBGCEVTSTATE enmEvtState, uint16_t iSxEvt)
+{
+    uint32_t iCfg;
+    for (iCfg = 0; iCfg < cEventCfgs; iCfg++)
+        if (paEventCfgs[iCfg].enmType == enmType)
+            break;
+    if (iCfg == cEventCfgs)
+    {
+        Assert(cEventCfgs < DBGFEVENT_END);
+        paEventCfgs[iCfg].enmType = enmType;
+        cEventCfgs++;
+    }
+    paEventCfgs[iCfg].fEnabled    = enmEvtState > kDbgcEvtState_Disabled;
+    paEventCfgs[iCfg].abUnused[0] = enmEvtState;
+    paEventCfgs[iCfg].abUnused[1] = (uint8_t)iSxEvt;
+    paEventCfgs[iCfg].abUnused[2] = (uint8_t)(iSxEvt >> 8);
+    return cEventCfgs;
+}
+
+
+/**
+ * Record one or more interrupt event config changes.
+ *
+ * @returns The new @a cIntCfgs value.
+ * @param   paIntCfgs   Interrupt confiruation array. Must have 256 entries.
+ * @param   cIntCfgs    The current number of entries in @a paIntCfgs.
+ * @param   iInt        The interrupt number to start with.
+ * @param   cInts       The number of interrupts to change.
+ * @param   pszName     The settings name (hwint/swint).
+ * @param   enmEvtState The new event state.
+ * @param   bIntOp      The new DBGF interrupt state.
+ */
+static uint32_t dbgcEventAddIntConfig(PDBGFINTERRUPTCONFIG paIntCfgs, uint32_t cIntCfgs, uint8_t iInt, uint16_t cInts,
+                                      const char *pszName, DBGCEVTSTATE enmEvtState, uint8_t bIntOp)
+{
+    bool const fHwInt = *pszName == 'h';
+
+    bIntOp |= (uint8_t)enmEvtState << 4;
+    uint8_t const   bSoftState = !fHwInt ? bIntOp : DBGFINTERRUPTSTATE_DONT_TOUCH;
+    uint8_t const   bHardState = fHwInt  ? bIntOp : DBGFINTERRUPTSTATE_DONT_TOUCH;
+
+    while (cInts > 0)
+    {
+        uint32_t iCfg;
+        for (iCfg = 0; iCfg < cIntCfgs; iCfg++)
+            if (paIntCfgs[iCfg].iInterrupt == iInt)
+                break;
+        if (iCfg == cIntCfgs)
+            break;
+        if (fHwInt)
+            paIntCfgs[iCfg].enmHardState = bHardState;
+        else
+            paIntCfgs[iCfg].enmSoftState = bSoftState;
+        iInt++;
+        cInts--;
+    }
+
+    while (cInts > 0)
+    {
+        Assert(cIntCfgs < 256);
+        paIntCfgs[cIntCfgs].iInterrupt   = iInt;
+        paIntCfgs[cIntCfgs].enmHardState = bHardState;
+        paIntCfgs[cIntCfgs].enmSoftState = bSoftState;
+        cIntCfgs++;
+        iInt++;
+        cInts--;
+    }
+
+    return cIntCfgs;
+}
+
+
+/**
+ * Applies event settings changes to DBGC and DBGF.
+ *
+ * @returns VBox status code (fully bitched)
+ * @param   pCmdHlp         The command helpers.
+ * @param   pUVM            The user mode VM handle.
+ * @param   paIntCfgs       Interrupt configuration array.  We use the upper 4
+ *                          bits of the settings for the DBGCEVTSTATE.  This
+ *                          will be cleared.
+ * @param   cIntCfgs        Number of interrupt configuration changes.
+ * @param   paEventCfgs     The generic event configuration array.  We use the
+ *                          abUnused[0] member for the DBGCEVTSTATE, and
+ *                          abUnused[2:1] for the g_aDbgcSxEvents index.
+ * @param   cEventCfgs      The number of generic event settings changes.
+ * @param   pszCmd          The commands to associate with the changed events.
+ *                          If this is NULL, don't touch the command.
+ * @param   fChangeCmdOnly  Whether to only change the commands (sx-).
+ */
+static int dbgcEventApplyChanges(PDBGCCMDHLP pCmdHlp, PUVM pUVM, PDBGFINTERRUPTCONFIG paIntCfgs, uint32_t cIntCfgs,
+                                 PCDBGFEVENTCONFIG paEventCfgs, uint32_t cEventCfgs, const char *pszCmd, bool fChangeCmdOnly)
+{
+    int rc;
+
+    /*
+     * Apply changes to DBGC.  This can only fail with out of memory error.
+     */
+    PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
+    if (cIntCfgs)
+        for (uint32_t iCfg = 0; iCfg < cIntCfgs; iCfg++)
+        {
+            DBGCEVTSTATE enmEvtState = (DBGCEVTSTATE)(paIntCfgs[iCfg].enmHardState >> 4);
+            paIntCfgs[iCfg].enmHardState &= 0xf;
+            if (paIntCfgs[iCfg].enmHardState != DBGFINTERRUPTSTATE_DONT_TOUCH)
+            {
+                rc = dbgcEventUpdate(&pDbgc->apHardInts[paIntCfgs[iCfg].iInterrupt], pszCmd, enmEvtState, fChangeCmdOnly);
+                if (RT_FAILURE(rc))
+                    return rc;
+            }
+
+            enmEvtState = (DBGCEVTSTATE)(paIntCfgs[iCfg].enmSoftState >> 4);
+            paIntCfgs[iCfg].enmSoftState &= 0xf;
+            if (paIntCfgs[iCfg].enmSoftState != DBGFINTERRUPTSTATE_DONT_TOUCH)
+            {
+                rc = dbgcEventUpdate(&pDbgc->apSoftInts[paIntCfgs[iCfg].iInterrupt], pszCmd, enmEvtState, fChangeCmdOnly);
+                if (RT_FAILURE(rc))
+                    return rc;
+            }
+        }
+
+    if (cEventCfgs)
+    {
+        for (uint32_t iCfg = 0; iCfg < cEventCfgs; iCfg++)
+        {
+            Assert((unsigned)paEventCfgs[iCfg].enmType < RT_ELEMENTS(pDbgc->apEventCfgs));
+            uint16_t iSxEvt = RT_MAKE_U16(paEventCfgs[iCfg].abUnused[1], paEventCfgs[iCfg].abUnused[2]);
+            Assert(iSxEvt < RT_ELEMENTS(g_aDbgcSxEvents));
+            rc = dbgcEventUpdate(&pDbgc->apEventCfgs[iSxEvt], pszCmd, (DBGCEVTSTATE)paEventCfgs[iCfg].abUnused[0], fChangeCmdOnly);
+            if (RT_FAILURE(rc))
+                return rc;
+        }
+    }
+
+    /*
+     * Apply changes to DBGF.
+     */
+    if (!fChangeCmdOnly)
+    {
+        if (cIntCfgs)
+        {
+            rc = DBGFR3InterruptConfigEx(pUVM, paIntCfgs, cIntCfgs);
+            if (RT_FAILURE(rc))
+                return DBGCCmdHlpVBoxError(pCmdHlp, rc, "DBGFR3InterruptConfigEx: %Rrc\n", rc);
+        }
+        if (cEventCfgs)
+        {
+            rc = DBGFR3EventConfigEx(pUVM, paEventCfgs, cEventCfgs);
+            if (RT_FAILURE(rc))
+                return DBGCCmdHlpVBoxError(pCmdHlp, rc, "DBGFR3EventConfigEx: %Rrc\n", rc);
+        }
+    }
+
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'sx[eni-]' commands.}
+ */
+static DECLCALLBACK(int) dbgcCmdEventCtrl(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    /*
+     * Figure out which command this is.
+     */
+    uint8_t         bIntOp;
+    DBGCEVTSTATE    enmEvtState;
+    bool            fChangeCmdOnly;
+    switch (pCmd->pszCmd[2])
+    {
+        case 'e': bIntOp = DBGFINTERRUPTSTATE_ENABLED;  enmEvtState = kDbgcEvtState_Enabled;  fChangeCmdOnly = false; break;
+        case 'n': bIntOp = DBGFINTERRUPTSTATE_ENABLED;  enmEvtState = kDbgcEvtState_Notify;   fChangeCmdOnly = false; break;
+        case '-': bIntOp = DBGFINTERRUPTSTATE_ENABLED;  enmEvtState = kDbgcEvtState_Invalid;  fChangeCmdOnly = true;  break;
+        case 'i': bIntOp = DBGFINTERRUPTSTATE_DISABLED; enmEvtState = kDbgcEvtState_Disabled; fChangeCmdOnly = false; break;
+        default:
+            return DBGCCmdHlpVBoxError(pCmdHlp, VERR_INVALID_PARAMETER, "pszCmd=%s\n", pCmd->pszCmd);
+    }
+
+    /*
+     * Command option.
+     */
+    unsigned    iArg = 0;
+    const char *pszCmd = NULL;
+    if (   cArgs >= iArg + 2
+        && paArgs[iArg].enmType == DBGCVAR_TYPE_STRING
+        && paArgs[iArg + 1].enmType == DBGCVAR_TYPE_STRING
+        && strcmp(paArgs[iArg].u.pszString, "-c") == 0)
+    {
+        pszCmd = paArgs[iArg + 1].u.pszString;
+        iArg += 2;
+    }
+    if (fChangeCmdOnly && !pszCmd)
+        return DBGCCmdHlpVBoxError(pCmdHlp, VERR_INVALID_PARAMETER, "The 'sx-' requires the '-c cmd' arguments.\n");
+
+    /*
+     * The remaining arguments are event specifiers to which the operation should be applied.
+     */
+    uint32_t            cIntCfgs   = 0;
+    DBGFINTERRUPTCONFIG aIntCfgs[256];
+    uint32_t            cEventCfgs = 0;
+    DBGFEVENTCONFIG     aEventCfgs[DBGFEVENT_END];
+
+    for (; iArg < cArgs; iArg++)
+    {
+        DBGC_CMDHLP_ASSERT_PARSER_RET(pCmdHlp, pCmd, iArg, paArgs[iArg].enmType == DBGCVAR_TYPE_STRING
+                                                        || paArgs[iArg].enmType == DBGCVAR_TYPE_SYMBOL);
+        uint32_t cHits = 0;
+        for (uint32_t iEvt = 0; iEvt < RT_ELEMENTS(g_aDbgcSxEvents); iEvt++)
+            if (g_aDbgcSxEvents[iEvt].enmKind == kDbgcSxEventKind_Plain)
+            {
+                if (   RTStrSimplePatternMatch(paArgs[iArg].u.pszString, g_aDbgcSxEvents[iEvt].pszName)
+                    || (   g_aDbgcSxEvents[iEvt].pszAltNm
+                        && RTStrSimplePatternMatch(paArgs[iArg].u.pszString, g_aDbgcSxEvents[iEvt].pszAltNm)) )
+                {
+                    cEventCfgs = dbgcEventAddPlainConfig(aEventCfgs, cEventCfgs, g_aDbgcSxEvents[iEvt].enmType,
+                                                         enmEvtState, iEvt);
+                    cHits++;
+                }
+            }
+            else
+            {
+                Assert(g_aDbgcSxEvents[iEvt].enmKind == kDbgcSxEventKind_Interrupt);
+                uint8_t  iInt;
+                uint16_t cInts;
+                if (dbgcEventIsMatchingInt(&paArgs[iArg], g_aDbgcSxEvents[iEvt].pszName, pCmdHlp, &iInt, &cInts))
+                {
+                    cIntCfgs = dbgcEventAddIntConfig(aIntCfgs, cIntCfgs, iInt, cInts, g_aDbgcSxEvents[iEvt].pszName,
+                                                     enmEvtState, bIntOp);
+                    cHits++;
+                }
+            }
+        if (!cHits)
+            return DBGCCmdHlpVBoxError(pCmdHlp, VERR_INVALID_PARAMETER, "Unknown event: '%s'\n", paArgs[iArg].u.pszString);
+    }
+
+    /*
+     * Apply the changes.
+     */
+    return dbgcEventApplyChanges(pCmdHlp, pUVM, aIntCfgs, cIntCfgs, aEventCfgs, cEventCfgs, pszCmd, fChangeCmdOnly);
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'sxr' commands.}
+ */
+static DECLCALLBACK(int) dbgcCmdEventCtrlReset(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    RT_NOREF1(pCmd);
+    uint32_t            cEventCfgs = 0;
+    DBGFEVENTCONFIG     aEventCfgs[DBGFEVENT_END];
+    uint32_t            cIntCfgs   = 0;
+    DBGFINTERRUPTCONFIG aIntCfgs[256];
+
+    if (cArgs == 0)
+    {
+        /*
+         * All events.
+         */
+        for (uint32_t iInt = 0; iInt < 256; iInt++)
+        {
+            aIntCfgs[iInt].iInterrupt   = iInt;
+            aIntCfgs[iInt].enmHardState = DBGFINTERRUPTSTATE_DONT_TOUCH;
+            aIntCfgs[iInt].enmSoftState = DBGFINTERRUPTSTATE_DONT_TOUCH;
+        }
+        cIntCfgs = 256;
+
+        for (uint32_t iEvt = 0; iEvt < RT_ELEMENTS(g_aDbgcSxEvents); iEvt++)
+            if (g_aDbgcSxEvents[iEvt].enmKind == kDbgcSxEventKind_Plain)
+            {
+                aEventCfgs[cEventCfgs].enmType     = g_aDbgcSxEvents[iEvt].enmType;
+                aEventCfgs[cEventCfgs].fEnabled    = g_aDbgcSxEvents[iEvt].enmDefault > kDbgcEvtState_Disabled;
+                aEventCfgs[cEventCfgs].abUnused[0] = g_aDbgcSxEvents[iEvt].enmDefault;
+                aEventCfgs[cEventCfgs].abUnused[1] = (uint8_t)iEvt;
+                aEventCfgs[cEventCfgs].abUnused[2] = (uint8_t)(iEvt >> 8);
+                cEventCfgs++;
+            }
+            else
+            {
+                uint8_t const bState = (  g_aDbgcSxEvents[iEvt].enmDefault > kDbgcEvtState_Disabled
+                                        ? DBGFINTERRUPTSTATE_ENABLED : DBGFINTERRUPTSTATE_DISABLED)
+                                     | ((uint8_t)g_aDbgcSxEvents[iEvt].enmDefault << 4);
+                if (strcmp(g_aDbgcSxEvents[iEvt].pszName, "hwint") == 0)
+                    for (uint32_t iInt = 0; iInt < 256; iInt++)
+                        aIntCfgs[iInt].enmHardState = bState;
+                else
+                    for (uint32_t iInt = 0; iInt < 256; iInt++)
+                        aIntCfgs[iInt].enmSoftState = bState;
+            }
+    }
+    else
+    {
+        /*
+         * Selected events.
+         */
+        for (uint32_t iArg = 0; iArg < cArgs; iArg++)
+        {
+            unsigned cHits = 0;
+            for (uint32_t iEvt = 0; iEvt < RT_ELEMENTS(g_aDbgcSxEvents); iEvt++)
+                if (g_aDbgcSxEvents[iEvt].enmKind == kDbgcSxEventKind_Plain)
+                {
+                    if (   RTStrSimplePatternMatch(paArgs[iArg].u.pszString, g_aDbgcSxEvents[iEvt].pszName)
+                        || (   g_aDbgcSxEvents[iEvt].pszAltNm
+                            && RTStrSimplePatternMatch(paArgs[iArg].u.pszString, g_aDbgcSxEvents[iEvt].pszAltNm)) )
+                    {
+                        cEventCfgs = dbgcEventAddPlainConfig(aEventCfgs, cEventCfgs, g_aDbgcSxEvents[iEvt].enmType,
+                                                             g_aDbgcSxEvents[iEvt].enmDefault, iEvt);
+                        cHits++;
+                    }
+                }
+                else
+                {
+                    Assert(g_aDbgcSxEvents[iEvt].enmKind == kDbgcSxEventKind_Interrupt);
+                    uint8_t  iInt;
+                    uint16_t cInts;
+                    if (dbgcEventIsMatchingInt(&paArgs[iArg], g_aDbgcSxEvents[iEvt].pszName, pCmdHlp, &iInt, &cInts))
+                    {
+                        cIntCfgs = dbgcEventAddIntConfig(aIntCfgs, cIntCfgs, iInt, cInts, g_aDbgcSxEvents[iEvt].pszName,
+                                                         g_aDbgcSxEvents[iEvt].enmDefault,
+                                                         g_aDbgcSxEvents[iEvt].enmDefault > kDbgcEvtState_Disabled
+                                                         ? DBGFINTERRUPTSTATE_ENABLED : DBGFINTERRUPTSTATE_DISABLED);
+                        cHits++;
+                    }
+                }
+            if (!cHits)
+                return DBGCCmdHlpVBoxError(pCmdHlp, VERR_INVALID_PARAMETER, "Unknown event: '%s'\n", paArgs[iArg].u.pszString);
+        }
+    }
+
+    /*
+     * Apply the reset changes.
+     */
+    return dbgcEventApplyChanges(pCmdHlp, pUVM, aIntCfgs, cIntCfgs, aEventCfgs, cEventCfgs, "", false);
+}
+
+
+/**
+ * Used during DBGC initialization to configure events with defaults.
+ *
+ * @returns VBox status code.
+ * @param   pDbgc       The DBGC instance.
+ */
+void dbgcEventInit(PDBGC pDbgc)
+{
+    if (pDbgc->pUVM)
+        dbgcCmdEventCtrlReset(NULL, &pDbgc->CmdHlp, pDbgc->pUVM, NULL, 0);
+}
+
+
+/**
+ * Used during DBGC termination to disable all events.
+ *
+ * @param   pDbgc       The DBGC instance.
+ */
+void dbgcEventTerm(PDBGC pDbgc)
+{
+/** @todo need to do more than just reset later. */
+    if (pDbgc->pUVM && VMR3GetStateU(pDbgc->pUVM) < VMSTATE_DESTROYING)
+        dbgcCmdEventCtrlReset(NULL, &pDbgc->CmdHlp, pDbgc->pUVM, NULL, 0);
+}
+
+
+static void dbgcEventDisplay(PDBGCCMDHLP pCmdHlp, const char *pszName, DBGCEVTSTATE enmDefault, PDBGCEVTCFG const *ppEvtCfg)
+{
+    RT_NOREF1(enmDefault);
+    PDBGCEVTCFG pEvtCfg = *ppEvtCfg;
+
+    const char *pszState;
+    switch (pEvtCfg ? pEvtCfg->enmState : kDbgcEvtState_Disabled)
+    {
+        case kDbgcEvtState_Disabled:    pszState = "ignore"; break;
+        case kDbgcEvtState_Enabled:     pszState = "enabled"; break;
+        case kDbgcEvtState_Notify:      pszState = "notify"; break;
+        default:
+            AssertFailed();
+            pszState = "invalid";
+            break;
+    }
+
+    if (pEvtCfg && pEvtCfg->cchCmd > 0)
+        DBGCCmdHlpPrintf(pCmdHlp, "%-22s  %-7s  \"%s\"\n", pszName, pszState, pEvtCfg->szCmd);
+    else
+        DBGCCmdHlpPrintf(pCmdHlp, "%-22s  %s\n", pszName, pszState);
+}
+
+
+static void dbgcEventDisplayRange(PDBGCCMDHLP pCmdHlp, const char *pszBaseNm, DBGCEVTSTATE enmDefault,
+                                  PDBGCEVTCFG const *papEvtCfgs, unsigned iCfg, unsigned cCfgs)
+{
+    do
+    {
+        PCDBGCEVTCFG pFirstCfg = papEvtCfgs[iCfg];
+        if (pFirstCfg && pFirstCfg->enmState == kDbgcEvtState_Disabled && pFirstCfg->cchCmd == 0)
+            pFirstCfg = NULL;
+
+        unsigned const iFirstCfg = iCfg;
+        iCfg++;
+        while (iCfg < cCfgs)
+        {
+            PCDBGCEVTCFG pCurCfg = papEvtCfgs[iCfg];
+            if (pCurCfg && pCurCfg->enmState == kDbgcEvtState_Disabled  && pCurCfg->cchCmd == 0)
+                pCurCfg = NULL;
+            if (pCurCfg != pFirstCfg)
+            {
+                if (!pCurCfg || !pFirstCfg)
+                    break;
+                if (pCurCfg->enmState != pFirstCfg->enmState)
+                    break;
+                if (pCurCfg->cchCmd != pFirstCfg->cchCmd)
+                    break;
+                if (memcmp(pCurCfg->szCmd, pFirstCfg->szCmd, pFirstCfg->cchCmd) != 0)
+                    break;
+            }
+            iCfg++;
+        }
+
+        char szName[16];
+        unsigned cEntries = iCfg - iFirstCfg;
+        if (cEntries == 1)
+            RTStrPrintf(szName, sizeof(szName), "%s%02x", pszBaseNm, iFirstCfg);
+        else
+            RTStrPrintf(szName, sizeof(szName), "%s%02x L %#x", pszBaseNm, iFirstCfg, cEntries);
+        dbgcEventDisplay(pCmdHlp, szName, enmDefault, &papEvtCfgs[iFirstCfg]);
+
+        cCfgs -= cEntries;
+    } while (cCfgs > 0);
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'sx' commands.}
+ */
+static DECLCALLBACK(int) dbgcCmdEventCtrlList(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    RT_NOREF2(pCmd, pUVM);
+    PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
+
+    if (cArgs == 0)
+    {
+        /*
+         * All events.
+         */
+        for (uint32_t iEvt = 0; iEvt < RT_ELEMENTS(g_aDbgcSxEvents); iEvt++)
+            if (g_aDbgcSxEvents[iEvt].enmKind == kDbgcSxEventKind_Plain)
+                dbgcEventDisplay(pCmdHlp, g_aDbgcSxEvents[iEvt].pszName, g_aDbgcSxEvents[iEvt].enmDefault,
+                                 &pDbgc->apEventCfgs[iEvt]);
+            else if (strcmp(g_aDbgcSxEvents[iEvt].pszName, "hwint") == 0)
+                dbgcEventDisplayRange(pCmdHlp, g_aDbgcSxEvents[iEvt].pszName, g_aDbgcSxEvents[iEvt].enmDefault,
+                                      pDbgc->apHardInts, 0, 256);
+            else
+                dbgcEventDisplayRange(pCmdHlp, g_aDbgcSxEvents[iEvt].pszName, g_aDbgcSxEvents[iEvt].enmDefault,
+                                      pDbgc->apSoftInts, 0, 256);
+    }
+    else
+    {
+        /*
+         * Selected events.
+         */
+        for (uint32_t iArg = 0; iArg < cArgs; iArg++)
+        {
+            unsigned cHits = 0;
+            for (uint32_t iEvt = 0; iEvt < RT_ELEMENTS(g_aDbgcSxEvents); iEvt++)
+                if (g_aDbgcSxEvents[iEvt].enmKind == kDbgcSxEventKind_Plain)
+                {
+                    if (   RTStrSimplePatternMatch(paArgs[iArg].u.pszString, g_aDbgcSxEvents[iEvt].pszName)
+                        || (   g_aDbgcSxEvents[iEvt].pszAltNm
+                            && RTStrSimplePatternMatch(paArgs[iArg].u.pszString, g_aDbgcSxEvents[iEvt].pszAltNm)) )
+                    {
+                        dbgcEventDisplay(pCmdHlp, g_aDbgcSxEvents[iEvt].pszName, g_aDbgcSxEvents[iEvt].enmDefault,
+                                         &pDbgc->apEventCfgs[iEvt]);
+                        cHits++;
+                    }
+                }
+                else
+                {
+                    Assert(g_aDbgcSxEvents[iEvt].enmKind == kDbgcSxEventKind_Interrupt);
+                    uint8_t  iInt;
+                    uint16_t cInts;
+                    if (dbgcEventIsMatchingInt(&paArgs[iArg], g_aDbgcSxEvents[iEvt].pszName, pCmdHlp, &iInt, &cInts))
+                    {
+                        if (strcmp(g_aDbgcSxEvents[iEvt].pszName, "hwint") == 0)
+                            dbgcEventDisplayRange(pCmdHlp, g_aDbgcSxEvents[iEvt].pszName, g_aDbgcSxEvents[iEvt].enmDefault,
+                                                  pDbgc->apHardInts, iInt, cInts);
+                        else
+                            dbgcEventDisplayRange(pCmdHlp, g_aDbgcSxEvents[iEvt].pszName, g_aDbgcSxEvents[iEvt].enmDefault,
+                                                  pDbgc->apSoftInts, iInt, cInts);
+                        cHits++;
+                    }
+                }
+            if (cHits == 0)
+                return DBGCCmdHlpVBoxError(pCmdHlp, VERR_INVALID_PARAMETER, "Unknown event: '%s'\n", paArgs[iArg].u.pszString);
+        }
+    }
+
+    return VINF_SUCCESS;
+}
+
 
 
 /**
@@ -3948,7 +5828,7 @@ static int dbgcDoListNear(PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR pArg)
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'ln' (listnear) command.}
+ * @callback_method_impl{FNDBGCCMD, The 'ln' (listnear) command.}
  */
 static DECLCALLBACK(int) dbgcCmdListNear(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -4000,7 +5880,7 @@ static bool dbgcCmdListModuleMatch(const char *pszName, PCDBGCVAR paArgs, unsign
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'ln' (list near) command.}
+ * @callback_method_impl{FNDBGCCMD, The 'ln' (list near) command.}
  */
 static DECLCALLBACK(int) dbgcCmdListModules(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -4136,11 +6016,12 @@ static DECLCALLBACK(int) dbgcCmdListModules(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp,
 
 
 /**
- * @callback_method_impl{Reads a unsigned 8-bit value.}
+ * @callback_method_impl{FNDBGCFUNC, Reads a unsigned 8-bit value.}
  */
 static DECLCALLBACK(int) dbgcFuncReadU8(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
                                         PDBGCVAR pResult)
 {
+    RT_NOREF1(pUVM);
     AssertReturn(cArgs == 1, VERR_DBGC_PARSE_BUG);
     AssertReturn(DBGCVAR_ISPOINTER(paArgs[0].enmType), VERR_DBGC_PARSE_BUG);
     AssertReturn(paArgs[0].enmRangeType == DBGCVAR_RANGE_NONE, VERR_DBGC_PARSE_BUG);
@@ -4157,11 +6038,12 @@ static DECLCALLBACK(int) dbgcFuncReadU8(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, P
 
 
 /**
- * @callback_method_impl{Reads a unsigned 16-bit value.}
+ * @callback_method_impl{FNDBGCFUNC, Reads a unsigned 16-bit value.}
  */
 static DECLCALLBACK(int) dbgcFuncReadU16(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
                                          PDBGCVAR pResult)
 {
+    RT_NOREF1(pUVM);
     AssertReturn(cArgs == 1, VERR_DBGC_PARSE_BUG);
     AssertReturn(DBGCVAR_ISPOINTER(paArgs[0].enmType), VERR_DBGC_PARSE_BUG);
     AssertReturn(paArgs[0].enmRangeType == DBGCVAR_RANGE_NONE, VERR_DBGC_PARSE_BUG);
@@ -4178,11 +6060,12 @@ static DECLCALLBACK(int) dbgcFuncReadU16(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, 
 
 
 /**
- * @callback_method_impl{Reads a unsigned 32-bit value.}
+ * @callback_method_impl{FNDBGCFUNC, Reads a unsigned 32-bit value.}
  */
 static DECLCALLBACK(int) dbgcFuncReadU32(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
                                          PDBGCVAR pResult)
 {
+    RT_NOREF1(pUVM);
     AssertReturn(cArgs == 1, VERR_DBGC_PARSE_BUG);
     AssertReturn(DBGCVAR_ISPOINTER(paArgs[0].enmType), VERR_DBGC_PARSE_BUG);
     AssertReturn(paArgs[0].enmRangeType == DBGCVAR_RANGE_NONE, VERR_DBGC_PARSE_BUG);
@@ -4199,11 +6082,12 @@ static DECLCALLBACK(int) dbgcFuncReadU32(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, 
 
 
 /**
- * @callback_method_impl{Reads a unsigned 64-bit value.}
+ * @callback_method_impl{FNDBGCFUNC, Reads a unsigned 64-bit value.}
  */
 static DECLCALLBACK(int) dbgcFuncReadU64(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
                                          PDBGCVAR pResult)
 {
+    RT_NOREF1(pUVM);
     AssertReturn(cArgs == 1, VERR_DBGC_PARSE_BUG);
     AssertReturn(DBGCVAR_ISPOINTER(paArgs[0].enmType), VERR_DBGC_PARSE_BUG);
     AssertReturn(paArgs[0].enmRangeType == DBGCVAR_RANGE_NONE, VERR_DBGC_PARSE_BUG);
@@ -4220,7 +6104,7 @@ static DECLCALLBACK(int) dbgcFuncReadU64(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, 
 
 
 /**
- * @callback_method_impl{Reads a unsigned pointer-sized value.}
+ * @callback_method_impl{FNDBGCFUNC, Reads a unsigned pointer-sized value.}
  */
 static DECLCALLBACK(int) dbgcFuncReadPtr(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
                                          PDBGCVAR pResult)
@@ -4237,7 +6121,7 @@ static DECLCALLBACK(int) dbgcFuncReadPtr(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, 
 
 
 /**
- * @callback_method_impl{The hi(value) function implementation.}
+ * @callback_method_impl{FNDBGCFUNC, The hi(value) function implementation.}
  */
 static DECLCALLBACK(int) dbgcFuncHi(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
                                     PDBGCVAR pResult)
@@ -4265,7 +6149,7 @@ static DECLCALLBACK(int) dbgcFuncHi(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM 
 
 
 /**
- * @callback_method_impl{The low(value) function implementation.}
+ * @callback_method_impl{FNDBGCFUNC, The low(value) function implementation.}
  */
 static DECLCALLBACK(int) dbgcFuncLow(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
                                      PDBGCVAR pResult)
@@ -4293,7 +6177,7 @@ static DECLCALLBACK(int) dbgcFuncLow(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM
 
 
 /**
- * @callback_method_impl{The low(value) function implementation.}
+ * @callback_method_impl{FNDBGCFUNC,The low(value) function implementation.}
  */
 static DECLCALLBACK(int) dbgcFuncNot(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
                                      PDBGCVAR pResult)

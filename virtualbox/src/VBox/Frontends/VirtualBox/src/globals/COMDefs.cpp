@@ -1,12 +1,10 @@
 /* $Id: COMDefs.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * CInterface implementation
+ * VBox Qt GUI - CInterface implementation.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,27 +15,41 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QObject>
-#include <QSocketNotifier>
+# include <QSocketNotifier>
+
+/* GUI includes: */
+# include "COMDefs.h"
 
 /* COM includes: */
-#include "COMDefs.h"
-#include "UIDefs.h"
-#include "CVirtualBoxErrorInfo.h"
+# include "CVirtualBoxErrorInfo.h"
 
-#if !defined (VBOX_WITH_XPCOM)
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
-#else /* !defined (VBOX_WITH_XPCOM) */
+/* VirtualBox interface declarations: */
+#ifndef VBOX_WITH_XPCOM
+# include "VirtualBox.h"
+#else /* !VBOX_WITH_XPCOM */
+# include "VirtualBox_XPCOM.h"
+#endif /* VBOX_WITH_XPCOM */
 
 /* Other VBox includes: */
-#include <iprt/env.h>
-#include <iprt/err.h>
-#include <iprt/path.h>
-#include <iprt/param.h>
-#include <nsEventQueueUtils.h>
-#include <nsIEventQueue.h>
-#include <nsIExceptionService.h>
+#include <iprt/log.h>
+
+#ifdef VBOX_WITH_XPCOM
+
+/* Other VBox includes: */
+# include <iprt/env.h>
+# include <iprt/err.h>
+# include <iprt/path.h>
+# include <iprt/param.h>
+# include <nsEventQueueUtils.h>
+# include <nsIEventQueue.h>
+# include <nsIExceptionService.h>
 
 /* Mac OS X (Carbon mode) and OS/2 will notify the native queue
    internally in plevent.c. Because moc doesn't seems to respect
@@ -91,7 +103,7 @@ HRESULT COMBase::InitializeCOM(bool fGui)
 {
     LogFlowFuncEnter();
 
-    HRESULT rc = com::Initialize(fGui);
+    HRESULT rc = com::Initialize(fGui ? VBOX_COM_INIT_F_DEFAULT | VBOX_COM_INIT_F_GUI : VBOX_COM_INIT_F_DEFAULT);
 
 #if defined (VBOX_WITH_XPCOM)
 
@@ -214,7 +226,15 @@ void COMBase::FromSafeArray (const com::SafeGUIDArray &aArr,
     AssertCompileSize (GUID, sizeof (QUuid));
     aVec.resize (static_cast <int> (aArr.size()));
     for (int i = 0; i < aVec.size(); ++ i)
+    {
+#ifdef VBOX_WITH_XPCOM
         aVec [i] = *(QUuid*) &aArr [i];
+#else
+        /* No by-reference accessor, only by-value. So spell it out to avoid warnings. */
+        GUID Tmp = aArr[i];
+        aVec[i] = *(QUuid *)&Tmp;
+#endif
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -317,90 +337,88 @@ void COMErrorInfo::fetchFromCurrentThread(IUnknown *callee, const GUID *calleeII
     mIsNull = true;
     mIsFullAvailable = mIsBasicAvailable = false;
 
-    AssertReturn (!callee || calleeIID, (void) 0);
+    AssertReturnVoid(!callee || calleeIID);
 
     HRESULT rc = E_FAIL;
 
-#if !defined (VBOX_WITH_XPCOM)
+#if !defined(VBOX_WITH_XPCOM)
 
     if (callee)
     {
-        CComPtr <IUnknown> iface = callee;
-        CComQIPtr <ISupportErrorInfo> serr;
-        serr = callee;
+        ComPtr<IUnknown> iface(callee);
+        ComPtr<ISupportErrorInfo> serr(iface);
         if (!serr)
             return;
-        rc = serr->InterfaceSupportsErrorInfo (*calleeIID);
-        if (!SUCCEEDED (rc))
+        rc = serr->InterfaceSupportsErrorInfo(*calleeIID);
+        if (!SUCCEEDED(rc))
             return;
     }
 
-    CComPtr <IErrorInfo> err;
-    rc = ::GetErrorInfo (0, &err);
+    ComPtr<IErrorInfo> err;
+    rc = ::GetErrorInfo(0, err.asOutParam());
     if (rc == S_OK && err)
     {
-        CComPtr <IVirtualBoxErrorInfo> info;
-        info = err;
+        ComPtr<IVirtualBoxErrorInfo> info(err);
         if (info)
-            init (CVirtualBoxErrorInfo (info));
+            init(CVirtualBoxErrorInfo(info));
 
         if (!mIsFullAvailable)
         {
             bool gotSomething = false;
 
-            rc = err->GetGUID (COMBase::GUIDOut (mInterfaceID));
-            gotSomething |= SUCCEEDED (rc);
-            if (SUCCEEDED (rc))
-                mInterfaceName = getInterfaceNameFromIID (mInterfaceID);
+            rc = err->GetGUID(COMBase::GUIDOut(mInterfaceID));
+            gotSomething |= SUCCEEDED(rc);
+            if (SUCCEEDED(rc))
+                mInterfaceName = getInterfaceNameFromIID(mInterfaceID);
 
-            rc = err->GetSource (COMBase::BSTROut (mComponent));
-            gotSomething |= SUCCEEDED (rc);
+            rc = err->GetSource(COMBase::BSTROut(mComponent));
+            gotSomething |= SUCCEEDED(rc);
 
-            rc = err->GetDescription (COMBase::BSTROut (mText));
-            gotSomething |= SUCCEEDED (rc);
+            rc = err->GetDescription(COMBase::BSTROut(mText));
+            gotSomething |= SUCCEEDED(rc);
 
             if (gotSomething)
                 mIsBasicAvailable = true;
 
             mIsNull = !gotSomething;
 
-            AssertMsg (gotSomething, ("Nothing to fetch!\n"));
+            AssertMsg(gotSomething,("Nothing to fetch!\n"));
         }
     }
 
-#else /* !defined (VBOX_WITH_XPCOM) */
+#else /* defined(VBOX_WITH_XPCOM) */
 
-    nsCOMPtr <nsIExceptionService> es;
-    es = do_GetService (NS_EXCEPTIONSERVICE_CONTRACTID, &rc);
-    if (NS_SUCCEEDED (rc))
+    nsCOMPtr<nsIExceptionService> es;
+    es = do_GetService(NS_EXCEPTIONSERVICE_CONTRACTID, &rc);
+    if (NS_SUCCEEDED(rc))
     {
-        nsCOMPtr <nsIExceptionManager> em;
-        rc = es->GetCurrentExceptionManager (getter_AddRefs (em));
-        if (NS_SUCCEEDED (rc))
+        nsCOMPtr<nsIExceptionManager> em;
+        rc = es->GetCurrentExceptionManager(getter_AddRefs(em));
+        if (NS_SUCCEEDED(rc))
         {
-            nsCOMPtr <nsIException> ex;
-            rc = em->GetCurrentException (getter_AddRefs(ex));
-            if (NS_SUCCEEDED (rc) && ex)
+            nsCOMPtr<nsIException> ex;
+            rc = em->GetCurrentException(getter_AddRefs(ex));
+            if (NS_SUCCEEDED(rc) && ex)
             {
-                nsCOMPtr <IVirtualBoxErrorInfo> info;
-                info = do_QueryInterface (ex, &rc);
-                if (NS_SUCCEEDED (rc) && info)
-                    init (CVirtualBoxErrorInfo (info));
+                nsCOMPtr<IVirtualBoxErrorInfo> info;
+                info = do_QueryInterface(ex, &rc);
+                if (NS_SUCCEEDED(rc) && info)
+                    init(CVirtualBoxErrorInfo(info));
 
                 if (!mIsFullAvailable)
                 {
                     bool gotSomething = false;
 
-                    rc = ex->GetResult (&mResultCode);
-                    gotSomething |= NS_SUCCEEDED (rc);
+                    rc = ex->GetResult(&mResultCode);
+                    gotSomething |= NS_SUCCEEDED(rc);
 
                     char *message = NULL; // utf8
-                    rc = ex->GetMessage (&message);
-                    gotSomething |= NS_SUCCEEDED (rc);
-                    if (NS_SUCCEEDED (rc) && message)
+                    rc = ex->GetMessage(&message);
+                    gotSomething |= NS_SUCCEEDED(rc);
+                    if (NS_SUCCEEDED(rc) && message)
                     {
-                        mText = QString::fromUtf8 (message);
-                        nsMemory::Free (message);
+                        mText = QString::fromUtf8(message);
+                        nsMemory::Free(message);
                     }
 
                     if (gotSomething)
@@ -408,25 +426,25 @@ void COMErrorInfo::fetchFromCurrentThread(IUnknown *callee, const GUID *calleeII
 
                     mIsNull = !gotSomething;
 
-                    AssertMsg (gotSomething, ("Nothing to fetch!\n"));
+                    AssertMsg(gotSomething, ("Nothing to fetch!\n"));
                 }
 
                 // set the exception to NULL (to emulate Win32 behavior)
-                em->SetCurrentException (NULL);
+                em->SetCurrentException(NULL);
 
                 rc = NS_OK;
             }
         }
     }
 
-    AssertComRC (rc);
+    AssertComRC(rc);
 
-#endif /* !defined (VBOX_WITH_XPCOM) */
+#endif /* !defined(VBOX_WITH_XPCOM) */
 
     if (callee && calleeIID && mIsBasicAvailable)
     {
-        mCalleeIID = COMBase::ToQUuid (*calleeIID);
-        mCalleeName = getInterfaceNameFromIID (mCalleeIID);
+        mCalleeIID = COMBase::ToQUuid(*calleeIID);
+        mCalleeName = getInterfaceNameFromIID(mCalleeIID);
     }
 }
 

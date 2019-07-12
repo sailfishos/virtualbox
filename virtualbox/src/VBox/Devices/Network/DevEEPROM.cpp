@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2010 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -85,8 +85,9 @@ bool EEPROM93C46::readWord(uint32_t u32Addr, uint16_t *pu16Value)
  */
 EEPROM93C46::State EEPROM93C46::opRead()
 {
-    m_u16Word = m_au16Data[m_u16Addr++];
-    E1kLog(("EEPROM: Reading word %04x at %08x\n", m_u16Word, m_u16Addr-1));
+    m_u16Word = m_au16Data[m_u16Addr];
+    E1kLog(("EEPROM: Reading word %04x at %08x\n", m_u16Word, m_u16Addr));
+    m_u16Addr = (m_u16Addr + 1) & ADDR_MASK;
     m_u16Mask = DATA_MSB;
     return WRITING_DO;
 }
@@ -235,7 +236,7 @@ void EEPROM93C46::write(uint32_t u32Wires)
                 break;
             case READING_DI:
                 m_u32InternalWires &= ~WIRES_DO; /* Clear ready/busy status from DO. */
-                /* Fall through! */
+                RT_FALL_THRU();
             default:
                 m_eState = STANDBY;
                 break;

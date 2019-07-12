@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/base64.h>
 
 #include <iprt/err.h>
@@ -37,9 +38,9 @@
 #include <iprt/test.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #if defined(RT_OS_OS2) || defined(RT_OS_WINDOWS)
 # define MY_NL "\r\n"
 #else
@@ -47,9 +48,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 
 
 static void tstBase64(const void *pvData, size_t cbData,
@@ -92,8 +93,8 @@ static void tstBase64(const void *pvData, size_t cbData,
         RTTestIFailed("RTBase64Encode returned %zu bytes, expected %zu.\n",
                       cchOut, cchEnc);
     else if (fNormalEnc && memcmp(szOut, pszEnc, cchOut + 1))
-        RTTestIFailed("RTBase64Encode returned:\n%*s\nexpected:\n%s\n",
-                      szOut, pszEnc);
+        RTTestIFailed("RTBase64Encode returned:\n%.*s\nexpected:\n%s\n",
+                      sizeof(szOut), szOut, pszEnc);
 
     size_t cchOut2 = RTBase64EncodedLength(cbData);
     if (cchOut != cchOut2)

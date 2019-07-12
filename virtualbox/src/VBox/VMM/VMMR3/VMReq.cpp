@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VM
 #include <VBox/vmm/mm.h>
 #include <VBox/vmm/vmm.h>
@@ -37,10 +37,10 @@
 #include <iprt/thread.h>
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-static int  vmR3ReqProcessOneU(PUVM pUVM, PVMREQ pReq);
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
+static int  vmR3ReqProcessOne(PVMREQ pReq);
 
 
 /**
@@ -54,7 +54,7 @@ static int  vmR3ReqProcessOneU(PUVM pUVM, PVMREQ pReq);
  *          its status code is return.  Otherwise, the status of pfnFunction is
  *          returned.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   idDstCpu        The destination CPU(s). Either a specific CPU ID or
  *                          one of the following special values:
  *                              VMCPUID_ANY, VMCPUID_ANY_QUEUE, VMCPUID_ALL or VMCPUID_ALL_REVERSE.
@@ -91,7 +91,7 @@ VMMR3_INT_DECL(int) VMR3ReqCallWait(PVM pVM, VMCPUID idDstCpu, PFNRT pfnFunction
  *          its status code is return.  Otherwise, the status of pfnFunction is
  *          returned.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pUVM            The user mode VM structure.
  * @param   idDstCpu        The destination CPU(s). Either a specific CPU ID or
  *                          one of the following special values:
  *                              VMCPUID_ANY, VMCPUID_ANY_QUEUE, VMCPUID_ALL or VMCPUID_ALL_REVERSE.
@@ -125,7 +125,7 @@ VMMR3DECL(int) VMR3ReqCallWaitU(PUVM pUVM, VMCPUID idDstCpu, PFNRT pfnFunction, 
  *
  * @returns VBox status code returned by VMR3ReqCallVU.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   idDstCpu        The destination CPU(s). Either a specific CPU ID or
  *                          one of the following special values:
  *                              VMCPUID_ANY, VMCPUID_ANY_QUEUE, VMCPUID_ALL or VMCPUID_ALL_REVERSE.
@@ -184,7 +184,7 @@ VMMR3DECL(int) VMR3ReqCallNoWaitU(PUVM pUVM, VMCPUID idDstCpu, PFNRT pfnFunction
  *
  * @returns VBox status code of VMR3ReqCallVU.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   idDstCpu        The destination CPU(s). Either a specific CPU ID or
  *                          one of the following special values:
  *                              VMCPUID_ANY, VMCPUID_ANY_QUEUE, VMCPUID_ALL or VMCPUID_ALL_REVERSE.
@@ -247,7 +247,7 @@ VMMR3DECL(int) VMR3ReqCallVoidWaitU(PUVM pUVM, VMCPUID idDstCpu, PFNRT pfnFuncti
  *
  * @returns VBox status code of VMR3ReqCallVU.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   idDstCpu        The destination CPU(s). Either a specific CPU ID or
  *                          one of the following special values:
  *                              VMCPUID_ANY, VMCPUID_ANY_QUEUE, VMCPUID_ALL or VMCPUID_ALL_REVERSE.
@@ -283,7 +283,7 @@ VMMR3DECL(int) VMR3ReqCallVoidNoWait(PVM pVM, VMCPUID idDstCpu, PFNRT pfnFunctio
  *          its status code is return.  Otherwise, the status of pfnFunction is
  *          returned.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   idDstCpu        The destination CPU(s). Either a specific CPU ID or
  *                          one of the following special values:
  *                              VMCPUID_ANY, VMCPUID_ANY_QUEUE, VMCPUID_ALL or VMCPUID_ALL_REVERSE.
@@ -653,7 +653,7 @@ VMMR3DECL(int) VMR3ReqAlloc(PUVM pUVM, PVMREQ *ppReq, VMREQTYPE enmType, VMCPUID
                     AssertRC(rc);
                     if (RT_FAILURE(rc))
                         return rc;
-#if 0 ///@todo @bugref{4725} - def RT_LOCK_STRICT
+#if 0 /// @todo @bugref{4725} - def RT_LOCK_STRICT
                     for (VMCPUID idCpu = 0; idCpu < pUVM->cCpus; idCpu++)
                         RTSemEventAddSignaller(pReq->EventSem, pUVM->aCpus[idCpu].vm.s.ThreadEMT);
 #endif
@@ -700,7 +700,7 @@ VMMR3DECL(int) VMR3ReqAlloc(PUVM pUVM, PVMREQ *ppReq, VMREQTYPE enmType, VMCPUID
         MMR3HeapFree(pReq);
         return rc;
     }
-#if 0 ///@todo @bugref{4725} - def RT_LOCK_STRICT
+#if 0 /// @todo @bugref{4725} - def RT_LOCK_STRICT
     for (VMCPUID idCpu = 0; idCpu < pUVM->cCpus; idCpu++)
         RTSemEventAddSignaller(pReq->EventSem, pUVM->aCpus[idCpu].vm.s.ThreadEMT);
 #endif
@@ -940,7 +940,7 @@ VMMR3DECL(int) VMR3ReqQueue(PVMREQ pReq, RTMSINTERVAL cMillies)
          * The requester was an EMT, just execute it.
          */
         pReq->enmState = VMREQSTATE_QUEUED;
-        rc = vmR3ReqProcessOneU(pUVM, pReq);
+        rc = vmR3ReqProcessOne(pReq);
         LogFlow(("VMR3ReqQueue: returns %Rrc (processed)\n", rc));
     }
     return rc;
@@ -1167,7 +1167,7 @@ VMMR3_INT_DECL(int) VMR3ReqProcessU(PUVM pUVM, VMCPUID idDstCpu, bool fPriorityO
          * Process the request
          */
         STAM_COUNTER_INC(&pUVM->vm.s.StatReqProcessed);
-        int rc2 = vmR3ReqProcessOneU(pUVM, pReq);
+        int rc2 = vmR3ReqProcessOne(pReq);
         if (    rc2 >= VINF_EM_FIRST
             &&  rc2 <= VINF_EM_LAST)
         {
@@ -1186,27 +1186,11 @@ VMMR3_INT_DECL(int) VMR3ReqProcessU(PUVM pUVM, VMCPUID idDstCpu, bool fPriorityO
  *
  * @returns VBox status code.
  *
- * @param   pVM         Pointer to the VM.
  * @param   pReq        Request packet to process.
  */
-static int  vmR3ReqProcessOneU(PUVM pUVM, PVMREQ pReq)
+static int  vmR3ReqProcessOne(PVMREQ pReq)
 {
-    LogFlow(("vmR3ReqProcessOneU: pReq=%p type=%d fFlags=%#x\n", pReq, pReq->enmType, pReq->fFlags));
-
-#if 1 /*def VBOX_STRICT */
-    /*
-     * Disable rendezvous if servicing a priority request.  Priority requests
-     * can not make use of the EMT rendezvous API.
-     */
-    PVMCPU      pVCpu               = NULL;
-    bool        fSavedInRendezvous  = true;
-    bool const  fPriorityReq        = RT_BOOL(pReq->fFlags & VMREQFLAGS_PRIORITY);
-    if (fPriorityReq && pUVM->pVM)
-    {
-        pVCpu = VMMGetCpu(pUVM->pVM);
-        fSavedInRendezvous = VMMR3EmtRendezvousSetDisabled(pVCpu, true /*fDisabled*/);
-    }
-#endif
+    LogFlow(("vmR3ReqProcessOne: pReq=%p type=%d fFlags=%#x\n", pReq, pReq->enmType, pReq->fFlags));
 
     /*
      * Process the request.
@@ -1326,14 +1310,14 @@ static int  vmR3ReqProcessOneU(PUVM pUVM, PVMREQ pReq)
     if (pReq->fFlags & VMREQFLAGS_NO_WAIT)
     {
         /* Free the packet, nobody is waiting. */
-        LogFlow(("vmR3ReqProcessOneU: Completed request %p: rcReq=%Rrc rcRet=%Rrc - freeing it\n",
+        LogFlow(("vmR3ReqProcessOne: Completed request %p: rcReq=%Rrc rcRet=%Rrc - freeing it\n",
                  pReq, rcReq, rcRet));
         VMR3ReqFree(pReq);
     }
     else
     {
         /* Notify the waiter and him free up the packet. */
-        LogFlow(("vmR3ReqProcessOneU: Completed request %p: rcReq=%Rrc rcRet=%Rrc - notifying waiting thread\n",
+        LogFlow(("vmR3ReqProcessOne: Completed request %p: rcReq=%Rrc rcRet=%Rrc - notifying waiting thread\n",
                  pReq, rcReq, rcRet));
         ASMAtomicXchgSize(&pReq->fEventSemClear, false);
         int rc2 = RTSemEventSignal(pReq->EventSem);
@@ -1344,13 +1328,6 @@ static int  vmR3ReqProcessOneU(PUVM pUVM, PVMREQ pReq)
         }
     }
 
-#if 1 /*def VBOX_STRICT */
-    /*
-     * Restore the rendezvous disabled state.
-     */
-    if (!fSavedInRendezvous)
-        VMMR3EmtRendezvousSetDisabled(pVCpu, false /*fDisabled*/);
-#endif
     return rcRet;
 }
 

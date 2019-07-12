@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,14 +23,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-#ifndef ___iprt_crypto_spc_h
-#define ___iprt_crypto_spc_h
+#ifndef ___iprt_crypto_pem_h
+#define ___iprt_crypto_pem_h
 
-#include <iprt/asn1.h>
-#include <iprt/crypto/x509.h>
-#include <iprt/crypto/pkcs7.h>
-#include <iprt/md5.h>
-#include <iprt/sha.h>
+#include <iprt/types.h>
 
 
 RT_C_DECLS_BEGIN
@@ -101,11 +97,35 @@ typedef RTCRPEMSECTION const *PCRTCRPEMSECTION;
 
 
 /**
- * Frees sections returned by RTCrPemReadFile.
+ * Frees sections returned by RTCrPemReadFile and RTCrPemParseContent.
  * @returns IPRT status code.
  * @param   pSectionHead        The first section.
  */
 RTDECL(int) RTCrPemFreeSections(PCRTCRPEMSECTION pSectionHead);
+
+/**
+ * Parses the given data and returns a list of binary sections.
+ *
+ * If the file isn't an ASCII file or if no markers were found, the entire file
+ * content is returned as one single section (with pMarker = NULL).
+ *
+ * @returns IPRT status code.
+ * @retval  VINF_EOF if the file is empty.  The @a ppSectionHead value will be
+ *          NULL.
+ * @retval  VWRN_NOT_FOUND no section was found and RTCRPEMREADFILE_F_ONLY_PEM
+ *          is specified.  The @a ppSectionHead value will be NULL.
+ *
+ * @param   pvContent       The content bytes to parse.
+ * @param   cbContent       The number of content bytes.
+ * @param   fFlags          RTCRPEMREADFILE_F_XXX.
+ * @param   paMarkers       Array of one or more section markers to look for.
+ * @param   cMarkers        Number of markers in the array.
+ * @param   ppSectionHead   Where to return the head of the section list.  Call
+ *                          RTCrPemFreeSections to free.
+ * @param   pErrInfo        Where to return extend error info. Optional.
+ */
+RTDECL(int) RTCrPemParseContent(void const *pvContent, size_t cbContent, uint32_t fFlags,
+                                PCRTCRPEMMARKER paMarkers, size_t cMarkers, PCRTCRPEMSECTION *ppSectionHead, PRTERRINFO pErrInfo);
 
 /**
  * Reads the content of the given file and returns a list of binary sections
@@ -115,15 +135,47 @@ RTDECL(int) RTCrPemFreeSections(PCRTCRPEMSECTION pSectionHead);
  * content is returned as one single section (with pMarker = NULL).
  *
  * @returns IPRT status code.
+ * @retval  VINF_EOF if the file is empty.  The @a ppSectionHead value will be
+ *          NULL.
+ * @retval  VWRN_NOT_FOUND no section was found and RTCRPEMREADFILE_F_ONLY_PEM
+ *          is specified.  The @a ppSectionHead value will be NULL.
+ *
  * @param   pszFilename     The path to the file to read.
- * @param   fFlags          Flags reserved for future hacks.
+ * @param   fFlags          RTCRPEMREADFILE_F_XXX.
  * @param   paMarkers       Array of one or more section markers to look for.
  * @param   cMarkers        Number of markers in the array.
- * @param   ppSectionHead   Where to return the head of the section list.
+ * @param   ppSectionHead   Where to return the head of the section list. Call
+ *                          RTCrPemFreeSections to free.
  * @param   pErrInfo        Where to return extend error info. Optional.
  */
 RTDECL(int) RTCrPemReadFile(const char *pszFilename, uint32_t fFlags, PCRTCRPEMMARKER paMarkers, size_t cMarkers,
                             PCRTCRPEMSECTION *ppSectionHead, PRTERRINFO pErrInfo);
+/** @name RTCRPEMREADFILE_F_XXX - Flags for RTCrPemReadFile and
+ *        RTCrPemParseContent.
+ * @{ */
+/** Continue on encoding error. */
+#define RTCRPEMREADFILE_F_CONTINUE_ON_ENCODING_ERROR    RT_BIT(0)
+/** Only PEM sections, no binary fallback. */
+#define RTCRPEMREADFILE_F_ONLY_PEM                      RT_BIT(1)
+/** Valid flags. */
+#define RTCRPEMREADFILE_F_VALID_MASK                    UINT32_C(0x00000003)
+/** @} */
+
+/**
+ * Finds the beginning of first PEM section using the specified markers.
+ *
+ * This will not look any further than the first section.  Nor will it check for
+ * binaries.
+ *
+ * @returns Pointer to the "-----BEGIN XXXX" sequence on success.
+ *          NULL if not found.
+ * @param   pvContent       The content bytes to parse.
+ * @param   cbContent       The number of content bytes.
+ * @param   paMarkers       Array of one or more section markers to look for.
+ * @param   cMarkers        Number of markers in the array.
+ */
+RTDECL(const char *) RTCrPemFindFirstSectionInContent(void const *pvContent, size_t cbContent,
+                                                      PCRTCRPEMMARKER paMarkers, size_t cMarkers);
 
 /** @} */
 

@@ -28,9 +28,10 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SUP_DRV
 #define __STDC_CONSTANT_MACROS
 #define __STDC_LIMIT_MACROS
@@ -49,9 +50,9 @@
 #include <iprt/param.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Device extention & session data association structure.
  */
@@ -76,9 +77,9 @@ extern uint16_t             g_cchInitTextMax;
 RT_C_DECLS_END
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 
 
@@ -124,7 +125,7 @@ DECLASM(int) VBoxDrvInit(const char *pszArgs)
                            "\r\n"
                            "VirtualBox.org Support Driver for OS/2 version " VBOX_VERSION_STRING "\r\n"
                            "Copyright (C) 2007 Knut St. Osmundsen\r\n"
-                           "Copyright (C) 2007 Oracle Corporation\r\n");
+                           "Copyright (C) 2007-2016 Oracle Corporation\r\n");
                     g_cchInitText = strlen(&g_szInitText[0]);
                 }
                 return VINF_SUCCESS;
@@ -162,7 +163,7 @@ DECLASM(int) VBoxDrvOpen(uint16_t sfn)
         RTSpinlockAcquire(g_Spinlock);
         pSession->pNextHash = g_apSessionHashTab[iHash];
         g_apSessionHashTab[iHash] = pSession;
-        RTSpinlockReleaseNoInts(g_Spinlock);
+        RTSpinlockRelease(g_Spinlock);
     }
 
     Log(("VBoxDrvOpen: g_DevExt=%p pSession=%p rc=%d pid=%d\n", &g_DevExt, pSession, rc, (int)RTProcSelf()));
@@ -211,7 +212,7 @@ DECLASM(int) VBoxDrvClose(uint16_t sfn)
             }
         }
     }
-    RTSpinlockReleaseNoInts(g_Spinlock);
+    RTSpinlockRelease(g_Spinlock);
     if (!pSession)
     {
         OSDBGPRINT(("VBoxDrvIoctl: WHUT?!? pSession == NULL! This must be a mistake... pid=%d sfn=%d\n", (int)Process, sfn));
@@ -247,7 +248,7 @@ DECLASM(int) VBoxDrvIOCtlFast(uint16_t sfn, uint8_t iFunction)
         if (RT_LIKELY(pSession))
             supdrvSessionRetain(pSession);
     }
-    RTSpinlockReleaseNoInts(g_Spinlock);
+    RTSpinlockRelease(g_Spinlock);
     if (RT_UNLIKELY(!pSession))
     {
         OSDBGPRINT(("VBoxDrvIoctl: WHUT?!? pSession == NULL! This must be a mistake... pid=%d\n", (int)Process));
@@ -284,7 +285,7 @@ DECLASM(int) VBoxDrvIOCtl(uint16_t sfn, uint8_t iCat, uint8_t iFunction, void *p
         if (RT_LIKELY(pSession))
             supdrvSessionRetain(pSession);
     }
-    RTSpinlockReleaseNoInts(g_Spinlock);
+    RTSpinlockRelease(g_Spinlock);
     if (!pSession)
     {
         OSDBGPRINT(("VBoxDrvIoctl: WHUT?!? pSession == NULL! This must be a mistake... pid=%d\n", (int)Process));
@@ -406,6 +407,19 @@ bool VBOXCALL  supdrvOSGetForcedAsyncTscMode(PSUPDRVDEVEXT pDevExt)
 }
 
 
+bool VBOXCALL  supdrvOSAreCpusOfflinedOnSuspend(void)
+{
+    return false;
+}
+
+
+bool VBOXCALL  supdrvOSAreTscDeltasInSync(void)
+{
+    NOREF(pDevExt);
+    return false;
+}
+
+
 int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const char *pszFilename)
 {
     NOREF(pDevExt); NOREF(pImage); NOREF(pszFilename);
@@ -413,15 +427,10 @@ int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
 }
 
 
-void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv,
+                                           const uint8_t *pbImageBits, const char *pszSymbol)
 {
-    NOREF(pDevExt); NOREF(pImage);
-}
-
-
-int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv, const uint8_t *pbImageBits)
-{
-    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits);
+    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits); NOREF(pszSymbol);
     return VERR_NOT_SUPPORTED;
 }
 
@@ -437,6 +446,51 @@ void VBOXCALL   supdrvOSLdrUnload(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
 {
     NOREF(pDevExt); NOREF(pImage);
 }
+
+
+void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const char *pszFilename)
+{
+    NOREF(pDevExt); NOREF(pImage); NOREF(pszFilename);
+}
+
+
+void VBOXCALL   supdrvOSLdrNotifyUnloaded(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+{
+    NOREF(pDevExt); NOREF(pImage);
+}
+
+
+int  VBOXCALL   supdrvOSLdrQuerySymbol(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage,
+                                       const char *pszSymbol, size_t cchSymbol, void **ppvSymbol)
+{
+    RT_NOREF(pDevExt, pImage, pszSymbol, cchSymbol, ppvSymbol);
+    return VERR_WRONG_ORDER;
+}
+
+
+#ifdef SUPDRV_WITH_MSR_PROBER
+
+int VBOXCALL    supdrvOSMsrProberRead(uint32_t uMsr, RTCPUID idCpu, uint64_t *puValue)
+{
+    NOREF(uMsr); NOREF(idCpu); NOREF(puValue);
+    return VERR_NOT_SUPPORTED;
+}
+
+
+int VBOXCALL    supdrvOSMsrProberWrite(uint32_t uMsr, RTCPUID idCpu, uint64_t uValue)
+{
+    NOREF(uMsr); NOREF(idCpu); NOREF(uValue);
+    return VERR_NOT_SUPPORTED;
+}
+
+
+int VBOXCALL    supdrvOSMsrProberModify(RTCPUID idCpu, PSUPMSRPROBER pReq)
+{
+    NOREF(idCpu); NOREF(pReq);
+    return VERR_NOT_SUPPORTED;
+}
+
+#endif /* SUPDRV_WITH_MSR_PROBER */
 
 
 /**
@@ -482,9 +536,6 @@ SUPR0DECL(int) SUPR0Printf(const char *pszFormat, ...)
 }
 
 
-/**
- * Returns configuration flags of the host kernel.
- */
 SUPR0DECL(uint32_t) SUPR0GetKernelFeatures(void)
 {
     return 0;

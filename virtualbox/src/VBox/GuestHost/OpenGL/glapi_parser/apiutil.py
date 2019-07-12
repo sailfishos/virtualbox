@@ -5,24 +5,25 @@
 # This file defines a bunch of utility functions for OpenGL API code
 # generation.
 
+from __future__ import print_function
 import sys, string, re
 
 
 #======================================================================
 
 def CopyrightC( ):
-	print """/* Copyright (c) 2001, Stanford University
+	print("""/* Copyright (c) 2001, Stanford University
 	All rights reserved.
 
 	See the file LICENSE.txt for information on redistributing this software. */
-	"""
+	""")
 
 def CopyrightDef( ):
-	print """; Copyright (c) 2001, Stanford University
+	print("""; Copyright (c) 2001, Stanford University
 	; All rights reserved.
 	;
 	; See the file LICENSE.txt for information on redistributing this software.
-	"""
+	""")
 
 
 
@@ -55,7 +56,7 @@ def ProcessSpecFile(filename, userFunc):
 	processed."""
 	specFile = open(filename, "r")
 	if not specFile:
-		print "Error: couldn't open %s file!" % filename
+		print("Error: couldn't open %s file!" % filename)
 		sys.exit()
 
 	record = APIFunction()
@@ -63,7 +64,7 @@ def ProcessSpecFile(filename, userFunc):
 	for line in specFile.readlines():
 
 		# split line into tokens
-		tokens = string.split(line)
+		tokens = line.split()
 
 		if len(tokens) > 0 and line[0] != '#':
 
@@ -77,11 +78,11 @@ def ProcessSpecFile(filename, userFunc):
 				record.name = tokens[1]
 
 			elif tokens[0] == 'return':
-				record.returnType = string.join(tokens[1:], ' ')
+				record.returnType = ' '.join(tokens[1:])
 			
 			elif tokens[0] == 'param':
 				name = tokens[1]
-				type = string.join(tokens[2:], ' ')
+				type = ' '.join(tokens[2:])
 				vecSize = 0
 				record.params.append((name, type, vecSize))
 
@@ -166,7 +167,7 @@ def ProcessSpecFile(filename, userFunc):
 				record.chrelopcode = int(tokens[1])
 
 			else:
-				print 'Invalid token %s after function %s' % (tokens[0], record.name)
+				print('Invalid token %s after function %s' % (tokens[0], record.name))
 			#endif
 		#endif
 	#endfor
@@ -188,7 +189,7 @@ __ReverseAliases = {}
 
 
 def AddFunction(record):
-	assert not __FunctionDict.has_key(record.name)
+	assert record.name not in __FunctionDict
 	#if not "omit" in record.chromium:
 	__FunctionDict[record.name] = record
 
@@ -209,9 +210,10 @@ def GetFunctionDict(specFile = ""):
 			# and look for regular aliases (for glloader)
 			a = __FunctionDict[func].alias
 			if a:
-				__ReverseAliases[a] = func
-			#endif
-		#endfor
+				if a in __ReverseAliases:
+					__ReverseAliases[a].append(func)
+				else:
+					__ReverseAliases[a] = [func]
 	#endif
 	return __FunctionDict
 
@@ -335,13 +337,19 @@ def Alias(funcName):
 	return d[funcName].alias
 
 
-def ReverseAlias(funcName):
-	"""Like Alias(), but the inverse."""
+def ReverseAliases(funcName):
+	"""Return a list of aliases."""
 	d = GetFunctionDict()
-	if funcName in __ReverseAliases.keys():
-		return __ReverseAliases[funcName]
+	if funcName in __ReverseAliases:
+		return sorted(__ReverseAliases[funcName])
 	else:
-		return ''
+		return []
+
+
+def ReverseAliasesMaxCount():
+	"""Returns the maximum number of aliases possible for a function."""
+	d = GetFunctionDict()
+	return max([len(a) for a in __ReverseAliases.values()])
 
 
 def NonVectorFunction(funcName):
@@ -382,10 +390,10 @@ def GetCategoryWrapper(func_name):
 		  cat == '2.0' or
 		  cat == '2.1'):
 		# i.e. OpenGL 1.3 or 1.4 or 1.5
-		return "OPENGL_VERSION_" + string.replace(cat, ".", "_")
+		return "OPENGL_VERSION_" + cat.replace(".", "_")
 	else:
 		assert cat != ''
-		return string.replace(cat, "GL_", "")
+		return cat.replace("GL_", "")
 
 
 def CanCompile(funcName):
@@ -517,7 +525,7 @@ def FuncGetsState(funcName):
 
 def IsPointer(dataType):
 	"""Determine if the datatype is a pointer.  Return 1 or 0."""
-	if string.find(dataType, "*") == -1:
+	if dataType.find("*") == -1:
 		return 0
 	else:
 		return 1
@@ -527,7 +535,7 @@ def PointerType(pointerType):
 	"""Return the type of a pointer.
 	Ex: PointerType('const GLubyte *') = 'GLubyte'
 	"""
-	t = string.split(pointerType, ' ')
+	t = pointerType.split(' ')
 	if t[0] == "const":
 		t[0] = t[1]
 	return t[0]
@@ -537,17 +545,20 @@ def PointerType(pointerType):
 
 def OpcodeName(funcName):
 	"""Return the C token for the opcode for the given function."""
-	return "CR_" + string.upper(funcName) + "_OPCODE"
+	return "CR_" + funcName.upper() + "_OPCODE"
 
 
 def ExtendedOpcodeName(funcName):
 	"""Return the C token for the extended opcode for the given function."""
-	return "CR_" + string.upper(funcName) + "_EXTEND_OPCODE"
+	return "CR_" + funcName.upper() + "_EXTEND_OPCODE"
 
 
 
 
 #======================================================================
+
+def _needPointerOrigin(name, type):
+	return type == 'const GLvoid *' and (name == 'pointer' or name == 'NULL');
 
 def MakeCallString(params):
 	"""Given a list of (name, type, vectorSize) parameters, make a C-style
@@ -565,6 +576,19 @@ def MakeCallString(params):
 	#endfor
 	return result
 #enddef
+
+def MakeCallStringForDispatcher(params):
+	"""Same as MakeCallString, but with 'pointer' origin hack for bugref:9407."""
+	strResult = ''
+	fFirst    = True;
+	for (name, type, vecSize) in params:
+		if not fFirst:  strResult += ', ';
+		else:           fFirst     = False;
+		strResult += name;
+		if _needPointerOrigin(name, type):
+			if name != 'NULL': strResult += ', fRealPtr';
+			else:   		   strResult += ', 0 /*fRealPtr*/';
+	return strResult;
 
 
 def MakeDeclarationString(params):
@@ -587,6 +611,20 @@ def MakeDeclarationString(params):
 		return result
 	#endif
 #enddef
+
+def MakeDeclarationStringForDispatcher(params):
+	"""Same as MakeDeclarationString, but with 'pointer' origin hack for bugref:9407."""
+	if len(params) == 0:
+		return 'void';
+	strResult = '';
+	fFirst    = True;
+	for (name, type, vecSize) in params:
+		if not fFirst:  strResult += ', ';
+		else:           fFirst     = False;
+		strResult = strResult + type + ' ' + name;
+		if _needPointerOrigin(name, type):
+			strResult = strResult + ' CRVBOX_HOST_ONLY_PARAM(int fRealPtr)';
+	return strResult;
 
 def MakeDeclarationStringWithContext(ctx_macro_prefix, params):
 	"""Same as MakeDeclarationString, but adds a context macro
@@ -623,6 +661,20 @@ def MakePrototypeString(params):
 		return result
 	#endif
 #enddef
+
+def MakePrototypeStringForDispatcher(params):
+	"""Same as MakePrototypeString, but with 'pointer' origin hack for bugref:9407."""
+	if len(params) == 0:
+		return 'void'
+	strResult = ''
+	fFirst    = True;
+	for (name, type, vecSize) in params:
+		if not fFirst:  strResult += ', ';
+		else:           fFirst     = False;
+		strResult = strResult + type
+		if _needPointerOrigin(name, type):
+			strResult += ' CRVBOX_HOST_ONLY_PARAM(int)';
+	return strResult;
 
 
 #======================================================================
@@ -682,7 +734,7 @@ def PacketLength( params ):
 		if IsPointer(type):
 			size = PointerSize()
 		else:
-			assert string.find(type, "const") == -1
+			assert type.find("const") == -1
 			size = sizeof(type)
 		len = FixAlignment( len, size ) + size
 	len = WordAlign( len )
@@ -705,7 +757,7 @@ def LoadSpecials( filename ):
 #			return {}
 	
 	for line in f.readlines():
-		line = string.strip(line)
+		line = line.strip()
 		if line == "" or line[0] == '#':
 			continue
 		table[line] = 1
@@ -739,23 +791,8 @@ def AllSpecials( table_file ):
 	except KeyError:
 		table = LoadSpecials( filename )
 	
-	keys = table.keys()
-	keys.sort()
-	return keys
+	return sorted(table.keys())
 
-
-def AllSpecials( table_file ):
-	filename = table_file + "_special"
-	table = {}
-	try:
-		table = __specials[filename]
-	except KeyError:
-		table = LoadSpecials(filename)
-	
-	ret = table.keys()
-	ret.sort()
-	return ret
-	
 
 def NumSpecials( table_file ):
 	filename = table_file + "_special"
@@ -772,9 +809,9 @@ def PrintRecord(record):
 		prefix = "cr"
 	else:
 		prefix = "gl"
-	print '%s %s%s(%s);' % (record.returnType, prefix, record.name, argList )
+	print('%s %s%s(%s);' % (record.returnType, prefix, record.name, argList ))
 	if len(record.props) > 0:
-		print '   /* %s */' % string.join(record.props, ' ')
+		print('   /* %s */' % string.join(record.props, ' '))
 
 #ProcessSpecFile("APIspec.txt", PrintRecord)
 

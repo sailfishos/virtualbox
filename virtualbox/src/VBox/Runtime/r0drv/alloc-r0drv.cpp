@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define RTMEM_NO_WRAP_TO_EF_APIS
 #include <iprt/mem.h>
 #include "internal/iprt.h"
@@ -45,9 +45,9 @@
 #include "r0drv/alloc-r0drv.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RT_STRICT
 # define RTR0MEM_STRICT
 #endif
@@ -59,9 +59,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef RTR0MEM_STRICT
 /** Fence data. */
 static uint8_t const g_abFence[RTR0MEM_FENCE_EXTRA] =
@@ -89,21 +89,21 @@ DECLINLINE(PRTMEMHDR) rtR0MemAlloc(size_t cb, uint32_t fFlags)
 }
 
 
-RTDECL(void *)  RTMemTmpAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemTmpAllocTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     return RTMemAllocTag(cb, pszTag);
 }
 RT_EXPORT_SYMBOL(RTMemTmpAllocTag);
 
 
-RTDECL(void *)  RTMemTmpAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemTmpAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     return RTMemAllocZTag(cb, pszTag);
 }
 RT_EXPORT_SYMBOL(RTMemTmpAllocZTag);
 
 
-RTDECL(void)    RTMemTmpFree(void *pv) RT_NO_THROW
+RTDECL(void)    RTMemTmpFree(void *pv) RT_NO_THROW_DEF
 {
     return RTMemFree(pv);
 }
@@ -113,10 +113,11 @@ RT_EXPORT_SYMBOL(RTMemTmpFree);
 
 
 
-RTDECL(void *)  RTMemAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemAllocTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     PRTMEMHDR pHdr;
     RT_ASSERT_INTS_ON();
+    RT_NOREF_PV(pszTag);
 
     pHdr = rtR0MemAlloc(cb + RTR0MEM_FENCE_EXTRA, 0);
     if (pHdr)
@@ -132,10 +133,11 @@ RTDECL(void *)  RTMemAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemAllocTag);
 
 
-RTDECL(void *)  RTMemAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     PRTMEMHDR pHdr;
     RT_ASSERT_INTS_ON();
+    RT_NOREF_PV(pszTag);
 
     pHdr = rtR0MemAlloc(cb + RTR0MEM_FENCE_EXTRA, RTMEMHDR_FLAG_ZEROED);
     if (pHdr)
@@ -177,7 +179,7 @@ RTDECL(void *) RTMemAllocZVarTag(size_t cbUnaligned, const char *pszTag)
 RT_EXPORT_SYMBOL(RTMemAllocZVarTag);
 
 
-RTDECL(void *) RTMemReallocTag(void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemReallocTag(void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW_DEF
 {
     PRTMEMHDR pHdrOld;
 
@@ -243,7 +245,7 @@ RTDECL(void *) RTMemReallocTag(void *pvOld, size_t cbNew, const char *pszTag) RT
 RT_EXPORT_SYMBOL(RTMemReallocTag);
 
 
-RTDECL(void) RTMemFree(void *pv) RT_NO_THROW
+RTDECL(void) RTMemFree(void *pv) RT_NO_THROW_DEF
 {
     PRTMEMHDR pHdr;
     RT_ASSERT_INTS_ON();
@@ -276,7 +278,7 @@ RT_EXPORT_SYMBOL(RTMemFree);
 
 
 
-RTDECL(void *)    RTMemExecAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *)    RTMemExecAllocTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     PRTMEMHDR pHdr;
 #ifdef RT_OS_SOLARIS /** @todo figure out why */
@@ -284,6 +286,8 @@ RTDECL(void *)    RTMemExecAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
 #else
     RT_ASSERT_PREEMPTIBLE();
 #endif
+    RT_NOREF_PV(pszTag);
+
 
     pHdr = rtR0MemAlloc(cb + RTR0MEM_FENCE_EXTRA, RTMEMHDR_FLAG_EXEC);
     if (pHdr)
@@ -299,10 +303,11 @@ RTDECL(void *)    RTMemExecAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemExecAllocTag);
 
 
-RTDECL(void)      RTMemExecFree(void *pv, size_t cb) RT_NO_THROW
+RTDECL(void)      RTMemExecFree(void *pv, size_t cb) RT_NO_THROW_DEF
 {
     PRTMEMHDR pHdr;
     RT_ASSERT_INTS_ON();
+    RT_NOREF_PV(cb);
 
     if (!pv)
         return;
@@ -329,11 +334,12 @@ RT_EXPORT_SYMBOL(RTMemExecFree);
 
 
 
-RTDECL(int) RTMemAllocExTag(size_t cb, size_t cbAlignment, uint32_t fFlags, const char *pszTag, void **ppv) RT_NO_THROW
+RTDECL(int) RTMemAllocExTag(size_t cb, size_t cbAlignment, uint32_t fFlags, const char *pszTag, void **ppv) RT_NO_THROW_DEF
 {
     uint32_t    fHdrFlags = RTMEMHDR_FLAG_ALLOC_EX;
     PRTMEMHDR   pHdr;
     int         rc;
+    RT_NOREF_PV(pszTag);
 
     RT_ASSERT_PREEMPT_CPUID_VAR();
     if (!(fFlags & RTMEMALLOCEX_FLAGS_ANY_CTX_ALLOC))
@@ -393,9 +399,10 @@ RTDECL(int) RTMemAllocExTag(size_t cb, size_t cbAlignment, uint32_t fFlags, cons
 RT_EXPORT_SYMBOL(RTMemAllocExTag);
 
 
-RTDECL(void) RTMemFreeEx(void *pv, size_t cb) RT_NO_THROW
+RTDECL(void) RTMemFreeEx(void *pv, size_t cb) RT_NO_THROW_DEF
 {
     PRTMEMHDR pHdr;
+    RT_NOREF_PV(cb);
 
     if (!pv)
         return;

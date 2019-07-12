@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-darwin-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/log.h>
@@ -35,7 +35,8 @@
 
 RTDECL(void) RTLogWriteStdOut(const char *pch, size_t cb)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
     printf("%.*s", (int)cb, pch);
-    return;
+    IPRT_DARWIN_RESTORE_EFL_AC();
 }
 

@@ -1,8 +1,10 @@
+/* $Id: VBoxGINA.cpp $ */
 /** @file
- *
  * VBoxGINA -- Windows Logon DLL for VirtualBox
- *
- * Copyright (C) 2006-2012 Oracle Corporation
+ */
+
+/*
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,11 +17,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <windows.h>
+#include <iprt/win/windows.h>
 
 #include <iprt/buildconfig.h>
 #include <iprt/initterm.h>
 #include <iprt/ldr.h>
+#include <iprt/err.h>
 
 #include <VBox/VBoxGuestLib.h>
 
@@ -77,8 +80,9 @@ PGWLXDISCONNECTNOTIFY GWlxDisconnectNotify;
  */
 BOOL WINAPI DllMain(HINSTANCE hInstance,
                     DWORD     dwReason,
-                    LPVOID    lpReserved)
+                    LPVOID    pReserved)
 {
+    RT_NOREF(pReserved);
     switch (dwReason)
     {
         case DLL_PROCESS_ATTACH:
@@ -473,6 +477,7 @@ VOID WINAPI WlxShutdown(PVOID pWlxContext, DWORD ShutdownType)
  */
 BOOL WINAPI WlxScreenSaverNotify(PVOID pWlxContext, BOOL *pSecure)
 {
+    RT_NOREF(pWlxContext);
     VBoxGINAVerbose(0, "VBoxGINA::WlxScreenSaverNotify, pSecure=%d\n",
                     pSecure ? *pSecure : 0);
 
@@ -601,6 +606,7 @@ VOID WINAPI WlxDisconnectNotify(PVOID pWlxContext)
  */
 void WnpScreenSaverStop(PWLX_NOTIFICATION_INFO pInfo)
 {
+    RT_NOREF(pInfo);
     VBoxGINAVerbose(0, "VBoxGINA::WnpScreenSaverStop\n");
 
     /*

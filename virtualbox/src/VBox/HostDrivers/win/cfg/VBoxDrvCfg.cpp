@@ -2,8 +2,9 @@
 /** @file
  * VBoxDrvCfg.cpp - Windows Driver Manipulation API implementation
  */
+
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -12,11 +13,25 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
+
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/VBoxDrvCfg-win.h>
 
-#include <setupapi.h>
-#include <shlobj.h>
+#include <iprt/win/setupapi.h>
+#include <iprt/win/shlobj.h>
 
 #include <string.h>
 
@@ -26,6 +41,10 @@
 
 #include <Newdev.h>
 
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static PFNVBOXDRVCFG_LOG g_pfnVBoxDrvCfgLog;
 static void *g_pvVBoxDrvCfgLog;
 
@@ -229,7 +248,7 @@ static HRESULT vboxDrvCfgInfQueryKeyValue(PINFCONTEXT pCtx, DWORD iValue, LPWSTR
     NonStandardAssert(lpszValue);
     if (!lpszValue)
     {
-        NonStandardLogRelCrap((__FUNCTION__ ": SetCoTaskMemAlloc failed to alloc mem of size (%d), for iValue(%d)\n", cValue * sizeof (lpszValue[0]), dwErr, iValue));
+        NonStandardLogRelCrap((__FUNCTION__ ": SetCoTaskMemAlloc failed to alloc mem of size (%d), for iValue(%d)\n", cValue * sizeof (lpszValue[0]), iValue));
         return E_FAIL;
     }
 
@@ -348,8 +367,9 @@ static HRESULT vboxDrvCfgInfQueryModelsSectionName(HINF hInf, LPWSTR *lppszValue
 
 static HRESULT vboxDrvCfgInfQueryFirstPnPId(HINF hInf, LPWSTR *lppszPnPId)
 {
+    *lppszPnPId = NULL;
+
     LPWSTR lpszModels;
-    LPWSTR lpszPnPId;
     HRESULT hr = vboxDrvCfgInfQueryModelsSectionName(hInf, &lpszModels, NULL);
     NonStandardLogRelCrap((__FUNCTION__ ": vboxDrvCfgInfQueryModelsSectionName returned lpszModels = (%S)", lpszModels));
     if (hr != S_OK)
@@ -358,6 +378,7 @@ static HRESULT vboxDrvCfgInfQueryFirstPnPId(HINF hInf, LPWSTR *lppszPnPId)
         return hr;
     }
 
+    LPWSTR lpszPnPId = NULL;
     INFCONTEXT InfCtx;
     hr = vboxDrvCfgInfQueryContext(hInf, lpszModels, NULL, &InfCtx);
     if (hr != S_OK)
@@ -368,17 +389,14 @@ static HRESULT vboxDrvCfgInfQueryFirstPnPId(HINF hInf, LPWSTR *lppszPnPId)
     {
         hr = vboxDrvCfgInfQueryKeyValue(&InfCtx, 2, &lpszPnPId, NULL);
         NonStandardLogRelCrap((__FUNCTION__ ": vboxDrvCfgRegQueryKeyValue for models (%S) returned lpszPnPId (%S) \n", lpszModels, lpszPnPId));
+
         if (hr != S_OK)
-        {
             NonStandardLogRelCrap((__FUNCTION__ ": vboxDrvCfgRegQueryKeyValue for models (%S) failed, hr=0x%x\n", lpszModels, hr));
-        }
     }
     /* free models string right away */
     free(lpszModels);
     if (hr != S_OK)
-    {
         return hr;
-    }
 
     *lppszPnPId = lpszPnPId;
     return S_OK;
@@ -393,45 +411,22 @@ static HRESULT vboxDrvCfgInfCopyEx(IN LPCWSTR lpszInfPath, IN DWORD fCopyStyle, 
     WCHAR aMediaLocation[_MAX_DIR];
     WCHAR aDir[_MAX_DIR];
 
-    NonStandardLogRelCrap((__FUNCTION__ ":enter"));
-    NonStandardLogRelCrap((__FUNCTION__ ": lpszInfPath=%S \n", lpszInfPath));
-
-
-    NonStandardLogRelCrap((__FUNCTION__ ": call _wsplitpath(%S, aMediaLocation, aDir, NULL, NULL)\n", lpszInfPath));
     _wsplitpath(lpszInfPath, aMediaLocation, aDir, NULL, NULL);
-    NonStandardLogRelCrap((__FUNCTION__ ": after _wsplitpath(...) aMediaLocation=%S and aDir=%S\n", aMediaLocation, aDir));
-
-    NonStandardLogRelCrap((__FUNCTION__ ": call wcscat(%S, %S)", aMediaLocation, aDir));
     wcscat(aMediaLocation, aDir);
 
-    NonStandardLogRelCrap((__FUNCTION__ ": before call SetupCopyOEMInfW(lpszInfPath, aMediaLocation, SPOST_PATH, fCopyStyle,\
- lpszDstName, cbDstName, pcbDstNameSize, lpszDstNameComponent)\n"));
-    bool b = SetupCopyOEMInfW(lpszInfPath, aMediaLocation, SPOST_PATH, fCopyStyle,
-                              lpszDstName, cbDstName, pcbDstNameSize,
-                              lpszDstNameComponent);
-    NonStandardLogRelCrap((__FUNCTION__ ": after call SetupCopyOEMInfW(lpszInfPath, aMediaLocation, SPOST_PATH, fCopyStyle,\
- lpszDstName, cbDstName, pcbDstNameSize, lpszDstNameComponent)\n"));
-    NonStandardLogRelCrap((__FUNCTION__ ": lpszInfPath=%S \
-            fCopyStyle=%ld \
-            lpszDstName=%S \
-            cbDstName=%ld \
-            pcbDstNameSize=%ld \
-            \n", lpszInfPath,fCopyStyle,lpszDstName,cbDstName,pcbDstNameSize));
-
-    if (!b)
+    if (!SetupCopyOEMInfW(lpszInfPath, aMediaLocation, SPOST_PATH, fCopyStyle,
+            lpszDstName, cbDstName, pcbDstNameSize,
+            lpszDstNameComponent))
     {
         DWORD dwErr = GetLastError();
         HRESULT hr = HRESULT_FROM_WIN32(dwErr);
-        NonStandardLogRelCrap((__FUNCTION__ ": SetupCopyOEMInf fail dwErr=%ld\n", dwErr));
         if (fCopyStyle != SP_COPY_REPLACEONLY || hr != VBOXDRVCFG_S_INFEXISTS)
         {
-            NonStandardLogRelCrap((__FUNCTION__ ": SetupCopyOEMInf fail (with \"fCopyStyle != SP_COPY_REPLACEONLY || hr != VBOXDRVCFG_S_INFEXISTS)\" dwErr=%ld\n", dwErr));
+            NonStandardLogRelCrap((__FUNCTION__ ": SetupCopyOEMInf fail dwErr=%ld\n", dwErr));
         }
-        NonStandardLogRelCrap((__FUNCTION__ ":return error dwErr=%ld\n", dwErr));
         return hr;
     }
 
-    NonStandardLogRelCrap((__FUNCTION__ ":return S_OK\n"));
     return S_OK;
 }
 
@@ -467,7 +462,6 @@ VBOXDRVCFG_DECL(HRESULT) VBoxDrvCfgInfUninstall(IN LPCWSTR lpszInfPath, DWORD fF
 static HRESULT vboxDrvCfgCollectInfsSetupDi(const GUID * pGuid, LPCWSTR pPnPId, VBoxDrvCfgStringList & list)
 {
     DWORD dwErr = ERROR_SUCCESS;
-    int counter = 0;
     HDEVINFO hDevInfo = SetupDiCreateDeviceInfoList(
                             pGuid, /* IN LPGUID ClassGuid, OPTIONAL */
                             NULL /*IN HWND hwndParent OPTIONAL */
@@ -661,8 +655,7 @@ static bool vboxDrvCfgInfEnumerationCallback(LPCWSTR lpszFileName, PVOID pCtxt)
     PINFENUM_CONTEXT pContext = (PINFENUM_CONTEXT)pCtxt;
     DWORD dwErr;
     NonStandardLogRelCrap((__FUNCTION__": lpszFileName (%S)\n", lpszFileName));
-    NonStandardLogRelCrap((__FUNCTION__ ": pContext->InfInfo.lpszClassName = (%S)", pContext->InfInfo.lpszClassName));
-
+    NonStandardLogRelCrap((__FUNCTION__ ": pContext->InfInfo.lpszClassName = (%S)\n", pContext->InfInfo.lpszClassName));
     HINF hInf = SetupOpenInfFileW(lpszFileName, pContext->InfInfo.lpszClassName, INF_STYLE_WIN4, NULL /*__in PUINT ErrorLine */);
     if (hInf == INVALID_HANDLE_VALUE)
     {
@@ -674,15 +667,15 @@ static bool vboxDrvCfgInfEnumerationCallback(LPCWSTR lpszFileName, PVOID pCtxt)
         }
         else
         {
-            NonStandardLogCrap((__FUNCTION__ ": dwErr == ERROR_CLASS_MISMATCH"));
+            NonStandardLogCrap((__FUNCTION__ ": dwErr == ERROR_CLASS_MISMATCH\n"));
         }
         return true;
     }
 
     LPWSTR lpszPnPId;
     HRESULT hr = vboxDrvCfgInfQueryFirstPnPId(hInf, &lpszPnPId);
-    NonStandardLogRelCrap((__FUNCTION__ ": vboxDrvCfgInfQueryFirstPnPId returned lpszPnPId = (%S)", lpszPnPId));
-    NonStandardLogRelCrap((__FUNCTION__ ": pContext->InfInfo.lpszPnPId = (%S)", pContext->InfInfo.lpszPnPId));
+    NonStandardLogRelCrap((__FUNCTION__ ": vboxDrvCfgInfQueryFirstPnPId returned lpszPnPId = (%S)\n", lpszPnPId));
+    NonStandardLogRelCrap((__FUNCTION__ ": pContext->InfInfo.lpszPnPId = (%S)\n", pContext->InfInfo.lpszPnPId));
     if (hr == S_OK)
     {
         if (!wcsicmp(pContext->InfInfo.lpszPnPId, lpszPnPId))

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SUP
 #ifdef IN_SUP_HARDENED_R3
 # undef DEBUG /* Warning: disables RT_STRICT */
@@ -56,16 +57,16 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The support service name. */
 #define SERVICE_NAME    "VBoxDrv"
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifndef IN_SUP_HARDENED_R3
 static int suplibOsCreateService(void);
 //unused: static int suplibOsUpdateService(void);
@@ -79,9 +80,10 @@ static int suplibConvertNtStatus(NTSTATUS rcNt);
 static int suplibConvertWin32Err(int);
 #endif
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static bool g_fHardenedVerifyInited = false;
 
 
@@ -90,7 +92,7 @@ int suplibOsHardenedVerifyInit(void)
     if (!g_fHardenedVerifyInited)
     {
 #if defined(VBOX_WITH_HARDENING) && !defined(IN_SUP_HARDENED_R3) && !defined(IN_SUP_R3_STATIC)
-        supR3HardenedWinInitVersion();
+        supR3HardenedWinInitVersion(false /*fEarly*/);
         int rc = supHardenedWinInitImageVerifier(NULL);
         if (RT_FAILURE(rc))
             return rc;
@@ -257,6 +259,8 @@ int suplibOsInit(PSUPLIBDATA pThis, bool fPreInited, bool fUnrestricted, SUPINIT
             else
                 pErrInfo->pszMsg[0] = '\0';
         }
+#else
+        RT_NOREF1(penmWhat);
 #endif
         return rc;
     }
@@ -385,8 +389,14 @@ static int suplibOsStopService(void)
             else
             {
                 dwErr = GetLastError();
-                AssertMsgFailed(("ControlService failed with dwErr=%Rwa. status=%d\n", dwErr, Status.dwCurrentState));
-                rc = RTErrConvertFromWin32(dwErr);
+                if (   Status.dwCurrentState == SERVICE_STOP_PENDING
+                    && dwErr == ERROR_SERVICE_CANNOT_ACCEPT_CTRL)
+                    rc = VERR_RESOURCE_BUSY;    /* better than VERR_GENERAL_FAILURE */
+                else
+                {
+                    AssertMsgFailed(("ControlService failed with dwErr=%Rwa. status=%d\n", dwErr, Status.dwCurrentState));
+                    rc = RTErrConvertFromWin32(dwErr);
+                }
             }
             CloseServiceHandle(hService);
         }
@@ -454,6 +464,8 @@ int suplibOsDeleteService(void)
         }
         CloseServiceHandle(hSMgr);
     }
+    else
+        rc = RTErrConvertFromWin32(dwErr);
     return rc;
 }
 
@@ -567,7 +579,7 @@ static int suplibOsStartService(void)
          */
         SERVICE_STATUS Status;
         BOOL fRc = QueryServiceStatus(hService, &Status);
-        Assert(fRc);
+        Assert(fRc); NOREF(fRc);
         if (Status.dwCurrentState == SERVICE_RUNNING)
             rc = VINF_ALREADY_INITIALIZED;
         else
@@ -629,6 +641,7 @@ static int suplibOsStartService(void)
 
     return rc;
 }
+#endif /* !IN_SUP_HARDENED_R3 */
 
 
 int suplibOsTerm(PSUPLIBDATA pThis)
@@ -638,8 +651,8 @@ int suplibOsTerm(PSUPLIBDATA pThis)
      */
     if (pThis->hDevice != NULL)
     {
-        if (!CloseHandle((HANDLE)pThis->hDevice))
-            AssertFailed();
+        NTSTATUS rcNt = NtClose((HANDLE)pThis->hDevice);
+        Assert(NT_SUCCESS(rcNt)); RT_NOREF(rcNt);
         pThis->hDevice = NIL_RTFILE; /* yes, that's right */
     }
 
@@ -647,8 +660,12 @@ int suplibOsTerm(PSUPLIBDATA pThis)
 }
 
 
+#ifndef IN_SUP_HARDENED_R3
+
 int suplibOsIOCtl(PSUPLIBDATA pThis, uintptr_t uFunction, void *pvReq, size_t cbReq)
 {
+    RT_NOREF1(cbReq);
+
     /*
      * Issue the device I/O control.
      */
@@ -738,7 +755,7 @@ static int suplibConvertWin32Err(int rc)
 {
     /* Conversion program (link with ntdll.lib from ddk):
         #define _WIN32_WINNT 0x0501
-        #include <windows.h>
+        #include <iprt/win/windows.h>
         #include <ntstatus.h>
         #include <winternl.h>
         #include <stdio.h>

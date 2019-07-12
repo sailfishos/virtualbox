@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_EFI
 
 #include <VBox/vmm/pdmdev.h>
@@ -52,15 +53,22 @@
 #include "../PC/DevFwCommon.h"
 
 /* EFI includes */
+#ifdef _MSC_VER
+# pragma warning(push)
+# pragma warning(disable:4668)
+#endif
 #include <ProcessorBind.h>
+#ifdef _MSC_VER
+# pragma warning(pop)
+#endif
 #include <Common/UefiBaseTypes.h>
 #include <Common/PiFirmwareVolume.h>
 #include <Common/PiFirmwareFile.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * EFI NVRAM variable.
  */
@@ -165,6 +173,8 @@ typedef struct DEVEFI
     uint8_t                *pu8EfiRom;
     /** The size of the system EFI ROM. */
     uint64_t                cbEfiRom;
+    /** Offset into the actual ROM within EFI FW volume. */
+    uint64_t                uEfiRomOfs;
     /** The name of the EFI ROM file. */
     char                   *pszEfiRomFile;
     /** Thunk page pointer. */
@@ -182,14 +192,6 @@ typedef struct DEVEFI
 
     /** Number of virtual CPUs. (Config) */
     uint32_t                cCpus;
-    /** RAM below 4GB (in bytes). (Config) */
-    uint32_t                cbBelow4GB;
-    /** RAM above 4GB (in bytes). (Config) */
-    uint64_t                cbAbove4GB;
-    /** The total amount of memory. */
-    uint64_t                cbRam;
-    /** The size of the RAM hole below 4GB. */
-    uint64_t                cbRamHole;
 
     /** The size of the DMI tables. */
     uint16_t                cbDmiTables;
@@ -198,8 +200,14 @@ typedef struct DEVEFI
     /** The DMI tables. */
     uint8_t                 au8DMIPage[0x1000];
 
+    /** Should NVRAM range be reserved for flash? */
+    bool                    fSkipNvramRange;
+
     /** I/O-APIC enabled? */
     uint8_t                 u8IOAPIC;
+
+    /** APIC mode to be set up by firmware. */
+    uint8_t                 u8APIC;
 
     /** Boot parameters passed to the firmware. */
     char                    szBootArgs[256];
@@ -218,12 +226,16 @@ typedef struct DEVEFI
     uint64_t                u64TscFrequency;
     /** Virtual machine CPU frequency. */
     uint64_t                u64CpuFrequency;
-    /** GOP mode. */
-    uint32_t                u32GopMode;
-    /** Uga mode horisontal resolution. */
-    uint32_t                cxUgaResolution;
-    /** Uga mode vertical resolution. */
-    uint32_t                cyUgaResolution;
+    /** EFI Graphics mode (used as fallback if resolution is not known). */
+    uint32_t                u32GraphicsMode;
+    /** EFI Graphics (GOP or UGA) horizontal resolution. */
+    uint32_t                u32HorizontalResolution;
+    /** EFI Graphics (GOP or UGA) vertical resolution. */
+    uint32_t                u32VerticalResolution;
+    /** Physical address of PCI config space MMIO region */
+    uint64_t                u64McfgBase;
+    /** Length of PCI config space MMIO region */
+    uint64_t                cbMcfgLength;
 
 
     /** NVRAM state variables. */
@@ -245,9 +257,9 @@ typedef struct DEVEFI
 typedef DEVEFI *PDEVEFI;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The saved state version. */
 #define EFI_SSM_VERSION 2
 /** The saved state version from VBox 4.2. */
@@ -259,9 +271,9 @@ typedef DEVEFI *PDEVEFI;
 #define VBOX_EFI_VARIABLE_READ_ONLY     UINT32_C(0x00000008)
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Saved state NVRAMDESC field descriptors. */
 static SSMFIELD const g_aEfiNvramDescField[] =
 {
@@ -422,7 +434,7 @@ static int nvramLoad(PDEVEFI pThis)
                 rc = VERR_NO_DATA;
             if (RT_FAILURE(rc))
                 LogRel(("EFI/nvramLoad: Bad variable #%u: cbValue=%#x cchName=%#x (strlen=%#x) szName=%.*Rhxs\n",
-                        pEfiVar->cbValue, pEfiVar->cchName, cchName, pEfiVar->cchName + 1, pEfiVar->szName));
+                        iVar, pEfiVar->cbValue, pEfiVar->cchName, cchName, pEfiVar->cchName + 1, pEfiVar->szName));
         }
         if (RT_FAILURE(rc))
         {
@@ -682,13 +694,36 @@ static int nvramWriteVariableOpAdd(PDEVEFI pThis)
         /*
          * Too many variables.
          */
-        static unsigned s_cWarnings = 0;
-        if (s_cWarnings++ < 5)
-            LogRel(("EFI: Too many variables (%RTuuid::'%s' fAttrib=%#x cbValue=%#x)\n", &pThis->NVRAM.VarOpBuf.uuid,
-                    pThis->NVRAM.VarOpBuf.szName, pThis->NVRAM.VarOpBuf.fAttributes, pThis->NVRAM.VarOpBuf.cbValue));
+        LogRelMax(5, ("EFI: Too many variables (%RTuuid::'%s' fAttrib=%#x cbValue=%#x)\n", &pThis->NVRAM.VarOpBuf.uuid,
+                  pThis->NVRAM.VarOpBuf.szName, pThis->NVRAM.VarOpBuf.fAttributes, pThis->NVRAM.VarOpBuf.cbValue));
         pThis->NVRAM.u32Status = EFI_VARIABLE_OP_STATUS_ERROR;
         Log(("nvramWriteVariableOpAdd: Too many variabled.\n"));
     }
+
+    /*
+     * Log the value of bugcheck variables.
+     */
+    if (   (   pThis->NVRAM.VarOpBuf.cbValue == 4
+            || pThis->NVRAM.VarOpBuf.cbValue == 8)
+        && (   strcmp(pThis->NVRAM.VarOpBuf.szName, "BugCheckCode") == 0
+            || strcmp(pThis->NVRAM.VarOpBuf.szName, "BugCheckParameter0") == 0
+            || strcmp(pThis->NVRAM.VarOpBuf.szName, "BugCheckParameter1") == 0
+            || strcmp(pThis->NVRAM.VarOpBuf.szName, "BugCheckParameter2") == 0
+            || strcmp(pThis->NVRAM.VarOpBuf.szName, "BugCheckParameter3") == 0
+            || strcmp(pThis->NVRAM.VarOpBuf.szName, "BugCheckProgress")   == 0 ) )
+    {
+        if (pThis->NVRAM.VarOpBuf.cbValue == 4)
+            LogRel(("EFI: %RTuuid::'%s' = %#010RX32\n", &pThis->NVRAM.VarOpBuf.uuid, pThis->NVRAM.VarOpBuf.szName,
+                    RT_MAKE_U32_FROM_U8(pThis->NVRAM.VarOpBuf.abValue[0], pThis->NVRAM.VarOpBuf.abValue[1],
+                                        pThis->NVRAM.VarOpBuf.abValue[2], pThis->NVRAM.VarOpBuf.abValue[3])));
+        else
+            LogRel(("EFI: %RTuuid::'%s' = %#018RX64\n", &pThis->NVRAM.VarOpBuf.uuid, pThis->NVRAM.VarOpBuf.szName,
+                    RT_MAKE_U64_FROM_U8(pThis->NVRAM.VarOpBuf.abValue[0], pThis->NVRAM.VarOpBuf.abValue[1],
+                                        pThis->NVRAM.VarOpBuf.abValue[2], pThis->NVRAM.VarOpBuf.abValue[3],
+                                        pThis->NVRAM.VarOpBuf.abValue[4], pThis->NVRAM.VarOpBuf.abValue[5],
+                                        pThis->NVRAM.VarOpBuf.abValue[6], pThis->NVRAM.VarOpBuf.abValue[7])));
+    }
+
 
     LogFunc(("cVariables=%u u32Status=%#x\n", pThis->NVRAM.cVariables, pThis->NVRAM.u32Status));
     return VINF_SUCCESS;
@@ -1022,6 +1057,7 @@ static bool efiInfoNvramIsUtf16(PCEFIVAR pEfiVar, bool *pfZeroTerm)
  */
 static DECLCALLBACK(void) efiInfoNvram(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, const char *pszArgs)
 {
+    RT_NOREF(pszArgs);
     PDEVEFI pThis = PDMINS_2_DATA(pDevIns, PDEVEFI);
     PDMCritSectEnter(pDevIns->pCritSectRoR3, VERR_IGNORED);
 
@@ -1073,9 +1109,9 @@ static uint32_t efiInfoSize(PDEVEFI pThis)
         case EFI_INFO_INDEX_TEMPMEM_SIZE:
         case EFI_INFO_INDEX_STACK_BASE:
         case EFI_INFO_INDEX_STACK_SIZE:
-        case EFI_INFO_INDEX_GOP_MODE:
-        case EFI_INFO_INDEX_UGA_VERTICAL_RESOLUTION:
-        case EFI_INFO_INDEX_UGA_HORISONTAL_RESOLUTION:
+        case EFI_INFO_INDEX_GRAPHICS_MODE:
+        case EFI_INFO_INDEX_VERTICAL_RESOLUTION:
+        case EFI_INFO_INDEX_HORIZONTAL_RESOLUTION:
             return 4;
         case EFI_INFO_INDEX_BOOT_ARGS:
             return (uint32_t)RTStrNLen(pThis->szBootArgs, sizeof(pThis->szBootArgs)) + 1;
@@ -1084,6 +1120,8 @@ static uint32_t efiInfoSize(PDEVEFI pThis)
         case EFI_INFO_INDEX_FSB_FREQUENCY:
         case EFI_INFO_INDEX_CPU_FREQUENCY:
         case EFI_INFO_INDEX_TSC_FREQUENCY:
+        case EFI_INFO_INDEX_MCFG_BASE:
+        case EFI_INFO_INDEX_MCFG_SIZE:
             return 8;
     }
     return UINT32_MAX;
@@ -1156,13 +1194,15 @@ static uint8_t efiInfoNextByte(PDEVEFI pThis)
         case EFI_INFO_INDEX_CPU_FREQUENCY:      return efiInfoNextByteU64(pThis, pThis->u64CpuFrequency);
         case EFI_INFO_INDEX_BOOT_ARGS:          return efiInfoNextByteBuf(pThis, pThis->szBootArgs, sizeof(pThis->szBootArgs));
         case EFI_INFO_INDEX_DEVICE_PROPS:       return efiInfoNextByteBuf(pThis, pThis->pbDeviceProps, pThis->cbDeviceProps);
-        case EFI_INFO_INDEX_GOP_MODE:           return efiInfoNextByteU32(pThis, pThis->u32GopMode);
-        case EFI_INFO_INDEX_UGA_HORISONTAL_RESOLUTION:  return efiInfoNextByteU32(pThis, pThis->cxUgaResolution);
-        case EFI_INFO_INDEX_UGA_VERTICAL_RESOLUTION:    return efiInfoNextByteU32(pThis, pThis->cyUgaResolution);
+        case EFI_INFO_INDEX_GRAPHICS_MODE:      return efiInfoNextByteU32(pThis, pThis->u32GraphicsMode);
+        case EFI_INFO_INDEX_HORIZONTAL_RESOLUTION:  return efiInfoNextByteU32(pThis, pThis->u32HorizontalResolution);
+        case EFI_INFO_INDEX_VERTICAL_RESOLUTION:    return efiInfoNextByteU32(pThis, pThis->u32VerticalResolution);
 
         /* Keep in sync with value in EfiThunk.asm */
         case EFI_INFO_INDEX_STACK_BASE:         return efiInfoNextByteU32(pThis,  VBOX_EFI_TOP_OF_STACK - _128K); /* 2M - 128 K */
         case EFI_INFO_INDEX_STACK_SIZE:         return efiInfoNextByteU32(pThis, _128K);
+        case EFI_INFO_INDEX_MCFG_BASE:          return efiInfoNextByteU64(pThis, pThis->u64McfgBase);
+        case EFI_INFO_INDEX_MCFG_SIZE:          return efiInfoNextByteU64(pThis, pThis->cbMcfgLength);
 
         default:
             PDMDevHlpDBGFStop(pThis->pDevIns, RT_SRC_POS, "%#x", pThis->iInfoSelector);
@@ -1172,7 +1212,7 @@ static uint8_t efiInfoNextByte(PDEVEFI pThis)
 
 
 #ifdef IN_RING3
-static void efiVBoxDbgScript(PDEVEFI pThis, const char *pszFormat, ...)
+static void efiVBoxDbgScript(const char *pszFormat, ...)
 {
 # ifdef DEVEFI_WITH_VBOXDBG_SCRIPT
     PRTSTREAM pStrm;
@@ -1185,6 +1225,8 @@ static void efiVBoxDbgScript(PDEVEFI pThis, const char *pszFormat, ...)
         va_end(va);
         RTStrmClose(pStrm);
     }
+# else
+    RT_NOREF(pszFormat);
 # endif
 }
 #endif /* IN_RING3 */
@@ -1201,6 +1243,7 @@ static void efiVBoxDbgScript(PDEVEFI pThis, const char *pszFormat, ...)
  */
 static int efiPortImageEventWrite(PDEVEFI pThis, uint32_t u32, unsigned cb)
 {
+    RT_NOREF(cb);
     switch (u32 & EFI_IMAGE_EVT_CMD_MASK)
     {
         case EFI_IMAGE_EVT_CMD_START_LOAD32:
@@ -1231,14 +1274,14 @@ static int efiPortImageEventWrite(PDEVEFI pThis, uint32_t u32, unsigned cb)
                         LogRel(("EFI: VBoxDbg> loadimage32 '%.*s.efi' %#llx LB %#llx\n",
                                 pThis->ImageEvt.offName - 4, pThis->ImageEvt.szName, pThis->ImageEvt.uAddr0, pThis->ImageEvt.cb0));
                         if (pThis->ImageEvt.offName > 4)
-                            efiVBoxDbgScript(pThis, "loadimage32 '%.*s.efi' %#llx\n",
+                            efiVBoxDbgScript("loadimage32 '%.*s.efi' %#llx\n",
                                              pThis->ImageEvt.offName - 4, pThis->ImageEvt.szName, pThis->ImageEvt.uAddr0);
                         break;
                     case EFI_IMAGE_EVT_CMD_START_LOAD64:
                         LogRel(("EFI: VBoxDbg> loadimage64 '%.*s.efi' %#llx LB %#llx\n",
                                 pThis->ImageEvt.offName - 4, pThis->ImageEvt.szName, pThis->ImageEvt.uAddr0, pThis->ImageEvt.cb0));
                         if (pThis->ImageEvt.offName > 4)
-                            efiVBoxDbgScript(pThis, "loadimage64 '%.*s.efi' %#llx\n",
+                            efiVBoxDbgScript("loadimage64 '%.*s.efi' %#llx\n",
                                              pThis->ImageEvt.offName - 4, pThis->ImageEvt.szName, pThis->ImageEvt.uAddr0);
                         break;
                     case EFI_IMAGE_EVT_CMD_START_UNLOAD32:
@@ -1249,7 +1292,7 @@ static int efiPortImageEventWrite(PDEVEFI pThis, uint32_t u32, unsigned cb)
                                 &pThis->ImageEvt.szName[pThis->ImageEvt.offNameLastComponent],
                                 pThis->ImageEvt.uAddr0, pThis->ImageEvt.cb0));
                         if (pThis->ImageEvt.offName > 4)
-                            efiVBoxDbgScript(pThis, "unload '%.*s.efi'\n",
+                            efiVBoxDbgScript("unload '%.*s.efi'\n",
                                              pThis->ImageEvt.offName - 4 - pThis->ImageEvt.offNameLastComponent,
                                              &pThis->ImageEvt.szName[pThis->ImageEvt.offNameLastComponent]);
                         break;
@@ -1314,6 +1357,7 @@ static int efiPortImageEventWrite(PDEVEFI pThis, uint32_t u32, unsigned cb)
  */
 static DECLCALLBACK(int) efiIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t *pu32, unsigned cb)
 {
+    RT_NOREF(pvUser);
     PDEVEFI pThis = PDMINS_2_DATA(pDevIns, PDEVEFI);
     Log4(("EFI in: %x %x\n", Port, cb));
 
@@ -1399,6 +1443,7 @@ static const char *efiDbgPointName(EFIDBGPOINT enmDbgPoint)
  */
 static DECLCALLBACK(int) efiIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t u32, unsigned cb)
 {
+    RT_NOREF(pvUser);
     PDEVEFI pThis = PDMINS_2_DATA(pDevIns, PDEVEFI);
     int     rc    = VINF_SUCCESS;
     Log4(("efi: out %x %x %d\n", Port, u32, cb));
@@ -1424,20 +1469,21 @@ static DECLCALLBACK(int) efiIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPO
             /* The readable, buffered version. */
             if (u32 == '\n' || u32 == '\r')
             {
+                Assert(pThis->iMsg < sizeof(pThis->szMsg));
                 pThis->szMsg[pThis->iMsg] = '\0';
                 if (pThis->iMsg)
-                    Log(("efi: %s\n", pThis->szMsg));
+                    LogRel2(("efi: %s\n", pThis->szMsg));
                 pThis->iMsg = 0;
             }
             else
             {
-                if (pThis->iMsg >= sizeof(pThis->szMsg)-1)
+                if (pThis->iMsg >= sizeof(pThis->szMsg) - 1)
                 {
                     pThis->szMsg[pThis->iMsg] = '\0';
-                    Log(("efi: %s\n", pThis->szMsg));
+                    LogRel2(("efi: %s\n", pThis->szMsg));
                     pThis->iMsg = 0;
                 }
-                pThis->szMsg[pThis->iMsg] = (char )u32;
+                pThis->szMsg[pThis->iMsg] = (char)u32;
                 pThis->szMsg[++pThis->iMsg] = '\0';
             }
             break;
@@ -1515,7 +1561,7 @@ static DECLCALLBACK(int) efiIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPO
             }
             pThis->NVRAM.offOpBuffer = 0;
             pThis->NVRAM.enmOp = (EFIVAROP)u32;
-            Log2(("EFI_VARIABLE_OP: enmOp=%#x (%d)\n", u32));
+            Log2(("EFI_VARIABLE_OP: enmOp=%#x (%d)\n", u32, u32));
             break;
         }
 
@@ -1528,12 +1574,7 @@ static DECLCALLBACK(int) efiIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPO
             if (u32 > EFIDBGPOINT_INVALID && u32 < EFIDBGPOINT_END)
             {
                 /* For now, just log it. */
-                static uint64_t s_cDbgPointLogged = 0;
-                if (s_cDbgPointLogged < 1024)
-                {
-                    s_cDbgPointLogged++;
-                    LogRel(("EFI: debug point %s\n", efiDbgPointName((EFIDBGPOINT)u32)));
-                }
+                LogRelMax(1024, ("EFI: debug point %s\n", efiDbgPointName((EFIDBGPOINT)u32)));
                 rc = VINF_SUCCESS;
             }
             else
@@ -1630,7 +1671,7 @@ static DECLCALLBACK(int) efiLoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32
     for (uint32_t i = 0; i < pThis->NVRAM.cVariables; i++)
     {
         PEFIVAR pEfiVar = (PEFIVAR)RTMemAllocZ(sizeof(EFIVAR));
-        AssertPtrReturn(pEfiVar, VERR_NO_MEMORY);
+        AssertReturn(pEfiVar, VERR_NO_MEMORY);
 
         rc = SSMR3GetStructEx(pSSM, pEfiVar, sizeof(EFIVAR), 0, g_aEfiVariableDescFields, NULL);
         if (RT_SUCCESS(rc))
@@ -1677,7 +1718,7 @@ static DECLCALLBACK(int) efiLoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32
  */
 static DECLCALLBACK(void *) devEfiQueryInterface(PPDMIBASE pInterface, const char *pszIID)
 {
-    LogFlowFunc(("ENTER: pIBase: %p, pszIID:%p\n", __FUNCTION__, pInterface, pszIID));
+    LogFlowFunc(("ENTER: pIBase=%p pszIID=%p\n", pInterface, pszIID));
     PDEVEFI  pThis = RT_FROM_MEMBER(pInterface, DEVEFI, Lun0.IBase);
 
     PDMIBASE_RETURN_INTERFACE(pszIID, PDMIBASE, &pThis->Lun0.IBase);
@@ -1708,23 +1749,28 @@ static DECLCALLBACK(int) efiInitComplete(PPDMDEVINS pDevIns)
 {
     PDEVEFI pThis = PDMINS_2_DATA(pDevIns, PDEVEFI);
 
+    PVM pVM                    = PDMDevHlpGetVM(pDevIns);
+    uint64_t const  cbRamSize  = MMR3PhysGetRamSize(pVM);
+    uint32_t const  cbBelow4GB = MMR3PhysGetRamSizeBelow4GB(pVM);
+    uint64_t const  cbAbove4GB = MMR3PhysGetRamSizeAbove4GB(pVM);
+    NOREF(cbAbove4GB);
+
     /*
      * Memory sizes.
      */
-    uint64_t const offRamHole = _4G - pThis->cbRamHole;
     uint32_t u32Low = 0;
     uint32_t u32Chunks = 0;
-    if (pThis->cbRam > 16 * _1M)
+    if (cbRamSize > 16 * _1M)
     {
-        u32Low = (uint32_t)RT_MIN(RT_MIN(pThis->cbRam, offRamHole), UINT32_C(0xffe00000));
+        u32Low = RT_MIN(cbBelow4GB, UINT32_C(0xfe000000));
         u32Chunks = (u32Low - 16U * _1M) / _64K;
     }
     cmosWrite(pDevIns, 0x34, RT_BYTE1(u32Chunks));
     cmosWrite(pDevIns, 0x35, RT_BYTE2(u32Chunks));
 
-    if (u32Low < pThis->cbRam)
+    if (u32Low < cbRamSize)
     {
-        uint64_t u64 = pThis->cbRam - u32Low;
+        uint64_t u64 = cbRamSize - u32Low;
         u32Chunks = (uint32_t)(u64 / _64K);
         cmosWrite(pDevIns, 0x5b, RT_BYTE1(u32Chunks));
         cmosWrite(pDevIns, 0x5c, RT_BYTE2(u32Chunks));
@@ -1746,10 +1792,11 @@ static DECLCALLBACK(int) efiInitComplete(PPDMDEVINS pDevIns)
  */
 static DECLCALLBACK(void) efiMemSetup(PPDMDEVINS pDevIns, PDMDEVMEMSETUPCTX enmCtx)
 {
+    RT_NOREF(enmCtx);
     PDEVEFI pThis = PDMINS_2_DATA(pDevIns, PDEVEFI);
 
     /*
-     * Plan some structures in RAM.
+     * Plant some structures in RAM.
      */
     FwCommonPlantSmbiosAndDmiHdrs(pDevIns, pThis->cbDmiTables, pThis->cNumDmiTables);
     if (pThis->u8IOAPIC)
@@ -1814,6 +1861,19 @@ static DECLCALLBACK(void) efiReset(PPDMDEVINS pDevIns)
 
 
 /**
+ * @interface_method_impl{PDMDEVREG,pfnPowerOff}
+ */
+static DECLCALLBACK(void) efiPowerOff(PPDMDEVINS pDevIns)
+{
+    PDEVEFI  pThis = PDMINS_2_DATA(pDevIns, PDEVEFI);
+
+    if (pThis->Lun0.pNvramDrv)
+        nvramStore(pThis);
+}
+
+
+
+/**
  * Destruct a device instance.
  *
  * Most VM resources are freed by the VM. This callback is provided so that any non-VM
@@ -1826,13 +1886,11 @@ static DECLCALLBACK(int) efiDestruct(PPDMDEVINS pDevIns)
     PDEVEFI  pThis = PDMINS_2_DATA(pDevIns, PDEVEFI);
     PDMDEV_CHECK_VERSIONS_RETURN_QUIET(pDevIns);
 
-    if (pThis->Lun0.pNvramDrv)
-        nvramStore(pThis);
     nvramFlushDeviceVariableList(pThis);
 
     if (pThis->pu8EfiRom)
     {
-        RTFileReadAllFree(pThis->pu8EfiRom, (size_t)pThis->cbEfiRom);
+        RTFileReadAllFree(pThis->pu8EfiRom, (size_t)pThis->cbEfiRom + pThis->uEfiRomOfs);
         pThis->pu8EfiRom = NULL;
     }
 
@@ -1853,7 +1911,7 @@ static DECLCALLBACK(int) efiDestruct(PPDMDEVINS pDevIns)
 
     if (pThis->pbDeviceProps)
     {
-        MMR3HeapFree(pThis->pbDeviceProps);
+        PDMDevHlpMMHeapFree(pDevIns, pThis->pbDeviceProps);
         pThis->pbDeviceProps = NULL;
         pThis->cbDeviceProps = 0;
     }
@@ -1861,6 +1919,8 @@ static DECLCALLBACK(int) efiDestruct(PPDMDEVINS pDevIns)
     return VINF_SUCCESS;
 }
 
+
+#if 0 /* unused */
 /**
  * Helper that searches for a FFS file of a given type.
  *
@@ -1874,7 +1934,7 @@ static DECLCALLBACK(int) efiDestruct(PPDMDEVINS pDevIns)
 DECLINLINE(EFI_FFS_FILE_HEADER const *)
 efiFwVolFindFileByType(EFI_FFS_FILE_HEADER const *pFfsFile, uint8_t const *pbEnd, EFI_FV_FILETYPE FileType, uint32_t *pcbFile)
 {
-#define FFS_SIZE(hdr)   RT_MAKE_U32_FROM_U8((hdr)->Size[0], (hdr)->Size[1], (hdr)->Size[2], 0)
+# define FFS_SIZE(hdr)   RT_MAKE_U32_FROM_U8((hdr)->Size[0], (hdr)->Size[1], (hdr)->Size[2], 0)
     while ((uintptr_t)pFfsFile < (uintptr_t)pbEnd)
     {
         if (pFfsFile->Type == FileType)
@@ -1885,15 +1945,16 @@ efiFwVolFindFileByType(EFI_FFS_FILE_HEADER const *pFfsFile, uint8_t const *pbEnd
         }
         pFfsFile = (EFI_FFS_FILE_HEADER *)((uintptr_t)pFfsFile + RT_ALIGN(FFS_SIZE(pFfsFile), 8));
     }
-#undef FFS_SIZE
+# undef FFS_SIZE
     return NULL;
 }
+#endif /* unused */
 
 
 /**
  * Parse EFI ROM headers and find entry points.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pThis    The device instance data.
  */
 static int efiParseFirmware(PDEVEFI pThis)
@@ -1920,7 +1981,15 @@ static int efiParseFirmware(PDEVEFI pThis)
 
     AssertLogRelMsgReturn(!(pThis->cbEfiRom & PAGE_OFFSET_MASK), ("%RX64\n", pThis->cbEfiRom), VERR_INVALID_PARAMETER);
 
-    uint8_t const * const pbFwVolEnd = pThis->pu8EfiRom + pFwVolHdr->FvLength;
+    LogRel(("Found EFI FW Volume, %u bytes (%u %u-byte blocks)\n", pFwVolHdr->FvLength, pFwVolHdr->BlockMap[0].NumBlocks, pFwVolHdr->BlockMap[0].Length));
+
+    /* Adjust the FW variables to skip the NVRAM volume. */
+    if (pThis->fSkipNvramRange)
+    {
+        pThis->cbEfiRom  -= pFwVolHdr->FvLength;
+        pThis->uEfiRomOfs = pFwVolHdr->FvLength;
+    }
+
     pThis->GCLoadAddress = UINT32_C(0xfffff000) - pThis->cbEfiRom + PAGE_SIZE;
 
     return VINF_SUCCESS;
@@ -1929,12 +1998,14 @@ static int efiParseFirmware(PDEVEFI pThis)
 /**
  * Load EFI ROM file into the memory.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pThis       The device instance data.
  * @param   pCfg        Configuration node handle for the device.
  */
 static int efiLoadRom(PDEVEFI pThis, PCFGMNODE pCfg)
 {
+    RT_NOREF(pCfg);
+
     /*
      * Read the entire firmware volume into memory.
      */
@@ -1970,7 +2041,7 @@ static int efiLoadRom(PDEVEFI pThis, PCFGMNODE pCfg)
     rc = PDMDevHlpROMRegister(pThis->pDevIns,
                               pThis->GCLoadAddress,
                               cbQuart,
-                              pThis->pu8EfiRom,
+                              pThis->pu8EfiRom + pThis->uEfiRomOfs,
                               cbQuart,
                               PGMPHYS_ROM_FLAGS_SHADOWED | PGMPHYS_ROM_FLAGS_PERMANENT_BINARY,
                               "EFI Firmware Volume");
@@ -1980,7 +2051,7 @@ static int efiLoadRom(PDEVEFI pThis, PCFGMNODE pCfg)
     rc = PDMDevHlpROMRegister(pThis->pDevIns,
                               pThis->GCLoadAddress + cbQuart,
                               cbQuart,
-                              pThis->pu8EfiRom + cbQuart,
+                              pThis->pu8EfiRom + pThis->uEfiRomOfs + cbQuart,
                               cbQuart,
                               PGMPHYS_ROM_FLAGS_SHADOWED | PGMPHYS_ROM_FLAGS_PERMANENT_BINARY,
                               "EFI Firmware Volume (Part 2)");
@@ -1989,7 +2060,7 @@ static int efiLoadRom(PDEVEFI pThis, PCFGMNODE pCfg)
     rc = PDMDevHlpROMRegister(pThis->pDevIns,
                               pThis->GCLoadAddress + cbQuart * 2,
                               cbQuart,
-                              pThis->pu8EfiRom + cbQuart * 2,
+                              pThis->pu8EfiRom + pThis->uEfiRomOfs + cbQuart * 2,
                               cbQuart,
                               PGMPHYS_ROM_FLAGS_SHADOWED | PGMPHYS_ROM_FLAGS_PERMANENT_BINARY,
                               "EFI Firmware Volume (Part 3)");
@@ -1998,7 +2069,7 @@ static int efiLoadRom(PDEVEFI pThis, PCFGMNODE pCfg)
     rc = PDMDevHlpROMRegister(pThis->pDevIns,
                               pThis->GCLoadAddress + cbQuart * 3,
                               pThis->cbEfiRom - cbQuart * 3,
-                              pThis->pu8EfiRom + cbQuart * 3,
+                              pThis->pu8EfiRom + pThis->uEfiRomOfs + cbQuart * 3,
                               pThis->cbEfiRom - cbQuart * 3,
                               PGMPHYS_ROM_FLAGS_SHADOWED | PGMPHYS_ROM_FLAGS_PERMANENT_BINARY,
                               "EFI Firmware Volume (Part 4)");
@@ -2070,9 +2141,10 @@ static int efiParseDeviceString(PDEVEFI pThis, const char *pszDeviceProps)
  */
 static DECLCALLBACK(int)  efiConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
+    RT_NOREF(iInstance);
+    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
     PDEVEFI     pThis = PDMINS_2_DATA(pDevIns, PDEVEFI);
     int         rc;
-    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
 
     Assert(iInstance == 0);
 
@@ -2089,11 +2161,12 @@ static DECLCALLBACK(int)  efiConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
      */
     if (!CFGMR3AreValuesValid(pCfg,
                               "EfiRom\0"
-                              "RamSize\0"
-                              "RamHoleSize\0"
                               "NumCPUs\0"
+                              "McfgBase\0"
+                              "McfgLength\0"
                               "UUID\0"
                               "IOAPIC\0"
+                              "APIC\0"
                               "DmiBIOSFirmwareMajor\0"
                               "DmiBIOSFirmwareMinor\0"
                               "DmiBIOSReleaseDate\0"
@@ -2130,9 +2203,12 @@ static DECLCALLBACK(int)  efiConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
                               "64BitEntry\0"
                               "BootArgs\0"
                               "DeviceProps\0"
-                              "GopMode\0"
-                              "UgaHorizontalResolution\0"
-                              "UgaVerticalResolution\0"))
+                              "SkipNvramRange\0"            // legacy
+                              "GopMode\0"                   // legacy
+                              "GraphicsMode\0"
+                              "UgaHorizontalResolution\0"   // legacy
+                              "UgaVerticalResolution\0"     // legacy
+                              "GraphicsResolution\0"))
         return PDMDEV_SET_ERROR(pDevIns, VERR_PDM_DEVINS_UNKNOWN_CFG_VALUES,
                                 N_("Configuration error: Invalid config value(s) for the EFI device"));
 
@@ -2140,10 +2216,24 @@ static DECLCALLBACK(int)  efiConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
     rc = CFGMR3QueryU32Def(pCfg, "NumCPUs", &pThis->cCpus, 1);
     AssertLogRelRCReturn(rc, rc);
 
+    rc = CFGMR3QueryU64Def(pCfg, "McfgBase", &pThis->u64McfgBase, 0);
+    if (RT_FAILURE(rc))
+        return PDMDEV_SET_ERROR(pDevIns, rc,
+                                N_("Configuration error: Querying \"\" as integer failed"));
+    rc = CFGMR3QueryU64Def(pCfg, "McfgLength", &pThis->cbMcfgLength, 0);
+    if (RT_FAILURE(rc))
+        return PDMDEV_SET_ERROR(pDevIns, rc,
+                                N_("Configuration error: Querying \"McfgLength\" as integer failed"));
+
     rc = CFGMR3QueryU8Def(pCfg, "IOAPIC", &pThis->u8IOAPIC, 1);
     if (RT_FAILURE (rc))
         return PDMDEV_SET_ERROR(pDevIns, rc,
                                 N_("Configuration error: Failed to read \"IOAPIC\""));
+
+    rc = CFGMR3QueryU8Def(pCfg, "APIC", &pThis->u8APIC, 1);
+    if (RT_FAILURE (rc))
+        return PDMDEV_SET_ERROR(pDevIns, rc,
+                                N_("Configuration error: Failed to read \"APIC\""));
 
     /*
      * Query the machine's UUID for SMBIOS/DMI use.
@@ -2162,16 +2252,6 @@ static DECLCALLBACK(int)  efiConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
     uuid.Gen.u16TimeMid = RT_H2BE_U16(uuid.Gen.u16TimeMid);
     uuid.Gen.u16TimeHiAndVersion = RT_H2BE_U16(uuid.Gen.u16TimeHiAndVersion);
     memcpy(&pThis->aUuid, &uuid, sizeof pThis->aUuid);
-
-    /*
-     * RAM sizes
-     */
-    rc = CFGMR3QueryU64(pCfg, "RamSize", &pThis->cbRam);
-    AssertLogRelRCReturn(rc, rc);
-    rc = CFGMR3QueryU64(pCfg, "RamHoleSize", &pThis->cbRamHole);
-    AssertLogRelRCReturn(rc, rc);
-    pThis->cbBelow4GB = RT_MIN(pThis->cbRam, _4G - pThis->cbRamHole);
-    pThis->cbAbove4GB = pThis->cbRam - pThis->cbBelow4GB;
 
     /*
      * Get the system EFI ROM file name.
@@ -2196,6 +2276,12 @@ static DECLCALLBACK(int)  efiConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
         MMR3HeapFree(pThis->pszEfiRomFile);
         pThis->pszEfiRomFile = NULL;
     }
+
+    rc = CFGMR3QueryBoolDef(pCfg, "SkipNvramRange", &pThis->fSkipNvramRange, false);
+    if (RT_FAILURE(rc))
+        return PDMDEV_SET_ERROR(pDevIns, rc,
+                                N_("Configuration error: Querying \"SkipNvramRange\" as integer failed"));
+
 
     /*
      * NVRAM processing.
@@ -2256,26 +2342,54 @@ static DECLCALLBACK(int)  efiConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
     pThis->u64FsbFrequency = CPUMGetGuestScalableBusFrequency(PDMDevHlpGetVM(pDevIns));
 
     /*
-     * GOP graphics.
+     * EFI graphics mode (with new EFI VGA code used only as a fallback, for
+     * old EFI VGA code the only way to select the GOP mode).
      */
-    rc = CFGMR3QueryU32Def(pCfg, "GopMode", &pThis->u32GopMode, 2 /* 1024x768 */);
+    rc = CFGMR3QueryU32Def(pCfg, "GraphicsMode", &pThis->u32GraphicsMode, UINT32_MAX);
     if (RT_FAILURE(rc))
         return PDMDevHlpVMSetError(pDevIns, rc, RT_SRC_POS,
-                                   N_("Configuration error: Querying \"GopMode\" as a 32-bit int failed"));
-    if (pThis->u32GopMode == UINT32_MAX)
-        pThis->u32GopMode = 2; /* 1024x768 */
+                                   N_("Configuration error: Querying \"GraphicsMode\" as a 32-bit int failed"));
+    if (pThis->u32GraphicsMode == UINT32_MAX)
+    {
+        /* get the legacy value if nothing else was specified */
+        rc = CFGMR3QueryU32Def(pCfg, "GopMode", &pThis->u32GraphicsMode, UINT32_MAX);
+        if (RT_FAILURE(rc))
+            return PDMDevHlpVMSetError(pDevIns, rc, RT_SRC_POS,
+                                       N_("Configuration error: Querying \"GopMode\" as a 32-bit int failed"));
+    }
+    if (pThis->u32GraphicsMode == UINT32_MAX)
+        pThis->u32GraphicsMode = 2; /* 1024x768, at least typically */
 
     /*
-     * Uga graphics, default to 1024x768.
+     * EFI graphics resolution, defaults to 1024x768 (used to be UGA only, now
+     * is the main config setting as the mode number is so hard to predict).
      */
-    rc = CFGMR3QueryU32Def(pCfg, "UgaHorizontalResolution", &pThis->cxUgaResolution, 0);
-    AssertRCReturn(rc, rc);
-    rc = CFGMR3QueryU32Def(pCfg, "UgaVerticalResolution", &pThis->cyUgaResolution, 0);
-    AssertRCReturn(rc, rc);
-    if (pThis->cxUgaResolution == 0 || pThis->cyUgaResolution == 0)
+    char szResolution[16];
+    rc = CFGMR3QueryStringDef(pCfg, "GraphicsResolution", szResolution, sizeof(szResolution), "");
+    if (RT_FAILURE(rc))
+        return PDMDevHlpVMSetError(pDevIns, rc, RT_SRC_POS,
+                                   N_("Configuration error: Querying \"GraphicsResolution\" as a string failed"));
+    if (szResolution[0])
     {
-        pThis->cxUgaResolution = 1024;
-        pThis->cyUgaResolution = 768;
+        const char *pszX = RTStrStr(szResolution, "x");
+        if (pszX)
+        {
+            pThis->u32HorizontalResolution = RTStrToUInt32(szResolution);
+            pThis->u32VerticalResolution = RTStrToUInt32(pszX + 1);
+        }
+    }
+    else
+    {
+        /* get the legacy values if nothing else was specified */
+        rc = CFGMR3QueryU32Def(pCfg, "UgaHorizontalResolution", &pThis->u32HorizontalResolution, 0);
+        AssertRCReturn(rc, rc);
+        rc = CFGMR3QueryU32Def(pCfg, "UgaVerticalResolution", &pThis->u32VerticalResolution, 0);
+        AssertRCReturn(rc, rc);
+    }
+    if (pThis->u32HorizontalResolution == 0 || pThis->u32VerticalResolution == 0)
+    {
+        pThis->u32HorizontalResolution = 1024;
+        pThis->u32VerticalResolution = 768;
     }
 
     /*
@@ -2373,7 +2487,7 @@ const PDMDEVREG g_DeviceEFI =
     /* pfnInitComplete. */
     efiInitComplete,
     /* pfnPowerOff */
-    NULL,
+    efiPowerOff,
     /* pfnSoftReset */
     NULL,
     /* u32VersionEnd */

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/semaphore.h>
 #include "internal/iprt.h"
 
@@ -45,9 +46,9 @@
 #include <sys/time.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Posix internal representation of a Mutex semaphore. */
 struct RTSEMMUTEXINTERNAL
 {
@@ -65,40 +66,58 @@ struct RTSEMMUTEXINTERNAL
 #endif
 };
 
-#ifdef RT_OS_DARWIN
+#if defined(RT_OS_DARWIN) || defined(RT_OS_NETBSD)
 /**
- * This function emulate pthread_mutex_timedlock on Mac OS X
+ * This function is a crude approximation of pthread_mutex_timedlock.
  */
-static int DarwinPthreadMutexTimedlock(pthread_mutex_t * mutex, const struct timespec * pTsAbsTimeout)
+int rtSemFallbackPthreadMutexTimedlock(pthread_mutex_t *mutex, RTMSINTERVAL cMillies)
 {
-    int rc = 0;
-    struct timeval tv;
-    timespec ts = {0, 0};
-    do
+    struct timespec ts;
+    int rc;
+
+    rc = pthread_mutex_trylock(mutex);
+    if (rc != EBUSY)
+        return rc;
+
+    ts.tv_sec = cMillies / 1000;
+    ts.tv_nsec = (cMillies % 1000) * 1000000;
+
+    while (ts.tv_sec > 0 || ts.tv_nsec > 0)
     {
-        rc = pthread_mutex_trylock(mutex);
-        if (rc == EBUSY)
+        struct timespec delta, remaining;
+
+        if (ts.tv_sec > 0)
         {
-            gettimeofday(&tv, NULL);
-
-            ts.tv_sec = pTsAbsTimeout->tv_sec - tv.tv_sec;
-            ts.tv_nsec = pTsAbsTimeout->tv_nsec - tv.tv_sec;
-
-            if (ts.tv_nsec < 0)
-            {
-                ts.tv_sec--;
-                ts.tv_nsec += 1000000000;
-            }
-
-            if (   ts.tv_sec > 0
-                && ts.tv_nsec > 0)
-                nanosleep(&ts, &ts);
+            delta.tv_sec = 1;
+            delta.tv_nsec = 0;
+            ts.tv_sec--;
         }
         else
-            break;
-    } while (   rc != 0
-             || ts.tv_sec > 0);
-    return rc;
+        {
+            delta.tv_sec = 0;
+            delta.tv_nsec = ts.tv_nsec;
+            ts.tv_nsec = 0;
+        }
+
+        nanosleep(&delta, &remaining);
+
+        rc = pthread_mutex_trylock(mutex);
+        if (rc != EBUSY)
+            return rc;
+
+        if (RT_UNLIKELY(remaining.tv_nsec > 0 || remaining.tv_sec > 0))
+        {
+            ts.tv_sec += remaining.tv_sec;
+            ts.tv_nsec += remaining.tv_nsec;
+            if (ts.tv_nsec >= 1000000000)
+            {
+                ts.tv_nsec -= 1000000000;
+                ts.tv_sec++;
+            }
+        }
+    }
+
+    return ETIMEDOUT;
 }
 #endif
 
@@ -125,40 +144,34 @@ RTDECL(int) RTSemMutexCreateEx(PRTSEMMUTEX phMutexSem, uint32_t fFlags,
         /*
          * Create the semaphore.
          */
-        pthread_mutexattr_t MutexAttr;
-        rc = pthread_mutexattr_init(&MutexAttr);
+        rc = pthread_mutex_init(&pThis->Mutex, NULL);
         if (!rc)
         {
-            rc = pthread_mutex_init(&pThis->Mutex, &MutexAttr);
-            if (!rc)
-            {
-                pthread_mutexattr_destroy(&MutexAttr);
-
-                pThis->Owner    = (pthread_t)-1;
-                pThis->cNesting = 0;
-                pThis->u32Magic = RTSEMMUTEX_MAGIC;
+            pThis->Owner    = (pthread_t)-1;
+            pThis->cNesting = 0;
+            pThis->u32Magic = RTSEMMUTEX_MAGIC;
 #ifdef RTSEMMUTEX_STRICT
-                if (!pszNameFmt)
-                {
-                    static uint32_t volatile s_iMutexAnon = 0;
-                    RTLockValidatorRecExclInit(&pThis->ValidatorRec, hClass, uSubClass, pThis,
-                                               !(fFlags & RTSEMMUTEX_FLAGS_NO_LOCK_VAL),
-                                               "RTSemMutex-%u", ASMAtomicIncU32(&s_iMutexAnon) - 1);
-                }
-                else
-                {
-                    va_list va;
-                    va_start(va, pszNameFmt);
-                    RTLockValidatorRecExclInitV(&pThis->ValidatorRec, hClass, uSubClass, pThis,
-                                                !(fFlags & RTSEMMUTEX_FLAGS_NO_LOCK_VAL), pszNameFmt, va);
-                    va_end(va);
-                }
+            if (!pszNameFmt)
+            {
+                static uint32_t volatile s_iMutexAnon = 0;
+                RTLockValidatorRecExclInit(&pThis->ValidatorRec, hClass, uSubClass, pThis,
+                                           !(fFlags & RTSEMMUTEX_FLAGS_NO_LOCK_VAL),
+                                           "RTSemMutex-%u", ASMAtomicIncU32(&s_iMutexAnon) - 1);
+            }
+            else
+            {
+                va_list va;
+                va_start(va, pszNameFmt);
+                RTLockValidatorRecExclInitV(&pThis->ValidatorRec, hClass, uSubClass, pThis,
+                                            !(fFlags & RTSEMMUTEX_FLAGS_NO_LOCK_VAL), pszNameFmt, va);
+                va_end(va);
+            }
+#else
+            RT_NOREF_PV(hClass); RT_NOREF_PV(uSubClass); RT_NOREF_PV(pszNameFmt);
 #endif
 
-                *phMutexSem = pThis;
-                return VINF_SUCCESS;
-            }
-            pthread_mutexattr_destroy(&MutexAttr);
+            *phMutexSem = pThis;
+            return VINF_SUCCESS;
         }
         RTMemFree(pThis);
     }
@@ -217,6 +230,7 @@ RTDECL(uint32_t) RTSemMutexSetSubClass(RTSEMMUTEX hMutexSem, uint32_t uSubClass)
 
     return RTLockValidatorRecExclSetSubClass(&pThis->ValidatorRec, uSubClass);
 #else
+    RT_NOREF_PV(hMutexSem); RT_NOREF_PV(uSubClass);
     return RTLOCKVAL_SUB_CLASS_INVALID;
 #endif
 }
@@ -262,6 +276,7 @@ DECL_FORCE_INLINE(int) rtSemMutexRequest(RTSEMMUTEX hMutexSem, RTMSINTERVAL cMil
 #else
         hThreadSelf = RTThreadSelf();
         RTThreadBlocking(hThreadSelf, RTTHREADSTATE_MUTEX, true);
+        RT_NOREF_PV(pSrcPos);
 #endif
     }
 
@@ -278,16 +293,17 @@ DECL_FORCE_INLINE(int) rtSemMutexRequest(RTSEMMUTEX hMutexSem, RTMSINTERVAL cMil
     }
     else
     {
+        int rc;
+#if !defined(RT_OS_DARWIN) && !defined(RT_OS_NETBSD)
         struct timespec     ts = {0,0};
-#if defined(RT_OS_DARWIN) || defined(RT_OS_HAIKU)
-
+# if defined(RT_OS_HAIKU)
         struct timeval      tv = {0,0};
         gettimeofday(&tv, NULL);
         ts.tv_sec = tv.tv_sec;
         ts.tv_nsec = tv.tv_usec * 1000;
-#else
+# else
         clock_gettime(CLOCK_REALTIME, &ts);
-#endif
+# endif
         if (cMillies != 0)
         {
             ts.tv_nsec += (cMillies % 1000) * 1000000;
@@ -300,10 +316,16 @@ DECL_FORCE_INLINE(int) rtSemMutexRequest(RTSEMMUTEX hMutexSem, RTMSINTERVAL cMil
         }
 
         /* take mutex */
-#ifndef RT_OS_DARWIN
-        int rc = pthread_mutex_timedlock(&pThis->Mutex, &ts);
+        rc = pthread_mutex_timedlock(&pThis->Mutex, &ts);
 #else
-        int rc = DarwinPthreadMutexTimedlock(&pThis->Mutex, &ts);
+        /*
+         * When there's no pthread_mutex_timedlock() use a crude sleep
+         * and retry approximation.  Since the sleep interval is
+         * relative, we don't need to convert to the absolute time
+         * here only to convert back to relative in the fallback
+         * function.
+         */
+        rc = rtSemFallbackPthreadMutexTimedlock(&pThis->Mutex, cMillies);
 #endif
         RTThreadUnblocked(hThreadSelf, RTTHREADSTATE_MUTEX);
         if (rc)

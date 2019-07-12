@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,19 +19,19 @@
 #include <iprt/asm.h>
 #include <VBox/err.h>
 #include <VBox/log.h>
-#include <VBox/VBoxGuestLib.h>
 
 #include <stdarg.h>
 #include <string.h>
-RT_C_DECLS_BEGIN
-#define _InterlockedAddLargeStatistic  _InterlockedAddLargeStatistic_StupidDDKVsCompilerCrap
 #undef PAGE_SIZE
 #undef PAGE_SHIFT
-#include <ntddk.h>
+#include <iprt/nt/ntddk.h>
+RT_C_DECLS_BEGIN
 #include <ntddkbd.h>
 #include <ntddmou.h>
-#undef _InterlockedAddLargeStatistic  _InterlockedAddLargeStatistic_StupidDDKVsCompilerCrap
 RT_C_DECLS_END
+
+#include <VBox/VMMDev.h>
+#include <VBox/VBoxGuestLib.h>
 
 /* not available on NT4 */
 #undef ExFreePool
@@ -192,7 +192,7 @@ typedef struct _I8042CFGINF
     CM_PARTIAL_RESOURCE_DESCRIPTOR aPorts[i8042MaxPorts];
     CM_PARTIAL_RESOURCE_DESCRIPTOR KbdInt;
     CM_PARTIAL_RESOURCE_DESCRIPTOR MouInt;
-    BOOLEAN               fFloatSave;                   /**< weather to save floating point context */
+    BOOLEAN               fFloatSave;                   /**< whether to save floating point context */
     USHORT                iResend;                      /**< number of retries allowed */
     USHORT                PollingIterations;            /**< number of polling iterations */
     USHORT                PollingIterationsMaximum;
@@ -973,14 +973,12 @@ static NTSTATUS I8042OpenClose(PDEVICE_OBJECT pDevObj, PIRP Irp)
  */
 static VOID CtrlRetriesExceededDpc(PKDPC Dpc, PDEVICE_OBJECT pDevObj, PIRP Irp, PVOID pCtx)
 {
-    NOREF(Dpc);
-    NOREF(pCtx);
-    PDEVEXT pDevExt = (PDEVEXT)pDevObj->DeviceExtension;
+    RT_NOREF(Dpc, pCtx);
 
     Irp->IoStatus.Status = STATUS_IO_TIMEOUT;
 
     IoStartNextPacket(pDevObj, FALSE);
-    IoCompleteRequest (Irp, IO_KEYBOARD_INCREMENT);
+    IoCompleteRequest(Irp, IO_KEYBOARD_INCREMENT);
 }
 
 static UCHAR TypematicPeriod[] =
@@ -1092,6 +1090,7 @@ static VOID I8042StartIo(PDEVICE_OBJECT pDevObj, PIRP Irp)
  */
 static VOID CtrlTimeoutDpc(PKDPC Dpc, PDEVICE_OBJECT pDevObj, PVOID SystemContext1, PVOID SystemContext2)
 {
+    RT_NOREF(Dpc, SystemContext1, SystemContext2);
     PDEVEXT pDevExt = (PDEVEXT)pDevObj->DeviceExtension;
 
     KIRQL cancelIrql;
@@ -1465,7 +1464,7 @@ static BOOLEAN MouIntHandler(PKINTERRUPT Interrupt, PVOID pCtx)
                     VMMDevReqMouseStatus *pReq = pDevExt->pReq;
                     if (pReq)
                     {
-                        int rc = VbglGRPerform (&pReq->header);
+                        int rc = VbglR0GRPerform (&pReq->header);
                         if (RT_SUCCESS(rc))
                         {
                             if (pReq->mouseFeatures & VMMDEV_MOUSE_HOST_WANTS_ABSOLUTE)
@@ -1507,7 +1506,7 @@ static BOOLEAN MouIntHandler(PKINTERRUPT Interrupt, PVOID pCtx)
                 VMMDevReqMouseStatus *pReq = pDevExt->pReq;
                 if (pReq)
                 {
-                    int rc = VbglGRPerform(&pReq->header);
+                    int rc = VbglR0GRPerform(&pReq->header);
                     if (RT_SUCCESS(rc))
                     {
                         if (pReq->mouseFeatures & VMMDEV_MOUSE_HOST_WANTS_ABSOLUTE)
@@ -1575,7 +1574,10 @@ static BOOLEAN KbdIntHandler(PKINTERRUPT Interrupt, PVOID pCtx)
                                                             != (OUTPUT_BUFFER_FULL))
         {
             if (pDevExt->KeyboardEnableCount == 0)
+            {
                 UCHAR scanCode = I8X_GET_DATA_BYTE(pDevExt->DevRegs[i8042Dat]);
+                NOREF(scanCode);
+            }
             return FALSE;
         }
     }
@@ -1717,6 +1719,7 @@ static VOID KbdGetRegstry(PINITEXT pInit, PUNICODE_STRING RegistryPath,
                                                    &controllerType, NULL,
                                                    &peripheralType, NULL,
                                                    KbdCallOut, pInit);
+        NOREF(status); /* how diligent of us */
 
         if (pDevExt->HardwarePresent & KEYBOARD_HARDWARE_PRESENT)
         {
@@ -1748,7 +1751,6 @@ static VOID KbdGetRegstry(PINITEXT pInit, PUNICODE_STRING RegistryPath,
 static VOID MouGetRegstry(PINITEXT pInit, PUNICODE_STRING RegistryPath,
                           PUNICODE_STRING KeyboardDeviceName, PUNICODE_STRING PointerDeviceName)
 {
-    PDEVEXT pDevExt = &pInit->DevExt;
     NTSTATUS status = STATUS_SUCCESS;
     INTERFACE_TYPE interfaceType;
     CONFIGURATION_TYPE controllerType = PointerController;
@@ -1778,6 +1780,7 @@ static VOID MouGetRegstry(PINITEXT pInit, PUNICODE_STRING RegistryPath,
 NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING RegistryPath)
 {
     PDEVICE_OBJECT pPortDevObj = NULL;
+    PDEVEXT pDevExt = NULL;
     NTSTATUS status = STATUS_SUCCESS;
     KIRQL IrqlCoord = 0;
     ULONG IntVecKbd;
@@ -1790,13 +1793,16 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING RegistryPath)
     PHYSICAL_ADDRESS Phys;
     BOOLEAN fConflict;
 
-    UNICODE_STRING KbdNameFull;
-    UNICODE_STRING MouNameFull;
-    UNICODE_STRING KbdNameBase;
-    UNICODE_STRING MouNameBase;
-    UNICODE_STRING DevNameSuff;
-    UNICODE_STRING resourceDeviceClass;
-    UNICODE_STRING registryPath;
+    ULONG resourceListSize = 0;
+    PCM_RESOURCE_LIST resources = NULL;
+
+    UNICODE_STRING KbdNameFull          = { 0, 0, NULL };
+    UNICODE_STRING MouNameFull          = { 0, 0, NULL };
+    UNICODE_STRING KbdNameBase          = { 0, 0, NULL };
+    UNICODE_STRING MouNameBase          = { 0, 0, NULL };
+    UNICODE_STRING DevNameSuff          = { 0, 0, NULL };
+    UNICODE_STRING resourceDeviceClass  = { 0, 0, NULL };
+    UNICODE_STRING registryPath         = { 0, 0, NULL };
 
 #define NAME_MAX 256
     WCHAR keyboardBuffer[NAME_MAX];
@@ -1812,15 +1818,6 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING RegistryPath)
     }
 
     RtlZeroMemory(pInit, sizeof(INITEXT));
-    KbdNameFull.MaximumLength = 0;
-    KbdNameFull.Length = 0;
-    MouNameFull.MaximumLength = 0;
-    MouNameFull.Length = 0;
-    DevNameSuff.MaximumLength = 0;
-    DevNameSuff.Length = 0;
-    resourceDeviceClass.MaximumLength = 0;
-    resourceDeviceClass.Length = 0;
-    registryPath.MaximumLength = 0;
     RtlZeroMemory(keyboardBuffer, NAME_MAX * sizeof(WCHAR));
     KbdNameBase.Buffer = keyboardBuffer;
     KbdNameBase.Length = 0;
@@ -1903,12 +1900,10 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING RegistryPath)
     if (!NT_SUCCESS(status))
         goto fail;
 
-    PDEVEXT pDevExt = (PDEVEXT)pPortDevObj->DeviceExtension;
+    pDevExt = (PDEVEXT)pPortDevObj->DeviceExtension;
     *pDevExt = pInit->DevExt;
     pDevExt->pDevObj = pPortDevObj;
 
-    ULONG resourceListSize = 0;
-    PCM_RESOURCE_LIST resources = NULL;
     CreateResList(pDevExt, &resources, &resourceListSize);
 
     RtlInitUnicodeString(&resourceDeviceClass, NULL);
@@ -2136,7 +2131,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING RegistryPath)
 
     ASSERT(status == STATUS_SUCCESS);
 
-    int rcVBox = VbglInit();
+    int rcVBox = VbglR0InitClient();
     if (RT_FAILURE(rcVBox))
     {
         Log(("VBoxMouseNT::DriverEntry: could not initialize guest library, rc = %Rrc\n", rcVBox));
@@ -2146,14 +2141,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING RegistryPath)
     {
         VMMDevReqMouseStatus *pReq = NULL;
 
-        rcVBox = VbglGRAlloc((VMMDevRequestHeader**)&pReq, sizeof(VMMDevReqMouseStatus), VMMDevReq_SetMouseStatus);
+        rcVBox = VbglR0GRAlloc((VMMDevRequestHeader**)&pReq, sizeof(VMMDevReqMouseStatus), VMMDevReq_SetMouseStatus);
         if (RT_SUCCESS(rcVBox))
         {
             /* Inform host that we support absolute */
             pReq->mouseFeatures = VMMDEV_MOUSE_GUEST_CAN_ABSOLUTE;
             pReq->pointerXPos = 0;
             pReq->pointerYPos = 0;
-            rcVBox = VbglGRPerform(&pReq->header);
+            rcVBox = VbglR0GRPerform(&pReq->header);
             if (RT_FAILURE(rcVBox))
                 Log(("VBoxMouseNT::DriverEntry: ERROR communicating new mouse capabilities to VMMDev. rc = %Rrc\n", rcVBox));
             else
@@ -2165,7 +2160,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING RegistryPath)
         }
         else
         {
-            VbglTerminate();
+            VbglR0TerminateClient();
             Log(("VBoxMouseNT::DriverEntry: could not allocate request buffer, rc = %Rrc\n", rcVBox));
             /* Continue working in non-VBox mode. */
         }
@@ -2486,7 +2481,7 @@ fail:
  */
 static NTSTATUS KbdInitHw(PDEVICE_OBJECT pDevObj)
 {
-    NTSTATUS status;
+    NTSTATUS status = STATUS_SUCCESS; /* Shut up MSC. */
     BOOLEAN fWaitForAck = TRUE;
     PDEVEXT pDevExt = (PDEVEXT)pDevObj->DeviceExtension;
 
@@ -2501,22 +2496,19 @@ retry:
         status = GetBytePoll(KbdDevType, pDevExt, &byte);
         if (NT_SUCCESS(status))
             break;
-        else
+        if (status == STATUS_IO_TIMEOUT)
         {
-            if (status == STATUS_IO_TIMEOUT)
-            {
-                LARGE_INTEGER nextQuery, difference, tenSeconds;
-                KeStallExecutionProcessor(50);
-                KeQueryTickCount(&nextQuery);
-                difference.QuadPart = nextQuery.QuadPart - startOfSpin.QuadPart;
-                tenSeconds.QuadPart = 10*10*1000*1000;
-                ASSERT(KeQueryTimeIncrement() <= MAXLONG);
-                if (difference.QuadPart*KeQueryTimeIncrement() >= tenSeconds.QuadPart)
-                    break;
-            }
-            else
+            LARGE_INTEGER nextQuery, difference, tenSeconds;
+            KeStallExecutionProcessor(50);
+            KeQueryTickCount(&nextQuery);
+            difference.QuadPart = nextQuery.QuadPart - startOfSpin.QuadPart;
+            tenSeconds.QuadPart = 10*10*1000*1000;
+            ASSERT(KeQueryTimeIncrement() <= MAXLONG);
+            if (difference.QuadPart*KeQueryTimeIncrement() >= tenSeconds.QuadPart)
                 break;
         }
+        else
+            break;
     }
 
     if (!NT_SUCCESS(status))
@@ -2548,8 +2540,8 @@ retry:
     if (status == STATUS_SUCCESS)
     {
         status = PutBytePoll(i8042Dat, TRUE /*=wait*/, KbdDevType, pDevExt,
-                                  ConvertTypematic(pDevExt->Cfg.KeyRepeatCurrent.Rate,
-                                                   pDevExt->Cfg.KeyRepeatCurrent.Delay));
+                             ConvertTypematic(pDevExt->Cfg.KeyRepeatCurrent.Rate,
+                                              pDevExt->Cfg.KeyRepeatCurrent.Delay));
         /* ignore errors */
     }
 
@@ -2677,7 +2669,7 @@ static VOID HwGetRegstry(PINITEXT pInit, PUNICODE_STRING RegistryPath,
 
 {
     PRTL_QUERY_REGISTRY_TABLE aQuery = NULL;
-    UNICODE_STRING parametersPath;
+    UNICODE_STRING parametersPath = { 0, 0, NULL }; /* Shut up MSC (actually badly structured code is a fault, but whatever). */
     UNICODE_STRING defaultPointerName;
     UNICODE_STRING defaultKeyboardName;
     USHORT   defaultResendIterations = 3;
@@ -2930,6 +2922,7 @@ static NTSTATUS KbdCallOut(PVOID pCtx, PUNICODE_STRING PathName,
                            CONFIGURATION_TYPE uCtrlType, ULONG uCtrlNr, PKEY_VALUE_FULL_INFORMATION *pCtrlInf,
                            CONFIGURATION_TYPE uPrfType, ULONG uPrfNr, PKEY_VALUE_FULL_INFORMATION *pPrfInf)
 {
+    RT_NOREF(PathName, pBusInf, uCtrlType, uCtrlNr, uPrfType, uPrfNr);
     UNICODE_STRING unicodeIdentifier;
     GetDevIdentifier(pPrfInf, &unicodeIdentifier);
 
@@ -3082,6 +3075,7 @@ static NTSTATUS MouCallOut(PVOID pCtx, PUNICODE_STRING PathName,
                            CONFIGURATION_TYPE uCtrlType, ULONG uCtrlNr, PKEY_VALUE_FULL_INFORMATION *pCtrlInf,
                            CONFIGURATION_TYPE uPrfType, ULONG uPrfNr, PKEY_VALUE_FULL_INFORMATION *pPrfInf)
 {
+    RT_NOREF(PathName, pBusInf, uCtrlType, uCtrlNr, uPrfType, uPrfNr);
     NTSTATUS status = STATUS_SUCCESS;
 
     UNICODE_STRING unicodeIdentifier;
@@ -3218,7 +3212,7 @@ static const UCHAR s_ucCommands[] =
 
 static NTSTATUS MouFindWheel(PDEVICE_OBJECT pDevObj)
 {
-    NTSTATUS status;
+    NTSTATUS status = STATUS_SUCCESS; /* Shut up MSC. */
     PDEVEXT pDevExt = (PDEVEXT) pDevObj->DeviceExtension;
 
     if (!pDevExt->Cfg.EnableWheelDetection)
@@ -3236,7 +3230,7 @@ static NTSTATUS MouFindWheel(PDEVICE_OBJECT pDevObj)
         KeStallExecutionProcessor(50);
     }
 
-    UCHAR byte;
+    UCHAR byte = UINT8_MAX;
     for (unsigned i = 0; i < 5; i++)
     {
         status = GetBytePoll(CtrlDevType, pDevExt, &byte);

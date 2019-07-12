@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,6 +26,8 @@
 #ifndef ___iprt_cpputils_h
 #define ___iprt_cpputils_h
 
+#include <iprt/types.h>
+
 /** @defgroup grp_rt_cpp        IPRT C++ APIs */
 
 /** @defgroup grp_rt_cpp_util   C++ Utilities
@@ -41,8 +43,6 @@
  *
  * Inherit from this class in order to prevent automatic generation
  * of the copy constructor and assignment operator in your class.
- *
- * @addtogroup grp_rt_cpp_util
  */
 class RTCNonCopyable
 {
@@ -51,7 +51,7 @@ protected:
     ~RTCNonCopyable() {}
 private:
     RTCNonCopyable(RTCNonCopyable const &);
-    RTCNonCopyable const &operator=(RTCNonCopyable const &);
+    RTCNonCopyable &operator=(RTCNonCopyable const &);
 };
 
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -53,15 +54,16 @@ static size_t rtAsn1DefaultAllocator_AlignSize(size_t cb)
 }
 
 
-/** @interface_method_impl{RTASN1ALLOCATORVTABLE, pfnFree} */
+/** @interface_method_impl{RTASN1ALLOCATORVTABLE,pfnFree} */
 static DECLCALLBACK(void) rtAsn1DefaultAllocator_Free(PCRTASN1ALLOCATORVTABLE pThis, PRTASN1ALLOCATION pAllocation, void *pv)
 {
+    RT_NOREF_PV(pThis);
     RTMemFree(pv);
     pAllocation->cbAllocated = 0;
 }
 
 
-/** @interface_method_impl{RTASN1ALLOCATORVTABLE, pfnAlloc} */
+/** @interface_method_impl{RTASN1ALLOCATORVTABLE,pfnAlloc} */
 static DECLCALLBACK(int)  rtAsn1DefaultAllocator_Alloc(PCRTASN1ALLOCATORVTABLE pThis, PRTASN1ALLOCATION pAllocation,
                                                        void **ppv, size_t cb)
 {
@@ -73,11 +75,12 @@ static DECLCALLBACK(int)  rtAsn1DefaultAllocator_Alloc(PCRTASN1ALLOCATORVTABLE p
         pAllocation->cbAllocated = (uint32_t)cbAlloc;
         return VINF_SUCCESS;
     }
+    RT_NOREF_PV(pThis);
     return VERR_NO_MEMORY;
 }
 
 
-/** @interface_method_impl{RTASN1ALLOCATORVTABLE, pfnRealloc} */
+/** @interface_method_impl{RTASN1ALLOCATORVTABLE,pfnRealloc} */
 static DECLCALLBACK(int)  rtAsn1DefaultAllocator_Realloc(PCRTASN1ALLOCATORVTABLE pThis, PRTASN1ALLOCATION pAllocation,
                                                          void *pvOld, void **ppvNew, size_t cbNew)
 {
@@ -91,15 +94,128 @@ static DECLCALLBACK(int)  rtAsn1DefaultAllocator_Realloc(PCRTASN1ALLOCATORVTABLE
         pAllocation->cbAllocated = (uint32_t)cbAlloc;
         return VINF_SUCCESS;
     }
+    RT_NOREF_PV(pThis);
     return VERR_NO_MEMORY;
 }
 
 
+/** @interface_method_impl{RTASN1ALLOCATORVTABLE,pfnFreeArray} */
+static DECLCALLBACK(void) rtAsn1DefaultAllocator_FreeArray(PCRTASN1ALLOCATORVTABLE pThis, PRTASN1ARRAYALLOCATION pAllocation,
+                                                           void **papvArray)
+{
+    RT_NOREF_PV(pThis);
+    Assert(papvArray);
+    Assert(pAllocation->cbEntry);
+
+    uint32_t i = pAllocation->cEntriesAllocated;
+    while (i-- > 0)
+        RTMemFree(papvArray[i]);
+    RTMemFree(papvArray);
+
+    pAllocation->cEntriesAllocated  = 0;
+    pAllocation->cPointersAllocated = 0;
+}
+
+
+/** @interface_method_impl{RTASN1ALLOCATORVTABLE,pfnGrowArray} */
+static DECLCALLBACK(int) rtAsn1DefaultAllocator_GrowArray(PCRTASN1ALLOCATORVTABLE pThis, PRTASN1ARRAYALLOCATION pAllocation,
+                                                          void ***ppapvArray, uint32_t cMinEntries)
+{
+    RT_NOREF_PV(pThis);
+
+    /*
+     * Resize the pointer array.  We do chunks of 64 bytes for now.
+     */
+    void **papvArray = *ppapvArray;
+    uint32_t cPointers = RT_ALIGN_32(cMinEntries, 64 / sizeof(void *));
+    if (cPointers > pAllocation->cPointersAllocated)
+    {
+        void *pvPointers = RTMemRealloc(papvArray, cPointers * sizeof(void *));
+        if (pvPointers)
+        { /* likely */ }
+        else if (cMinEntries > pAllocation->cPointersAllocated)
+        {
+            cPointers  = cMinEntries;
+            pvPointers = RTMemRealloc(*ppapvArray, cPointers * sizeof(void *));
+            if (!pvPointers)
+                return VERR_NO_MEMORY;
+        }
+        else
+        {
+            cPointers  = pAllocation->cPointersAllocated;
+            pvPointers = papvArray;
+        }
+
+        *ppapvArray = papvArray = (void **)pvPointers;
+        RT_BZERO(&papvArray[pAllocation->cPointersAllocated], (cPointers - pAllocation->cPointersAllocated) * sizeof(void *));
+        pAllocation->cPointersAllocated = cPointers;
+    }
+
+    /*
+     * Add more entries.  Do multiple as the array grows.
+     *
+     * Note! We could possibly optimize this by allocating slabs of entries and
+     *       slice them up.  However, keep things as simple as possible for now.
+     */
+    uint32_t cEntries = cMinEntries;
+    if (cEntries > 2)
+    {
+        if (cEntries > 8)
+            cEntries = RT_ALIGN_32(cEntries, 4);
+        else
+            cEntries = RT_ALIGN_32(cEntries, 2);
+        cEntries = RT_MIN(cEntries, cPointers);
+        Assert(cEntries >= cMinEntries);
+    }
+    Assert(cEntries <= pAllocation->cPointersAllocated);
+
+    while (pAllocation->cEntriesAllocated < cEntries)
+    {
+        void *pv;
+        papvArray[pAllocation->cEntriesAllocated] = pv = RTMemAllocZ(pAllocation->cbEntry);
+        if (pv)
+            pAllocation->cEntriesAllocated++;
+        else if (pAllocation->cEntriesAllocated >= cMinEntries)
+            break;
+        else
+            return VERR_NO_MEMORY;
+    }
+
+    return VINF_SUCCESS;
+}
+
+
+/** @interface_method_impl{RTASN1ALLOCATORVTABLE,pfnShrinkArray} */
+static DECLCALLBACK(void) rtAsn1DefaultAllocator_ShrinkArray(PCRTASN1ALLOCATORVTABLE pThis, PRTASN1ARRAYALLOCATION pAllocation,
+                                                             void ***ppapvArray, uint32_t cNew, uint32_t cCurrent)
+{
+    RT_NOREF_PV(pThis);
+
+    /*
+     * For now we only zero the entries being removed.
+     */
+    void **papvArray = *ppapvArray;
+    while (cNew < cCurrent)
+    {
+        RT_BZERO(papvArray[cNew], pAllocation->cbEntry);
+        cNew++;
+    }
+}
+
+
+
 /** The default ASN.1 allocator. */
+#if 1 || !defined(IN_RING3) || defined(DOXYGEN_RUNNING)
 RT_DECL_DATA_CONST(RTASN1ALLOCATORVTABLE const) g_RTAsn1DefaultAllocator =
+#else
+RT_DECL_DATA_CONST(RTASN1ALLOCATORVTABLE const) g_RTAsn1DefaultAllocatorDisabled =
+#endif
 {
     rtAsn1DefaultAllocator_Free,
     rtAsn1DefaultAllocator_Alloc,
-    rtAsn1DefaultAllocator_Realloc
+    rtAsn1DefaultAllocator_Realloc,
+    rtAsn1DefaultAllocator_FreeArray,
+    rtAsn1DefaultAllocator_GrowArray,
+    rtAsn1DefaultAllocator_ShrinkArray
 };
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,11 +15,13 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP   LOG_GROUP_USB_MSD
 #include <VBox/vmm/pdmusb.h>
+#include <VBox/vmm/pdmstorageifs.h>
 #include <VBox/log.h>
 #include <VBox/err.h>
 #include <VBox/scsi.h>
@@ -32,9 +34,9 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @name USB MSD string IDs
  * @{ */
 #define USBMSD_STR_ID_MANUFACTURER  1
@@ -49,9 +51,15 @@
 #define USBMSD_PID_CD               0x0031
 /** @} */
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/** Saved state version. */
+#define USB_MSD_SAVED_STATE_VERSION             2
+/** Saved state vesion before the cleanup. */
+#define USB_MSD_SAVED_STATE_VERSION_PRE_CLEANUP 1
+
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * USB MSD Command Block Wrapper or CBW. The command block
@@ -125,7 +133,9 @@ typedef enum USBMSDREQSTATE
      * and the only reference to this request will be with DrvSCSI. */
     USBMSDREQSTATE_DESTROY_ON_COMPLETION,
     /** The end of the valid states. */
-    USBMSDREQSTATE_END
+    USBMSDREQSTATE_END,
+    /** 32bit blow up hack. */
+    USBMSDREQSTATE_32BIT_HACK = 0x7fffffff
 } USBMSDREQSTATE;
 
 
@@ -136,28 +146,18 @@ typedef struct USBMSDREQ
 {
     /** The state of the request. */
     USBMSDREQSTATE      enmState;
+    /** The I/O requesthandle .*/
+    PDMMEDIAEXIOREQ     hIoReq;
     /** The size of the data buffer. */
-    size_t              cbBuf;
+    uint32_t            cbBuf;
     /** Pointer to the data buffer. */
     uint8_t            *pbBuf;
     /** Current buffer offset. */
     uint32_t            offBuf;
     /** The current Cbw when we're in the pending state. */
     USBCBW              Cbw;
-    /** The current SCSI request. */
-    PDMSCSIREQUEST      ScsiReq;
-    /** The scatter-gather segment used by ScsiReq for describing pbBuf. */
-    RTSGSEG             ScsiReqSeg;
-    /** The sense buffer for the current SCSI request. */
-    uint8_t             ScsiReqSense[64];
     /** The status of a completed SCSI request. */
-    int                 iScsiReqStatus;
-    /** Set if the request structure must be destroyed when the SCSI driver
-     * completes it.  This is used to deal with requests that runs while the
-     * device is being reset. */
-    bool                fDestoryOnCompletion;
-    /** Pointer to the USB device instance owning it. */
-    PPDMUSBINS          pUsbIns;
+    uint8_t             iScsiReqStatus;
 } USBMSDREQ;
 /** Pointer to a USB MSD request. */
 typedef USBMSDREQ *PUSBMSDREQ;
@@ -203,10 +203,6 @@ typedef struct USBMSD
     /** The current configuration.
      * (0 - default, 1 - the only, i.e configured.) */
     uint8_t             bConfigurationValue;
-#if 0
-    /** The state of the MSD (state machine).*/
-    USBMSDSTATE         enmState;
-#endif
     /** Endpoint 0 is the default control pipe, 1 is the host->dev bulk pipe and 2
      * is the dev->host one. */
     USBMSDEP            aEps[3];
@@ -236,6 +232,12 @@ typedef struct USBMSD
     /** The reset URB.
      * This is waiting for SCSI request completion before finishing the reset. */
     PVUSBURB            pResetUrb;
+    /** Indicates that PDMUsbHlpAsyncNotificationCompleted should be called when
+     * the MSD is entering the idle state. */
+    volatile bool       fSignalIdle;
+
+    /** Indicates that this device is a CD-ROM. */
+    bool                fIsCdrom;
 
     /**
      * LUN\#0 data.
@@ -244,13 +246,17 @@ typedef struct USBMSD
     {
         /** The base interface for LUN\#0. */
         PDMIBASE            IBase;
-        /** The SCSI port interface for LUN\#0  */
-        PDMISCSIPORT        IScsiPort;
+        /** The media port interface fo LUN\#0. */
+        PDMIMEDIAPORT       IMediaPort;
+        /** The extended media port interface for LUN\#0  */
+        PDMIMEDIAEXPORT     IMediaExPort;
 
         /** The base interface for the SCSI driver connected to LUN\#0. */
         PPDMIBASE           pIBase;
-        /** The SCSI connector interface for the SCSI driver connected to LUN\#0. */
-        PPDMISCSICONNECTOR  pIScsiConnector;
+        /** The media interface for th SCSI drver conected to LUN\#0. */
+        PPDMIMEDIA          pIMedia;
+        /** The extended media inerface for the SCSI driver connected to LUN\#0. */
+        PPDMIMEDIAEX        pIMediaEx;
     } Lun0;
 
 } USBMSD;
@@ -258,9 +264,9 @@ typedef struct USBMSD
 typedef USBMSD *PUSBMSD;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static const PDMUSBDESCCACHESTRING g_aUsbMsdStrings_en_US[] =
 {
     { USBMSD_STR_ID_MANUFACTURER,   "VirtualBox"   },
@@ -286,7 +292,9 @@ static const VUSBDESCENDPOINTEX g_aUsbMsdEndpointDescsFS[2] =
         },
         /* .pvMore = */     NULL,
         /* .pvClass = */    NULL,
-        /* .cbClass = */    0
+        /* .cbClass = */    0,
+        /* .pvSsepc = */    NULL,
+        /* .cbSsepc = */    0
     },
     {
         {
@@ -299,7 +307,9 @@ static const VUSBDESCENDPOINTEX g_aUsbMsdEndpointDescsFS[2] =
         },
         /* .pvMore = */     NULL,
         /* .pvClass = */    NULL,
-        /* .cbClass = */    0
+        /* .cbClass = */    0,
+        /* .pvSsepc = */    NULL,
+        /* .cbSsepc = */    0
     }
 };
 
@@ -316,7 +326,9 @@ static const VUSBDESCENDPOINTEX g_aUsbMsdEndpointDescsHS[2] =
         },
         /* .pvMore = */     NULL,
         /* .pvClass = */    NULL,
-        /* .cbClass = */    0
+        /* .cbClass = */    0,
+        /* .pvSsepc = */    NULL,
+        /* .cbSsepc = */    0
     },
     {
         {
@@ -329,7 +341,52 @@ static const VUSBDESCENDPOINTEX g_aUsbMsdEndpointDescsHS[2] =
         },
         /* .pvMore = */     NULL,
         /* .pvClass = */    NULL,
-        /* .cbClass = */    0
+        /* .cbClass = */    0,
+        /* .pvSsepc = */    NULL,
+        /* .cbSsepc = */    0
+    }
+};
+
+static const VUSBDESCSSEPCOMPANION g_aUsbMsdEpCompanionSS =
+{
+    /* .bLength = */            sizeof(VUSBDESCSSEPCOMPANION),
+    /* .bDescriptorType = */    VUSB_DT_SS_ENDPOINT_COMPANION,
+    /* .bMaxBurst = */          15  /* we can burst all the way */,
+    /* .bmAttributes = */       0   /* no streams */,
+    /* .wBytesPerInterval = */  0   /* not a periodic endpoint */
+};
+
+static const VUSBDESCENDPOINTEX g_aUsbMsdEndpointDescsSS[2] =
+{
+    {
+        {
+            /* .bLength = */            sizeof(VUSBDESCENDPOINT),
+            /* .bDescriptorType = */    VUSB_DT_ENDPOINT,
+            /* .bEndpointAddress = */   0x81 /* ep=1, in */,
+            /* .bmAttributes = */       2 /* bulk */,
+            /* .wMaxPacketSize = */     1024 /* SS bulk packet size */,
+            /* .bInterval = */          0 /* no NAKs */
+        },
+        /* .pvMore = */     NULL,
+        /* .pvClass = */    NULL,
+        /* .cbClass = */    0,
+        /* .pvSsepc = */    &g_aUsbMsdEpCompanionSS,
+        /* .cbSsepc = */    sizeof(g_aUsbMsdEpCompanionSS)
+    },
+    {
+        {
+            /* .bLength = */            sizeof(VUSBDESCENDPOINT),
+            /* .bDescriptorType = */    VUSB_DT_ENDPOINT,
+            /* .bEndpointAddress = */   0x02 /* ep=2, out */,
+            /* .bmAttributes = */       2 /* bulk */,
+            /* .wMaxPacketSize = */     1024 /* SS bulk packet size */,
+            /* .bInterval = */          0 /* no NAKs */
+        },
+        /* .pvMore = */     NULL,
+        /* .pvClass = */    NULL,
+        /* .cbClass = */    0,
+        /* .pvSsepc = */    &g_aUsbMsdEpCompanionSS,
+        /* .cbSsepc = */    sizeof(g_aUsbMsdEpCompanionSS)
     }
 };
 
@@ -375,6 +432,27 @@ static const VUSBDESCINTERFACEEX g_UsbMsdInterfaceDescHS =
     /* .cbIAD = */ 0
 };
 
+static const VUSBDESCINTERFACEEX g_UsbMsdInterfaceDescSS =
+{
+    {
+        /* .bLength = */                sizeof(VUSBDESCINTERFACE),
+        /* .bDescriptorType = */        VUSB_DT_INTERFACE,
+        /* .bInterfaceNumber = */       0,
+        /* .bAlternateSetting = */      0,
+        /* .bNumEndpoints = */          2,
+        /* .bInterfaceClass = */        8 /* Mass Storage */,
+        /* .bInterfaceSubClass = */     6 /* SCSI transparent command set */,
+        /* .bInterfaceProtocol = */     0x50 /* Bulk-Only Transport */,
+        /* .iInterface = */             0
+    },
+    /* .pvMore = */     NULL,
+    /* .pvClass = */    NULL,
+    /* .cbClass = */    0,
+    &g_aUsbMsdEndpointDescsSS[0],
+    /* .pIAD = */ NULL,
+    /* .cbIAD = */ 0
+};
+
 static const VUSBINTERFACE g_aUsbMsdInterfacesFS[] =
 {
     { &g_UsbMsdInterfaceDescFS, /* .cSettings = */ 1 },
@@ -383,6 +461,11 @@ static const VUSBINTERFACE g_aUsbMsdInterfacesFS[] =
 static const VUSBINTERFACE g_aUsbMsdInterfacesHS[] =
 {
     { &g_UsbMsdInterfaceDescHS, /* .cSettings = */ 1 },
+};
+
+static const VUSBINTERFACE g_aUsbMsdInterfacesSS[] =
+{
+    { &g_UsbMsdInterfaceDescSS, /* .cSettings = */ 1 },
 };
 
 static const VUSBDESCCONFIGEX g_UsbMsdConfigDescFS =
@@ -398,6 +481,8 @@ static const VUSBDESCCONFIGEX g_UsbMsdConfigDescFS =
         /* .MaxPower = */           50 /* 100mA */
     },
     NULL,                           /* pvMore */
+    NULL,                           /* pvClass */
+    0,                              /* cbClass */
     &g_aUsbMsdInterfacesFS[0],
     NULL                            /* pvOriginal */
 };
@@ -415,13 +500,34 @@ static const VUSBDESCCONFIGEX g_UsbMsdConfigDescHS =
         /* .MaxPower = */           50 /* 100mA */
     },
     NULL,                           /* pvMore */
+    NULL,                           /* pvClass */
+    0,                              /* cbClass */
     &g_aUsbMsdInterfacesHS[0],
     NULL                            /* pvOriginal */
 };
 
-static const VUSBDESCDEVICE g_UsbMsdDeviceDesc =
+static const VUSBDESCCONFIGEX g_UsbMsdConfigDescSS =
 {
-    /* .bLength = */                sizeof(g_UsbMsdDeviceDesc),
+    {
+        /* .bLength = */            sizeof(VUSBDESCCONFIG),
+        /* .bDescriptorType = */    VUSB_DT_CONFIG,
+        /* .wTotalLength = */       0 /* recalculated on read */,
+        /* .bNumInterfaces = */     RT_ELEMENTS(g_aUsbMsdInterfacesSS),
+        /* .bConfigurationValue =*/ 1,
+        /* .iConfiguration = */     0,
+        /* .bmAttributes = */       RT_BIT(7),
+        /* .MaxPower = */           50 /* 100mA */
+    },
+    NULL,                           /* pvMore */
+    NULL,                           /* pvClass */
+    0,                              /* cbClass */
+    &g_aUsbMsdInterfacesSS[0],
+    NULL                            /* pvOriginal */
+};
+
+static const VUSBDESCDEVICE g_UsbMsdDeviceDesc20 =
+{
+    /* .bLength = */                sizeof(g_UsbMsdDeviceDesc20),
     /* .bDescriptorType = */        VUSB_DT_DEVICE,
     /* .bcdUsb = */                 0x200, /* USB 2.0 */
     /* .bDeviceClass = */           0 /* Class specified in the interface desc. */,
@@ -433,6 +539,60 @@ static const VUSBDESCDEVICE g_UsbMsdDeviceDesc =
     /* .bcdDevice = */              0x0100, /* 1.0 */
     /* .iManufacturer = */          USBMSD_STR_ID_MANUFACTURER,
     /* .iProduct = */               USBMSD_STR_ID_PRODUCT_HD,
+    /* .iSerialNumber = */          0,
+    /* .bNumConfigurations = */     1
+};
+
+static const VUSBDESCDEVICE g_UsbCdDeviceDesc20 =
+{
+    /* .bLength = */                sizeof(g_UsbCdDeviceDesc20),
+    /* .bDescriptorType = */        VUSB_DT_DEVICE,
+    /* .bcdUsb = */                 0x200, /* USB 2.0 */
+    /* .bDeviceClass = */           0 /* Class specified in the interface desc. */,
+    /* .bDeviceSubClass = */        0 /* Subclass specified in the interface desc. */,
+    /* .bDeviceProtocol = */        0 /* Protocol specified in the interface desc. */,
+    /* .bMaxPacketSize0 = */        64,
+    /* .idVendor = */               VBOX_USB_VENDOR,
+    /* .idProduct = */              USBMSD_PID_CD,
+    /* .bcdDevice = */              0x0100, /* 1.0 */
+    /* .iManufacturer = */          USBMSD_STR_ID_MANUFACTURER,
+    /* .iProduct = */               USBMSD_STR_ID_PRODUCT_CDROM,
+    /* .iSerialNumber = */          0,
+    /* .bNumConfigurations = */     1
+};
+
+static const VUSBDESCDEVICE g_UsbMsdDeviceDesc30 =
+{
+    /* .bLength = */                sizeof(g_UsbMsdDeviceDesc30),
+    /* .bDescriptorType = */        VUSB_DT_DEVICE,
+    /* .bcdUsb = */                 0x300, /* USB 2.0 */
+    /* .bDeviceClass = */           0 /* Class specified in the interface desc. */,
+    /* .bDeviceSubClass = */        0 /* Subclass specified in the interface desc. */,
+    /* .bDeviceProtocol = */        0 /* Protocol specified in the interface desc. */,
+    /* .bMaxPacketSize0 = */        9 /* 512, the only option for USB3. */,
+    /* .idVendor = */               VBOX_USB_VENDOR,
+    /* .idProduct = */              USBMSD_PID_HD,
+    /* .bcdDevice = */              0x0110, /* 1.10 */
+    /* .iManufacturer = */          USBMSD_STR_ID_MANUFACTURER,
+    /* .iProduct = */               USBMSD_STR_ID_PRODUCT_HD,
+    /* .iSerialNumber = */          0,
+    /* .bNumConfigurations = */     1
+};
+
+static const VUSBDESCDEVICE g_UsbCdDeviceDesc30 =
+{
+    /* .bLength = */                sizeof(g_UsbCdDeviceDesc30),
+    /* .bDescriptorType = */        VUSB_DT_DEVICE,
+    /* .bcdUsb = */                 0x300, /* USB 2.0 */
+    /* .bDeviceClass = */           0 /* Class specified in the interface desc. */,
+    /* .bDeviceSubClass = */        0 /* Subclass specified in the interface desc. */,
+    /* .bDeviceProtocol = */        0 /* Protocol specified in the interface desc. */,
+    /* .bMaxPacketSize0 = */        9 /* 512, the only option for USB3. */,
+    /* .idVendor = */               VBOX_USB_VENDOR,
+    /* .idProduct = */              USBMSD_PID_CD,
+    /* .bcdDevice = */              0x0110, /* 1.10 */
+    /* .iManufacturer = */          USBMSD_STR_ID_MANUFACTURER,
+    /* .iProduct = */               USBMSD_STR_ID_PRODUCT_CDROM,
     /* .iSerialNumber = */          0,
     /* .bNumConfigurations = */     1
 };
@@ -450,9 +610,42 @@ static const VUSBDEVICEQUALIFIER g_UsbMsdDeviceQualifier =
     /* .bReserved = */              0
 };
 
+static const struct {
+    VUSBDESCBOS         bos;
+    VUSBDESCSSDEVCAP    sscap;
+} g_UsbMsdBOS =
+{
+    {
+        /* .bLength = */                sizeof(g_UsbMsdBOS.bos),
+        /* .bDescriptorType = */        VUSB_DT_BOS,
+        /* .wTotalLength = */           sizeof(g_UsbMsdBOS),
+        /* .bNumDeviceCaps = */         1
+    },
+    {
+        /* .bLength = */                sizeof(VUSBDESCSSDEVCAP),
+        /* .bDescriptorType = */        VUSB_DT_DEVICE_CAPABILITY,
+        /* .bDevCapabilityType = */     VUSB_DCT_SUPERSPEED_USB,
+        /* .bmAttributes = */           0   /* No LTM. */,
+        /* .wSpeedsSupported = */       0xe /* Any speed is good. */,
+        /* .bFunctionalitySupport = */  2   /* Want HS at least. */,
+        /* .bU1DevExitLat = */          0,  /* We are blazingly fast. */
+        /* .wU2DevExitLat = */          0
+    }
+};
+
 static const PDMUSBDESCCACHE g_UsbMsdDescCacheFS =
 {
-    /* .pDevice = */                &g_UsbMsdDeviceDesc,
+    /* .pDevice = */                &g_UsbMsdDeviceDesc20,
+    /* .paConfigs = */              &g_UsbMsdConfigDescFS,
+    /* .paLanguages = */            g_aUsbMsdLanguages,
+    /* .cLanguages = */             RT_ELEMENTS(g_aUsbMsdLanguages),
+    /* .fUseCachedDescriptors = */  true,
+    /* .fUseCachedStringsDescriptors = */ true
+};
+
+static const PDMUSBDESCCACHE g_UsbCdDescCacheFS =
+{
+    /* .pDevice = */                &g_UsbCdDeviceDesc20,
     /* .paConfigs = */              &g_UsbMsdConfigDescFS,
     /* .paLanguages = */            g_aUsbMsdLanguages,
     /* .cLanguages = */             RT_ELEMENTS(g_aUsbMsdLanguages),
@@ -462,7 +655,7 @@ static const PDMUSBDESCCACHE g_UsbMsdDescCacheFS =
 
 static const PDMUSBDESCCACHE g_UsbMsdDescCacheHS =
 {
-    /* .pDevice = */                &g_UsbMsdDeviceDesc,
+    /* .pDevice = */                &g_UsbMsdDeviceDesc20,
     /* .paConfigs = */              &g_UsbMsdConfigDescHS,
     /* .paLanguages = */            g_aUsbMsdLanguages,
     /* .cLanguages = */             RT_ELEMENTS(g_aUsbMsdLanguages),
@@ -470,10 +663,40 @@ static const PDMUSBDESCCACHE g_UsbMsdDescCacheHS =
     /* .fUseCachedStringsDescriptors = */ true
 };
 
+static const PDMUSBDESCCACHE g_UsbCdDescCacheHS =
+{
+    /* .pDevice = */                &g_UsbCdDeviceDesc20,
+    /* .paConfigs = */              &g_UsbMsdConfigDescHS,
+    /* .paLanguages = */            g_aUsbMsdLanguages,
+    /* .cLanguages = */             RT_ELEMENTS(g_aUsbMsdLanguages),
+    /* .fUseCachedDescriptors = */  true,
+    /* .fUseCachedStringsDescriptors = */ true
+};
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+static const PDMUSBDESCCACHE g_UsbMsdDescCacheSS =
+{
+    /* .pDevice = */                &g_UsbMsdDeviceDesc30,
+    /* .paConfigs = */              &g_UsbMsdConfigDescSS,
+    /* .paLanguages = */            g_aUsbMsdLanguages,
+    /* .cLanguages = */             RT_ELEMENTS(g_aUsbMsdLanguages),
+    /* .fUseCachedDescriptors = */  true,
+    /* .fUseCachedStringsDescriptors = */ true
+};
+
+static const PDMUSBDESCCACHE g_UsbCdDescCacheSS =
+{
+    /* .pDevice = */                &g_UsbCdDeviceDesc30,
+    /* .paConfigs = */              &g_UsbMsdConfigDescSS,
+    /* .paLanguages = */            g_aUsbMsdLanguages,
+    /* .cLanguages = */             RT_ELEMENTS(g_aUsbMsdLanguages),
+    /* .fUseCachedDescriptors = */  true,
+    /* .fUseCachedStringsDescriptors = */ true
+};
+
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int  usbMsdHandleBulkDevToHost(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb);
 
 
@@ -558,6 +781,7 @@ DECLINLINE(bool) usbMsdQueueRemove(PUSBMSDURBQUEUE pQueue, PVUSBURB pUrb)
 }
 
 
+#ifdef VBOX_STRICT
 /**
  * Checks if the queue is empty or not.
  *
@@ -568,6 +792,7 @@ DECLINLINE(bool) usbMsdQueueIsEmpty(PCUSBMSDURBQUEUE pQueue)
 {
     return pQueue->pHead == NULL;
 }
+#endif /* VBOX_STRICT */
 
 
 /**
@@ -594,19 +819,24 @@ static void usbMsdLinkDone(PUSBMSD pThis, PVUSBURB pUrb)
  * Allocates a new request and does basic init.
  *
  * @returns Pointer to the new request.  NULL if we're out of memory.
- * @param   pUsbIns             The instance allocating it.
+ * @param   pThis               The MSD instance.
  */
-static PUSBMSDREQ usbMsdReqAlloc(PPDMUSBINS pUsbIns)
+static PUSBMSDREQ usbMsdReqAlloc(PUSBMSD pThis)
 {
-    PUSBMSDREQ pReq = (PUSBMSDREQ)PDMUsbHlpMMHeapAllocZ(pUsbIns, sizeof(*pReq));
-    if (pReq)
+    PUSBMSDREQ pReq = NULL;
+    PDMMEDIAEXIOREQ hIoReq = NULL;
+
+    int rc = pThis->Lun0.pIMediaEx->pfnIoReqAlloc(pThis->Lun0.pIMediaEx, &hIoReq, (void **)&pReq,
+                                                  0 /* uTag */, PDMIMEDIAEX_F_DEFAULT);
+    if (RT_SUCCESS(rc))
     {
-        pReq->enmState          = USBMSDREQSTATE_READY;
-        pReq->iScsiReqStatus    = -1;
-        pReq->pUsbIns           = pUsbIns;
+        pReq->hIoReq         = hIoReq;
+        pReq->enmState       = USBMSDREQSTATE_READY;
+        pReq->iScsiReqStatus = 0xff;
     }
     else
-        LogRel(("usbMsdReqAlloc: Out of memory\n"));
+        LogRel(("usbMsdReqAlloc: Out of memory (%Rrc)\n", rc));
+
     return pReq;
 }
 
@@ -614,9 +844,10 @@ static PUSBMSDREQ usbMsdReqAlloc(PPDMUSBINS pUsbIns)
 /**
  * Frees a request.
  *
+ * @param   pThis               The MSD instance.
  * @param   pReq                The request.
  */
-static void usbMsdReqFree(PUSBMSDREQ pReq)
+static void usbMsdReqFree(PUSBMSD pThis, PUSBMSDREQ pReq)
 {
     /*
      * Check the input.
@@ -624,22 +855,16 @@ static void usbMsdReqFree(PUSBMSDREQ pReq)
     AssertReturnVoid(    pReq->enmState > USBMSDREQSTATE_INVALID
                      &&  pReq->enmState != USBMSDREQSTATE_EXECUTING
                      &&  pReq->enmState < USBMSDREQSTATE_END);
-    PPDMUSBINS pUsbIns = pReq->pUsbIns;
+    PPDMUSBINS pUsbIns = pThis->pUsbIns;
     AssertPtrReturnVoid(pUsbIns);
     AssertReturnVoid(PDM_VERSION_ARE_COMPATIBLE(pUsbIns->u32Version, PDM_USBINS_VERSION));
 
     /*
      * Invalidate it and free the associated resources.
      */
-    pReq->enmState                      = USBMSDREQSTATE_INVALID;
-    pReq->cbBuf                         = 0;
-    pReq->offBuf                        = 0;
-    pReq->ScsiReq.pbCDB                 = NULL;
-    pReq->ScsiReq.paScatterGatherHead   = NULL;
-    pReq->ScsiReq.pbSenseBuffer         = NULL;
-    pReq->ScsiReq.pvUser                = NULL;
-    pReq->ScsiReqSeg.cbSeg              = 0;
-    pReq->ScsiReqSeg.pvSeg              = NULL;
+    pReq->enmState = USBMSDREQSTATE_INVALID;
+    pReq->cbBuf    = 0;
+    pReq->offBuf   = 0;
 
     if (pReq->pbBuf)
     {
@@ -647,7 +872,8 @@ static void usbMsdReqFree(PUSBMSDREQ pReq)
         pReq->pbBuf = NULL;
     }
 
-    PDMUsbHlpMMHeapFree(pUsbIns, pReq);
+    int rc = pThis->Lun0.pIMediaEx->pfnIoReqFree(pThis->Lun0.pIMediaEx, pReq->hIoReq);
+    AssertRC(rc);
 }
 
 
@@ -660,29 +886,13 @@ static void usbMsdReqFree(PUSBMSDREQ pReq)
 static void usbMsdReqPrepare(PUSBMSDREQ pReq, PCUSBCBW pCbw)
 {
     /* Copy the CBW */
-    size_t cbCopy = RT_OFFSETOF(USBCBW, CBWCB[pCbw->bCBWCBLength]);
+    size_t cbCopy = RT_UOFFSETOF_DYN(USBCBW, CBWCB[pCbw->bCBWCBLength]);
     memcpy(&pReq->Cbw, pCbw, cbCopy);
     memset((uint8_t *)&pReq->Cbw + cbCopy, 0, sizeof(pReq->Cbw) - cbCopy);
 
     /* Setup the SCSI request. */
-    pReq->ScsiReq.uLogicalUnit      = pReq->Cbw.bCBWLun;
-    pReq->ScsiReq.uDataDirection    = (pReq->Cbw.bmCBWFlags & USBCBW_DIR_MASK) == USBCBW_DIR_OUT
-                                    ? PDMSCSIREQUESTTXDIR_TO_DEVICE
-                                    : PDMSCSIREQUESTTXDIR_FROM_DEVICE;
-    pReq->ScsiReq.cbCDB             = pReq->Cbw.bCBWCBLength;
-
-    pReq->ScsiReq.pbCDB             = &pReq->Cbw.CBWCB[0];
-    pReq->offBuf                    = 0;
-    pReq->ScsiReqSeg.pvSeg          = pReq->pbBuf;
-    pReq->ScsiReqSeg.cbSeg          = pReq->Cbw.dCBWDataTransferLength;
-    pReq->ScsiReq.cbScatterGather   = pReq->Cbw.dCBWDataTransferLength;
-    pReq->ScsiReq.cScatterGatherEntries = 1;
-    pReq->ScsiReq.paScatterGatherHead = &pReq->ScsiReqSeg;
-    pReq->ScsiReq.cbSenseBuffer     = sizeof(pReq->ScsiReqSense);
-    pReq->ScsiReq.pbSenseBuffer     = &pReq->ScsiReqSense[0];
-    pReq->ScsiReq.pvUser            = NULL;
-    RT_ZERO(pReq->ScsiReqSense);
-    pReq->iScsiReqStatus            = -1;
+    pReq->offBuf         = 0;
+    pReq->iScsiReqStatus = 0xff;
 }
 
 
@@ -690,20 +900,21 @@ static void usbMsdReqPrepare(PUSBMSDREQ pReq, PCUSBCBW pCbw)
  * Makes sure that there is sufficient buffer space available.
  *
  * @returns Success indicator (true/false)
- * @param   pReq
- * @param   cbBuf       The required buffer space.
+ * @param   pThis               The MSD instance.
+ * @param   pReq                The request.
+ * @param   cbBuf               The required buffer space.
  */
-static int usbMsdReqEnsureBuffer(PUSBMSDREQ pReq, size_t cbBuf)
+static int usbMsdReqEnsureBuffer(PUSBMSD pThis, PUSBMSDREQ pReq, uint32_t cbBuf)
 {
     if (RT_LIKELY(pReq->cbBuf >= cbBuf))
         RT_BZERO(pReq->pbBuf, cbBuf);
     else
     {
-        PDMUsbHlpMMHeapFree(pReq->pUsbIns, pReq->pbBuf);
+        PDMUsbHlpMMHeapFree(pThis->pUsbIns, pReq->pbBuf);
         pReq->cbBuf = 0;
 
         cbBuf = RT_ALIGN_Z(cbBuf, 0x1000);
-        pReq->pbBuf = (uint8_t *)PDMUsbHlpMMHeapAllocZ(pReq->pUsbIns, cbBuf);
+        pReq->pbBuf = (uint8_t *)PDMUsbHlpMMHeapAllocZ(pThis->pUsbIns, cbBuf);
         if (!pReq->pbBuf)
             return false;
 
@@ -718,6 +929,7 @@ static int usbMsdReqEnsureBuffer(PUSBMSDREQ pReq, size_t cbBuf)
  */
 static int usbMsdCompleteStall(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb, const char *pszWhy)
 {
+    RT_NOREF(pszWhy);
     Log(("usbMsdCompleteStall/#%u: pUrb=%p:%s: %s\n", pThis->pUsbIns->iInstance, pUrb, pUrb->pszDesc, pszWhy));
 
     pUrb->enmStatus = VUSBSTATUS_STALL;
@@ -790,7 +1002,7 @@ static int usbMsdResetWorker(PUSBMSD pThis, PVUSBURB pUrb, bool fSetConfig)
         }
 
         /* Device reset: Wait for up to 10 ms.  If it doesn't work, ditch
-           whoe the request structure.  We'll allocate a new one when needed. */
+           whole the request structure.  We'll allocate a new one when needed. */
         Log(("usbMsdResetWorker: Waiting for completion...\n"));
         Assert(!pThis->fSignalResetSem);
         pThis->fSignalResetSem = true;
@@ -818,7 +1030,7 @@ static int usbMsdResetWorker(PUSBMSD pThis, PVUSBURB pUrb, bool fSetConfig)
     if (pReq)
     {
         pReq->enmState       = USBMSDREQSTATE_READY;
-        pReq->iScsiReqStatus = -1;
+        pReq->iScsiReqStatus = 0xff;
     }
 
     for (unsigned i = 0; i < RT_ELEMENTS(pThis->aEps); i++)
@@ -852,22 +1064,24 @@ static int usbMsdResetWorker(PUSBMSD pThis, PVUSBURB pUrb, bool fSetConfig)
 
 
 /**
- * @interface_method_impl{PDMISCSIPORT,pfnSCSIRequestCompleted}
+ * Process a completed request.
+ *
+ * @returns nothing.
+ * @param   pThis               The MSD instance.
+ * @param   pReq                The request.
+ * @param   rcReq               The completion status.
  */
-static DECLCALLBACK(int) usbMsdLun0ScsiRequestCompleted(PPDMISCSIPORT pInterface, PPDMSCSIREQUEST pSCSIRequest,
-                                                        int rcCompletion, bool fRedo, int rcReq)
+static void usbMsdReqComplete(PUSBMSD pThis, PUSBMSDREQ pReq, int rcReq)
 {
-    PUSBMSD     pThis = RT_FROM_MEMBER(pInterface, USBMSD, Lun0.IScsiPort);
-    PUSBMSDREQ  pReq  = RT_FROM_MEMBER(pSCSIRequest, USBMSDREQ, ScsiReq);
+    RT_NOREF1(rcReq);
 
-    Log(("usbMsdLun0ScsiRequestCompleted: pReq=%p dCBWTag=%#x iScsiReqStatus=%u \n", pReq, pReq->Cbw.dCBWTag, rcCompletion));
+    Log(("usbMsdLun0IoReqCompleteNotify: pReq=%p dCBWTag=%#x iScsiReqStatus=%u \n", pReq, pReq->Cbw.dCBWTag, pReq->iScsiReqStatus));
     RTCritSectEnter(&pThis->CritSect);
 
     if (pReq->enmState != USBMSDREQSTATE_DESTROY_ON_COMPLETION)
     {
         Assert(pReq->enmState == USBMSDREQSTATE_EXECUTING);
         Assert(pThis->pReq == pReq);
-        pReq->iScsiReqStatus = rcCompletion;
 
         /*
          * Advance the state machine.  The state machine is not affected by
@@ -876,12 +1090,12 @@ static DECLCALLBACK(int) usbMsdLun0ScsiRequestCompleted(PPDMISCSIPORT pInterface
         if ((pReq->Cbw.bmCBWFlags & USBCBW_DIR_MASK) == USBCBW_DIR_OUT)
         {
             pReq->enmState = USBMSDREQSTATE_STATUS;
-            Log(("usbMsdLun0ScsiRequestCompleted: Entering STATUS\n"));
+            Log(("usbMsdLun0IoReqCompleteNotify: Entering STATUS\n"));
         }
         else
         {
             pReq->enmState = USBMSDREQSTATE_DATA_TO_HOST;
-            Log(("usbMsdLun0ScsiRequestCompleted: Entering DATA_TO_HOST\n"));
+            Log(("usbMsdLun0IoReqCompleteNotify: Entering DATA_TO_HOST\n"));
         }
 
         /*
@@ -899,8 +1113,8 @@ static DECLCALLBACK(int) usbMsdLun0ScsiRequestCompleted(PPDMISCSIPORT pInterface
     }
     else
     {
-        Log(("usbMsdLun0ScsiRequestCompleted: freeing %p\n", pReq));
-        usbMsdReqFree(pReq);
+        Log(("usbMsdLun0IoReqCompleteNotify: freeing %p\n", pReq));
+        usbMsdReqFree(pThis, pReq);
     }
 
     if (pThis->fSignalResetSem)
@@ -913,6 +1127,107 @@ static DECLCALLBACK(int) usbMsdLun0ScsiRequestCompleted(PPDMISCSIPORT pInterface
     }
 
     RTCritSectLeave(&pThis->CritSect);
+}
+
+
+/**
+ * @interface_method_impl{PDMIMEDIAEXPORT,pfnIoReqCopyFromBuf}
+ */
+static DECLCALLBACK(int) usbMsdLun0IoReqCopyFromBuf(PPDMIMEDIAEXPORT pInterface, PDMMEDIAEXIOREQ hIoReq,
+                                                    void *pvIoReqAlloc, uint32_t offDst, PRTSGBUF pSgBuf,
+                                                    size_t cbCopy)
+{
+    RT_NOREF2(pInterface, hIoReq);
+    int rc = VINF_SUCCESS;
+    PUSBMSDREQ pReq = (PUSBMSDREQ)pvIoReqAlloc;
+
+    if (RT_UNLIKELY(offDst + cbCopy > pReq->cbBuf))
+        rc = VERR_PDM_MEDIAEX_IOBUF_OVERFLOW;
+    else
+    {
+        size_t cbCopied = RTSgBufCopyToBuf(pSgBuf, pReq->pbBuf + offDst, cbCopy);
+        Assert(cbCopied == cbCopy); RT_NOREF(cbCopied);
+    }
+
+    return rc;
+}
+
+
+/**
+ * @interface_method_impl{PDMIMEDIAEXPORT,pfnIoReqCopyToBuf}
+ */
+static DECLCALLBACK(int) usbMsdLun0IoReqCopyToBuf(PPDMIMEDIAEXPORT pInterface, PDMMEDIAEXIOREQ hIoReq,
+                                                  void *pvIoReqAlloc, uint32_t offSrc, PRTSGBUF pSgBuf,
+                                                  size_t cbCopy)
+{
+    RT_NOREF2(pInterface, hIoReq);
+    int rc = VINF_SUCCESS;
+    PUSBMSDREQ pReq = (PUSBMSDREQ)pvIoReqAlloc;
+
+    if (RT_UNLIKELY(offSrc + cbCopy > pReq->cbBuf))
+        rc = VERR_PDM_MEDIAEX_IOBUF_UNDERRUN;
+    else
+    {
+        size_t cbCopied = RTSgBufCopyFromBuf(pSgBuf, pReq->pbBuf + offSrc, cbCopy);
+        Assert(cbCopied == cbCopy); RT_NOREF(cbCopied);
+    }
+
+    return rc;
+}
+
+
+/**
+ * @interface_method_impl{PDMIMEDIAEXPORT,pfnIoReqCompleteNotify}
+ */
+static DECLCALLBACK(int) usbMsdLun0IoReqCompleteNotify(PPDMIMEDIAEXPORT pInterface, PDMMEDIAEXIOREQ hIoReq,
+                                                       void *pvIoReqAlloc, int rcReq)
+{
+    RT_NOREF1(hIoReq);
+    PUSBMSD pThis = RT_FROM_MEMBER(pInterface, USBMSD, Lun0.IMediaExPort);
+    PUSBMSDREQ pReq = (PUSBMSDREQ)pvIoReqAlloc;
+
+    usbMsdReqComplete(pThis, pReq, rcReq);
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @interface_method_impl{PDMIMEDIAEXPORT,pfnIoReqStateChanged}
+ */
+static DECLCALLBACK(void) usbMsdLun0IoReqStateChanged(PPDMIMEDIAEXPORT pInterface, PDMMEDIAEXIOREQ hIoReq,
+                                                      void *pvIoReqAlloc, PDMMEDIAEXIOREQSTATE enmState)
+{
+    RT_NOREF4(pInterface, hIoReq, pvIoReqAlloc, enmState);
+    AssertLogRelMsgFailed(("This should not be hit because I/O requests should not be suspended\n"));
+}
+
+
+/**
+ * @interface_method_impl{PDMIMEDIAEXPORT,pfnMediumEjected}
+ */
+static DECLCALLBACK(void) usbMsdLun0MediumEjected(PPDMIMEDIAEXPORT pInterface)
+{
+    RT_NOREF1(pInterface); /** @todo */
+}
+
+
+/**
+ * @interface_method_impl{PDMIMEDIAPORT,pfnQueryDeviceLocation}
+ */
+static DECLCALLBACK(int) usbMsdLun0QueryDeviceLocation(PPDMIMEDIAPORT pInterface, const char **ppcszController,
+                                                       uint32_t *piInstance, uint32_t *piLUN)
+{
+    PUSBMSD    pThis = RT_FROM_MEMBER(pInterface, USBMSD, Lun0.IMediaPort);
+    PPDMUSBINS pUsbIns = pThis->pUsbIns;
+
+    AssertPtrReturn(ppcszController, VERR_INVALID_POINTER);
+    AssertPtrReturn(piInstance, VERR_INVALID_POINTER);
+    AssertPtrReturn(piLUN, VERR_INVALID_POINTER);
+
+    *ppcszController = pUsbIns->pReg->szName;
+    *piInstance = pUsbIns->iInstance;
+    *piLUN = 0;
+
     return VINF_SUCCESS;
 }
 
@@ -924,13 +1239,241 @@ static DECLCALLBACK(void *) usbMsdLun0QueryInterface(PPDMIBASE pInterface, const
 {
     PUSBMSD pThis = RT_FROM_MEMBER(pInterface, USBMSD, Lun0.IBase);
     PDMIBASE_RETURN_INTERFACE(pszIID, PDMIBASE, &pThis->Lun0.IBase);
-    PDMIBASE_RETURN_INTERFACE(pszIID, PDMISCSIPORT, &pThis->Lun0.IScsiPort);
+    PDMIBASE_RETURN_INTERFACE(pszIID, PDMIMEDIAPORT, &pThis->Lun0.IMediaPort);
+    PDMIBASE_RETURN_INTERFACE(pszIID, PDMIMEDIAEXPORT, &pThis->Lun0.IMediaExPort);
     return NULL;
 }
 
 
 /**
- * @copydoc PDMUSBREG::pfnUrbReap
+ * Checks if all asynchronous I/O is finished.
+ *
+ * Used by usbMsdVMReset, usbMsdVMSuspend and usbMsdVMPowerOff.
+ *
+ * @returns true if quiesced, false if busy.
+ * @param   pUsbIns         The USB device instance.
+ */
+static bool usbMsdAllAsyncIOIsFinished(PPDMUSBINS pUsbIns)
+{
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+
+    if (   VALID_PTR(pThis->pReq)
+        && pThis->pReq->enmState == USBMSDREQSTATE_EXECUTING)
+        return false;
+
+    return true;
+}
+
+/**
+ * @callback_method_impl{FNPDMDEVASYNCNOTIFY,
+ * Callback employed by usbMsdVMSuspend and usbMsdVMPowerOff.}
+ */
+static DECLCALLBACK(bool) usbMsdIsAsyncSuspendOrPowerOffDone(PPDMUSBINS pUsbIns)
+{
+    if (!usbMsdAllAsyncIOIsFinished(pUsbIns))
+        return false;
+
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+    ASMAtomicWriteBool(&pThis->fSignalIdle, false);
+    return true;
+}
+
+/**
+ * Common worker for usbMsdVMSuspend and usbMsdVMPowerOff.
+ */
+static void usbMsdSuspendOrPowerOff(PPDMUSBINS pUsbIns)
+{
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+
+    ASMAtomicWriteBool(&pThis->fSignalIdle, true);
+    if (!usbMsdAllAsyncIOIsFinished(pUsbIns))
+        PDMUsbHlpSetAsyncNotification(pUsbIns, usbMsdIsAsyncSuspendOrPowerOffDone);
+    else
+    {
+        ASMAtomicWriteBool(&pThis->fSignalIdle, false);
+
+        if (pThis->pReq)
+        {
+            usbMsdReqFree(pThis, pThis->pReq);
+            pThis->pReq = NULL;
+        }
+    }
+
+    if (pThis->Lun0.pIMediaEx)
+        pThis->Lun0.pIMediaEx->pfnNotifySuspend(pThis->Lun0.pIMediaEx);
+}
+
+
+/* -=-=-=-=- Saved State -=-=-=-=- */
+
+/**
+ * @callback_method_impl{FNSSMUSBSAVEPREP}
+ */
+static DECLCALLBACK(int) usbMsdSavePrep(PPDMUSBINS pUsbIns, PSSMHANDLE pSSM)
+{
+    RT_NOREF(pSSM);
+#ifdef VBOX_STRICT
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+    Assert(usbMsdAllAsyncIOIsFinished(pUsbIns));
+    Assert(usbMsdQueueIsEmpty(&pThis->ToHostQueue));
+    Assert(usbMsdQueueIsEmpty(&pThis->DoneQueue));
+#else
+    RT_NOREF(pUsbIns);
+#endif
+    return VINF_SUCCESS;
+}
+
+/**
+ * @callback_method_impl{FNSSMUSBLOADPREP}
+ */
+static DECLCALLBACK(int) usbMsdLoadPrep(PPDMUSBINS pUsbIns, PSSMHANDLE pSSM)
+{
+    RT_NOREF(pSSM);
+#ifdef VBOX_STRICT
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+    Assert(usbMsdAllAsyncIOIsFinished(pUsbIns));
+    Assert(usbMsdQueueIsEmpty(&pThis->ToHostQueue));
+    Assert(usbMsdQueueIsEmpty(&pThis->DoneQueue));
+#else
+    RT_NOREF(pUsbIns);
+#endif
+    return VINF_SUCCESS;
+}
+
+/**
+ * @callback_method_impl{FNSSMUSBLIVEEXEC}
+ */
+static DECLCALLBACK(int) usbMsdLiveExec(PPDMUSBINS pUsbIns, PSSMHANDLE pSSM, uint32_t uPass)
+{
+    RT_NOREF(uPass);
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+
+    /* config. */
+    SSMR3PutBool(pSSM, pThis->Lun0.pIBase != NULL);
+    return VINF_SSM_DONT_CALL_AGAIN;
+}
+
+/**
+ * @callback_method_impl{FNSSMUSBSAVEEXEC}
+ */
+static DECLCALLBACK(int) usbMsdSaveExec(PPDMUSBINS pUsbIns, PSSMHANDLE pSSM)
+{
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+    int rc;
+
+    /* The config */
+    rc = usbMsdLiveExec(pUsbIns, pSSM, SSM_PASS_FINAL);
+    AssertRCReturn(rc, rc);
+
+    SSMR3PutU8(pSSM, pThis->bConfigurationValue);
+    SSMR3PutBool(pSSM, pThis->aEps[0].fHalted);
+    SSMR3PutBool(pSSM, pThis->aEps[1].fHalted);
+    SSMR3PutBool(pSSM, pThis->aEps[2].fHalted);
+    SSMR3PutBool(pSSM, pThis->pReq != NULL);
+
+    if (pThis->pReq)
+    {
+        PUSBMSDREQ pReq = pThis->pReq;
+
+        SSMR3PutU32(pSSM, pReq->enmState);
+        SSMR3PutU32(pSSM, pReq->cbBuf);
+        if (pReq->cbBuf)
+        {
+            AssertPtr(pReq->pbBuf);
+            SSMR3PutMem(pSSM, pReq->pbBuf, pReq->cbBuf);
+        }
+
+        SSMR3PutU32(pSSM, pReq->offBuf);
+        SSMR3PutMem(pSSM, &pReq->Cbw, sizeof(pReq->Cbw));
+        SSMR3PutU8(pSSM, pReq->iScsiReqStatus);
+    }
+
+    return SSMR3PutU32(pSSM, UINT32_MAX); /* sanity/terminator */
+}
+
+/**
+ * @callback_method_impl{FNSSMUSBLOADEXEC}
+ */
+static DECLCALLBACK(int) usbMsdLoadExec(PPDMUSBINS pUsbIns, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass)
+{
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+    uint32_t u32;
+    int rc;
+
+    if (uVersion > USB_MSD_SAVED_STATE_VERSION)
+        return VERR_SSM_UNSUPPORTED_DATA_UNIT_VERSION;
+
+    /* Verify config. */
+    bool fInUse;
+    rc = SSMR3GetBool(pSSM, &fInUse);
+    AssertRCReturn(rc, rc);
+    if (fInUse != (pThis->Lun0.pIBase != NULL))
+        return SSMR3SetCfgError(pSSM, RT_SRC_POS,
+                                N_("The %s VM is missing a USB mass storage device. Please make sure the source and target VMs have compatible storage configurations"),
+                                fInUse ? "target" : "source");
+
+    if (uPass == SSM_PASS_FINAL)
+    {
+        /* Restore data. */
+        Assert(!pThis->pReq);
+
+        SSMR3GetU8(pSSM, &pThis->bConfigurationValue);
+        SSMR3GetBool(pSSM, &pThis->aEps[0].fHalted);
+        SSMR3GetBool(pSSM, &pThis->aEps[1].fHalted);
+        SSMR3GetBool(pSSM, &pThis->aEps[2].fHalted);
+        bool fReqAlloc = false;
+        rc = SSMR3GetBool(pSSM, &fReqAlloc);
+        AssertRCReturn(rc, rc);
+        if (fReqAlloc)
+        {
+            PUSBMSDREQ pReq = usbMsdReqAlloc(pThis);
+            AssertReturn(pReq, VERR_NO_MEMORY);
+            pThis->pReq = pReq;
+
+            SSMR3GetU32(pSSM, (uint32_t *)&pReq->enmState);
+            uint32_t cbBuf = 0;
+            rc = SSMR3GetU32(pSSM, &cbBuf);
+            AssertRCReturn(rc, rc);
+            if (cbBuf)
+            {
+                if (usbMsdReqEnsureBuffer(pThis, pReq, cbBuf))
+                {
+                    AssertPtr(pReq->pbBuf);
+                    Assert(cbBuf == pReq->cbBuf);
+                    SSMR3GetMem(pSSM, pReq->pbBuf, pReq->cbBuf);
+                }
+                else
+                    return VERR_NO_MEMORY;
+            }
+
+            SSMR3GetU32(pSSM, &pReq->offBuf);
+            SSMR3GetMem(pSSM, &pReq->Cbw, sizeof(pReq->Cbw));
+
+            if (uVersion > USB_MSD_SAVED_STATE_VERSION_PRE_CLEANUP)
+                rc = SSMR3GetU8(pSSM, &pReq->iScsiReqStatus);
+            else
+            {
+                int32_t iScsiReqStatus;
+
+                /* Skip old fields which are unused now or can be determined from the CBW. */
+                SSMR3Skip(pSSM, 4 * 4 + 64);
+                rc = SSMR3GetS32(pSSM, &iScsiReqStatus);
+                pReq->iScsiReqStatus = (uint8_t)iScsiReqStatus;
+            }
+            AssertRCReturn(rc, rc);
+        }
+
+        rc = SSMR3GetU32(pSSM, &u32);
+        AssertRCReturn(rc, rc);
+        AssertMsgReturn(u32 == UINT32_MAX, ("%#x\n", u32), VERR_SSM_DATA_UNIT_FORMAT_CHANGED);
+    }
+
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @interface_method_impl{PDMUSBREG,pfnUrbReap}
  */
 static DECLCALLBACK(PVUSBURB) usbMsdUrbReap(PPDMUSBINS pUsbIns, RTMSINTERVAL cMillies)
 {
@@ -963,7 +1506,7 @@ static DECLCALLBACK(PVUSBURB) usbMsdUrbReap(PPDMUSBINS pUsbIns, RTMSINTERVAL cMi
 
 
 /**
- * @copydoc PDMUSBREG::pfnWakeup
+ * @interface_method_impl{PDMUSBREG,pfnWakeup}
  */
 static DECLCALLBACK(int) usbMsdWakeup(PPDMUSBINS pUsbIns)
 {
@@ -975,7 +1518,7 @@ static DECLCALLBACK(int) usbMsdWakeup(PPDMUSBINS pUsbIns)
 
 
 /**
- * @copydoc PDMUSBREG::pfnUrbCancel
+ * @interface_method_impl{PDMUSBREG,pfnUrbCancel}
  */
 static DECLCALLBACK(int) usbMsdUrbCancel(PPDMUSBINS pUsbIns, PVUSBURB pUrb)
 {
@@ -995,84 +1538,6 @@ static DECLCALLBACK(int) usbMsdUrbCancel(PPDMUSBINS pUsbIns, PVUSBURB pUrb)
 
 
 /**
- * Fails an illegal SCSI request.
- *
- * @returns VBox status code.
- * @param   pThis               The MSD instance data.
- * @param   pReq                The MSD request.
- * @param   bAsc                The ASC for the SCSI_SENSE_ILLEGAL_REQUEST.
- * @param   bAscq               The ASC qualifier.
- * @param   pszWhy              For logging why.
- */
-static int usbMsdScsiIllegalRequest(PUSBMSD pThis, PUSBMSDREQ pReq, uint8_t bAsc, uint8_t bAscq, const char *pszWhy)
-{
-    Log(("usbMsdScsiIllegalRequest: bAsc=%#x bAscq=%#x %s\n", bAsc, bAscq, pszWhy));
-
-    RT_ZERO(pReq->ScsiReqSense);
-    pReq->ScsiReqSense[0]  = 0x80 | SCSI_SENSE_RESPONSE_CODE_CURR_FIXED;
-    pReq->ScsiReqSense[2]  = SCSI_SENSE_ILLEGAL_REQUEST;
-    pReq->ScsiReqSense[7]  = 10;
-    pReq->ScsiReqSense[12] = SCSI_ASC_INVALID_MESSAGE;
-    pReq->ScsiReqSense[13] = 0; /* Should be ASCQ but it has the same value for success. */
-
-    usbMsdLun0ScsiRequestCompleted(&pThis->Lun0.IScsiPort, &pReq->ScsiReq, SCSI_STATUS_CHECK_CONDITION, false, VINF_SUCCESS);
-    return VINF_SUCCESS;
-}
-
-
-/**
- * The SCSI driver doesn't handle SCSI_REQUEST_SENSE but instead
- * returns the sense info with the request.
- *
- */
-static int usbMsdHandleScsiReqestSense(PUSBMSD pThis, PUSBMSDREQ pReq, PCUSBCBW pCbw)
-{
-    Log(("usbMsdHandleScsiReqestSense: Entering EXECUTING (dCBWTag=%#x).\n", pReq->Cbw.dCBWTag));
-    Assert(pReq == pThis->pReq);
-    pReq->enmState = USBMSDREQSTATE_EXECUTING;
-
-    /* validation */
-    if ((pCbw->bmCBWFlags & USBCBW_DIR_MASK) != USBCBW_DIR_IN)
-        return usbMsdScsiIllegalRequest(pThis, pReq, SCSI_ASC_INVALID_MESSAGE, 0, "direction");
-    if (pCbw->bCBWCBLength < 6)
-        return usbMsdScsiIllegalRequest(pThis, pReq, SCSI_ASC_INVALID_MESSAGE, 0, "length");
-    if ((pCbw->CBWCB[1] >> 5) != pCbw->bCBWLun)
-        return usbMsdScsiIllegalRequest(pThis, pReq, SCSI_ASC_INV_FIELD_IN_CMD_PACKET, 0, "lun");
-    if (pCbw->bCBWLun != 0)
-        return usbMsdScsiIllegalRequest(pThis, pReq, SCSI_ASC_INVALID_MESSAGE, 0, "lun0");
-    if (pCbw->CBWCB[4] < 6)
-        return usbMsdScsiIllegalRequest(pThis, pReq, SCSI_ASC_INV_FIELD_IN_CMD_PACKET, 0, "out length");
-
-    /* If the previous command succeeded successfully, whip up some sense data. */
-    if (   pReq->iScsiReqStatus == SCSI_STATUS_OK
-        && pReq->ScsiReqSense[0] == 0)
-    {
-        RT_ZERO(pReq->ScsiReqSense);
-#if 0  /** @todo something upsets linux about this stuff. Needs investigation. */
-        pReq->ScsiReqSense[0]  = 0x80 | SCSI_SENSE_RESPONSE_CODE_CURR_FIXED;
-        pReq->ScsiReqSense[0]  = SCSI_SENSE_RESPONSE_CODE_CURR_FIXED;
-        pReq->ScsiReqSense[2]  = SCSI_SENSE_NONE;
-        pReq->ScsiReqSense[7]  = 10;
-        pReq->ScsiReqSense[12] = SCSI_ASC_NONE;
-        pReq->ScsiReqSense[13] = SCSI_ASC_NONE; /* Should be ASCQ but it has the same value for success. */
-#endif
-    }
-
-    /* Copy the data into the result buffer. */
-    size_t cbCopy = RT_MIN(pCbw->dCBWDataTransferLength, sizeof(pReq->ScsiReqSense));
-    Log(("usbMsd: SCSI_REQUEST_SENSE - CBWCB[4]=%#x iOldState=%d, %u bytes, raw: %.*Rhxs\n",
-         pCbw->CBWCB[4], pReq->iScsiReqStatus, pCbw->dCBWDataTransferLength, RT_MAX(1, cbCopy), pReq->ScsiReqSense));
-    memcpy(pReq->pbBuf, &pReq->ScsiReqSense[0], cbCopy);
-
-    usbMsdReqPrepare(pReq, pCbw);
-
-    /* Do normal completion.  */
-    usbMsdLun0ScsiRequestCompleted(&pThis->Lun0.IScsiPort, &pReq->ScsiReq, SCSI_STATUS_OK, false, VINF_SUCCESS);
-    return VINF_SUCCESS;
-}
-
-
-/**
  * Wrapper around  PDMISCSICONNECTOR::pfnSCSIRequestSend that deals with
  * SCSI_REQUEST_SENSE.
  *
@@ -1083,40 +1548,21 @@ static int usbMsdHandleScsiReqestSense(PUSBMSD pThis, PUSBMSDREQ pReq, PCUSBCBW 
  */
 static int usbMsdSubmitScsiCommand(PUSBMSD pThis, PUSBMSDREQ pReq, const char *pszCaller)
 {
+    RT_NOREF(pszCaller);
     Log(("%s: Entering EXECUTING (dCBWTag=%#x).\n", pszCaller, pReq->Cbw.dCBWTag));
     Assert(pReq == pThis->pReq);
     pReq->enmState = USBMSDREQSTATE_EXECUTING;
 
-    switch (pReq->ScsiReq.pbCDB[0])
-    {
-        case SCSI_REQUEST_SENSE:
-        {
-        }
+    PDMMEDIAEXIOREQSCSITXDIR enmTxDir = pReq->Cbw.dCBWDataTransferLength == 0
+                                      ? PDMMEDIAEXIOREQSCSITXDIR_NONE
+                                      :   (pReq->Cbw.bmCBWFlags & USBCBW_DIR_MASK) == USBCBW_DIR_OUT
+                                        ? PDMMEDIAEXIOREQSCSITXDIR_TO_DEVICE
+                                        : PDMMEDIAEXIOREQSCSITXDIR_FROM_DEVICE;
 
-        default:
-            return pThis->Lun0.pIScsiConnector->pfnSCSIRequestSend(pThis->Lun0.pIScsiConnector, &pReq->ScsiReq);
-    }
-}
-
-/**
- * Validates a SCSI request before passing it down to the SCSI driver.
- *
- * @returns true / false.  The request will be completed on failure.
- * @param   pThis               The MSD instance data.
- * @param   pCbw                The USB command block wrapper.
- * @param   pUrb                The URB.
- */
-static bool usbMsdIsValidCommand(PUSBMSD pThis, PCUSBCBW pCbw, PVUSBURB pUrb)
-{
-    switch (pCbw->CBWCB[0])
-    {
-        case SCSI_REQUEST_SENSE:
-            /** @todo validate this. */
-            return true;
-
-        default:
-            return true;
-    }
+    return pThis->Lun0.pIMediaEx->pfnIoReqSendScsiCmd(pThis->Lun0.pIMediaEx, pReq->hIoReq, pReq->Cbw.bCBWLun,
+                                                      &pReq->Cbw.CBWCB[0], pReq->Cbw.bCBWCBLength, enmTxDir,
+                                                      pReq->Cbw.dCBWDataTransferLength, NULL, 0,
+                                                      &pReq->iScsiReqStatus, 20 * RT_MS_1SEC);
 }
 
 
@@ -1141,7 +1587,7 @@ static int usbMsdHandleBulkHostToDev(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb
         case USBMSDREQSTATE_STATUS:
             LogFlow(("usbMsdHandleBulkHostToDev: Skipping pending status.\n"));
             pReq->enmState = USBMSDREQSTATE_READY;
-            /* fall thru */
+            RT_FALL_THRU();
 
         /*
          * We're ready to receive a command.  Start off by validating the
@@ -1178,10 +1624,10 @@ static int usbMsdHandleBulkHostToDev(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb
                 Log(("usbMsd: CBW: Bad bCBWCBLength value: %#x\n", pCbw->bCBWCBLength));
                 return usbMsdCompleteStall(pThis, NULL, pUrb, "Bad CBW");
             }
-            if (pUrb->cbData < RT_UOFFSETOF(USBCBW, CBWCB[pCbw->bCBWCBLength]))
+            if (pUrb->cbData < RT_UOFFSETOF_DYN(USBCBW, CBWCB[pCbw->bCBWCBLength]))
             {
                 Log(("usbMsd: CBW: Mismatching cbData and bCBWCBLength values: %#x vs. %#x (%#x)\n",
-                     pUrb->cbData, RT_UOFFSETOF(USBCBW, CBWCB[pCbw->bCBWCBLength]), pCbw->bCBWCBLength));
+                     pUrb->cbData, RT_UOFFSETOF_DYN(USBCBW, CBWCB[pCbw->bCBWCBLength]), pCbw->bCBWCBLength));
                 return usbMsdCompleteStall(pThis, NULL, pUrb, "Bad CBW");
             }
             if (pCbw->dCBWDataTransferLength > _1M)
@@ -1190,9 +1636,6 @@ static int usbMsdHandleBulkHostToDev(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb
                      pCbw->dCBWDataTransferLength, pCbw->dCBWDataTransferLength));
                 return usbMsdCompleteStall(pThis, NULL, pUrb, "Too big transfer");
             }
-
-            if (!usbMsdIsValidCommand(pThis, pCbw, pUrb))
-                return VINF_SUCCESS;
 
             /*
              * Make sure we've got a request and a sufficient buffer space.
@@ -1203,42 +1646,35 @@ static int usbMsdHandleBulkHostToDev(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb
              */
             if (!pReq)
             {
-                pReq = usbMsdReqAlloc(pThis->pUsbIns);
+                pReq = usbMsdReqAlloc(pThis);
                 if (!pReq)
                     return usbMsdCompleteStall(pThis, NULL, pUrb, "Request allocation failure");
                 pThis->pReq = pReq;
             }
-            if (!usbMsdReqEnsureBuffer(pReq, pCbw->dCBWDataTransferLength))
+            if (!usbMsdReqEnsureBuffer(pThis, pReq, pCbw->dCBWDataTransferLength))
                 return usbMsdCompleteStall(pThis, NULL, pUrb, "Buffer allocation failure");
 
             /*
-             * Special case REQUEST SENSE requests, usbMsdReqPrepare will
-             * trash the sense data otherwise.
+             * Prepare the request.  Kick it off right away if possible.
              */
-            if (pCbw->CBWCB[0] == SCSI_REQUEST_SENSE)
-                usbMsdHandleScsiReqestSense(pThis, pReq, pCbw);
+            usbMsdReqPrepare(pReq, pCbw);
+
+            if (   pReq->Cbw.dCBWDataTransferLength == 0
+                || (pReq->Cbw.bmCBWFlags & USBCBW_DIR_MASK) == USBCBW_DIR_IN)
+            {
+                int rc = usbMsdSubmitScsiCommand(pThis, pReq, "usbMsdHandleBulkHostToDev");
+                if (RT_SUCCESS(rc) && rc != VINF_PDM_MEDIAEX_IOREQ_IN_PROGRESS)
+                    usbMsdReqComplete(pThis, pReq, rc);
+                else if (RT_FAILURE(rc))
+                {
+                    Log(("usbMsd: Failed sending SCSI request to driver: %Rrc\n", rc));
+                    return usbMsdCompleteStall(pThis, NULL, pUrb, "SCSI Submit #1");
+                }
+            }
             else
             {
-                /*
-                 * Prepare the request.  Kick it off right away if possible.
-                 */
-                usbMsdReqPrepare(pReq, pCbw);
-
-                if (   pReq->Cbw.dCBWDataTransferLength == 0
-                    || (pReq->Cbw.bmCBWFlags & USBCBW_DIR_MASK) == USBCBW_DIR_IN)
-                {
-                    int rc = usbMsdSubmitScsiCommand(pThis, pReq, "usbMsdHandleBulkHostToDev");
-                    if (RT_FAILURE(rc))
-                    {
-                        Log(("usbMsd: Failed sending SCSI request to driver: %Rrc\n", rc));
-                        return usbMsdCompleteStall(pThis, NULL, pUrb, "SCSI Submit #1");
-                    }
-                }
-                else
-                {
-                    Log(("usbMsdHandleBulkHostToDev: Entering DATA_FROM_HOST.\n"));
-                    pReq->enmState = USBMSDREQSTATE_DATA_FROM_HOST;
-                }
+                Log(("usbMsdHandleBulkHostToDev: Entering DATA_FROM_HOST.\n"));
+                pReq->enmState = USBMSDREQSTATE_DATA_FROM_HOST;
             }
 
             return usbMsdCompleteOk(pThis, pUrb, pUrb->cbData);
@@ -1263,13 +1699,14 @@ static int usbMsdHandleBulkHostToDev(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb
             if (pReq->offBuf == pReq->Cbw.dCBWDataTransferLength)
             {
                 int rc = usbMsdSubmitScsiCommand(pThis, pReq, "usbMsdHandleBulkHostToDev");
-                if (RT_FAILURE(rc))
+                if (RT_SUCCESS(rc) && rc != VINF_PDM_MEDIAEX_IOREQ_IN_PROGRESS)
+                    usbMsdReqComplete(pThis, pReq, rc);
+                else if (RT_FAILURE(rc))
                 {
                     Log(("usbMsd: Failed sending SCSI request to driver: %Rrc\n", rc));
                     return usbMsdCompleteStall(pThis, NULL, pUrb, "SCSI Submit #2");
                 }
             }
-LogRel(("DATA_FROM_HOST: %d bytes\n", cbData));
             return usbMsdCompleteOk(pThis, pUrb, cbData);
         }
 
@@ -1330,7 +1767,6 @@ static int usbMsdHandleBulkDevToHost(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb
                 Log(("usbMsdHandleBulkDevToHost: Entering STATUS\n"));
                 pReq->enmState = USBMSDREQSTATE_STATUS;
             }
-LogRel(("DATA_TO_HOST: %d bytes\n", cbCopy));
             return usbMsdCompleteOk(pThis, pUrb, cbCopy);
         }
 
@@ -1351,19 +1787,19 @@ LogRel(("DATA_TO_HOST: %d bytes\n", cbCopy));
             pCsw->dCSWTag       = pReq->Cbw.dCBWTag;
             pCsw->bCSWStatus    = pReq->iScsiReqStatus == SCSI_STATUS_OK
                                 ? USBCSW_STATUS_OK
-                                : pReq->iScsiReqStatus >= 0
+                                : pReq->iScsiReqStatus < 0xff
                                 ? USBCSW_STATUS_FAILED
                                 : USBCSW_STATUS_PHASE_ERROR;
             /** @todo the following is not always accurate; VSCSI needs
              *        to implement residual counts properly! */
             if ((pReq->Cbw.bmCBWFlags & USBCBW_DIR_MASK) == USBCBW_DIR_OUT)
                 pCsw->dCSWDataResidue = pCsw->bCSWStatus == USBCSW_STATUS_OK
-                                      ? pReq->Cbw.dCBWDataTransferLength - pReq->ScsiReq.cbScatterGather
+                                      ? 0
                                       : pReq->Cbw.dCBWDataTransferLength;
             else
                 pCsw->dCSWDataResidue = pCsw->bCSWStatus == USBCSW_STATUS_OK
                                       ? 0
-                                      : pReq->ScsiReq.cbScatterGather;
+                                      : pReq->Cbw.dCBWDataTransferLength;
             Log(("usbMsd: CSW: dCSWTag=%#x bCSWStatus=%d dCSWDataResidue=%#x\n",
                  pCsw->dCSWTag, pCsw->bCSWStatus, pCsw->dCSWDataResidue));
 
@@ -1386,31 +1822,16 @@ LogRel(("DATA_TO_HOST: %d bytes\n", cbCopy));
                 return usbMsdCompleteStall(pThis, NULL, pUrb, "Invalid CSW size");
             }
 
-            /* Adjust the request and kick it off.  Special case the no-data
-               case since the SCSI driver doesn't like that. */
-            pReq->ScsiReq.cbScatterGather = pReq->offBuf;
-            pReq->ScsiReqSeg.cbSeg        = pReq->offBuf;
-            if (!pReq->offBuf)
-            {
-                Log(("usbMsdHandleBulkDevToHost: Entering EXECUTING (offBuf=0x0).\n"));
-                pReq->enmState = USBMSDREQSTATE_EXECUTING;
-
-                usbMsdQueueAddTail(&pThis->ToHostQueue, pUrb);
-                LogFlow(("usbMsdHandleBulkDevToHost: Added %p:%s to the to-host queue\n", pUrb, pUrb->pszDesc));
-
-                usbMsdLun0ScsiRequestCompleted(&pThis->Lun0.IScsiPort, &pReq->ScsiReq, SCSI_STATUS_OK, false, VINF_SUCCESS);
-                return VINF_SUCCESS;
-            }
-
             int rc = usbMsdSubmitScsiCommand(pThis, pReq, "usbMsdHandleBulkDevToHost");
-            if (RT_FAILURE(rc))
+            if (RT_SUCCESS(rc) && rc != VINF_PDM_MEDIAEX_IOREQ_IN_PROGRESS)
+                usbMsdReqComplete(pThis, pReq, rc);
+            else if (RT_FAILURE(rc))
             {
                 Log(("usbMsd: Failed sending SCSI request to driver: %Rrc\n", rc));
                 return usbMsdCompleteStall(pThis, NULL, pUrb, "SCSI Submit #3");
             }
-
-            /* fall thru */
         }
+        RT_FALL_THRU();
 
         /*
          * The SCSI command is still pending, queue the URB awaiting its
@@ -1425,7 +1846,7 @@ LogRel(("DATA_TO_HOST: %d bytes\n", cbCopy));
          * Bad states, stall.
          */
         case USBMSDREQSTATE_READY:
-            Log(("usbMsdHandleBulkDevToHost: enmState=READ (cbData=%#x)\n", pReq->enmState, pUrb->cbData));
+            Log(("usbMsdHandleBulkDevToHost: enmState=READ(%d) (cbData=%#x)\n", pReq->enmState, pUrb->cbData));
             return usbMsdCompleteStall(pThis, NULL, pUrb, "Bad state D2H: READY");
 
         default:
@@ -1468,6 +1889,13 @@ static int usbMsdHandleDefaultPipe(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb)
                         cbCopy = pUrb->cbData - sizeof(*pSetup);
                         cbCopy = RT_MIN(cbCopy, sizeof(g_UsbMsdDeviceQualifier));
                         memcpy(&pUrb->abData[sizeof(*pSetup)], &g_UsbMsdDeviceQualifier, cbCopy);
+                        return usbMsdCompleteOk(pThis, pUrb, cbCopy + sizeof(*pSetup));
+                    case VUSB_DT_BOS:
+                        Log(("usbMsd: GET_DESCRIPTOR DT_BOS wValue=%#x wIndex=%#x\n", pSetup->wValue, pSetup->wIndex));
+                        /* Returned data is written after the setup message. */
+                        cbCopy = pUrb->cbData - sizeof(*pSetup);
+                        cbCopy = RT_MIN(cbCopy, sizeof(g_UsbMsdBOS));
+                        memcpy(&pUrb->abData[sizeof(*pSetup)], &g_UsbMsdBOS, cbCopy);
                         return usbMsdCompleteOk(pThis, pUrb, cbCopy + sizeof(*pSetup));
                     default:
                         Log(("usbMsd: GET_DESCRIPTOR, huh? wValue=%#x wIndex=%#x\n", pSetup->wValue, pSetup->wIndex));
@@ -1518,7 +1946,7 @@ static int usbMsdHandleDefaultPipe(PUSBMSD pThis, PUSBMSDEP pEp, PVUSBURB pUrb)
 
 
 /**
- * @copydoc PDMUSBREG::pfnQueue
+ * @interface_method_impl{PDMUSBREG,pfnUrbQueue}
  */
 static DECLCALLBACK(int) usbMsdQueue(PPDMUSBINS pUsbIns, PVUSBURB pUrb)
 {
@@ -1538,6 +1966,7 @@ static DECLCALLBACK(int) usbMsdQueue(PPDMUSBINS pUsbIns, PVUSBURB pUrb)
 
         case 0x81:
             AssertFailed();
+            RT_FALL_THRU();
         case 0x01:
             rc = usbMsdHandleBulkDevToHost(pThis, &pThis->aEps[1], pUrb);
             break;
@@ -1558,7 +1987,7 @@ static DECLCALLBACK(int) usbMsdQueue(PPDMUSBINS pUsbIns, PVUSBURB pUrb)
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbClearHaltedEndpoint
+ * @interface_method_impl{PDMUSBREG,pfnUsbClearHaltedEndpoint}
  */
 static DECLCALLBACK(int) usbMsdUsbClearHaltedEndpoint(PPDMUSBINS pUsbIns, unsigned uEndpoint)
 {
@@ -1577,10 +2006,11 @@ static DECLCALLBACK(int) usbMsdUsbClearHaltedEndpoint(PPDMUSBINS pUsbIns, unsign
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbSetInterface
+ * @interface_method_impl{PDMUSBREG,pfnUsbSetInterface}
  */
 static DECLCALLBACK(int) usbMsdUsbSetInterface(PPDMUSBINS pUsbIns, uint8_t bInterfaceNumber, uint8_t bAlternateSetting)
 {
+    RT_NOREF(pUsbIns, bInterfaceNumber, bAlternateSetting);
     LogFlow(("usbMsdUsbSetInterface/#%u: bInterfaceNumber=%u bAlternateSetting=%u\n", pUsbIns->iInstance, bInterfaceNumber, bAlternateSetting));
     Assert(bAlternateSetting == 0);
     return VINF_SUCCESS;
@@ -1588,11 +2018,12 @@ static DECLCALLBACK(int) usbMsdUsbSetInterface(PPDMUSBINS pUsbIns, uint8_t bInte
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbSetConfiguration
+ * @interface_method_impl{PDMUSBREG,pfnUsbSetConfiguration}
  */
 static DECLCALLBACK(int) usbMsdUsbSetConfiguration(PPDMUSBINS pUsbIns, uint8_t bConfigurationValue,
                                                    const void *pvOldCfgDesc, const void *pvOldIfState, const void *pvNewCfgDesc)
 {
+    RT_NOREF(pvOldCfgDesc, pvOldIfState,  pvNewCfgDesc);
     PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
     LogFlow(("usbMsdUsbSetConfiguration/#%u: bConfigurationValue=%u\n", pUsbIns->iInstance, bConfigurationValue));
     Assert(bConfigurationValue == 1);
@@ -1611,24 +2042,27 @@ static DECLCALLBACK(int) usbMsdUsbSetConfiguration(PPDMUSBINS pUsbIns, uint8_t b
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbGetDescriptorCache
+ * @interface_method_impl{PDMUSBREG,pfnUsbGetDescriptorCache}
  */
 static DECLCALLBACK(PCPDMUSBDESCCACHE) usbMsdUsbGetDescriptorCache(PPDMUSBINS pUsbIns)
 {
     PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
     LogFlow(("usbMsdUsbGetDescriptorCache/#%u:\n", pUsbIns->iInstance));
-    if (pThis->pUsbIns->iUsbHubVersion & VUSB_STDVER_20)
-        return &g_UsbMsdDescCacheHS;
+    if (pThis->pUsbIns->enmSpeed == VUSB_SPEED_SUPER)
+        return pThis->fIsCdrom ? &g_UsbCdDescCacheSS : &g_UsbMsdDescCacheSS;
+    else if (pThis->pUsbIns->enmSpeed == VUSB_SPEED_HIGH)
+        return pThis->fIsCdrom ? &g_UsbCdDescCacheHS : &g_UsbMsdDescCacheHS;
     else
-        return &g_UsbMsdDescCacheFS;
+        return pThis->fIsCdrom ? &g_UsbCdDescCacheFS : &g_UsbMsdDescCacheFS;
 }
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbReset
+ * @interface_method_impl{PDMUSBREG,pfnUsbReset}
  */
 static DECLCALLBACK(int) usbMsdUsbReset(PPDMUSBINS pUsbIns, bool fResetOnLinux)
 {
+    RT_NOREF(fResetOnLinux);
     PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
     LogFlow(("usbMsdUsbReset/#%u:\n", pUsbIns->iInstance));
     RTCritSectEnter(&pThis->CritSect);
@@ -1641,10 +2075,151 @@ static DECLCALLBACK(int) usbMsdUsbReset(PPDMUSBINS pUsbIns, bool fResetOnLinux)
 
 
 /**
- * @copydoc PDMUSBREG::pfnDestruct
+ * @interface_method_impl{PDMUSBREG,pfnVMSuspend}
  */
-static void usbMsdDestruct(PPDMUSBINS pUsbIns)
+static DECLCALLBACK(void) usbMsdVMSuspend(PPDMUSBINS pUsbIns)
 {
+    LogFlow(("usbMsdVMSuspend/#%u:\n", pUsbIns->iInstance));
+    usbMsdSuspendOrPowerOff(pUsbIns);
+}
+
+
+/**
+ * @interface_method_impl{PDMUSBREG,pfnVMSuspend}
+ */
+static DECLCALLBACK(void) usbMsdVMPowerOff(PPDMUSBINS pUsbIns)
+{
+    LogFlow(("usbMsdVMPowerOff/#%u:\n", pUsbIns->iInstance));
+    usbMsdSuspendOrPowerOff(pUsbIns);
+}
+
+
+/**
+ * @interface_method_impl{PDMUSBREG,pfnDriverAttach}
+ */
+static DECLCALLBACK(int) usbMsdDriverAttach(PPDMUSBINS pUsbIns, unsigned iLUN, uint32_t fFlags)
+{
+    RT_NOREF(fFlags);
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+
+    LogFlow(("usbMsdDriverAttach/#%u:\n", pUsbIns->iInstance));
+
+    AssertMsg(iLUN == 0, ("UsbMsd: No other LUN than 0 is supported\n"));
+    AssertMsg(fFlags & PDM_TACH_FLAGS_NOT_HOT_PLUG,
+              ("UsbMsd: Device does not support hotplugging\n"));
+
+    /* the usual paranoia */
+    AssertRelease(!pThis->Lun0.pIBase);
+    AssertRelease(!pThis->Lun0.pIMedia);
+    AssertRelease(!pThis->Lun0.pIMediaEx);
+
+    /*
+     * Try attach the block device and get the interfaces,
+     * required as well as optional.
+     */
+    int rc = PDMUsbHlpDriverAttach(pUsbIns, iLUN, &pThis->Lun0.IBase, &pThis->Lun0.pIBase, NULL);
+    if (RT_SUCCESS(rc))
+    {
+        /* Get media and extended media interface. */
+        pThis->Lun0.pIMedia = PDMIBASE_QUERY_INTERFACE(pThis->Lun0.pIBase, PDMIMEDIA);
+        AssertMsgReturn(pThis->Lun0.pIMedia, ("Missing media interface below\n"), VERR_PDM_MISSING_INTERFACE);
+        pThis->Lun0.pIMediaEx = PDMIBASE_QUERY_INTERFACE(pThis->Lun0.pIBase, PDMIMEDIAEX);
+        AssertMsgReturn(pThis->Lun0.pIMediaEx, ("Missing extended media interface below\n"), VERR_PDM_MISSING_INTERFACE);
+
+        rc = pThis->Lun0.pIMediaEx->pfnIoReqAllocSizeSet(pThis->Lun0.pIMediaEx, sizeof(USBMSDREQ));
+        AssertMsgRCReturn(rc, ("MSD failed to set I/O request size!\n"), VERR_PDM_MISSING_INTERFACE);
+    }
+    else
+        AssertMsgFailed(("Failed to attach LUN#%d. rc=%Rrc\n", iLUN, rc));
+
+    if (RT_FAILURE(rc))
+    {
+        pThis->Lun0.pIBase = NULL;
+        pThis->Lun0.pIMedia = NULL;
+        pThis->Lun0.pIMediaEx = NULL;
+    }
+
+    pThis->fIsCdrom = false;
+    PDMMEDIATYPE enmType = pThis->Lun0.pIMedia->pfnGetType(pThis->Lun0.pIMedia);
+    /* Anything else will be reported as a hard disk. */
+    if (enmType == PDMMEDIATYPE_CDROM || enmType == PDMMEDIATYPE_DVD)
+        pThis->fIsCdrom = true;
+
+    return rc;
+}
+
+
+/**
+ * @interface_method_impl{PDMUSBREG,pfnDriverDetach}
+ */
+static DECLCALLBACK(void) usbMsdDriverDetach(PPDMUSBINS pUsbIns, unsigned iLUN, uint32_t fFlags)
+{
+    RT_NOREF(iLUN, fFlags);
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+
+    LogFlow(("usbMsdDriverDetach/#%u:\n", pUsbIns->iInstance));
+
+    AssertMsg(iLUN == 0, ("UsbMsd: No other LUN than 0 is supported\n"));
+    AssertMsg(fFlags & PDM_TACH_FLAGS_NOT_HOT_PLUG,
+              ("UsbMsd: Device does not support hotplugging\n"));
+
+    if (pThis->pReq)
+    {
+        usbMsdReqFree(pThis, pThis->pReq);
+        pThis->pReq = NULL;
+    }
+
+    /*
+     * Zero some important members.
+     */
+    pThis->Lun0.pIBase = NULL;
+    pThis->Lun0.pIMedia = NULL;
+    pThis->Lun0.pIMediaEx = NULL;
+}
+
+
+/**
+ * @callback_method_impl{FNPDMDEVASYNCNOTIFY,
+ * Callback employed by usbMsdVMReset.}
+ */
+static DECLCALLBACK(bool) usbMsdIsAsyncResetDone(PPDMUSBINS pUsbIns)
+{
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+
+    if (!usbMsdAllAsyncIOIsFinished(pUsbIns))
+        return false;
+    ASMAtomicWriteBool(&pThis->fSignalIdle, false);
+
+    int rc = usbMsdResetWorker(pThis, NULL, false /*fSetConfig*/);
+    AssertRC(rc);
+    return true;
+}
+
+/**
+ * @interface_method_impl{PDMDEVREG,pfnReset}
+ */
+static DECLCALLBACK(void) usbMsdVMReset(PPDMUSBINS pUsbIns)
+{
+    PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
+
+    ASMAtomicWriteBool(&pThis->fSignalIdle, true);
+    if (!usbMsdAllAsyncIOIsFinished(pUsbIns))
+        PDMUsbHlpSetAsyncNotification(pUsbIns, usbMsdIsAsyncResetDone);
+    else
+    {
+        ASMAtomicWriteBool(&pThis->fSignalIdle, false);
+        int rc = usbMsdResetWorker(pThis, NULL, false /*fSetConfig*/);
+        AssertRC(rc);
+    }
+}
+
+
+/**
+ * @interface_method_impl{PDMUSBREG,pfnDestruct}
+ */
+static DECLCALLBACK(void) usbMsdDestruct(PPDMUSBINS pUsbIns)
+{
+    PDMUSB_CHECK_VERSIONS_RETURN_VOID(pUsbIns);
     PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
     LogFlow(("usbMsdDestruct/#%u:\n", pUsbIns->iInstance));
 
@@ -1653,12 +2228,6 @@ static void usbMsdDestruct(PPDMUSBINS pUsbIns)
         RTCritSectEnter(&pThis->CritSect);
         RTCritSectLeave(&pThis->CritSect);
         RTCritSectDelete(&pThis->CritSect);
-    }
-
-    if (pThis->pReq)
-    {
-        usbMsdReqFree(pThis->pReq);
-        pThis->pReq = NULL;
     }
 
     if (pThis->hEvtDoneQueue != NIL_RTSEMEVENT)
@@ -1676,10 +2245,12 @@ static void usbMsdDestruct(PPDMUSBINS pUsbIns)
 
 
 /**
- * @copydoc PDMUSBREG::pfnConstruct
+ * @interface_method_impl{PDMUSBREG,pfnConstruct}
  */
 static DECLCALLBACK(int) usbMsdConstruct(PPDMUSBINS pUsbIns, int iInstance, PCFGMNODE pCfg, PCFGMNODE pCfgGlobal)
 {
+    RT_NOREF(pCfgGlobal);
+    PDMUSB_CHECK_VERSIONS_RETURN(pUsbIns);
     PUSBMSD pThis = PDMINS_2_DATA(pUsbIns, PUSBMSD);
     Log(("usbMsdConstruct/#%u:\n", iInstance));
 
@@ -1687,11 +2258,17 @@ static DECLCALLBACK(int) usbMsdConstruct(PPDMUSBINS pUsbIns, int iInstance, PCFG
      * Perform the basic structure initialization first so the destructor
      * will not misbehave.
      */
-    pThis->pUsbIns                                  = pUsbIns;
-    pThis->hEvtDoneQueue                            = NIL_RTSEMEVENT;
-    pThis->hEvtReset                                = NIL_RTSEMEVENTMULTI;
-    pThis->Lun0.IBase.pfnQueryInterface             = usbMsdLun0QueryInterface;
-    pThis->Lun0.IScsiPort.pfnSCSIRequestCompleted   = usbMsdLun0ScsiRequestCompleted;
+    pThis->pUsbIns                                      = pUsbIns;
+    pThis->hEvtDoneQueue                                = NIL_RTSEMEVENT;
+    pThis->hEvtReset                                    = NIL_RTSEMEVENTMULTI;
+    pThis->Lun0.IBase.pfnQueryInterface                 = usbMsdLun0QueryInterface;
+    pThis->Lun0.IMediaPort.pfnQueryDeviceLocation       = usbMsdLun0QueryDeviceLocation;
+    pThis->Lun0.IMediaExPort.pfnIoReqCompleteNotify     = usbMsdLun0IoReqCompleteNotify;
+    pThis->Lun0.IMediaExPort.pfnIoReqCopyFromBuf        = usbMsdLun0IoReqCopyFromBuf;
+    pThis->Lun0.IMediaExPort.pfnIoReqCopyToBuf          = usbMsdLun0IoReqCopyToBuf;
+    pThis->Lun0.IMediaExPort.pfnIoReqQueryDiscardRanges = NULL;
+    pThis->Lun0.IMediaExPort.pfnIoReqStateChanged       = usbMsdLun0IoReqStateChanged;
+    pThis->Lun0.IMediaExPort.pfnMediumEjected           = usbMsdLun0MediumEjected;
     usbMsdQueueInit(&pThis->ToHostQueue);
     usbMsdQueueInit(&pThis->DoneQueue);
 
@@ -1717,10 +2294,38 @@ static DECLCALLBACK(int) usbMsdConstruct(PPDMUSBINS pUsbIns, int iInstance, PCFG
     rc = PDMUsbHlpDriverAttach(pUsbIns, 0 /*iLun*/, &pThis->Lun0.IBase, &pThis->Lun0.pIBase, "SCSI Port");
     if (RT_FAILURE(rc))
         return PDMUsbHlpVMSetError(pUsbIns, rc, RT_SRC_POS, N_("MSD failed to attach SCSI driver"));
-    pThis->Lun0.pIScsiConnector = PDMIBASE_QUERY_INTERFACE(pThis->Lun0.pIBase, PDMISCSICONNECTOR);
-    if (!pThis->Lun0.pIScsiConnector)
+    pThis->Lun0.pIMedia = PDMIBASE_QUERY_INTERFACE(pThis->Lun0.pIBase, PDMIMEDIA);
+    if (!pThis->Lun0.pIMedia)
         return PDMUsbHlpVMSetError(pUsbIns, VERR_PDM_MISSING_INTERFACE_BELOW, RT_SRC_POS,
-                                   N_("MSD failed to query the PDMISCSICONNECTOR from the driver below it"));
+                                   N_("MSD failed to query the PDMIMEDIA from the driver below it"));
+    pThis->Lun0.pIMediaEx = PDMIBASE_QUERY_INTERFACE(pThis->Lun0.pIBase, PDMIMEDIAEX);
+    if (!pThis->Lun0.pIMediaEx)
+        return PDMUsbHlpVMSetError(pUsbIns, VERR_PDM_MISSING_INTERFACE_BELOW, RT_SRC_POS,
+                                   N_("MSD failed to query the PDMIMEDIAEX from the driver below it"));
+
+    /*
+     * Find out what kind of device we are.
+     */
+    pThis->fIsCdrom = false;
+    PDMMEDIATYPE enmType = pThis->Lun0.pIMedia->pfnGetType(pThis->Lun0.pIMedia);
+    /* Anything else will be reported as a hard disk. */
+    if (enmType == PDMMEDIATYPE_CDROM || enmType == PDMMEDIATYPE_DVD)
+        pThis->fIsCdrom = true;
+
+    rc = pThis->Lun0.pIMediaEx->pfnIoReqAllocSizeSet(pThis->Lun0.pIMediaEx, sizeof(USBMSDREQ));
+    if (RT_FAILURE(rc))
+        return PDMUsbHlpVMSetError(pUsbIns, rc, RT_SRC_POS, N_("MSD failed to set I/O request size!"));
+
+    /*
+     * Register the saved state data unit.
+     */
+    rc = PDMUsbHlpSSMRegister(pUsbIns, USB_MSD_SAVED_STATE_VERSION, sizeof(*pThis),
+                              NULL,           usbMsdLiveExec, NULL,
+                              usbMsdSavePrep, usbMsdSaveExec, NULL,
+                              usbMsdLoadPrep, usbMsdLoadExec, NULL);
+    if (RT_FAILURE(rc))
+        return PDMUsbHlpVMSetError(pUsbIns, rc, RT_SRC_POS,
+                                   N_("MSD failed to register SSM save state handlers"));
 
     return VINF_SUCCESS;
 }
@@ -1738,7 +2343,8 @@ const PDMUSBREG g_UsbMsd =
     /* pszDescription */
     "USB Mass Storage Device, one LUN.",
     /* fFlags */
-    PDM_USBREG_HIGHSPEED_CAPABLE,
+      PDM_USBREG_HIGHSPEED_CAPABLE | PDM_USBREG_SUPERSPEED_CAPABLE
+    | PDM_USBREG_SAVED_STATE_SUPPORTED,
     /* cMaxInstances */
     ~0U,
     /* cbInstance */
@@ -1752,21 +2358,21 @@ const PDMUSBREG g_UsbMsd =
     /* pfnVMPowerOn */
     NULL,
     /* pfnVMReset */
-    NULL,
+    usbMsdVMReset,
     /* pfnVMSuspend */
-    NULL,
+    usbMsdVMSuspend,
     /* pfnVMResume */
     NULL,
     /* pfnVMPowerOff */
-    NULL,
+    usbMsdVMPowerOff,
     /* pfnHotPlugged */
     NULL,
     /* pfnHotUnplugged */
     NULL,
     /* pfnDriverAttach */
-    NULL,
+    usbMsdDriverAttach,
     /* pfnDriverDetach */
-    NULL,
+    usbMsdDriverDetach,
     /* pfnQueryInterface */
     NULL,
     /* pfnUsbReset */

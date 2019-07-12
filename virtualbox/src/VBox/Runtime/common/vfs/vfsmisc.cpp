@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/vfs.h>
 
@@ -70,8 +70,7 @@ RTDECL(int)         RTVfsIoStrmFromStdHandle(RTHANDLESTD enmStdHandle, uint64_t 
                 break;
 
             case RTHANDLETYPE_PIPE:
-                /** @todo  */
-                rc = VERR_NOT_IMPLEMENTED;
+                rc = RTVfsIoStrmFromRTPipe(h.u.hPipe, fLeaveOpen, phVfsIos);
                 break;
 
             case RTHANDLETYPE_SOCKET:

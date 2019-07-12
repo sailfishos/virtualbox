@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,14 +16,14 @@
  */
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_USBPROXY
 #include <VBox/vmm/pdm.h>
 #include <VBox/err.h>
@@ -45,9 +45,9 @@
 #include <usbcalls.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Structure for keeping track of the URBs for a device.
  */
@@ -95,9 +95,9 @@ typedef struct USBPROXYDEVOS2
 } USBPROXYDEVOS2, *PUSBPROXYDEVOS2;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef DYNAMIC_USBCALLS
 static int usbProxyOs2GlobalInit(void);
 #endif
@@ -106,9 +106,9 @@ static void usbProxyOs2UrbFree(PUSBPROXYDEV pProxyDev, PUSBPROXYURBOS2 pUrbOs2);
 static DECLCALLBACK(int) usbProxyOs2AsyncThread(RTTHREAD Thread, void *pvProxyDev);
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef DYNAMIC_USBCALLS
 static HMODULE g_hmod;
 static APIRET (APIENTRY *g_pfnUsbOpen)(PUSBHANDLE, USHORT, USHORT, USHORT, USHORT);
@@ -595,12 +595,7 @@ static void usbProxyOs2Close(PUSBPROXYDEV pProxyDev)
 }
 
 
-/**
- * Reset a device.
- *
- * @returns VBox status code.
- * @param   pDev    The device to reset.
- */
+/** @interface_method_impl{USBPROXYBACK,pfnReset} */
 static int usbProxyOs2Reset(PUSBPROXYDEV pProxyDev, bool fResetOnLinux)
 {
     return VINF_SUCCESS;
@@ -700,11 +695,10 @@ static bool usbProxyOs2ClearHaltedEp(PUSBPROXYDEV pProxyDev, unsigned int EndPt)
 
 
 /**
- * @copydoc USBPROXYBACK::pfnUrbQueue
+ * @interface_method_impl{USBPROXYBACK,pfnUrbQueue}
  */
-static int usbProxyOs2UrbQueue(PVUSBURB pUrb)
+static int usbProxyOs2UrbQueue(PUSBPROXYDEV pProxyDev, PVUSBURB pUrb)
 {
-    PUSBPROXYDEV    pProxyDev = (PUSBPROXYDEV)pUrb->pDev;
     PUSBPROXYDEVOS2 pDevOs2 = (PUSBPROXYDEVOS2)pProxyDev->Backend.pv;
     LogFlow(("usbProxyOs2UrbQueue: pProxyDev=%s pUrb=%p EndPt=%d cbData=%d\n",
              pProxyDev->pUsbIns->pszName, pUrb, pUrb->EndPt, pUrb->cbData));
@@ -728,7 +722,7 @@ static int usbProxyOs2UrbQueue(PVUSBURB pUrb)
             break;
         case VUSBXFERTYPE_BULK:
             break;
-///@todo        case VUSBXFERTYPE_INTR:
+/// @todo        case VUSBXFERTYPE_INTR:
 //            break;
 //        case VUSBXFERTYPE_ISOC:
 //            break;

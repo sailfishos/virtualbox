@@ -1,10 +1,10 @@
 /* $Id: EventQueue.h $ */
 /** @file
- * Event queue class declaration.
+ * MS COM / XPCOM Abstraction Layer - Event queue class declaration.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -34,6 +34,12 @@
 
 #include <VBox/com/defs.h>
 #include <VBox/com/assert.h>
+
+
+/** @defgroup grp_com_evtqueue  Event Queue Classes
+ * @ingroup grp_com
+ * @{
+ */
 
 namespace com
 {
@@ -125,6 +131,8 @@ private:
 };
 
 } /* namespace com */
+
+/** @} */
 
 #endif
 

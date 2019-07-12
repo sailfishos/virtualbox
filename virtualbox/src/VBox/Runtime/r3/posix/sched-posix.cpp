@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -46,9 +46,10 @@
 #define THREAD_LOGGING
 #endif
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_THREAD
 #include <errno.h>
 #include <pthread.h>
@@ -67,9 +68,9 @@
 #include "internal/thread.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /** Array scheduler attributes corresponding to each of the thread types. */
 typedef struct PROCPRIORITYTYPE
@@ -117,9 +118,9 @@ typedef struct
 } SAVEDPRIORITY, *PSAVEDPRIORITY;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Thread level priorities based on a 0..31 priority range
  * as specified as the minimum for SCHED_RR/FIFO. FreeBSD
@@ -324,9 +325,9 @@ static enum
 bool g_fCanNice = false;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 
 /**
@@ -392,6 +393,7 @@ static int rtSchedCreateThread(void *(*pfnThread)(void *pvArg), void *pvArg)
                 rc = pthread_create(&Thread, &ThreadAttr, pfnThread, pvArg);
                 if (!rc)
                 {
+                    pthread_attr_destroy(&ThreadAttr);
                     /*
                      * Wait for the thread to finish.
                      */
@@ -399,7 +401,7 @@ static int rtSchedCreateThread(void *(*pfnThread)(void *pvArg), void *pvArg)
                     do
                     {
                         rc = pthread_join(Thread, &pvRet);
-                    } while (errno == EINTR);
+                    } while (rc == EINTR);
                     if (rc)
                         return RTErrConvertFromErrno(rc);
                     return (int)(uintptr_t)pvRet;

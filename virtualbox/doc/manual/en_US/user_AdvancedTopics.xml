@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
-"http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+"http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd">
 <chapter id="AdvancedTopics">
   <title>Advanced topics</title>
 
@@ -278,7 +278,7 @@ HKEY_CLASSES_ROOT\CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}\InprocServer32</s
       as part of the Guest Additions but it is not installed and/or activated
       on the guest OS by default. In order to install it, it has to be copied
       from
-      <computeroutput>/opt/VBoxGuestAdditions-&lt;version&gt;/lib/VBoxGuestAdditions/</computeroutput>
+      <computeroutput>/opt/VBoxGuestAdditions-&lt;version&gt;/other/</computeroutput>
       to the security modules directory, usually
       <computeroutput>/lib/security/</computeroutput> on 32-bit guest Linuxes
       or <computeroutput>/lib64/security/</computeroutput> on 64-bit ones.
@@ -301,7 +301,7 @@ HKEY_CLASSES_ROOT\CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}\InprocServer32</s
           <para>Edit the PAM configuration file for GDM found at
           <computeroutput>/etc/pam.d/gdm</computeroutput>, adding the line
           <computeroutput>auth requisite pam_vbox.so</computeroutput> at the
-          top. Additionaly, in most Linux distributions there is a file called
+          top. Additionally, in most Linux distributions there is a file called
           <computeroutput>/etc/pam.d/common-auth</computeroutput>. This file
           is included in many other services (like the GDM file mentioned
           above). There you also have to add the line <computeroutput>auth
@@ -433,7 +433,7 @@ HKEY_CLASSES_ROOT\CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}\InprocServer32</s
         <para>For manual or postponed installation, the
         <computeroutput>vbox-greeter.desktop</computeroutput>
         file has to be copied from
-        <computeroutput>/opt/VBoxGuestAdditions-&lt;version&gt;/shared/VBoxGuestAdditions/</computeroutput>
+        <computeroutput>/opt/VBoxGuestAdditions-&lt;version&gt;/other/</computeroutput>
         to the <computeroutput>xgreeters</computeroutput> directory, usually
         <computeroutput>/usr/share/xgreeters/</computeroutput>.
         Please refer to your guest OS documentation for the correct LightDM
@@ -591,20 +591,21 @@ greeter-session=vbox-greeter</screen></para>
       <screen>  sh ./VBoxLinuxAdditions.run no_setup</screen>
 
       <para>After this, you will need to at least compile the kernel modules
-      by running the command <screen>  /usr/lib/VBoxGuestAdditions/vboxadd setup</screen>
+      by running the command <screen>  rcvboxadd setup</screen>
       as root (you will need to replace <emphasis>lib</emphasis> by
       <emphasis>lib64</emphasis> on some 64bit guests), and on older guests
       without the udev service you will need to add the
       <emphasis>vboxadd</emphasis> service to the default runlevel to ensure
       that the modules get loaded.</para>
 
-      <para>To setup the time synchronization service, run the command
-      <screen>  /usr/lib/VBoxGuestAdditions/vboxadd-service setup</screen> and
+      <para>To setup the time synchronization service,
       add the service vboxadd-service to the default runlevel. To set up the
-      X11 and OpenGL part of the Guest Additions, run the command <screen>  /usr/lib/VBoxGuestAdditions/vboxadd-x11 setup</screen>
+      X11 and OpenGL part of the Guest Additions, run the command
+      <screen>  rcvboxadd-x11 setup</screen>
       (you do not need to enable any services for this).</para>
 
-      <para>To recompile the guest kernel modules, use this command: <screen>  /usr/lib/VBoxGuestAdditions/vboxadd setup</screen>
+      <para>To recompile the guest kernel modules, use this command:
+      <screen>  rcvboxadd setup</screen>
       After compilation you should reboot your guest to ensure that the new
       modules are actually used.</para>
     </sect2>
@@ -620,24 +621,24 @@ greeter-session=vbox-greeter</screen></para>
       <para>The VirtualBox Guest Additions come with drivers for X.Org
       versions <itemizedlist>
           <listitem>
-            X11R6.8/X11R6.9 and XFree86 version 4.3 (vboxvideo_drv_68.o and vboxmouse_drv_68.o)
+            <para>X11R6.8/X11R6.9 and XFree86 version 4.3 (vboxvideo_drv_68.o and vboxmouse_drv_68.o)</para>
           </listitem>
 
           <listitem>
-            X11R7.0 (vboxvideo_drv_70.so and vboxmouse_drv_70.so)
+            <para>X11R7.0 (vboxvideo_drv_70.so and vboxmouse_drv_70.so)</para>
           </listitem>
 
           <listitem>
-            X11R7.1 (vboxvideo_drv_71.so and vboxmouse_drv_71.so)
+            <para>X11R7.1 (vboxvideo_drv_71.so and vboxmouse_drv_71.so)</para>
           </listitem>
 
           <listitem>
-            X.Org Server versions 1.3 and later (vboxvideo_drv_13.so and vboxmouse_drv_13.so and so on).
+            <para>X.Org Server versions 1.3 and later (vboxvideo_drv_13.so and vboxmouse_drv_13.so and so on).</para>
           </listitem>
         </itemizedlist> By default these drivers can be found in the
       directory</para>
 
-      <para><computeroutput>/opt/VBoxGuestAdditions-&lt;version&gt;/lib/VBoxGuestAdditions</computeroutput></para>
+      <para><computeroutput>/opt/VBoxGuestAdditions-&lt;version&gt;/other/</computeroutput></para>
 
       <para>and the correct versions for the X server are symbolically linked
       into the X.Org driver directories.</para>
@@ -709,16 +710,18 @@ EndSection</screen>
     command-line interface. First, hot-plugging needs to be enabled for a
     virtual machine:<screen>VBoxManage modifyvm "VM name" --cpuhotplug on</screen></para>
 
-    <para>After that, the --cpus option specifies the maximum number of CPUs
+    <para>After that, the <computeroutput>--cpus</computeroutput> option specifies the maximum number of CPUs
     that the virtual machine can have:<screen>VBoxManage modifyvm "VM name" --cpus 8</screen>When
-    the VM is off, you can then add and remove virtual CPUs with the modifyvm
-    --plugcpu and --unplugcpu subcommands, which take the number of the
+    the VM is off, you can then add and remove virtual CPUs with the
+    <computeroutput>modifyvm --plugcpu</computeroutput> and
+    <computeroutput>--unplugcpu</computeroutput> subcommands, which take the number of the
     virtual CPU as a parameter, like this:<screen>VBoxManage modifyvm "VM name" --plugcpu 3
 VBoxManage modifyvm "VM name" --unplugcpu 3</screen>Note that CPU 0 can never
     be removed.</para>
 
-    <para>While the VM is running, CPUs can be added with the
-    <computeroutput>controlvm plugcpu/unplugcpu</computeroutput> commands
+    <para>While the VM is running, CPUs can be added and removed with the
+    <computeroutput>controlvm plugcpu</computeroutput> and
+    <computeroutput>unplugcpu</computeroutput> commands
     instead:<screen>VBoxManage controlvm "VM name" plugcpu 3
 VBoxManage controlvm "VM name" unplugcpu 3</screen></para>
 
@@ -755,7 +758,7 @@ VBoxManage controlvm "VM name" unplugcpu 3</screen></para>
     particular device. Both, regular PCI and some PCI Express cards, are
     supported. AGP and certain PCI Express cards are not supported at the
     moment if they rely on GART (Graphics Address Remapping Table) unit
-    programming for texture management as it does rather nontrivial operations
+    programming for texture management as it does rather non-trivial operations
     with pages remapping interfering with IOMMU. This limitation may be lifted
     in future releases.</para>
 
@@ -839,19 +842,20 @@ VBoxManage controlvm "VM name" unplugcpu 3</screen></para>
     <para>If the virtual machine has a PCI device attached, certain
     limitations apply: <orderedlist>
         <listitem>
-           Only PCI cards with non-shared interrupts (such as using MSI on host) are supported at the moment.
+           <para>Only PCI cards with non-shared interrupts (such as using MSI on host) are supported at the moment.</para>
         </listitem>
 
         <listitem>
-           No guest state can be reliably saved/restored (as the internal state of the PCI card could not be retrieved).
+           <para>No guest state can be reliably saved/restored (as the internal state of the PCI card could not be retrieved).</para>
         </listitem>
 
         <listitem>
-           Teleportation (live migration) doesn't work (for the same reason).
+           <para>Teleportation (live migration) doesn't work (for the same reason).</para>
         </listitem>
 
         <listitem>
-           No lazy physical memory allocation. The host will preallocate the whole RAM required for the VM on startup (as we cannot catch physical hardware accesses to the physical memory).
+           <para>No lazy physical memory allocation. The host will preallocate the whole RAM required for the VM on startup
+           (as we cannot catch physical hardware accesses to the physical memory).</para>
         </listitem>
       </orderedlist></para>
   </sect1>
@@ -899,17 +903,17 @@ host path or identifier</screen>
             configure the emulated webcam device. The following settings are supported:
             <itemizedlist>
               <listitem>
-                <computeroutput>MaxFramerate</computeroutput> The highest rate at which video frames
+                <para><computeroutput>MaxFramerate</computeroutput> The highest rate at which video frames
                 are sent to the guest. A higher frame rate requires more CPU power. Therefore sometimes
                 it is useful to set a lower limit. Default is no limit and allow the guest to use all
-                frame rates supported by the host webcam.
+                frame rates supported by the host webcam.</para>
               </listitem>
               <listitem>
-                <computeroutput>MaxPayloadTransferSize</computeroutput> How many bytes the emulated
+                <para><computeroutput>MaxPayloadTransferSize</computeroutput> How many bytes the emulated
                 webcam can send to the guest at a time. Default value is 3060 bytes, which is used by
                 some webcams. Higher values can slightly reduce CPU load, if the guest is able to use
                 larger buffers. However, a high <computeroutput>MaxPayloadTransferSize</computeroutput>
-                might be not supported by some guests.
+                might be not supported by some guests.</para>
               </listitem>
             </itemizedlist>
           </para></listitem>
@@ -935,7 +939,7 @@ host path or identifier</screen>
     <sect2>
       <title>Mac OS X hosts</title>
 
-      <para>OS X version 10.7 or newer is required.</para>
+      <para>OS X version 10.9 or newer is required.</para>
 
       <para>When the webcam device is detached from the host, the emulated webcam device
       remains attached to the guest and must be manually detached using the
@@ -943,7 +947,7 @@ host path or identifier</screen>
     </sect2>
 
     <sect2>
-      <title>Linux hosts</title>
+      <title>Linux and Solaris hosts</title>
 
       <para>When the webcam is detached from the host the emulated webcam device is
       automatically detached from the guest only if the webcam is streaming video.
@@ -959,7 +963,7 @@ host path or identifier</screen>
   <sect1>
     <title>Advanced display configuration</title>
 
-    <sect2>
+    <sect2 id="customvesa">
       <title>Custom VESA resolutions</title>
 
       <para>Apart from the standard VESA resolutions, the VirtualBox VESA BIOS
@@ -1422,34 +1426,34 @@ VBoxManage modifyvm "VM name" --nattftpfile1 /srv/tftp/boot/MyPXEBoot.pxe</scree
           <para>In some cases it might be useful to intercept the name resolving mechanism,
             providing a user-defined IP address on a particular DNS request. The intercepting
             mechanism allows the user to map not only a single host but domains and even more
-            complex namings conventions if required.</para>
+            complex naming conventions if required.</para>
             <para>
               The following command sets a rule for mapping a name to a specified IP:</para>
             <screen>VBoxManage setextradata "VM name" \
-      "VBoxInternal/Devices/{pcnet,e1000}/0/LUN#0/Config/HostResolverMappings/ \
-      &lt;uniq name of interception rule&gt;/HostIP" &lt;IPv4&gt;
+      "VBoxInternal/Devices/{pcnet,e1000}/0/LUN#0/AttachedDriver/Config/HostResolverMappings/ \
+      &lt;unique rule name of interception rule&gt;/HostIP" &lt;IPv4&gt;
 VBoxManage setextradata "VM name" \
-      "VBoxInternal/Devices/{pcnet,e1000}/0/LUN#0/Config/HostResolverMappings/ \
-      &lt;uniq name of interception rule&gt;/HostName" &lt;name of host&gt;</screen>
+      "VBoxInternal/Devices/{pcnet,e1000}/0/LUN#0/AttachedDriver/Config/HostResolverMappings/ \
+      &lt;unique rule name&gt;/HostName" &lt;name of host&gt;</screen>
     <para>The following command sets a rule for mapping a pattern name to a specified IP:</para>
             <screen>VBoxManage setextradata "VM name" \
-      "VBoxInternal/Devices/{pcnet,e1000}/0/LUN#0/Config/HostResolverMappings/ \
-      &lt;uniq name of interception rule&gt;/HostIP" &lt;IPv4&gt;
+      "VBoxInternal/Devices/{pcnet,e1000}/0/LUN#0/AttachedDriver/Config/HostResolverMappings/ \
+      &lt;unique rule name&gt;/HostIP" &lt;IPv4&gt;
 VBoxManage setextradata "VM name" \
-      "VBoxInternal/Devices/{pcnet,e1000}/0/LUN#0/Config/HostResolverMappings/ \
-      &lt;uniq name of interception rule&gt;/HostNamePattern" &lt;hostpattern&gt;</screen>
+      "VBoxInternal/Devices/{pcnet,e1000}/0/LUN#0/AttachedDriver/Config/HostResolverMappings/ \
+      &lt;unique rule name&gt;/HostNamePattern" &lt;hostpattern&gt;</screen>
     <para>The host pattern may include <computeroutput>"|", "?" and "*"</computeroutput>.</para>
     <para>This example demonstrates how to instruct the host-resolver mechanism to resolve
       all domain and probably some mirrors of www.blocked-site.info site with IP 127.0.0.1:</para>
-            <screen>VBoxManage setextradata "VM name" \
-      "VBoxInternal/Devices/e1000/0/LUN#0/Config/HostResolverMappings/ \
+    <screen>VBoxManage setextradata "VM name" \
+      "VBoxInternal/Devices/e1000/0/LUN#0/AttachedDriver/Config/HostResolverMappings/ \
       all_blocked_site/HostIP" 127.0.0.1
 VBoxManage setextradata "VM name" \
-      "VBoxInternal/Devices/e1000/0/LUN#0/Config/HostResolverMappings/ \
+      "VBoxInternal/Devices/e1000/0/LUN#0/AttachedDriver/Config/HostResolverMappings/ \
       all_blocked_site/HostNamePattern" "*.blocked-site.*|*.fb.org"</screen>
-           <note><para>The host resolver mechanism should be enabled to use user-defined
-             mapping rules (please see
-             <xref linkend="nat_host_resolver_proxy" /> for more details).</para></note>
+
+    <para>The host resolver mechanism should be enabled to use user-defined
+      mapping rules, otherwise they don't have any effect.</para>
         </sect3>
     </sect2>
 
@@ -1477,9 +1481,12 @@ VBoxManage setextradata "VM name" \
     information. In case your VM is configured to use EFI firmware you need to
     replace <code>pcbios</code> by <code>efi</code> in the keys.</para>
 
-    <sect2>
-      <title>DMI BIOS information (type 0)</title>
-      <screen>VBoxManage setextradata "VM name"
+    <glosslist>
+      <glossentry>
+        <glossterm>DMI BIOS information</glossterm>
+        <glossdef>
+          <para>(type 0)</para>
+          <screen>VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiBIOSVendor"        "BIOS Vendor"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiBIOSVersion"       "BIOS Version"
@@ -1493,10 +1500,14 @@ VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiBIOSFirmwareMajor" 3
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiBIOSFirmwareMinor" 4</screen>
-    </sect2>
-    <sect2>
-      <title>DMI system information (type 1)</title>
-      <screen>VBoxManage setextradata "VM name"
+        </glossdef>
+      </glossentry>
+
+      <glossentry>
+        <glossterm>DMI system information</glossterm>
+        <glossdef>
+          <para>(type 1)</para>
+          <screen>VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiSystemVendor"      "System Vendor"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiSystemProduct"     "System Product"
@@ -1511,10 +1522,14 @@ VBoxManage setextradata "VM name"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiSystemUuid"
                                                "9852bf98-b83c-49db-a8de-182c42c7226b"</screen>
-    </sect2>
-    <sect2>
-      <title>DMI board information (type 2)</title>
-      <screen>VBoxManage setextradata "VM name"
+        </glossdef>
+      </glossentry>
+
+      <glossentry>
+        <glossterm>DMI board information</glossterm>
+        <glossdef>
+          <para>(type 2)</para>
+          <screen>VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiBoardVendor"       "Board Vendor"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiBoardProduct"      "Board Product"
@@ -1528,10 +1543,14 @@ VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiBoardLocInChass"   "Board Location"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiBoardBoardType"    10</screen>
-    </sect2>
-    <sect2>
-      <title>DMI system enclosure or chassis (type 3)</title>
-      <screen>VBoxManage setextradata "VM name"
+        </glossdef>
+      </glossentry>
+
+      <glossentry>
+        <glossterm>DMI system enclosure or chassis</glossterm>
+        <glossdef>
+          <para>(type 3)</para>
+          <screen>VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiChassisVendor"     "Chassis Vendor"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiChassisType"       3
@@ -1541,21 +1560,32 @@ VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiChassisSerial"     "Chassis Serial"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiChassisAssetTag"   "Chassis Tag"</screen>
-    </sect2>
-    <sect2>
-      <title>DMI processor informatiion (type 4)</title>
-      <screen>VBoxManage setextradata "VM name"
+        </glossdef>
+      </glossentry>
+
+      <glossentry>
+        <glossterm>DMI processor information</glossterm>
+        <glossdef>
+          <para>(type 4)</para>
+          <screen>VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiProcManufacturer"  "GenuineIntel"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiProcVersion"       "Pentium(R) III"</screen>
-    </sect2>
-    <sect2>
-      <title>DMI OEM strings (type 11)</title>
-      <screen>VBoxManage setextradata "VM name"
+        </glossdef>
+      </glossentry>
+
+      <glossentry>
+        <glossterm>DMI OEM strings</glossterm>
+        <glossdef>
+          <para>(type 11)</para>
+          <screen>VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiOEMVBoxVer"        "vboxVer_1.2.3"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiOEMVBoxRev"        "vboxRev_12345"</screen>
-    </sect2>
+        </glossdef>
+      </glossentry>
+    </glosslist>
+
     <para>If a DMI string is not set, the default value of VirtualBox is used.
     To set an empty string use
     <computeroutput>"&lt;EMPTY&gt;"</computeroutput>.</para>
@@ -1663,72 +1693,72 @@ VBoxManage setextradata "VM name"
       <para>where <computeroutput>PARAMETER</computeroutput> is one of the
       following:</para>
 
-      <para><glosslist>
-          <glossentry>
-            <glossterm><computeroutput>--timesync-interval</computeroutput></glossterm>
-            <glossdef>
-              <para>Specifies the interval at which to synchronize the time
-              with the host. The default is 10000 ms (10 seconds).</para>
-            </glossdef>
-          </glossentry>
+      <glosslist>
+        <glossentry>
+          <glossterm><computeroutput>--timesync-interval</computeroutput></glossterm>
+          <glossdef>
+            <para>Specifies the interval at which to synchronize the time
+            with the host. The default is 10000 ms (10 seconds).</para>
+          </glossdef>
+        </glossentry>
 
-          <glossentry>
-            <glossterm><computeroutput>--timesync-min-adjust</computeroutput></glossterm>
-            <glossdef>
-              <para>The minimum absolute drift value measured in milliseconds
-              to make adjustments for. The default is 1000 ms on OS/2 and 100
-              ms elsewhere.</para>
-            </glossdef>
-          </glossentry>
-          <glossentry>
-            <glossterm><computeroutput>--timesync-latency-factor</computeroutput></glossterm>
-            <glossdef>
-              <para>The factor to multiply the time query latency with to
-              calculate the dynamic minimum adjust time. The default is 8
-              times, that means in detail: Measure the time it takes to
-              determine the host time (the guest has to contact the VM host
-              service which may take some time), multiply this value by 8 and
-              do an adjustment only if the time difference between host and
-              guest is bigger than this value. Don't do any time adjustment
-              otherwise.</para>
-            </glossdef>
-          </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>--timesync-min-adjust</computeroutput></glossterm>
+          <glossdef>
+            <para>The minimum absolute drift value measured in milliseconds
+            to make adjustments for. The default is 1000 ms on OS/2 and 100
+            ms elsewhere.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>--timesync-latency-factor</computeroutput></glossterm>
+          <glossdef>
+            <para>The factor to multiply the time query latency with to
+            calculate the dynamic minimum adjust time. The default is 8
+            times, that means in detail: Measure the time it takes to
+            determine the host time (the guest has to contact the VM host
+            service which may take some time), multiply this value by 8 and
+            do an adjustment only if the time difference between host and
+            guest is bigger than this value. Don't do any time adjustment
+            otherwise.</para>
+          </glossdef>
+        </glossentry>
 
-          <glossentry>
-            <glossterm><computeroutput>--timesync-max-latency</computeroutput></glossterm>
-            <glossdef>
-              <para>The max host timer query latency to accept. The default is
-              250 ms.</para>
-            </glossdef>
-          </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>--timesync-max-latency</computeroutput></glossterm>
+          <glossdef>
+            <para>The max host timer query latency to accept. The default is
+            250 ms.</para>
+          </glossdef>
+        </glossentry>
 
-          <glossentry>
-            <glossterm><computeroutput>--timesync-set-threshold</computeroutput></glossterm>
-            <glossdef>
-              <para>The absolute drift threshold, given as milliseconds where
-              to start setting the time instead of trying to smoothly adjust
-              it. The default is 20 minutes.</para>
-            </glossdef>
-          </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>--timesync-set-threshold</computeroutput></glossterm>
+          <glossdef>
+            <para>The absolute drift threshold, given as milliseconds where
+            to start setting the time instead of trying to smoothly adjust
+            it. The default is 20 minutes.</para>
+          </glossdef>
+        </glossentry>
 
-          <glossentry>
-            <glossterm><computeroutput>--timesync-set-start</computeroutput></glossterm>
-            <glossdef>
-              <para>Set the time when starting the time sync service.</para>
-            </glossdef>
-          </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>--timesync-set-start</computeroutput></glossterm>
+          <glossdef>
+            <para>Set the time when starting the time sync service.</para>
+          </glossdef>
+        </glossentry>
 
-          <glossentry>
-            <glossterm><computeroutput>--timesync-set-on-restore
-            0|1</computeroutput></glossterm>
-            <glossdef>
-              <para>Set the time after the VM was restored from a saved state
-              when passing 1 as parameter (default). Disable by passing 0. In
-              the latter case, the time will be adjusted smoothly which can
-              take a long time.</para>
-            </glossdef>
-          </glossentry>
-        </glosslist></para>
+        <glossentry>
+          <glossterm><computeroutput>--timesync-set-on-restore
+          0|1</computeroutput></glossterm>
+          <glossdef>
+            <para>Set the time after the VM was restored from a saved state
+            when passing 1 as parameter (default). Disable by passing 0. In
+            the latter case, the time will be adjusted smoothly which can
+            take a long time.</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
 
       <para>All these parameters can be specified as command line parameters
       to VBoxService as well.</para>
@@ -1744,9 +1774,7 @@ VBoxManage setextradata "VM name"
         clock:</para>
 
       <screen>VBoxManage setextradata "VM name" "VBoxInternal/Devices/VMMDev/0/Config/GetHostTimeDisabled" 1</screen>
-
     </sect2>
-
   </sect1>
 
   <sect1 id="vboxbowsolaris11">
@@ -1790,14 +1818,18 @@ VBoxManage setextradata "VM name"
       </footnote> A VirtualBox VNIC template is a VNIC whose name starts with
     "vboxvnic_template" (case-sensitive).</para>
 
-    <para>Here is an example of how to use a VNIC template to configure a VLAN
-    for VMs. Create a VirtualBox VNIC template, by executing as root:</para>
+    <para>On Solaris 11 hosts<footnote><para>When Crossbow based bridged
+    networking is used.</para></footnote>, a VNIC template may be used to
+    specify the VLAN ID to use while bridging over a network link.</para>
+
+    <para>Here is an example of how to use a VNIC template to configure a VM
+    over a VLAN. Create a VirtualBox VNIC template, by executing as root:</para>
 
     <screen>dladm create-vnic -t -l nge0 -v 23 vboxvnic_template0</screen>
 
-    <para>This will create a temporary VNIC over interface "nge0" with the
-    VLAN ID 23. To create VNIC templates that are persistent across host
-    reboots, skip the <computeroutput>-t</computeroutput> parameter in the
+    <para>This will create a temporary VNIC template over interface "nge0"
+    with the VLAN ID 23. To create VNIC templates that are persistent across
+    host reboots, skip the <computeroutput>-t</computeroutput> parameter in the
     above command. You may check the current state of links using:</para>
 
     <para><screen>$ dladm show-link
@@ -1810,16 +1842,19 @@ $ dladm show-vnic
 LINK         OVER         SPEED  MACADDRESS        MACADDRTYPE         VID
 vboxvnic_template0 nge0   1000   2:8:20:25:12:75   random              23</screen></para>
 
-    <para>Once the VNIC template is created, all VMs that need to be part of
-    VLAN 23 over the physical interface "nge0" can use the same VNIC template.
-    This makes managing VMs on VLANs simpler and efficient, as the VLAN
-    details are not stored as part of every VM's configuration but rather
-    picked from the VNIC template which can be modified anytime using
-    <computeroutput>dladm</computeroutput>. Apart from the VLAN ID, VNIC
-    templates can be created with additional properties such as bandwidth
-    limits, CPU fanout etc. Refer to your Solaris network documentation on how
-    to accomplish this. These additional properties, if any, are also applied
-    to VMs which use the VNIC template.</para>
+    <para>Once the VNIC template is created, any VMs that need to be on VLAN
+    23 over the interface "nge0" can be configured to bridge using this VNIC
+    template.</para>
+
+    <para>VNIC templates makes managing VMs on VLANs simpler and efficient.
+    The VLAN details are not stored as part of every VM's configuration but
+    rather inherited from the VNIC template while starting the VM. The VNIC
+    template itself can be modified anytime using <computeroutput>dladm</computeroutput>.</para>
+
+    <para>VNIC templates can be created with additional properties such as
+    bandwidth limits, CPU fanout etc. Refer to your Solaris network
+    documentation on how to accomplish this. These additional properties,
+    if any, are also applied to VMs which bridge using the VNIC template.</para>
   </sect1>
 
   <sect1 id="addhostonlysolaris">
@@ -1828,34 +1863,57 @@ vboxvnic_template0 nge0   1000   2:8:20:25:12:75   random              23</scree
 
     <para>By default VirtualBox provides you with one host-only network
     interface. Adding more host-only network interfaces on Solaris hosts
-    requires manual configuration. Here's how to add two more host-only
-    network interfaces.</para>
+    requires manual configuration. Here's how to add another host-only
+    network interface.</para>
 
-    <para>You first need to stop all running VMs and unplumb all existing
-    "vboxnet" interfaces. Execute the following commands as root:</para>
+    <para>Begin by stopping all running VMs. Then, unplumb the existing
+    "vboxnet0" interface by execute the following command as root:</para>
 
     <screen>ifconfig vboxnet0 unplumb</screen>
 
-    <para>Once you make sure all vboxnet interfaces are unplumbed, remove the
-    driver using:</para>
+    <para>If you have several vboxnet interfaces, you will need to unplumb
+    all of them. Once all vboxnet interfaces are unplumbed, remove the
+    driver by executing the following command as root:</para>
 
-    <para><screen>rem_drv vboxnet</screen>then edit the file
-    <computeroutput>/platform/i86pc/kernel/drv/vboxnet.conf</computeroutput>
-    and add a line for the new interfaces:</para>
+    <screen>rem_drv vboxnet</screen>
 
-    <para><screen>name="vboxnet" parent="pseudo" instance=1;
-name="vboxnet" parent="pseudo" instance=2;</screen>Add as many of these lines
-    as required and make sure "instance" number is uniquely incremented. Next
-    reload the vboxnet driver using:</para>
+    <para>Edit the file <computeroutput>/platform/i86pc/kernel/drv/vboxnet.conf</computeroutput>
+    and add a line for the new interface we want to add as shown below:</para>
 
-    <para><screen>add_drv vboxnet</screen>Now plumb all the interfaces using
-    <computeroutput>ifconfig vboxnetX plumb</computeroutput> (where X can be
-    0, 1 or 2 in this case) and once plumbed you can then configure the
-    interface like any other network interface.</para>
+    <screen>name="vboxnet" parent="pseudo" instance=1;
+name="vboxnet" parent="pseudo" instance=2;</screen>
 
-    <para>To make your newly added interfaces' settings persistent across
-    reboots you will need to edit the files
-    <computeroutput>/etc/netmasks</computeroutput>, and if you are using NWAM
+    <para>Add as many of these lines as required with each line having a
+    unique instance number.</para>
+
+    <para>Next, reload the vboxnet driver by executing the following command
+    as root:</para>
+
+    <screen>add_drv vboxnet</screen>
+
+    <para>On Solaris 11.1 and newer hosts you may want to rename the default
+    vanity interface name. To check what name has been assigned, execute:</para>
+
+    <screen>dladm show-phys
+LINK              MEDIA                STATE      SPEED  DUPLEX    DEVICE
+net0              Ethernet             up         100    full      e1000g0
+net2              Ethernet             up         1000   full      vboxnet1
+net1              Ethernet             up         1000   full      vboxnet0</screen>
+
+    <para>In the above example, we can rename "net2" to "vboxnet1" before
+    proceeding to plumb the interface. This can be done by executing as root:</para>
+
+    <screen>dladm rename-link net2 vboxnet1</screen>
+
+    <para>Now plumb all the interfaces using
+    <computeroutput>ifconfig vboxnetX plumb</computeroutput> (where 'X' would
+    be 1 in this case). Once the interface is plumbed, it may be configured
+    like any other network interface. Refer to the
+    <computeroutput>ifconfig</computeroutput> documentation for further details.</para>
+
+    <para>To make the newly added interfaces' settings persistent across
+    reboots, you will need to edit the files
+    <computeroutput>/etc/inet/netmasks</computeroutput>, and if you are using NWAM
     <computeroutput>/etc/nwam/llp</computeroutput> and add the appropriate
     entries to set the netmask and static IP for each of those interfaces. The
     VirtualBox installer only updates these configuration files for the one
@@ -1912,8 +1970,33 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
     for example <computeroutput>core.vb.VBoxHeadless.11321</computeroutput>.</para>
   </sect1>
 
+  <sect1 id="vboxandsolzvmm">
+    <title>VirtualBox and Solaris kernel zones</title>
+
+    <para>Solaris kernel zones on x86-based systems make use of hardware-assisted
+    virtualization features like VirtualBox does. However, for kernel zones and
+    VirtualBox to share this hardware resource, they need to co-operate.</para>
+
+    <para>By default, due to performance reasons, VirtualBox acquires the
+    hardware-assisted virtualization resource (VT-x/AMD-V) globally on the
+    host machine and uses it until the last VirtualBox VM that requires it is
+    powered off. This prevents other software from using VT-x/AMD-V during the
+    time VirtualBox has taken control of it.</para>
+
+    <para>VirtualBox can be instructed to relinquish use of hardware-assisted
+    virtualization features when not executing guest code, thereby allowing
+    kernel zones to make use of them. To do this, shutdown all VirtualBox VMs
+    and execute the following command:</para>
+
+    <screen>VBoxManage setproperty hwvirtexclusive off</screen>
+
+    <para>This command needs to be executed only once as the setting is stored
+    as part of the global VirtualBox settings which will continue to persist
+    across host-reboots and VirtualBox upgrades.</para>
+  </sect1>
+
   <sect1 id="guitweaks">
-    <title>Locking down the VirtualBox manager GUI</title>
+    <title>Locking down the VirtualBox GUI</title>
 
     <sect2>
       <title>Customizing the VM manager</title>
@@ -1958,7 +2041,7 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
       <title>VM selector customization</title>
       <para>The following per-machine VM extradata settings can be used to change the
         behavior of the VM selector window in respect of certain VMs:</para>
-      <screen>VBoxManage setextradata "VM name" true</screen>
+      <screen>VBoxManage setextradata "VM name" SETTING true</screen>
       <para>where <computeroutput>SETTING</computeroutput> can be:</para>
       <glosslist>
         <glossentry>
@@ -2339,7 +2422,7 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
         <glossentry>
           <glossterm><computeroutput>DragAndDrop</computeroutput></glossterm>
           <glossdef>
-            <para>Don't show the <emphasis>Drag'n'Drop</emphasis> menu item in this menu.</para>
+            <para>Don't show the <emphasis>Drag and Drop</emphasis> menu item in this menu.</para>
           </glossdef>
         </glossentry>
         <glossentry>
@@ -2509,8 +2592,8 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
           <glossterm><computeroutput>FloppyDisks</computeroutput></glossterm>
           <glossdef>
             <para>Don't show the floppy icon in the VM window status bar. By default the
-              floppy icon is only shown if the VM configuration contains one more
-              more floppy drives.</para>
+              floppy icon is only shown if the VM configuration contains one or more
+              floppy drives.</para>
           </glossdef>
         </glossentry>
 
@@ -2603,7 +2686,7 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
             <para>Don't allow to switch the VM into scale mode.</para>
           </glossdef>
         </glossentry>
-      
+
       </glosslist>
 
       <para>This is a per-VM setting. Any combination of the above is allowed. To restore
@@ -2798,6 +2881,67 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
               powering off the VM.</para>
           </glossdef>
         </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Detach</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't allow the user to detach from the VM process if the
+              VM was started in separate mode.</para>
+          </glossdef>
+        </glossentry>
+
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. If all
+        options are specified, the VM cannot be shut down at all.</para>
+    </sect2>
+
+    <sect2>
+      <title>Default action when terminating the VM</title>
+
+      <para>You can define a specific action for terminating a VM. In contrast to
+        the setting decribed in the previous section, this setting allows only
+        one action when the user terminates the VM. No exit menu is shown.</para>
+
+      <para><screen>VBoxManage setextradata "VM name" GUI/DefaultCloseAction ACTION</screen></para>
+
+      <para>where <computeroutput>ACTION</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>SaveState</computeroutput></glossterm>
+          <glossdef>
+            <para>Save the VM state before terminating the VM process.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Shutdown</computeroutput></glossterm>
+          <glossdef>
+            <para>The VM is shut down by sending the ACPI power-off event to the guest.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>PowerOff</computeroutput></glossterm>
+          <glossdef>
+            <para>The VM is powered off.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>PowerOffRestoringSnapshot</computeroutput></glossterm>
+          <glossdef>
+            <para>The VM is powered off and the saved state returns to the last snapshot.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Detach</computeroutput></glossterm>
+          <glossdef>
+            <para>Terminate the frontend but leave the VM process running.</para>
+          </glossdef>
+        </glossentry>
+
       </glosslist>
 
       <para>This is a per-VM setting. Any combination of the above is allowed. If all
@@ -2812,7 +2956,7 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
         default is to show a message window which instructs the user to
         open a bug report.</para>
       <para>This behavior can be configured:</para>
-        
+
       <para><screen>VBoxManage setextradata "VM name" GUI/GuruMeditationHandler MODE</screen></para>
 
       <para>where <computeroutput>MODE</computeroutput> is one of the
@@ -2829,7 +2973,7 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
           <glossterm><computeroutput>PowerOff</computeroutput></glossterm>
           <glossdef>
             <para>The VM is immediately powered-off without showing any message
-              window. The VM logfile will show information about what happend.</para>
+              window. The VM logfile will show information about what happened.</para>
           </glossdef>
         </glossentry>
 
@@ -2845,12 +2989,12 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
       <para>This is a per-VM setting.</para>
     </sect2>
 
-    <sect2 id="mouse-capture">
+    <sect2>
       <title>Configuring automatic mouse capturing</title>
 
       <para>
         By default, the mouse is captured if the user clicks on the guest window
-        and the guest expects relative mouse coordiantes at this time. This
+        and the guest expects relative mouse coordinates at this time. This
         happens if the pointing device is configured as PS/2 mouse and the guest did
         not (yet) start the VirtualBox Guest Additions (for instance, the guest is
         booting or no Guest Additions installed at all) or if the pointing device
@@ -2862,7 +3006,51 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
         The default behavior is sometimes not desired. Therefore it can be configured:
       </para>
       <para><screen>VBoxManage setextradata "VM name" GUI/MouseCapturePolicy MODE</screen></para>
-      
+
+      <para>where <computeroutput>MODE</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>Default</computeroutput></glossterm>
+          <glossdef>
+            <para>The default behavior as described above.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>HostComboOnly</computeroutput></glossterm>
+          <glossdef>
+            <para>The mouse is only captured if the Host Key is toggled.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Disabled</computeroutput></glossterm>
+          <glossdef>
+            <para>The mouse is never captured, also not by toggling the Host Key</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting.</para>
+
+    </sect2>
+
+    <sect2 id="mouse-capture">
+      <title>Configuring automatic mouse capturing</title>
+
+      <para>
+        By default, the mouse is captured if the user clicks on the guest window
+        and the guest expects relative mouse coordinates at this time. This
+        happens if the pointing device is configured as PS/2 mouse and the guest did
+        not (yet) start the VirtualBox Guest Additions (for instance, the guest is
+        booting or no Guest Additions installed at all) or if the pointing device
+        is configured as USB tablet but the guest has no USB driver loaded yet.
+        Once the Guest Additions become active or the USB guest driver is started,
+        the mouse capture is automatically released.
+      </para>
+      <para>
+        The default behavior is sometimes not desired. Therefore it can be configured:
+      </para>
+      <para><screen>VBoxManage setextradata "VM name" GUI/MouseCapturePolicy MODE</screen></para>
+
       <para>where <computeroutput>MODE</computeroutput> is one of the
         following keywords:</para><glosslist>
         <glossentry>
@@ -2906,9 +3094,7 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
       <para><screen>VBoxManage setextradata global GUI/Fullscreen/LegacyMode</screen></para>
 
       <para>This is a global setting.</para>
-
     </sect2>
-
   </sect1>
 
   <sect1 id="vboxwebsrv-daemon">
@@ -3077,7 +3263,7 @@ svccfg -s svc:/application/virtualbox/webservice:default setprop config/user=roo
       service use the following command: <screen>launchctl load ~/Library/LaunchAgents/org.virtualbox.vboxwebsrv.plist</screen>
       For additional information on how launchd services could be
       configured see <literal><ulink
-      url="http://developer.apple.com/mac/library/documentation/MacOSX/Conceptual/BPSystemStartup/BPSystemStartup.html">http://developer.apple.com/mac/library/documentation/MacOSX/Conceptual/BPSystemStartup/BPSystemStartup.html</ulink></literal>.</para>
+      url="https://developer.apple.com/library/mac/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html">https://developer.apple.com/library/mac/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html</ulink></literal>.</para>
     </sect2>
   </sect1>
 
@@ -3112,7 +3298,7 @@ svccfg -s svc:/application/virtualbox/webservice:default setprop config/user=roo
     <para>
     All configuration values can be either specified via command line or global
     extradata, whereas command line values always have a higher priority when set.
-    Some of the configuration values also be be specified on a per-VM basis. So
+    Some of the configuration values also be specified on a per-VM basis. So
     the overall lookup order is: command line, per-VM basis extradata (if available),
     global extradata.
     </para>
@@ -3320,7 +3506,6 @@ svccfg -s svc:/application/virtualbox/balloonctrl:default setprop config/balloon
       <para>For more information about SMF, please refer to the Solaris
       documentation.</para>
     </sect2>
-
   </sect1>
 
   <sect1 id="otherextpacks">
@@ -3513,7 +3698,7 @@ alice = {
              <para>
                This event is currently only handled on Windows hosts and Mac OS X hosts.
                When this event is generated, VirtualBox will save the state and
-               terminate all VMs in preperation of a potential host powerdown.
+               terminate all VMs in preparation of a potential host powerdown.
              </para>
              <para>The behavior can be configured. By executing the following command,
              no VM is saved:</para>
@@ -3529,7 +3714,6 @@ VBoxManage setextradata "foo" "VBoxInternal2/SavestateOnBatteryLow" 0</screen>
          </glossentry>
        </glosslist>
      </para>
-
    </sect1>
 
    <sect1 id="sse412passthrough">
@@ -3561,7 +3745,623 @@ VBoxManage setextradata "VM name" VBoxInternal/CPUM/SSE4.2 1</screen>
       In order to disable it, use the same command but change "1" to "0", or use the VBoxManage
       command to remove the extra data. This is a per-VM setting and it is disabled by default.
     </para>
-
   </sect1>
 
+  <sect1 id="usbtrafficcapturing">
+    <title>Capturing USB traffic for selected devices</title>
+
+    <para>
+      Starting with VirtualBox 5.0 it is possible to capture USB traffic for
+      single USB devices or on the root hub level which captures the traffic of
+      all USB devices attached to the root hub. VirtualBox stores the traffic
+      in a format which is compatible with Wireshark. To capture the traffic
+      of a specific USB device it must be attached to the VM with VBoxManage
+      using the following command:
+    </para>
+
+    <screen>VBoxManage controlvm "VM name" usbattach "device uuid|address" --capturefile "filename"</screen>
+
+    <para>
+      In order to enable capturing on the root hub use the following command
+      while the VM is not running:
+    </para>
+
+    <screen>VBoxManage setextradata "VM name" VBoxInternal/Devices/usb-ehci/0/LUN#0/Config/CaptureFilename "filename"</screen>
+
+    <para>The command above enables capturing on the root hub attached to the EHCI controller.
+    To enable it for the OHCI or XHCI controller replace <computeroutput>usb-ehci</computeroutput>
+    with <computeroutput>usb-ohci</computeroutput> or <computeroutput>usb-xhci</computeroutput> respectively.</para>
+  </sect1>
+
+  <sect1 id="heartbeatservice">
+    <title>Configuring the heartbeat service</title>
+    <para>
+      VirtualBox ships a simple heartbeat service. Once the Guest Additions are
+      active, the guest sends frequent heartbeat pings to the host. If the guest
+      stops sending the heartbeat pings without properly terminating the service,
+      the VM process will log this event in the VBox.log file. In the future it
+      might be possible to configure dedicated actions but for now there is only a
+      warning in the log file.</para>
+
+    <para>
+      There are two parameters to configure. The <emphasis>heartbeat interval</emphasis>
+      defines the time between two heartbeat pings. The default value is 2 seconds, that
+      is, the heartbeat service of the VirtualBox Guest Additions will send a heartbeat
+      ping every two seconds. The value in nanoseconds can be configured like this:
+    </para>
+    <screen>VBoxManage setextradata "VM name" VBoxInternal/Devices/VMMDev/0/Config/HeartbeatInterval 2000000000</screen>
+    <para>
+      The <emphasis>heartbeat timeout</emphasis> defines the time the host waits
+      starting from the last heartbeat ping before it defines the guest as unresponsive.
+      The default value is 2 times the heartbeat interval (4 seconds) and can be configured
+      as following (in nanoseconds):
+    </para>
+
+    <screen>VBoxManage setextradata "VM name" VBoxInternal/Devices/VMMDev/0/Config/HeartbeatTimeout 4000000000</screen>
+
+    <para>
+      If the heartbeat timeout expires, there will be a log message like
+      <emphasis>VMMDev: HeartBeatCheckTimer: Guest seems to be unresponsive. Last heartbeat
+        received 5 seconds ago.</emphasis>
+      If another heartbeat ping arrives after this warning, there will be a log
+      message like
+      <emphasis>VMMDev: GuestHeartBeat: Guest is alive.</emphasis>
+    </para>
+  </sect1>
+
+  <sect1 id="diskencryption">
+    <title>Encryption of disk images</title>
+
+    <para>
+      Starting with VirtualBox 5.0, it is possible to encrypt the data stored in
+      hard disk images transparently for the guest. It does not depend on a specific
+      image format to be used. Images which have the data encrypted are not portable
+      between VirtualBox and other virtualization software.
+    </para>
+
+    <para>
+      VirtualBox uses the AES algorithm in XTS mode and supports 128 or 256 bit
+      data encryption keys (DEK).
+      The DEK is stored encrypted in the medium properties and is decrypted during
+      VM startup by entering a password which was chosen when the image was encrypted.
+    </para>
+
+    <para>
+      Since the DEK is stored as part of the VM configuration file, it is
+      important that it is kept safe. Losing the DEK means that the data stored
+      in the disk images is lost irrecoverably. Having complete and up to
+      date backups of all data related to the VM is the responsibility of the
+      user.
+    </para>
+
+    <sect2 id="diskencryption-limitations">
+      <title>Limitations</title>
+
+      <para>
+        There are some limitations the user needs to be aware of when using this
+        feature:
+      </para>
+
+      <itemizedlist>
+
+        <listitem>
+          <para>This feature is part of the Oracle VM VirtualBox Extension
+            Pack, which needs to be installed. Otherwise disk encryption
+            is unavailable.</para>
+        </listitem>
+
+        <listitem>
+          <para>Since encryption works only on the stored user data,
+            it is currently not possible to check for metadata integrity of the disk image.
+            Attackers might destroy data by removing or changing blocks of data
+            in the image or change metadata items such as the disk size.
+          </para>
+        </listitem>
+
+        <listitem>
+          <para>Exporting appliances which contain encrypted disk images is not
+            possible because the OVF specification doesn't support this.
+            All images are therefore decrypted during export.</para>
+        </listitem>
+
+        <listitem>
+          <para>The DEK is kept in memory while the VM is running to be able to
+            decrypt data read and encrypt data written by the guest. While this should
+            be obvious the user needs to be aware of this because an attacker might be able
+            to extract the key on a compromised host and decrypt the data.</para>
+        </listitem>
+
+        <listitem>
+          <para>When encrypting or decrypting the images, the password is
+            passed in clear text via the VirtualBox API. This needs to be kept
+            in mind, especially when using third party API clients which make
+            use of the webservice where the password might be transmitted
+            over the network. The use of HTTPS is mandatory in such a case.
+          </para>
+        </listitem>
+
+        <listitem>
+          <para>Encrypting images with differencing images is only possible if
+            there are no snapshots or a linear chain of snapshots. This
+            limitation may be addressed in a future VirtualBox version.</para>
+        </listitem>
+
+      </itemizedlist>
+
+    </sect2>
+
+    <sect2 id="diskencryption-encryption">
+      <title>Encrypting disk images</title>
+
+      <para>
+        Encrypting disk images can be done either using the GUI or VBoxManage.
+        While the GUI is easier to use, it works on a per VM basis and encrypts
+        all disk images attached to the specific VM.
+        With VBoxManage one can encrypt individual images (including all differencing
+        images). To encrypt an unencrypted medium with VBoxManage, use:
+      </para>
+
+      <screen>VBoxManage encryptmedium "uuid|filename" --newpassword "file|-" --cipher "cipher id" --newpasswordid "id"</screen>
+
+      <para>
+        To supply the encryption password point VBoxManage to the file where the
+        password is stored or specify <computeroutput>-</computeroutput> to let VBoxManage
+        ask you for the password on the command line.
+      </para>
+      <para>
+        The cipher parameter specifies the cipher to use for encryption and can be either
+        <computeroutput>AES-XTS128-PLAIN64</computeroutput> or <computeroutput>AES-XTS256-PLAIN64</computeroutput>.
+        The specified password identifier can be freely chosen by the user and is
+        used for correct identification when supplying multiple passwords during
+        VM startup.
+      </para>
+      <para>
+        If the user uses the same password when encrypting multiple images and also the
+        same password identifier, the user needs to supply the password only once during
+        VM startup.
+      </para>
+    </sect2>
+
+    <sect2 id="diskencryption-startvm">
+      <title>Starting a VM with encrypted images</title>
+
+      <para>
+        When a VM is started using the GUI, a dialog will open where the user
+        needs to enter all passwords for all encrypted images attached to the VM.
+        If another frontend like VBoxHeadless is used, the VM will be paused as soon
+        as the guest tries to access an encrypted disk.
+        The user needs to provide the passwords through VBoxManage using the following
+        command:
+      </para>
+
+      <screen>VBoxManage controlvm "uuid|vmname" addencpassword "id" "password" [--removeonsuspend "yes|no"]</screen>
+
+      <para>
+        The <computeroutput>id</computeroutput> parameter must be the same as the password identifier
+        supplied when encrypting the images. <computeroutput>password</computeroutput> is the password
+        used when encrypting the images. The user can optionally specify
+        <computeroutput>--removeonsuspend "yes|no"</computeroutput> to specify whether
+        to remove the password from VM memory when the VM is suspended. Before the VM can be
+        resumed, the user needs to supply the passwords again. This is useful when
+        a VM is suspended by a host suspend event and the user doesn't want
+        the password to remain in memory.
+      </para>
+    </sect2>
+
+    <sect2 id="diskencryption-decryption">
+      <title>Decrypting encrypted images</title>
+
+      <para>
+        In some circumstances it might be required to decrypt previously encrypted
+        images. This can be done in the GUI for a complete VM or using VBoxManage
+        with the following command:
+      </para>
+
+      <screen>VBoxManage encryptmedium "uuid|filename" --oldpassword "file|-"</screen>
+
+      <para>
+        The only required parameter is the password the image was encrypted with.
+        The options are the same as for encrypting images.
+      </para>
+    </sect2>
+  </sect1>
+
+  <sect1 id="gimdebug">
+    <title>Paravirtualized debugging</title>
+
+    <para>In this section we cover debugging of guest operating systems using interfaces
+    supported by paravirtualization providers.</para>
+
+    <note>
+      <para>Paravirtualized debugging significantly alter guest operating system behaviour
+      and should only be used by expert users for debugging and diagnostics.</para>
+    </note>
+
+    <para>These debug options are specified as a string of key-value pairs separated by
+    commas. An empty string disables paravirtualized debugging.</para>
+
+    <sect2 id="gimdebughyperv">
+      <title>Hyper-V debug options</title>
+
+      <para>All of the options listed below are optional, and thus the default value
+      specified will be used when the corresponding key-value pair is not
+      specified.</para>
+
+      <itemizedlist>
+        <listitem>
+          <para>Key: <emphasis role="bold"><computeroutput>enabled</computeroutput></emphasis></para>
+          <para>Value: <computeroutput>0</computeroutput> or <computeroutput>1</computeroutput></para>
+          <para>Default: <computeroutput>0</computeroutput></para>
+          <para>Specify <computeroutput>1</computeroutput> to enable the Hyper-V debug
+            interface. If this key-value pair is not specified or the value is not
+            <computeroutput>1</computeroutput>, the Hyper-V debug interface is disabled
+            regardless of other key-value pairs being present.</para>
+        </listitem>
+        <listitem>
+          <para>Key: <emphasis role="bold"><computeroutput>address</computeroutput></emphasis></para>
+          <para>Value: IPv4 address</para>
+          <para>Default: 127.0.0.1</para>
+          <para>Specify the IPv4 address where the remote debugger is connected.</para>
+        </listitem>
+        <listitem>
+          <para>Key: <emphasis role="bold"><computeroutput>port</computeroutput></emphasis></para>
+          <para>Value: UDP port number</para>
+          <para>Default: 50000</para>
+          <para>Specify the UDP port number where the remote debugger is connected.</para>
+        </listitem>
+        <listitem>
+          <para>Key: <emphasis role="bold"><computeroutput>vendor</computeroutput></emphasis></para>
+          <para>Value: Hyper-V vendor signature reported via CPUID to the guest</para>
+          <para>Default: When debugging is enabled: <computeroutput>Microsoft Hv</computeroutput>,
+          otherwise: <computeroutput>VBoxVBoxVBox</computeroutput></para>
+          <para>Specify the Hyper-V vendor signature which is exposed to the guest via CPUID.
+          For debugging Microsoft Windows guests, it is required the hypervisor reports
+          the Microsoft vendor.</para>
+        </listitem>
+        <listitem>
+          <para>Key: <emphasis role="bold"><computeroutput>hypercallinterface</computeroutput>
+          </emphasis></para>
+          <para>Value: <computeroutput>0</computeroutput> or <computeroutput>1</computeroutput></para>
+          <para>Default: <computeroutput>0</computeroutput></para>
+          <para>Specify whether hypercalls should be suggested for initiating debug data
+          transfers between host and guest rather than MSRs when requested by the guest.</para>
+        </listitem>
+        <listitem>
+          <para>Key: <emphasis role="bold"><computeroutput>vsinterface</computeroutput>
+          </emphasis></para>
+          <para>Value: <computeroutput>0</computeroutput> or <computeroutput>1</computeroutput></para>
+          <para>Default: When debugging is enabled, <computeroutput>1</computeroutput>,
+          otherwise <computeroutput>0</computeroutput></para>
+          <para>Specify whether to expose the "VS#1" (virtualization service) interface to the
+          guest. This interface is required for debugging Microsoft Windows 10 32-bit guests, but
+          is optional for other Windows versions.</para>
+        </listitem>
+      </itemizedlist>
+
+      <sect3 id="gimdebughyperv-windows-setup">
+        <title>Setting up Windows guests for debugging with the Hyper-V paravirtualization provider</title>
+
+        <para>Windows supports debugging over a serial cable, USB, IEEE 1394 Firewire, and Ethernet
+        (only Windows 8 and later). USB and IEEE 1394 are not applicable for virtual machines, and
+        Ethernet requires Windows 8 or later. While serial connection is universally usable, it is
+        slow.</para>
+
+        <para>Debugging using the Hyper-V debug transport, supported on Windows Vista and later,
+        offers significant benefits. It provides excellent performance due to direct host-to-guest
+        transfers, it is easy to set up and requires minimal support from the hypervisor. It can be
+        used with the debugger running on the same host as the VM or with the debugger and VM on
+        separate machines connected over a network.</para>
+
+        <sect4><title>Prerequisites</title>
+          <itemizedlist>
+            <listitem>
+              <para>A VM configured for Hyper-V paravirtualization running a Windows Vista or newer
+              Windows guest. You may check the effective paravirtualization provider for your VM from
+              the output of the following VBoxManage command:</para>
+              <para><screen>VBoxManage showvminfo "VM name"</screen></para>
+            </listitem>
+
+            <listitem>
+              <para>A sufficiently up-to-date version of the Microsoft WinDbg debugger required
+              to debug the version of Windows in your VM.</para>
+            </listitem>
+
+            <listitem>
+              <para>While Windows 8 and newer Windows guests ship with Hyper-V debug support,
+              Windows 7 and Vista do not. To use Hyper-V debugging with a Windows 7 or Vista
+              guest, copy the file
+              <computeroutput>kdvm.dll</computeroutput> from a Windows 8.0 installation<footnote>
+              <para>Only Windows 8.0 ships <computeroutput>kdvm.dll</computeroutput>. Windows 8.1
+              and newer Windows versions do not.</para></footnote>. This file is
+              typically located in <computeroutput>C:\Windows\System32</computeroutput>. Copy it
+              to the same location in your Windows 7/Vista guest. Make sure you copy the 32-bit or
+              64-bit version of the DLL which matches your guest OS.</para>
+            </listitem>
+          </itemizedlist>
+        </sect4>
+
+        <sect4><title>VM and guest configuration</title>
+          <orderedlist>
+            <listitem>
+              <para>Power off the VM.</para>
+            </listitem>
+
+            <listitem>
+              <para>Enable the debug options by executing the following VBoxManage command:</para>
+              <para><screen>VBoxManage modifyvm "VM name" --paravirtdebug "enabled=1"</screen></para>
+              <para>The above command assumes your debugger will connect to your host machine
+              on UDP port 50000. However, if you need to run the debugger on a remote machine
+              you may specify the remote address and port here, e.g. using:</para>
+              <para>
+              <screen>VBoxManage modifyvm "VM name" --paravirtdebug "enabled=1,address=192.168.32.1,port=55000"</screen>
+              </para>
+              <para>Refer <xref linkend="gimdebughyperv" /> for the complete set of options.</para>
+            </listitem>
+
+            <listitem>
+              <para>Start the VM.</para>
+            </listitem>
+
+            <listitem>
+              <para>In the guest, start an elevated command prompt and execute the
+              following commands:</para>
+              <itemizedlist>
+                <listitem><para>For a Windows 8 or newer Windows guest:</para>
+                  <para>
+                  <screen>bcdedit /dbgsettings net hostip:5.5.5.5 port:50000 key:1.2.3.4</screen>
+                  </para>
+                </listitem>
+                <listitem><para>For a Windows 7 or Vista guest:</para>
+                  <para>
+                  <screen>bcdedit /set loadoptions host_ip=5.5.5.5,host_port=50000,encryption_key=1.2.3.4</screen>
+                  <screen>bcdedit /set dbgtransport kdvm.dll</screen>
+                  </para>
+                  <para>The IP address and port in the <computeroutput>bcdedit</computeroutput> command
+                  are ignored when using the Hyper-V debug transport. Any valid IP and a port number greater
+                  than 49151 and lower than 65536 can be entered.</para>
+
+                  <para>The encryption key in the <computeroutput>bcdedit</computeroutput> command is
+                  relevant and must be valid. The key "1.2.3.4" used in the above example is valid
+                  and may be used if security is not a concern. If you do not specify any encryption key,
+                  <computeroutput>bcdedit</computeroutput> will generate one for you and you will need to copy
+                  this key to later enter in Microsoft WinDbg on the remote end. This encryption key is used
+                  to encrypt the debug data exchanged between Windows and the debugger.</para>
+                </listitem>
+                <listitem>
+                  <para>Execute one or more of the following commands to enable debugging for
+                  the appropriate phase or component of your Windows guest: </para>
+                  <para>
+                    <screen>bcdedit /set debug on</screen>
+                    <screen>bcdedit /set bootdebug on</screen>
+                    <screen>bcdedit /set {bootmgr} bootdebug on</screen>
+                  </para>
+                  <para>Please note that the <computeroutput>bootdebug</computeroutput> options are only
+                  effective on Windows 8 or newer when using the Hyper-V debug transport. Refer to Microsoft
+                  Windows documentation for detailed explanation of <computeroutput>bcdedit</computeroutput>
+                  options.</para>
+                </listitem>
+              </itemizedlist>
+            </listitem>
+
+            <listitem>
+              <para>Start Microsoft WinDbg on your host machine or remote host.</para>
+
+              <para>From the "File" menu, select "Kernel debug". Under the "NET" tab, specify the UDP port
+              number you used in the <computeroutput>paravirtdebug</computeroutput> options. If you didn't
+              specify any, leave it as 50000. Ensure that the UDP port is not blocked by a firewall or other
+              security software.</para>
+
+              <para>In the "Key" field, enter <computeroutput>1.2.3.4</computeroutput> or the encryption
+              key from the <computeroutput>bcdedit</computeroutput> command in your Windows guest.</para>
+
+              <para>Now press "OK" to start listening for connections. Microsoft WinDbg typically shows
+              a "Waiting to reconnect" message during this phase.</para>
+
+              <para>Alternatively, launch WinDbg from the command line to directly start a debug session:
+                <screen>windbg.exe -k net:port=50000,key=1.2.3.4</screen>
+              Please refer to the WinDbg documentation for complete command line syntax.
+              </para>
+
+            </listitem>
+
+            <listitem>
+              <para>Reboot your Windows guest and it should then connect as a debuggee with Microsoft
+              WinDbg.</para>
+            </listitem>
+          </orderedlist>
+        </sect4>
+      </sect3>
+    </sect2>
+  </sect1>
+
+  <sect1 id="pcspeaker_passthrough">
+    <title>PC speaker passthrough</title>
+
+    <para>As an experimental feature (primarily due to being limited to Linux
+    host only and unknown Linux distribution coverage) VirtualBox supports
+    passing through the PC speaker to the host. The PC speaker (sometimes
+    called system speaker) is a way to produce audible feedback such as beeps
+    without the need for regular audio/sound card support.</para>
+
+    <para>The PC speaker passthrough feature in VirtualBox handles beeps only.
+    Advanced PC speaker use by the VM (such as PCM audio) will not work,
+    resulting in undefined host behavior.</para>
+
+    <para>Producing beeps on Linux is unfortunately a very complex topic.
+    VirtualBox offers a collection of options, in an attempt to make this work
+    deterministically and reliably on as many Linux distributions and system
+    configurations as possible:
+      <table>
+        <title>PC speaker configuration options</title>
+        <tgroup cols="3">
+          <thead>
+            <row>
+              <entry><emphasis role="bold">Code</emphasis></entry>
+              <entry><emphasis role="bold">Device</emphasis></entry>
+              <entry><emphasis role="bold">Notes</emphasis></entry>
+            </row>
+          </thead>
+          <tbody>
+            <row>
+              <entry>1</entry>
+              <entry><computeroutput>/dev/input/ by-path/platform- pcspkr-event-spkr</computeroutput></entry>
+              <entry>Direct host PC speaker use.</entry>
+            </row>
+            <row>
+              <entry>2</entry>
+              <entry><computeroutput>/dev/tty</computeroutput></entry>
+              <entry>Uses the terminal association of the VM process. VM needs
+              to be started on a virtual console.</entry>
+            </row>
+            <row>
+              <entry>3</entry>
+              <entry><computeroutput>/dev/tty0</computeroutput> or
+              <computeroutput>/dev/vc/0</computeroutput></entry>
+              <entry>Can only be used by user <computeroutput>root</computeroutput>
+              or users with capability <computeroutput>cap_sys_tty_config</computeroutput></entry>
+            </row>
+            <row>
+              <entry>9</entry>
+              <entry>user specified console or evdev device path</entry>
+              <entry>Like 1-3, just with a custom device path.</entry>
+            </row>
+            <row>
+              <entry>70</entry>
+              <entry><computeroutput>/dev/tty</computeroutput></entry>
+              <entry>Standard beep only. Loses frequency and length. See code
+              2.</entry>
+            </row>
+            <row>
+              <entry>79</entry>
+              <entry>user specified terminal device path</entry>
+              <entry>Like 70, just with a custom device path.</entry>
+            </row>
+            <row>
+              <entry>100</entry>
+              <entry>all of the above</entry>
+              <entry>Tries all above codes.</entry>
+            </row>
+          </tbody>
+        </tgroup>
+      </table>
+    </para>
+
+    <para>To enable PC speaker passthrough use the following command:
+      <screen>VBoxManage setextradata "VM name" "VBoxInternal/Devices/i8254/0/Config/PassthroughSpeaker" N</screen>
+    Replace <computeroutput>N</computeroutput> with the code representing the
+    case you want to use. Changing this setting will take effect when the VM is
+    started next. It is safe to enable PC speaker passthrough on all host OSes.
+    It will only have an effect on Linux.</para>
+
+    <para>The VM log file, <computeroutput>VBox.log</computeroutput>, will
+    contain lines with the prefix <computeroutput>PIT: speaker:</computeroutput>
+    showing the PC speaker passthrough setup activities. It gives hints which
+    device it picked or why it failed.</para>
+
+    <para>Enabling PC speaker passthrough for the VM is usually the simple
+    part. The real difficulty is making sure that VirtualBox can access the
+    necessary device, because in a typical Linux install most of them can only
+    be accessed by user <computeroutput>root</computeroutput>. You should
+    follow the preferred way to persistently change this, e.g. by referring to
+    your distribution's documentation. Since there are countless Linux
+    distribution variants, we can only give the general hints that there is
+    often a way to give the X11 session user access to additional devices, or
+    you need to find a working solution using a udev configuration file. If
+    everything fails you might try setting the permissions using a script
+    which is run late enough in the host system startup.</para>
+
+    <para>Sometimes additional rules are applied by the kernel to limit access
+    (e.g. that the VM process must have the same controlling terminal as the
+    device configured to be used for beeping, something which is often very
+    difficult to achieve for GUI applications such as VirtualBox). The table
+    above contains some hints, but generally refer to the Linux
+    documentation.</para>
+
+    <para>If you have trouble getting any beeps even if the device permissions
+    are set up and VBox.log confirms that it uses evdev or console for the
+    PC speaker control, check if your system has a PC speaker. Some systems do
+    not have one. Other complications can arise from Linux rerouting the PC
+    speaker output to a sound card. Check if the beeps are audible if you
+    connect speakers to your sound card. Today almost all systems have one.
+    Finally, check if the audio mixer control has a channel named "beep"
+    (could be hidden in the mixer settings) and that it isn't muted.</para>
+  </sect1>
+
+  <sect1 id="usbip">
+    <title>Accessing USB devices exposed over the network with USB/IP</title>
+
+    <para>Starting with 5.1.0, VirtualBox supports passing through USB
+    devices which are exposed over the network using the USB over IP protocol
+    without the need to configure the client side provided by the kernel and
+    usbip tools. Furthermore, this feature works with VirtualBox running on any
+    supported host, rather than just Linux alone - as is the case with the official
+    client.</para>
+
+    <para>To enable support for passing through USB/IP devices, the device server exporting
+    the devices must be added with the following command:
+    <screen>VBoxManage usbdevsource add "Unique name" --backend "USBIP" --address "Device server[:port]"</screen>
+    USB devices exported on the device server are then accessible through the GUI
+    or VBoxManage, like any USB devices attached locally. This can be used multiple times
+    to access different device servers.</para>
+
+    <para>To remove a device server, the following command can be used:
+      <screen>VBoxManage usbdevsource remove "Unique name"</screen>
+    </para>
+
+    <sect2 id="usbip-setup-server">
+      <title>Setting up USB/IP support on a Linux system</title>
+
+      <para>This section gives a brief overview on how to set up a Linux based system
+      to act as a USB device server. The system on the server requires that the
+      <computeroutput>usbip-core.ko</computeroutput> and
+      <computeroutput>usbip-host.ko</computeroutput> kernel drivers
+      are available, and that the USB/IP tools package is installed.
+      The particular installation method for the necessary tools depends on which
+      distribution is used.
+      For example, for Debian based systems - the following command should be used to
+      install the required tools:
+      <screen>apt-get install usbip-utils</screen></para>
+      <para>To check whether the necessary tools are already installed use
+      the following command:
+      <screen>
+$ usbip list -l
+      </screen></para>
+      <para>
+      which should produce output similar to that shown in the example below:
+      <screen>
+ - busid 4-2 (0bda:0301)
+   Realtek Semiconductor Corp. : multicard reader (0bda:0301)
+
+ - busid 5-1 (046d:c52b)
+   Logitech, Inc. : Unifying Receiver (046d:c52b)
+      </screen></para>
+
+      <para>If everything is installed, the USB/IP server needs to be started as
+      <computeroutput>root</computeroutput> using the following command:
+      <screen>usbipd -D</screen>
+      Refer to the documentation for the installed distribution to determine how to start the
+      service when the system boots.</para>
+
+      <para>By default, no device on the server is exported - and this must be done manually
+      for each device. To export a device use:
+      <screen>usbip bind -b "bus identifier"</screen>
+      To export the multicard reader from above, for example  - use:
+      <screen>usbip bind -b 4-2</screen></para>
+    </sect2>
+
+    <sect2 id="usbip-security">
+      <title>Security considerations</title>
+
+      <para>The communication between the server and client is unencrypted and
+      there is no authorization required to access exported devices. An attacker
+      might sniff sensitive data or gain control over a device. To mitigate this
+      risk, the device should be exposed over a local network to which only trusted
+      clients have access. To access the device remotely over a public network,
+      a VPN solution should be used to provide the required level of security protection.</para>
+    </sect2>
+  </sect1>
+
+  <xi:include href="user_isomakercmd-man.xml"    xpointer="element(/1)" xmlns:xi="http://www.w3.org/2001/XInclude" />
+
 </chapter>
+

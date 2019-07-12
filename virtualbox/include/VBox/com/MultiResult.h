@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,6 +31,11 @@
 #include "VBox/com/string.h"
 
 #include <stdarg.h>
+
+/** @defgroup grp_com_mr    MultiResult Classes
+ * @ingroup grp_com
+ * @{
+ */
 
 namespace com
 {
@@ -128,8 +133,7 @@ private:
  * a S_OK value multiple times. See com::FWResult for details.
  *
  * Here is the typical usage pattern:
- *  <code>
-
+ * @code
     HRESULT Bar::method()
     {
         // assume multi-errors are turned off here...
@@ -156,8 +160,7 @@ private:
 
         return S_OK;
     }
-
- *  </code>
+ * @endcode
  *
  * @note This class is intended to be instantiated on the stack, therefore
  *       You cannot create them using new(). Although it is possible to copy
@@ -169,7 +172,7 @@ class MultiResult : public FWResult
 public:
 
     /**
-     * @copydoc FWResult::FWResult().
+     * @copydoc FWResult::FWResult()
      */
     MultiResult (HRESULT aRC = E_FAIL) : FWResult (aRC) { incCounter(); }
 
@@ -209,7 +212,7 @@ public:
 
 private:
 
-    DECLARE_CLS_NEW_DELETE_NOOP(MultiResult)
+    DECLARE_CLS_NEW_DELETE_NOOP(MultiResult);
 
     static void incCounter();
     static void decCounter();
@@ -248,13 +251,15 @@ public:
 
 private:
 
-    DECLARE_CLS_NEW_DELETE_NOOP (MultiResultRef)
+    DECLARE_CLS_NEW_DELETE_NOOP(MultiResultRef);
 
     HRESULT &mRC;
 };
 
 
 } /* namespace com */
+
+/** @} */
 
 #endif /* !___VBox_com_MultiResult_h */
 

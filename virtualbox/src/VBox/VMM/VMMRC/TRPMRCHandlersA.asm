@@ -4,7 +4,7 @@
 ;
 
 ;
-; Copyright (C) 2006-2012 Oracle Corporation
+; Copyright (C) 2006-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -155,38 +155,39 @@ g_apfnStaticTrapHandlersGuest:
 ;
 ALIGNCODE(16)
 BEGINPROC_EXPORTED TRPMGCHandlerGeneric
-%macro TRPMGenericEntry 1
+%macro TRPMGenericEntry 2
+EXPORTEDNAME_EX RT_CONCAT(TRPMRCHandlerAsmTrap,%2), function
     db 06ah, i                          ; push imm8 - note that this is a signextended value.
     jmp   %1
     ALIGNCODE(8)
 %assign i i+1
 %endmacro
 
-%assign i 0                             ; start counter.
-    TRPMGenericEntry GenericTrap        ; 0
-    TRPMGenericEntry GenericTrap        ; 1
-    TRPMGenericEntry GenericTrap        ; 2
-    TRPMGenericEntry GenericTrap        ; 3
-    TRPMGenericEntry GenericTrap        ; 4
-    TRPMGenericEntry GenericTrap        ; 5
-    TRPMGenericEntry GenericTrap        ; 6
-    TRPMGenericEntry GenericTrap        ; 7
-    TRPMGenericEntry GenericTrapErrCode ; 8
-    TRPMGenericEntry GenericTrap        ; 9
-    TRPMGenericEntry GenericTrapErrCode ; a
-    TRPMGenericEntry GenericTrapErrCode ; b
-    TRPMGenericEntry GenericTrapErrCode ; c
-    TRPMGenericEntry GenericTrapErrCode ; d
-    TRPMGenericEntry GenericTrapErrCode ; e
-    TRPMGenericEntry GenericTrap        ; f  (reserved)
-    TRPMGenericEntry GenericTrap        ; 10
-    TRPMGenericEntry GenericTrapErrCode ; 11
-    TRPMGenericEntry GenericTrap        ; 12
-    TRPMGenericEntry GenericTrap        ; 13
-    TRPMGenericEntry GenericTrap        ; 14 (reserved)
-    TRPMGenericEntry GenericTrap        ; 15 (reserved)
-    TRPMGenericEntry GenericTrap        ; 16 (reserved)
-    TRPMGenericEntry GenericTrap        ; 17 (reserved)
+%assign i 0                                     ; start counter.
+    TRPMGenericEntry GenericTrap       , 00     ; 0
+    TRPMGenericEntry GenericTrap       , 01     ; 1
+    TRPMGenericEntry GenericTrap       , 02     ; 2
+    TRPMGenericEntry GenericTrap       , 03     ; 3
+    TRPMGenericEntry GenericTrap       , 04     ; 4
+    TRPMGenericEntry GenericTrap       , 05     ; 5
+    TRPMGenericEntry GenericTrap       , 06     ; 6
+    TRPMGenericEntry GenericTrap       , 07     ; 7
+    TRPMGenericEntry GenericTrapErrCode, 08     ; 8
+    TRPMGenericEntry GenericTrap       , 09     ; 9
+    TRPMGenericEntry GenericTrapErrCode, 0a     ; a
+    TRPMGenericEntry GenericTrapErrCode, 0b     ; b
+    TRPMGenericEntry GenericTrapErrCode, 0c     ; c
+    TRPMGenericEntry GenericTrapErrCode, 0d     ; d
+    TRPMGenericEntry GenericTrapErrCode, 0e     ; e
+    TRPMGenericEntry GenericTrap       , 0f     ; f  (reserved)
+    TRPMGenericEntry GenericTrap       , 10     ; 10
+    TRPMGenericEntry GenericTrapErrCode, 11     ; 11
+    TRPMGenericEntry GenericTrap       , 12     ; 12
+    TRPMGenericEntry GenericTrap       , 13     ; 13
+    TRPMGenericEntry GenericTrap       , 14     ; 14 (reserved)
+    TRPMGenericEntry GenericTrap       , 15     ; 15 (reserved)
+    TRPMGenericEntry GenericTrap       , 16     ; 16 (reserved)
+    TRPMGenericEntry GenericTrap       , 17     ; 17 (reserved)
 %undef i
 %undef TRPMGenericEntry
 
@@ -487,6 +488,10 @@ ALIGNCODE(16)
     add     esp, 4
 %endif
 
+    ; For v8086 mode we must branch off before we enable write protection.
+    test    dword [ebx + CPUMCTXCORE.eflags], X86_EFL_VM
+    jnz     .gc_V86_return
+
     ; enable WP
     mov     eax, cr0                    ;; @todo try elimiate this read.
     or      eax, X86_CR0_WRITE_PROTECT
@@ -514,9 +519,6 @@ ALIGNCODE(16)
     mov     eax, [ebx + CPUMCTXCORE.eip]
     mov     [%$STK_EIP], eax
 
-    test    dword [ebx + CPUMCTXCORE.eflags], X86_EFL_VM
-    jnz     .gc_V86_return
-
     mov     ax, [ebx + CPUMCTXCORE.gs.Sel]
     TRPM_NP_GP_HANDLER NAME(trpmRCTrapInGeneric), TRPM_TRAP_IN_MOV_GS
     mov     gs, ax
@@ -543,22 +545,16 @@ ALIGNCODE(16)
 
 ALIGNCODE(16)
 .gc_V86_return:
-    mov     eax, dword [ebx + CPUMCTXCORE.es.Sel]
-    mov     [%$STK_V86_ES], eax
-    mov     eax, dword [ebx + CPUMCTXCORE.ds.Sel]
-    mov     [%$STK_V86_DS], eax
-    mov     eax, dword [ebx + CPUMCTXCORE.fs.Sel]
-    mov     [%$STK_V86_FS], eax
-    mov     eax, dword [ebx + CPUMCTXCORE.gs.Sel]
-    mov     [%$STK_V86_GS], eax
+    ;
+    ; We may be returning to V8086 while having entered from protected mode!
+    ; So, we have to push the whole stack frame.  There's code in CPUMRC that
+    ; does exactly that, so call it instead of duplicating it.
+    ;
+    push    ebx
+    extern  NAME(CPUMGCCallV86Code)
+    call    NAME(CPUMGCCallV86Code)
+    int3                                ; doesn't return...
 
-    ; finally restore our scratch register eax and ebx.
-    pop     ebx
-    pop     eax
-    add     esp, 16 + 8                 ; skip segregs, error code, and vector number.
-
-    TRPM_NP_GP_HANDLER NAME(trpmRCTrapInGeneric), TRPM_TRAP_IN_IRET | TRPM_TRAP_IN_V86
-    iret
 
     ;
     ; Trap in Hypervisor, try to handle it.
@@ -617,6 +613,8 @@ ALIGNCODE(16)
     cmp     eax, VINF_EM_DBG_HYPER_BREAKPOINT
     je short .rc_to_host
     cmp     eax, VINF_EM_DBG_HYPER_ASSERTION
+    je short .rc_to_host
+    cmp     eax, VINF_EM_RAW_GUEST_TRAP ; Special #DB case, see bugref:9171.
     je short .rc_to_host
     jmp     .rc_abandon_ship
 
@@ -950,6 +948,10 @@ ti_GenericInterrupt:
     add     esp, 4
 %endif
 
+    ; For v8086 mode we must branch off before we enable write protection.
+    test    dword [ebx + CPUMCTXCORE.eflags], X86_EFL_VM
+    jnz     .gc_V86_return
+
     ; enable WP
     mov     eax, cr0                    ;; @todo try elimiate this read.
     or      eax, X86_CR0_WRITE_PROTECT
@@ -977,9 +979,6 @@ ti_GenericInterrupt:
     mov     eax, [ebx + CPUMCTXCORE.eip]
     mov     [%$STK_EIP], eax
 
-    test    dword [ebx + CPUMCTXCORE.eflags], X86_EFL_VM
-    jnz     .gc_V86_return
-
     mov     ax, [ebx + CPUMCTXCORE.gs.Sel]
     TRPM_NP_GP_HANDLER NAME(trpmRCTrapInGeneric), TRPM_TRAP_IN_MOV_GS
     mov     gs, ax
@@ -1006,22 +1005,16 @@ ti_GenericInterrupt:
 
 ALIGNCODE(16)
 .gc_V86_return:
-    mov     eax, dword [ebx + CPUMCTXCORE.es.Sel]
-    mov     [%$STK_V86_ES], eax
-    mov     eax, dword [ebx + CPUMCTXCORE.ds.Sel]
-    mov     [%$STK_V86_DS], eax
-    mov     eax, dword [ebx + CPUMCTXCORE.fs.Sel]
-    mov     [%$STK_V86_FS], eax
-    mov     eax, dword [ebx + CPUMCTXCORE.gs.Sel]
-    mov     [%$STK_V86_GS], eax
+    ;
+    ; We may be returning to V8086 while having entered from protected mode!
+    ; So, we have to push the whole stack frame.  There's code in CPUMRC that
+    ; does exactly that, so call it instead of duplicating it.
+    ;
+    push    ebx
+    extern  NAME(CPUMGCCallV86Code)
+    call    NAME(CPUMGCCallV86Code)
+    int3                                ; doesn't return...
 
-    ; finally restore our scratch register eax and ebx.
-    pop     ebx
-    pop     eax
-    add     esp, 16 + 4                 ; skip segregs, and vector number.
-
-    TRPM_NP_GP_HANDLER NAME(trpmRCTrapInGeneric), TRPM_TRAP_IN_IRET | TRPM_TRAP_IN_V86
-    iret
 
     ; -+- Entry point -+-
     ;

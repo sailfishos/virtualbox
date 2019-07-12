@@ -1,11 +1,10 @@
 /* $Id: VBoxCrHgsmi.cpp $ */
-
 /** @file
  * VBoxVideo Display D3D User mode dll
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,7 +15,7 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include <VBox/VBoxCrHgsmi.h>
+#include <VBoxCrHgsmi.h>
 #include <iprt/err.h>
 
 #include "VBoxUhgsmiKmt.h"
@@ -45,7 +44,7 @@ static int vboxCrHgsmiInitPerform(VBOXDISPKMT_CALLBACKS *pCallbacks)
     return -1;
 }
 
-VBOXCRHGSMI_DECL(int) VBoxCrHgsmiInit()
+VBOXCRHGSMI_DECL(int) VBoxCrHgsmiInit(void)
 {
     if (!g_bVBoxKmtCallbacksInited)
     {
@@ -127,7 +126,7 @@ VBOXCRHGSMI_DECL(int) VBoxCrHgsmiCtlConGetHostCaps(PVBOXUHGSMI pHgsmi, uint32_t 
     return rc;
 }
 
-VBOXCRHGSMI_DECL(int) VBoxCrHgsmiCtlConCall(PVBOXUHGSMI pHgsmi, struct VBoxGuestHGCMCallInfo *pCallInfo, int cbCallInfo)
+VBOXCRHGSMI_DECL(int) VBoxCrHgsmiCtlConCall(PVBOXUHGSMI pHgsmi, struct VBGLIOCHGCMCALL *pCallInfo, int cbCallInfo)
 {
     PVBOXUHGSMI_PRIVATE_BASE pHgsmiPrivate = (PVBOXUHGSMI_PRIVATE_BASE)pHgsmi;
     int rc = vboxCrHgsmiPrivateCtlConCall(pHgsmiPrivate, pCallInfo, cbCallInfo);

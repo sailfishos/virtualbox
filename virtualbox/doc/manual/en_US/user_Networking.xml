@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
-"http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+"http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd">
 <chapter id="networkingdetails">
   <title>Virtual networking</title>
 
@@ -229,6 +229,72 @@
         </glossentry>
       </glosslist></para>
 
+    <para>The following table provides a quick overview of the most important
+    networking modes:</para>
+    <table>
+      <title>Overview</title>
+      <tgroup cols="6">
+        <colspec align="left" />
+        <colspec align="center" />
+        <colspec align="center" />
+        <colspec align="center" />
+        <colspec align="center" />
+        <colspec align="center" />
+        <thead valign="middle">
+          <row>
+            <entry></entry>
+            <entry><emphasis role="bold">VM&rarr;Host</emphasis></entry>
+            <entry><emphasis role="bold">VM&larr;Host</emphasis></entry>
+            <entry><emphasis role="bold">VM1&harr;VM2</emphasis></entry>
+            <entry><emphasis role="bold">VM&rarr;Net/LAN</emphasis></entry>
+            <entry><emphasis role="bold">VM&larr;Net/LAN</emphasis></entry>
+          </row>
+        </thead>
+        <tbody valign="middle">
+          <row>
+            <entry>Host-only</entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry align="center"><emphasis role="bold">+</emphasis></entry>
+            <entry>&ndash;</entry>
+            <entry>&ndash;</entry>
+          </row>
+          <row>
+            <entry>Internal</entry>
+            <entry>&ndash;</entry>
+            <entry>&ndash;</entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry>&ndash;</entry>
+            <entry>&ndash;</entry>
+          </row>
+          <row>
+            <entry>Bridged</entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+          </row>
+          <row>
+            <entry>NAT</entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><link linkend="natforward">Port forward</link></entry>
+            <entry>&ndash;</entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><link linkend="natforward">Port forward</link></entry>
+          </row>
+          <row>
+            <entry>NATservice</entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><link linkend="network_nat_service">Port forward</link></entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><emphasis role="bold">+</emphasis></entry>
+            <entry><link linkend="network_nat_service">Port forward</link></entry>
+          </row>
+        </tbody>
+      </tgroup>
+    </table>
+
     <para>The following sections describe the available network modes in more
     detail.</para>
   </sect1>
@@ -417,8 +483,8 @@
   </sect1>
 
   <sect1 id="network_nat_service">
-    <title>Network Address Translation Service (experimental)</title>
-    
+    <title>Network Address Translation Service</title>
+
     <para>The Network Address Translation (NAT) service works in a similar way
     to a home router, grouping the systems using it into a network and
     preventing systems outside of this network from directly accessing systems
@@ -431,38 +497,40 @@
     the internal network will be created if it does not already exist.  An
     example command to create a NAT network is:
     </para>
-    <para><screen>VBoxManage natnetwork add -t nat-int-network -n "192.168.15.0/24" -e</screen></para>
+    <para><screen>VBoxManage natnetwork add --netname natnet1 --network "192.168.15.0/24" --enable</screen></para>
     <para>
-    Here, "nat-int-network" is the name of the internal network to be used and
+    Here, "natnet1" is the name of the internal network to be used and
     "192.168.15.0/24" is the network address and mask of the NAT service
     interface.  By default in this static configuration the gateway will be
     assigned the address 192.168.15.1 (the address following the interface
     address), though this is subject to change.  To attach a DHCP server to the
     internal network, we modify the example as follows:</para>
-    <para><screen>VBoxManage natnetwork add -t nat-int-network -n "192.168.15.0/24" -e -h on</screen></para>
+    <para><screen>VBoxManage natnetwork add --netname natnet1 --network "192.168.15.0/24" --enable --dhcp on</screen></para>
     <para> or to add a DHCP server to the network after creation:</para>
-    <para><screen>VBoxManage natnetwork modify -t nat-int-network -h on</screen></para>
+    <para><screen>VBoxManage natnetwork modify --netname natnet1 --dhcp on</screen></para>
     <para>To disable it again, use:</para>
-    <para><screen>VBoxManage natnetwork modify -t nat-int-network -h off</screen></para>
-    <para>DHCP server provides list of registered nameservers, but doesn't map 
+    <para><screen>VBoxManage natnetwork modify --netname natnet1 --dhcp off</screen></para>
+    <para>DHCP server provides list of registered nameservers, but doesn't map
     servers from 127/8 network.</para>
     <para>To start the NAT service, use the following command:</para>
-    <para><screen>VBoxManage natnetwork start -t nat-int-network</screen></para>
+    <para><screen>VBoxManage natnetwork start --netname natnet1</screen></para>
     <para>If the network has a DHCP server attached then it will start together
     with the NAT network service.</para>
-    <para><screen>VBoxManage natnetwork stop -t nat-int-network</screen> stops
+    <para><screen>VBoxManage natnetwork stop --netname natnet1</screen> stops
     the NAT network service, together with DHCP server if any.</para>
     <para>To delete the NAT network service use:</para>
-    <para><screen>VBoxManage natnetwork remove -t nat-int-network</screen></para>
+    <para><screen>VBoxManage natnetwork remove --netname natnet1</screen></para>
     <para>This command does not remove the DHCP server if one is enabled on the
     internal network.</para>
-    <para>Port-forwarding is supported (using the "-p" switch for IPv4 and "-P"
+    <para>Port-forwarding is supported (using the
+    <computeroutput>--port-forward-4</computeroutput> switch for IPv4 and
+    <computeroutput>--port-forward-6</computeroutput>
     for IPv6):</para>
-    <para><screen>VBoxManage natnetwork modify -t nat-int-network -p "ssh:tcp:[]:10022:[192.168.15.15]:22"</screen></para>
-    <para>This adds a port-forwarding rule from the host's TCP 10022 port to
-    the port 22 on the guest with IP address 192.168.15.15.  To delete the rule,
-    use:</para>
-    <para><screen>VBoxManage natnetwork modify -t nat-int-network -p delete ssh</screen></para>
+    <para><screen>VBoxManage natnetwork modify --netname natnet1 --port-forward-4 "ssh:tcp:[]:1022:[192.168.15.5]:22"</screen></para>
+    <para>This adds a port-forwarding rule from the host's TCP 1022 port to
+    the port 22 on the guest with IP address 192.168.15.5. Host port, guest port and guest IP
+    are mandatory. To delete the rule, use:</para>
+    <para><screen>VBoxManage natnetwork modify --netname natnet1 --port-forward-4 delete ssh</screen></para>
     <para>It's possible to bind NAT service to specified interface:</para>
     <screen>VBoxManage setextradata global "NAT/win-nat-test-0/SourceIp4" 192.168.1.185</screen>
     <para>To see the list of registered NAT networks, use:</para>
@@ -534,15 +602,15 @@
           <para>On <emphasis role="bold">Macintosh</emphasis> hosts,
           functionality is limited when using AirPort (the Mac's wireless
           networking) for bridged networking. Currently, VirtualBox supports
-          only IPv4 over AirPort. For other protocols such as IPv6 and IPX,
+          only IPv4 and IPv6 over AirPort. For other protocols (such as IPX),
           you must choose a wired interface.</para>
         </listitem>
 
         <listitem>
           <para>On <emphasis role="bold">Linux</emphasis> hosts, functionality
           is limited when using wireless interfaces for bridged networking.
-          Currently, VirtualBox supports only IPv4 over wireless. For other
-          protocols such as IPv6 and IPX, you must choose a wired
+          Currently, VirtualBox supports only IPv4 and IPv6 over wireless.
+          For other protocols (such as IPX), you must choose a wired
           interface.</para>
 
           <para>Also, setting the MTU to less than 1500 bytes on wired
@@ -648,9 +716,10 @@
     into VirtualBox to manage IP addresses for the internal network. Please
     see <xref linkend="vboxmanage-dhcpserver" /> for details.</para>
 
-    <para>As a security measure, the Linux implementation of internal
+    <para>As a security measure, by default, the Linux implementation of internal
     networking only allows VMs running under the same user ID to establish an
-    internal network.</para>
+    internal network. However, it is possible to create a shared
+    internal networking interface, accessible by users with different UUIds.</para>
   </sect1>
 
   <sect1 id="network_hostonly">
@@ -696,7 +765,14 @@
           "VM name" --nic&lt;x&gt; hostonly</computeroutput>; see <xref
           linkend="vboxmanage-modifyvm" /> for details.</para>
         </listitem>
-      </itemizedlist></para>
+    </itemizedlist></para>
+
+    <para>Before you can attach a VM to a host-only network you have to
+      create at least one host-only interface, either from the GUI:
+      "File" &rarr; "Preferences" &rarr; "Network" &rarr; "Host-only network"
+      &rarr; "(+)Add host-only network", or via command line with</para>
+      <screen>VBoxManage hostonlyif create</screen>
+      <para>see <xref linkend="vboxmanage-hostonlyif" /> for details.</para>
 
     <para>For host-only networking, like with internal networking, you may
     find the DHCP server useful that is built into VirtualBox. This can be
@@ -705,8 +781,8 @@
     statically.<itemizedlist>
         <listitem>
           <para>In the VirtualBox graphical user interface, you can configure
-          all these items in the global settings via "File" -&gt; "Settings"
-          -&gt; "Network", which lists all host-only networks which are
+          all these items in the global settings via "File" &rarr; "Preferences"
+          &rarr; "Network", which lists all host-only networks which are
           presently in use. Click on the network name and then on the "Edit"
           button to the right, and you can modify the adapter and DHCP
           settings.</para>
@@ -717,9 +793,12 @@
           dhcpserver</computeroutput> on the command line; please see <xref
           linkend="vboxmanage-dhcpserver" /> for details.</para>
         </listitem>
-      </itemizedlist></para>
-    <para><note>On Linux and Mac OS X hosts the number of host-only interfaces is
-    limited to 128. There is no such limit for Solaris and Windows hosts.</note></para>
+      </itemizedlist>
+    </para>
+
+    <para><note><para>On Linux and Mac OS X hosts the number of host-only
+    interfaces is limited to 128. There is no such limit for Solaris and
+    Windows hosts.</para></note></para>
   </sect1>
 
   <sect1 id="network_udp_tunnel">
@@ -783,12 +862,11 @@
     the host can see the network traffic which it could not in the normal
     Internal network case.</para>
 
-    <para><note>
-        On Unix-based hosts (e.g. Linux, Solaris, Mac OS X) it is not possible
-        to bind to ports below 1024 from applications that are not run by 
-        <computeroutput>root</computeroutput>. As a result, if you try to
-        configure such a source UDP port, the VM will refuse to start. 
-      </note></para>
+    <para><note><para>On Unix-based hosts (e.g. Linux, Solaris, Mac OS X) it is
+    not possible to bind to ports below 1024 from applications that are not run
+    by <computeroutput>root</computeroutput>. As a result, if you try to
+    configure such a source UDP port, the VM will refuse to
+    start.</para></note></para>
   </sect1>
 
   <sect1 id="network_vde">
@@ -929,13 +1007,40 @@ VBoxManage modifyvm "VM name" --nicbandwidthgroup2 Limit</screen></para>
         </listitem>
         <listitem>
           <para>Use <emphasis>bridged</emphasis> attachment instead of
-            <emphasis>NAT</emphasis></para>;
+            <emphasis>NAT</emphasis>;</para>
         </listitem>
         <listitem>
           <para>Make sure segmentation offloading is enabled in the guest OS.
             Usually it will be enabled by default. You can check and modify
             offloading settings using <computeroutput>ethtool</computeroutput>
             command in Linux guests.</para>
+        </listitem>
+        <listitem>
+          <para>Perform a full, detailed analysis of network traffic on
+            the VM's network adaptor using a 3rd party tool such as Wireshark.
+            To do this, a promiscuous mode policy needs to be used on the
+            VM's network adaptor. Use of this mode is only possible on
+            networks: NAT Network, Bridged Adapter, Internal Network and Host-only Adapter.</para>
+          <para>To setup a promiscuous mode policy, either select from the drop down list
+            located in the Network Settings dialog for the network adaptor
+            or use the command line tool <computeroutput>VBoxManage</computeroutput>;
+            for details, refer to <xref linkend="vboxmanage-modifyvm" />.</para>
+          <para>Promiscuous mode policies are: </para>
+          <para><orderedlist>
+            <listitem>
+              <para><computeroutput>deny</computeroutput> (default setting) which hides
+              any traffic not intended for this VM's network adaptor.</para>
+            </listitem>
+            <listitem>
+              <para><computeroutput>allow-vms</computeroutput> which hides all host
+              traffic from this VM's network adaptor, but allows it to see traffic from/to other
+              VMs.</para>
+            </listitem>
+            <listitem>
+              <para><computeroutput>allow-all</computeroutput> which removes all
+              restrictions - this VM's network adaptor sees all traffic.</para>
+            </listitem>
+          </orderedlist></para>
         </listitem>
         </orderedlist></para>
   </sect1>

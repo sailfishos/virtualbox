@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -39,12 +39,12 @@ VMMR0DECL(int)  VMXR0InitVM(PVM pVM);
 VMMR0DECL(int)  VMXR0TermVM(PVM pVM);
 VMMR0DECL(int)  VMXR0SetupVM(PVM pVM);
 VMMR0DECL(int)  VMXR0SaveHostState(PVM pVM, PVMCPU pVCpu);
-VMMR0DECL(int)  VMXR0RunGuestCode(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx);
+VMMR0DECL(VBOXSTRICTRC) VMXR0RunGuestCode(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx);
 DECLASM(int)    VMXR0StartVM32(RTHCUINT fResume, PCPUMCTX pCtx, PVMCSCACHE pCache, PVM pVM, PVMCPU pVCpu);
 DECLASM(int)    VMXR0StartVM64(RTHCUINT fResume, PCPUMCTX pCtx, PVMCSCACHE pCache, PVM pVM, PVMCPU pVCpu);
 
 
-# if HC_ARCH_BITS == 32 && defined(VBOX_WITH_64_BITS_GUESTS) && !defined(VBOX_WITH_HYBRID_32BIT_KERNEL)
+# if HC_ARCH_BITS == 32 && defined(VBOX_WITH_64_BITS_GUESTS)
 DECLASM(int)    VMXR0SwitcherStartVM64(RTHCUINT fResume, PCPUMCTX pCtx, PVMCSCACHE pCache, PVM pVM, PVMCPU pVCpu);
 VMMR0DECL(int)  VMXR0Execute64BitsHandler(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, HM64ON32OP enmOp, uint32_t cbParam,
                                          uint32_t *paParam);
@@ -62,16 +62,7 @@ DECLINLINE(int) VMXReadCachedVmcsEx(PVMCPU pVCpu, uint32_t idxCache, RTGCUINTREG
 }
 # endif
 
-# ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-/* Don't use fAllow64BitGuests for VMXReadVmcsGstN() even though it looks right, as it can be forced to 'true'.
-   HMVMX_IS_64BIT_HOST_MODE() is what we need. */
-#  define VMXReadVmcsHstN(idxField, p64Val)               HMVMX_IS_64BIT_HOST_MODE() ?                      \
-                                                            VMXReadVmcs64(idxField, p64Val)                 \
-                                                          : (*(p64Val) &= UINT64_C(0xffffffff),             \
-                                                             VMXReadVmcs32(idxField, (uint32_t *)(p64Val)))
-#  define VMXReadVmcsGstN                                 VMXReadVmcsHstN
-#  define VMXReadVmcsGstNByIdxVal                         VMXReadVmcsGstN
-# elif HC_ARCH_BITS == 32
+# if HC_ARCH_BITS == 32
 #  define VMXReadVmcsHstN                                 VMXReadVmcs32
 #  define VMXReadVmcsGstN(idxField, pVal)                 VMXReadCachedVmcsEx(pVCpu, idxField##_CACHE_IDX, pVal)
 #  define VMXReadVmcsGstNByIdxVal(idxField, pVal)         VMXReadCachedVmcsEx(pVCpu, idxField, pVal)
@@ -87,5 +78,5 @@ DECLINLINE(int) VMXReadCachedVmcsEx(PVMCPU pVCpu, uint32_t idxCache, RTGCUINTREG
 
 RT_C_DECLS_END
 
-#endif /* ___HMVMXR0_h */
+#endif /* !___HMVMXR0_h */
 

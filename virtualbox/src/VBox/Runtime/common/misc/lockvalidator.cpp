@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/lockvalidator.h>
 #include "internal/iprt.h"
 
@@ -46,9 +47,9 @@
 #include "internal/thread.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Macro that asserts that a pointer is aligned correctly.
  * Only used when fighting bugs. */
 #if 1
@@ -93,9 +94,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Deadlock detection stack entry.
  */
@@ -225,9 +226,9 @@ AssertCompileSize(AVLLU32NODECORE, ARCH_BITS == 32 ? 20 : 32);
 AssertCompileMemberOffset(RTLOCKVALCLASSINT, PriorLocks, 64);
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Serializing object destruction and deadlock detection.
  *
  * This makes sure that none of the memory examined by the deadlock detection
@@ -264,9 +265,9 @@ static bool volatile    g_fLockValidatorMayPanic = false;
 static bool volatile    g_fLockValSoftWrongOrder = false;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void     rtLockValidatorClassDestroy(RTLOCKVALCLASSINT *pClass);
 static uint32_t rtLockValidatorStackDepth(PRTTHREADINT pThread);
 
@@ -395,9 +396,7 @@ static const char *rtLockValidatorNameThreadHandle(RTTHREAD volatile *phThread)
 /**
  * Launch a simple assertion like complaint w/ panic.
  *
- * @param   pszFile             Where from - file.
- * @param   iLine               Where from - line.
- * @param   pszFunction         Where from - function.
+ * @param   SRC_POS             The source position where call is being made from.
  * @param   pszWhat             What we're complaining about.
  * @param   ...                 Format arguments.
  */
@@ -584,7 +583,7 @@ DECL_FORCE_INLINE(void) rtLockValComplainAboutLockHlp(const char *pszPrefix, PRT
         case RTLOCKVALRECEXCL_MAGIC:
 #ifdef RTLOCKVAL_WITH_VERBOSE_DUMPS
             RTAssertMsg2AddWeak("%s%p %s xrec=%p own=%s r=%u cls=%s/%s pos={%Rbn(%u) %Rfn %p} [x%s]%s", pszPrefix,
-                                pRec->Excl.hLock, pRec->Excl.pszName, pRec,
+                                pRec->Excl.hLock, pRec->Excl.szName, pRec,
                                 rtLockValidatorNameThreadHandle(&pRec->Excl.hThread), cRecursion,
                                 rtLockValComplainGetClassName(pRec->Excl.hClass),
                                 rtLockValComplainGetSubClassName(pRec->Excl.uSubClass, szBuf),
@@ -616,12 +615,12 @@ DECL_FORCE_INLINE(void) rtLockValComplainAboutLockHlp(const char *pszPrefix, PRT
                 &&  pShared->Core.u32Magic == RTLOCKVALRECSHRD_MAGIC)
 #ifdef RTLOCKVAL_WITH_VERBOSE_DUMPS
                 RTAssertMsg2AddWeak("%s%p %s srec=%p trec=%p own=%s r=%u cls=%s/%s pos={%Rbn(%u) %Rfn %p} [o%s]%s", pszPrefix,
-                                    pShared->hLock, pShared->pszName, pShared,
+                                    pShared->hLock, pShared->szName, pShared,
                                     pRec, rtLockValidatorNameThreadHandle(&pRec->ShrdOwner.hThread), cRecursion,
                                     rtLockValComplainGetClassName(pShared->hClass),
                                     rtLockValComplainGetSubClassName(pShared->uSubClass, szBuf),
                                     pSrcPos->pszFile, pSrcPos->uLine, pSrcPos->pszFunction, pSrcPos->uId,
-                                    pszSuffix2, pszSuffix);
+                                    pszSuffix, pszSuffix);
 #else
                 RTAssertMsg2AddWeak("%s%p %s own=%s r=%u cls=%s/%s pos={%Rbn(%u) %Rfn %p} [o%s]%s", pszPrefix,
                                     pShared->hLock, pShared->szName,
@@ -1125,9 +1124,8 @@ RTDECL(int) RTLockValidatorClassCreate(PRTLOCKVALCLASS phClass, bool fAutodidact
  * @returns Class handle with a reference that is automatically consumed by the
  *          first retainer.  NIL_RTLOCKVALCLASS if we run into trouble.
  *
- * @param   pszFile             The source position of the call, file.
- * @param   iLine               The source position of the call, line.
- * @param   pszFunction         The source position of the call, function.
+ * @param   SRC_POS             The source position where call is being made from.
+ *                              Use RT_SRC_POS when possible.  Optional.
  * @param   pszNameFmt          Class name format string, optional (NULL).  Max
  *                              length is 32 bytes.
  * @param   ...                 Format string arguments.
@@ -1203,7 +1201,7 @@ DECLINLINE(uint32_t) rtLockValidatorClassRelease(RTLOCKVALCLASSINT *pClass)
 /**
  * Destroys a class once there are not more references to it.
  *
- * @param   Class               The class.
+ * @param   pClass              The class.
  */
 static void rtLockValidatorClassDestroy(RTLOCKVALCLASSINT *pClass)
 {
@@ -1570,6 +1568,7 @@ RTDECL(int) RTLockValidatorRecMakeSiblings(PRTLOCKVALRECCORE pRec1, PRTLOCKVALRE
 }
 
 
+#if 0 /* unused */
 /**
  * Gets the lock name for the given record.
  *
@@ -1607,8 +1606,10 @@ DECL_FORCE_INLINE(const char *) rtLockValidatorRecName(PRTLOCKVALRECUNION pRec)
             return "unknown";
     }
 }
+#endif /* unused */
 
 
+#if 0 /* unused */
 /**
  * Gets the class for this locking record.
  *
@@ -1666,7 +1667,7 @@ DECLINLINE(RTLOCKVALCLASSINT *) rtLockValidatorRecGetClass(PRTLOCKVALRECUNION pR
             return NIL_RTLOCKVALCLASS;
     }
 }
-
+#endif /* unused */
 
 /**
  * Gets the class for this locking record and the pointer to the one below it in
@@ -2206,6 +2207,9 @@ DECL_FORCE_INLINE(bool) rtLockValidatorIsClassOrderOk(RTLOCKVALCLASSINT *pClass1
  * @param   pThreadSelf         The current thread.
  * @param   pRec                The lock record.
  * @param   pSrcPos             The source position of the locking operation.
+ * @param   pFirstBadClass      The first bad class.
+ * @param   pFirstBadRec        The first bad lock record.
+ * @param   pFirstBadDown       The next record on the lock stack.
  */
 static int rtLockValidatorStackCheckLockingOrder2(RTLOCKVALCLASSINT * const pClass, uint32_t const uSubClass,
                                                   PRTTHREADINT pThreadSelf, PRTLOCKVALRECUNION const pRec,
@@ -2999,6 +3003,9 @@ RTDECL(void) RTLockValidatorRecExclDelete(PRTLOCKVALRECEXCL pRec)
 
     rtLockValidatorSerializeDestructEnter();
 
+    /** @todo Check that it's not on our stack first.  Need to make it
+     *        configurable whether deleting a owned lock is acceptable? */
+
     ASMAtomicWriteU32(&pRec->Core.u32Magic, RTLOCKVALRECEXCL_MAGIC_DEAD);
     ASMAtomicWriteHandle(&pRec->hThread, NIL_RTTHREAD);
     RTLOCKVALCLASS hClass;
@@ -3056,7 +3063,7 @@ RTDECL(void) RTLockValidatorRecExclSetOwner(PRTLOCKVALRECEXCL pRec, RTTHREAD hTh
 
     if (pRecU->Excl.hThread == hThreadSelf)
     {
-        Assert(!fFirstRecursion);
+        Assert(!fFirstRecursion); RT_NOREF_PV(fFirstRecursion);
         pRecU->Excl.cRecursion++;
         rtLockValidatorStackPushRecursion(hThreadSelf, pRecU, pSrcPos);
     }
@@ -3093,7 +3100,7 @@ static void  rtLockValidatorRecExclReleaseOwnerUnchecked(PRTLOCKVALRECUNION pRec
     else
     {
         Assert(c < UINT32_C(0xffff0000));
-        Assert(!fFinalRecursion);
+        Assert(!fFinalRecursion); RT_NOREF_PV(fFinalRecursion);
         rtLockValidatorStackPopRecursion(pThread, pRec);
     }
 }
@@ -3466,6 +3473,9 @@ RTDECL(int)  RTLockValidatorRecSharedCreate(PRTLOCKVALRECSHRD *ppRec, RTLOCKVALC
 RTDECL(void) RTLockValidatorRecSharedDelete(PRTLOCKVALRECSHRD pRec)
 {
     Assert(pRec->Core.u32Magic == RTLOCKVALRECSHRD_MAGIC);
+
+    /** @todo Check that it's not on our stack first.  Need to make it
+     *        configurable whether deleting a owned lock is acceptable? */
 
     /*
      * Flip it into table realloc mode and take the destruction lock.
@@ -4273,6 +4283,7 @@ RTDECL(void *) RTLockValidatorQueryBlocking(RTTHREAD hThread)
                             pRec = (PRTLOCKVALRECUNION)pRec->ShrdOwner.pSharedRec;
                             if (!pRec || pRec->Core.u32Magic != RTLOCKVALRECSHRD_MAGIC)
                                 break;
+                            RT_FALL_THRU();
                         case RTLOCKVALRECSHRD_MAGIC:
                             pvLock = pRec->Shared.hLock;
                             break;

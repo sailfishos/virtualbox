@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -113,7 +113,7 @@ RTDECL(int) RTManifestDup(RTMANIFEST hManifestSrc, PRTMANIFEST phManifestDst);
  *                              pszError.
  */
 RTDECL(int) RTManifestEqualsEx(RTMANIFEST hManifest1, RTMANIFEST hManifest2, const char * const *papszIgnoreEntries,
-                               const char * const *papszIgnoreAttr, uint32_t fFlags, char *pszError, size_t cbError);
+                               const char * const *papszIgnoreAttrs, uint32_t fFlags, char *pszError, size_t cbError);
 
 /** @defgroup RTMANIFEST_EQUALS_XXX     RTManifestEqualsEx flags
  * @{ */
@@ -122,8 +122,10 @@ RTDECL(int) RTManifestEqualsEx(RTMANIFEST hManifest1, RTMANIFEST hManifest2, con
 /** Ignore attributes missing in the 1st manifest.
  * @todo implement this  */
 #define RTMANIFEST_EQUALS_IGN_MISSING_ATTRS_1ST     RT_BIT_32(1)
+/** Ignore missing entries in the 2nd manifest. */
+#define RTMANIFEST_EQUALS_IGN_MISSING_ENTRIES_2ND   RT_BIT_32(2)
 /** Mask of valid flags. */
-#define RTMANIFEST_EQUALS_VALID_MASK                UINT32_C(0x00000003)
+#define RTMANIFEST_EQUALS_VALID_MASK                UINT32_C(0x00000005)
 /** @}  */
 
 /**
@@ -139,15 +141,28 @@ RTDECL(int) RTManifestEqualsEx(RTMANIFEST hManifest1, RTMANIFEST hManifest2, con
 RTDECL(int) RTManifestEquals(RTMANIFEST hManifest1, RTMANIFEST hManifest2);
 
 /**
+ *
+ * @returns IPRT status code.
+ * @param   hManifest       Handle to the manifest.
+ * @param   fEntriesOnly    Whether to only gather attribute types from the
+ *                          entries (@c true), or also include the manifest
+ *                          attributes (@c false).
+ * @param   pfTypes         Where to return the attributes.
+ */
+RTDECL(int) RTManifestQueryAllAttrTypes(RTMANIFEST hManifest, bool fEntriesOnly, uint32_t *pfTypes);
+
+/**
  * Sets a manifest attribute.
  *
  * @returns IPRT status code.
- * @param   hManifest           The manifest handle.
- * @param   pszAttr             The attribute name.  If this already exists,
- *                              its value will be replaced.
- * @param   pszValue            The value string.
- * @param   fType               The attribute type, pass
- *                              RTMANIFEST_ATTR_UNKNOWN if not known.
+ * @param   hManifest   The manifest handle.
+ * @param   pszAttr     The attribute name, if NULL it will be termined from  @a
+ *                      fType gives it. If this already exists, its value will
+ *                      be replaced.
+ * @param   pszValue    The value string.
+ * @param   fType       The attribute type.  If not know, pass
+ *                      RTMANIFEST_ATTR_UNKNOWN with a valid attribute
+ *                      name string (@a pszAttr).
  */
 RTDECL(int) RTManifestSetAttr(RTMANIFEST hManifest, const char *pszAttr, const char *pszValue, uint32_t fType);
 
@@ -163,7 +178,7 @@ RTDECL(int) RTManifestSetAttr(RTMANIFEST hManifest, const char *pszAttr, const c
 RTDECL(int) RTManifestUnsetAttr(RTMANIFEST hManifest, const char *pszAttr);
 
 /**
- * Query a manifest entry attribute.
+ * Query a manifest attribute.
  *
  * @returns IPRT status code.
  * @retval  VERR_BUFFER_OVERFLOW if the value buffer is too small. The @a
@@ -173,7 +188,6 @@ RTDECL(int) RTManifestUnsetAttr(RTMANIFEST hManifest, const char *pszAttr);
  * @retval  VERR_MANIFEST_ATTR_TYPE_MISMATCH
  *
  * @param   hManifest           The manifest handle.
- * @param   pszEntry            The entry name.
  * @param   pszAttr             The attribute name.  If NULL, it will be
  *                              selected by @a fType alone.
  * @param   fType               The attribute types the entry should match. Pass
@@ -191,16 +205,18 @@ RTDECL(int) RTManifestQueryAttr(RTMANIFEST hManifest, const char *pszAttr, uint3
  * Sets an attribute of a manifest entry.
  *
  * @returns IPRT status code.
- * @param   hManifest           The manifest handle.
- * @param   pszEntry            The entry name.  This will automatically be
- *                              added if there was no previous call to
- *                              RTManifestEntryAdd for this name.  See
- *                              RTManifestEntryAdd for the entry name rules.
- * @param   pszAttr             The attribute name.  If this already exists,
- *                              its value will be replaced.
- * @param   pszValue            The value string.
- * @param   fType               The attribute type, pass
- *                              RTMANIFEST_ATTR_UNKNOWN if not known.
+ * @param   hManifest   The manifest handle.
+ * @param   pszEntry    The entry name.  This will automatically be
+ *                      added if there was no previous call to
+ *                      RTManifestEntryAdd for this name.  See
+ *                      RTManifestEntryAdd for the entry name rules.
+ * @param   pszAttr     The attribute name, if NULL it will be termined from  @a
+ *                      fType gives it. If this already exists, its value will
+ *                      be replaced.
+ * @param   pszValue    The value string.
+ * @param   fType       The attribute type.  If not know, pass
+ *                      RTMANIFEST_ATTR_UNKNOWN with a valid attribute
+ *                      name string (@a pszAttr).
  */
 RTDECL(int) RTManifestEntrySetAttr(RTMANIFEST hManifest, const char *pszEntry, const char *pszAttr,
                                    const char *pszValue, uint32_t fType);
@@ -303,6 +319,14 @@ RTDECL(int) RTManifestEntryAddPassthruIoStream(RTMANIFEST hManifest, RTVFSIOSTRE
  *                              RTManifestEntryAddPassthruIoStream().
  */
 RTDECL(int) RTManifestPtIosAddEntryNow(RTVFSIOSTREAM hVfsPtIos);
+
+/**
+ * Checks if the give I/O stream is a manifest passthru instance or not.
+ *
+ * @returns true if it's a manifest passthru I/O stream, false if not.
+ * @param   hVfsPtIos   Possible the manifest passthru I/O stream handle.
+ */
+RTDECL(bool) RTManifestPtIosIsInstanceOf(RTVFSIOSTREAM hVfsPtIos);
 
 /**
  * Adds an entry for a file with the specified set of attributes.
@@ -491,7 +515,7 @@ RTR3DECL(int) RTManifestVerifyDigestType(void const *pvBuf, size_t cbSize, RTDIG
  * @param   pvBuf                Pointer to memory buffer of the manifest file.
  * @param   cbSize               Size of the memory buffer.
  * @param   paTests              Array of file names and digests.
- * @param   cTest                Number of entries in paTests.
+ * @param   cTests               Number of entries in paTests.
  * @param   piFailed             A index to paTests in the
  *                               VERR_MANIFEST_DIGEST_MISMATCH error case
  *                               (optional).

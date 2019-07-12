@@ -8,7 +8,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -46,9 +46,10 @@ AssertCompileSize(RTGCPHYS, 8);
 AssertCompileSize(RTHCPHYS, 8);
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define IN_TSTVMSTRUCT 1
 #define IN_TSTVMSTRUCTGC 1
 #include <VBox/vmm/cfgm.h>
 #include <VBox/vmm/cpum.h>
@@ -70,9 +71,11 @@ AssertCompileSize(RTHCPHYS, 8);
 #include "IOMInternal.h"
 #include "REMInternal.h"
 #include "HMInternal.h"
+#include "APICInternal.h"
 #include "PATMInternal.h"
 #include "VMMInternal.h"
 #include "DBGFInternal.h"
+#include "GIMInternal.h"
 #include "STAMInternal.h"
 #include "CSAMInternal.h"
 #include "EMInternal.h"

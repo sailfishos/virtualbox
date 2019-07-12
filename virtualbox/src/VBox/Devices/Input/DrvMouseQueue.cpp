@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_MOUSE_QUEUE
 #include <VBox/vmm/pdmdrv.h>
 #include <iprt/assert.h>
@@ -28,9 +28,9 @@
 
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Mouse queue driver instance data.
  *
@@ -113,7 +113,7 @@ static DECLCALLBACK(void *)  drvMouseQueueQueryInterface(PPDMIBASE pInterface, c
 /* -=-=-=-=- IMousePort -=-=-=-=- */
 
 /** Converts a pointer to DRVMOUSEQUEUE::Port to a DRVMOUSEQUEUE pointer. */
-#define IMOUSEPORT_2_DRVMOUSEQUEUE(pInterface) ( (PDRVMOUSEQUEUE)((char *)(pInterface) - RT_OFFSETOF(DRVMOUSEQUEUE, IPort)) )
+#define IMOUSEPORT_2_DRVMOUSEQUEUE(pInterface) ( (PDRVMOUSEQUEUE)((char *)(pInterface) - RT_UOFFSETOF(DRVMOUSEQUEUE, IPort)) )
 
 
 /**
@@ -184,7 +184,7 @@ static DECLCALLBACK(int) drvMouseQueuePutEventMultiTouch(PPDMIMOUSEPORT pInterfa
 
 /* -=-=-=-=- IConnector -=-=-=-=- */
 
-#define PPDMIMOUSECONNECTOR_2_DRVMOUSEQUEUE(pInterface) ( (PDRVMOUSEQUEUE)((char *)(pInterface) - RT_OFFSETOF(DRVMOUSEQUEUE, IConnector)) )
+#define PPDMIMOUSECONNECTOR_2_DRVMOUSEQUEUE(pInterface) ( (PDRVMOUSEQUEUE)((char *)(pInterface) - RT_UOFFSETOF(DRVMOUSEQUEUE, IConnector)) )
 
 
 /**
@@ -200,6 +200,20 @@ static DECLCALLBACK(void) drvMousePassThruReportModes(PPDMIMOUSECONNECTOR pInter
 {
     PDRVMOUSEQUEUE pDrv = PPDMIMOUSECONNECTOR_2_DRVMOUSEQUEUE(pInterface);
     pDrv->pDownConnector->pfnReportModes(pDrv->pDownConnector, fRel, fAbs, fMT);
+}
+
+
+/**
+ * Flush the mouse queue if there are pending events.
+ *
+ * @param   pInterface  Pointer to the mouse connector interface structure.
+ */
+static DECLCALLBACK(void) drvMouseFlushQueue(PPDMIMOUSECONNECTOR pInterface)
+{
+    PDRVMOUSEQUEUE pDrv = PPDMIMOUSECONNECTOR_2_DRVMOUSEQUEUE(pInterface);
+
+    AssertPtr(pDrv->pQueue);
+    PDMQueueFlushIfNecessary(pDrv->pQueue);
 }
 
 
@@ -244,7 +258,7 @@ static DECLCALLBACK(bool) drvMouseQueueConsumer(PPDMDRVINS pDrvIns, PPDMQUEUEITE
 /**
  * Power On notification.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pDrvIns     The drive instance data.
  */
 static DECLCALLBACK(void) drvMouseQueuePowerOn(PPDMDRVINS pDrvIns)
@@ -257,20 +271,21 @@ static DECLCALLBACK(void) drvMouseQueuePowerOn(PPDMDRVINS pDrvIns)
 /**
  * Reset notification.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pDrvIns     The drive instance data.
  */
 static DECLCALLBACK(void)  drvMouseQueueReset(PPDMDRVINS pDrvIns)
 {
     //PDRVKBDQUEUE        pThis = PDMINS_2_DATA(pDrvIns, PDRVKBDQUEUE);
     /** @todo purge the queue on reset. */
+    RT_NOREF(pDrvIns);
 }
 
 
 /**
  * Suspend notification.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pDrvIns     The drive instance data.
  */
 static DECLCALLBACK(void)  drvMouseQueueSuspend(PPDMDRVINS pDrvIns)
@@ -283,7 +298,7 @@ static DECLCALLBACK(void)  drvMouseQueueSuspend(PPDMDRVINS pDrvIns)
 /**
  * Resume notification.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pDrvIns     The drive instance data.
  */
 static DECLCALLBACK(void)  drvMouseQueueResume(PPDMDRVINS pDrvIns)
@@ -330,6 +345,7 @@ static DECLCALLBACK(int) drvMouseQueueConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pC
     pDrvIns->IBase.pfnQueryInterface        = drvMouseQueueQueryInterface;
     /* IMouseConnector. */
     pDrv->IConnector.pfnReportModes         = drvMousePassThruReportModes;
+    pDrv->IConnector.pfnFlushQueue          = drvMouseFlushQueue;
     /* IMousePort. */
     pDrv->IPort.pfnPutEvent                 = drvMouseQueuePutEvent;
     pDrv->IPort.pfnPutEventAbs              = drvMouseQueuePutEventAbs;

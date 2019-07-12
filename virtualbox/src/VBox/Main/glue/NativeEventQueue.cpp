@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -520,14 +520,17 @@ int NativeEventQueue::processEventQueue(RTMSINTERVAL cMsTimeout)
 # ifdef RT_OS_DARWIN
         /** @todo check how Ctrl-C works on Darwin. */
         rc = waitForEventsOnDarwin(cMsTimeout);
-        if (rc == VERR_TIMEOUT)
-            rc = processPendingEvents(mEventQ);
 # else // !RT_OS_DARWIN
         rc = waitForEventsOnXPCOM(mEventQ, cMsTimeout);
+# endif // !RT_OS_DARWIN
         if (    RT_SUCCESS(rc)
             ||  rc == VERR_TIMEOUT)
-            rc = processPendingEvents(mEventQ);
-# endif // !RT_OS_DARWIN
+        {
+            int rc2 = processPendingEvents(mEventQ);
+            /* If the wait was successful don't fail the whole operation. */
+            if (RT_FAILURE(rc) && RT_FAILURE(rc2))
+                rc = rc2;
+        }
     }
 
     if (  (   RT_SUCCESS(rc)
@@ -542,7 +545,7 @@ int NativeEventQueue::processEventQueue(RTMSINTERVAL cMsTimeout)
 #else // !VBOX_WITH_XPCOM
     if (cMsTimeout == RT_INDEFINITE_WAIT)
     {
-        BOOL fRet;
+        BOOL fRet = 0; /* Shut up MSC */
         MSG  Msg;
         rc = VINF_SUCCESS;
         while (   rc != VERR_INTERRUPTED
@@ -596,8 +599,8 @@ int NativeEventQueue::interruptEventQueueProcessing()
 /**
  *  Posts an event to this event loop asynchronously.
  *
- *  @param  event   the event to post, must be allocated using |new|
- *  @return         TRUE if successful and false otherwise
+ *  @param  pEvent  the event to post, must be allocated using |new|
+ *  @return         @c TRUE if successful and false otherwise
  */
 BOOL NativeEventQueue::postEvent(NativeEvent *pEvent)
 {

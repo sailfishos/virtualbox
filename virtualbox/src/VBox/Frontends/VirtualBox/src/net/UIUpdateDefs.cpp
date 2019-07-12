@@ -1,12 +1,10 @@
 /* $Id: UIUpdateDefs.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * Update routine related implementations
+ * VBox Qt GUI - Update routine related implementations.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,13 +15,20 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QCoreApplication>
-#include <QStringList>
+# include <QCoreApplication>
+# include <QStringList>
 
 /* Local includes: */
-#include "UIUpdateDefs.h"
-#include "VBoxGlobal.h"
+# include "UIUpdateDefs.h"
+# include "VBoxGlobal.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 /* static: */
 VBoxUpdateDayList VBoxUpdateData::m_dayList = VBoxUpdateDayList();
@@ -96,7 +101,7 @@ bool VBoxUpdateData::isNeedToCheck() const
         return true;
 
     /* Return 'true' if saved version value is NOT valid or NOT equal to current: */
-    if (!version().isValid() || version() != VBoxVersion(vboxGlobal().vboxVersionStringNormalized()))
+    if (!version().isValid() || version() != UIVersion(vboxGlobal().vboxVersionStringNormalized()))
         return true;
 
     /* Return 'false' in all other cases: */
@@ -137,7 +142,7 @@ QString VBoxUpdateData::branchName() const
     return QString();
 }
 
-VBoxVersion VBoxUpdateData::version() const
+UIVersion VBoxUpdateData::version() const
 {
     return m_version;
 }
@@ -179,7 +184,7 @@ void VBoxUpdateData::decode()
         /* Parse 'version' value: */
         if (parser.size() > 3)
         {
-            m_version = VBoxVersion(parser[3]);
+            m_version = UIVersion(parser[3]);
         }
     }
 }
@@ -213,7 +218,7 @@ void VBoxUpdateData::encode()
                               m_branchIndex == BranchAllRelease ? "allrelease" : "stable";
 
         /* Encode 'version' value: */
-        QString versionValue = VBoxVersion(vboxGlobal().vboxVersionStringNormalized()).toString();
+        QString versionValue = UIVersion(vboxGlobal().vboxVersionStringNormalized()).toString();
 
         /* Composite m_strData: */
         m_strData = QString("%1, %2, %3, %4").arg(remindPeriod, remindDate, branchValue, versionValue);

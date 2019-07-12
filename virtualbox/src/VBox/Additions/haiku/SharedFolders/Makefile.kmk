@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2012 Oracle Corporation
+# Copyright (C) 2012-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -66,7 +66,6 @@ vboxsf_DEFS            = \
 	KBUILD_MODNAME=KBUILD_STR\(vboxsf\) \
         KBUILD_BASENAME=KBUILD_STR\(vboxsf\)
 vboxsf_INCS            = \
-	$(PATH_ROOT)/src/VBox/Additions/common/VBoxGuestLib \
 	$(PATH_ROOT)/src/VBox/Additions/common/VBoxGuest \
 	$(PATH_ROOT)/src/VBox/Runtime/r0drv/haiku
 vboxsf_SOURCES         = \

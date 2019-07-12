@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PGM_DYNMAP
 #include <VBox/vmm/pgm.h>
 #include "PGMInternal.h"
@@ -41,9 +41,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef IN_RING0
 /** The max size of the mapping cache (in pages). */
 # define PGMR0DYNMAP_MAX_PAGES              ((16*_1M) >> PAGE_SHIFT)
@@ -53,12 +53,12 @@
 /** The number of pages we reserve per CPU. */
 # define PGMR0DYNMAP_PAGES_PER_CPU          256
 /** The minimum number of pages we reserve per CPU.
- * This must be equal or larger than the autoset size.  */
+ * This must be equal or larger than the autoset size. */
 # define PGMR0DYNMAP_PAGES_PER_CPU_MIN      64
 /** Calcs the overload threshold (safety margin).  Current set at 50%. */
 # define PGMR0DYNMAP_CALC_OVERLOAD(cPages)  ((cPages) / 2)
 /** The number of guard pages.
- * @remarks Never do tuning of the hashing or whatnot with a strict build!  */
+ * @remarks Never do tuning of the hashing or whatnot with a strict build! */
 # if defined(VBOX_STRICT)
 #  define PGMR0DYNMAP_GUARD_PAGES           1
 # else
@@ -72,7 +72,7 @@
 #if 0
 /** Define this to just clear the present bit on guard pages.
  * The alternative is to replace the entire PTE with an bad not-present
- * PTE. Either way, XNU will screw us. :-/   */
+ * PTE. Either way, XNU will screw us. :-/ */
 # define PGMR0DYNMAP_GUARD_NP
 #endif
 /** The dummy PTE value for a page. */
@@ -129,7 +129,7 @@
 #ifdef IN_RC
 # define PGMRZDYNMAP_CUR_CPU()              (0)
 #else
-# define PGMRZDYNMAP_CUR_CPU()              RTMpCpuIdToSetIndex(RTMpCpuId())
+# define PGMRZDYNMAP_CUR_CPU()              RTMpCurSetIndex()
 #endif
 
 /** PGMRZDYNMAP::u32Magic. (Jens Christian Bugge Wesseltoft) */
@@ -155,9 +155,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 #ifdef IN_RING0
 /**
  * Ring-0 dynamic mapping cache segment.
@@ -199,7 +199,7 @@ typedef struct PGMR0DYNMAPENTRY
 {
     /** The physical address of the currently mapped page.
      * This is duplicate for three reasons: cache locality, cache policy of the PT
-     * mappings and sanity checks.   */
+     * mappings and sanity checks. */
     RTHCPHYS                    HCPhys;
     /** Pointer to the page. */
     void                       *pvPage;
@@ -219,7 +219,7 @@ typedef struct PGMR0DYNMAPENTRY
     RTCPUSET                    PendingSet;
 } PGMR0DYNMAPENTRY;
 /** Pointer a mapping cache entry for the ring-0.
- * @sa PPGMRZDYNMAPENTRY, PPGMRCDYNMAPENTRY,  */
+ * @sa PPGMRZDYNMAPENTRY, PPGMRCDYNMAPENTRY, */
 typedef PGMR0DYNMAPENTRY *PPGMR0DYNMAPENTRY;
 
 
@@ -239,7 +239,7 @@ typedef struct PGMR0DYNMAP
     uint32_t                    u32Magic;
     /** Spinlock serializing the normal operation of the cache. */
     RTSPINLOCK                  hSpinlock;
-    /** Array for tracking and managing the pages.  */
+    /** Array for tracking and managing the pages. */
     PPGMR0DYNMAPENTRY           paPages;
     /** The cache size given as a number of pages. */
     uint32_t                    cPages;
@@ -297,21 +297,21 @@ typedef PGMR0DYNMAPPGLVL *PPGMR0DYNMAPPGLVL;
 #endif
 
 /** Mapping cache entry for the current context.
- * @sa PGMR0DYNMAPENTRY, PGMRCDYNMAPENTRY  */
+ * @sa PGMR0DYNMAPENTRY, PGMRCDYNMAPENTRY */
 typedef CTX_MID(PGM,DYNMAPENTRY) PGMRZDYNMAPENTRY;
 /** Pointer a mapping cache entry for the current context.
- * @sa PGMR0DYNMAPENTRY, PGMRCDYNMAPENTRY  */
+ * @sa PGMR0DYNMAPENTRY, PGMRCDYNMAPENTRY */
 typedef PGMRZDYNMAPENTRY *PPGMRZDYNMAPENTRY;
 
 /** Pointer to the mapping cache instance for the current context.
- * @sa PGMR0DYNMAP, PGMRCDYNMAP  */
+ * @sa PGMR0DYNMAP, PGMRCDYNMAP */
 typedef CTX_MID(PGM,DYNMAP) *PPGMRZDYNMAP;
 
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef IN_RING0
 /** Pointer to the ring-0 dynamic mapping cache. */
 static PGMR0DYNMAP *g_pPGMR0DynMap;
@@ -320,9 +320,9 @@ static PGMR0DYNMAP *g_pPGMR0DynMap;
 static bool         g_fPGMR0DynMapTestRunning = false;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void pgmRZDynMapReleasePage(PPGMRZDYNMAP pThis, uint32_t iPage, uint32_t cRefs);
 #ifdef IN_RING0
 static int  pgmR0DynMapSetup(PPGMRZDYNMAP pThis);
@@ -338,7 +338,7 @@ static int  pgmR0DynMapTest(PVM pVM);
  * Initializes the auto mapping sets for a VM.
  *
  * @returns VINF_SUCCESS on success, VERR_PGM_DYNMAP_IPE on failure.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 static int pgmRZDynMapInitAutoSetsForVM(PVM pVM)
 {
@@ -465,7 +465,7 @@ VMMR0DECL(void) PGMR0DynMapTerm(void)
  * Initializes the dynamic mapping cache for a new VM.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR0DECL(int) PGMR0DynMapInitVM(PVM pVM)
 {
@@ -520,7 +520,7 @@ VMMR0DECL(int) PGMR0DynMapInitVM(PVM pVM)
 /**
  * Terminates the dynamic mapping cache usage for a VM.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR0DECL(void) PGMR0DynMapTermVM(PVM pVM)
 {
@@ -614,7 +614,7 @@ static DECLCALLBACK(void) pgmR0DynMapShootDownTlbs(RTCPUID idCpu, void *pvUser1,
     PPGMRZDYNMAPENTRY   paPages = pThis->paPages;
     uint32_t            iPage   = pThis->cPages;
     while (iPage-- > 0)
-        ASMInvalidatePage(paPages[iPage].pvPage);
+        ASMInvalidatePage((uintptr_t)paPages[iPage].pvPage);
 }
 
 
@@ -632,7 +632,7 @@ static int pgmR0DynMapTlbShootDown(PPGMRZDYNMAP pThis)
     {
         uint32_t iPage = pThis->cPages;
         while (iPage-- > 0)
-            ASMInvalidatePage(pThis->paPages[iPage].pvPage);
+            ASMInvalidatePage((uintptr_t)pThis->paPages[iPage].pvPage);
     }
     return rc;
 }
@@ -948,7 +948,7 @@ static int pgmR0DynMapAddSeg(PPGMRZDYNMAP pThis, uint32_t cPages)
      * Allocate the segment structure and pages of memory, then touch all the pages (paranoia).
      */
     uint32_t cMaxPTs = cPages / (pThis->fLegacyMode ? X86_PG_ENTRIES : X86_PG_PAE_ENTRIES) + 2;
-    PPGMR0DYNMAPSEG pSeg = (PPGMR0DYNMAPSEG)RTMemAllocZ(RT_UOFFSETOF(PGMR0DYNMAPSEG, ahMemObjPTs[cMaxPTs]));
+    PPGMR0DYNMAPSEG pSeg = (PPGMR0DYNMAPSEG)RTMemAllocZ(RT_UOFFSETOF_DYN(PGMR0DYNMAPSEG, ahMemObjPTs[cMaxPTs]));
     if (!pSeg)
         return VERR_NO_MEMORY;
     pSeg->pNext  = NULL;
@@ -1252,7 +1252,7 @@ static void pgmR0DynMapTearDown(PPGMRZDYNMAP pThis)
  * Initializes the dynamic mapping cache in raw-mode context.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 VMMRCDECL(int) PGMRCDynMapInit(PVM pVM)
 {
@@ -1315,7 +1315,7 @@ DECLINLINE(void) pgmRZDynMapReleasePageLocked(PPGMRZDYNMAP pThis, uint32_t iPage
 #ifdef PGMRZDYNMAP_STRICT_RELEASE
         pThis->paPages[iPage].HCPhys = NIL_RTHCPHYS;
         ASMAtomicBitClear(pThis->paPages[iPage].uPte.pv, X86_PTE_BIT_P);
-        ASMInvalidatePage(pThis->paPages[iPage].pvPage);
+        ASMInvalidatePage((uintptr_t)pThis->paPages[iPage].pvPage);
 #endif
     }
 }
@@ -1340,16 +1340,17 @@ static void pgmRZDynMapReleasePage(PPGMRZDYNMAP pThis, uint32_t iPage, uint32_t 
  * pgmR0DynMapPage worker that deals with the tedious bits.
  *
  * @returns The page index on success, UINT32_MAX on failure.
- * @param   pThis       The dynamic mapping cache instance.
- * @param   HCPhys      The address of the page to be mapped.
- * @param   iPage       The page index pgmR0DynMapPage hashed HCPhys to.
- * @param   pVCpu       The current CPU, for statistics.
- * @param   pfNew       Set to @c true if a new entry was made and @c false if
- *                      an old entry was found and reused.
+ * @param   pThis   The dynamic mapping cache instance.
+ * @param   HCPhys  The address of the page to be mapped.
+ * @param   iPage   The page index pgmR0DynMapPage hashed HCPhys to.
+ * @param   pVCpu   The cross context virtual CPU structure of the calling EMT.
+ *                  For statistics.
+ * @param   pfNew   Set to @c true if a new entry was made and @c false if
+ *                  an old entry was found and reused.
  */
 static uint32_t pgmR0DynMapPageSlow(PPGMRZDYNMAP pThis, RTHCPHYS HCPhys, uint32_t iPage, PVMCPU pVCpu, bool *pfNew)
 {
-    STAM_COUNTER_INC(&pVCpu->pgm.s.CTX_SUFF(pStats)->StatRZDynMapPageSlow);
+    STAM_COUNTER_INC(&pVCpu->pgm.s.CTX_SUFF(pStats)->StatRZDynMapPageSlow); RT_NOREF_PV(pVCpu);
 
     /*
      * Check if any of the first 3 pages are unreferenced since the caller
@@ -1450,7 +1451,8 @@ static uint32_t pgmR0DynMapPageSlow(PPGMRZDYNMAP pThis, RTHCPHYS HCPhys, uint32_
  * @param   pThis       The dynamic mapping cache instance.
  * @param   HCPhys      The address of the page to be mapped.
  * @param   iRealCpu    The real cpu set index. (optimization)
- * @param   pVCpu       The current CPU (for statistics).
+ * @param   pVCpu       The cross context virtual CPU structure of the calling
+ *                      EMT.  For statistics.
  * @param   ppvPage     Where to the page address.
  */
 DECLINLINE(uint32_t) pgmR0DynMapPage(PPGMRZDYNMAP pThis, RTHCPHYS HCPhys, int32_t iRealCpu, PVMCPU pVCpu, void **ppvPage)
@@ -1518,7 +1520,7 @@ DECLINLINE(uint32_t) pgmR0DynMapPage(PPGMRZDYNMAP pThis, RTHCPHYS HCPhys, int32_
         ASMAtomicDecS32(&paPages[iPage].cRefs);
         PGMRZDYNMAP_SPINLOCK_RELEASE(pThis);
         *ppvPage = NULL;
-        AssertLogRelMsgFailedReturn(("cRefs=%d iPage=%p HCPhys=%RHp\n", cRefs, iPage, HCPhys), UINT32_MAX);
+        AssertLogRelMsgFailedReturn(("cRefs=%d iPage=%u HCPhys=%RHp\n", cRefs, iPage, HCPhys), UINT32_MAX);
     }
     void *pvPage = paPages[iPage].pvPage;
 
@@ -1545,7 +1547,7 @@ DECLINLINE(uint32_t) pgmR0DynMapPage(PPGMRZDYNMAP pThis, RTHCPHYS HCPhys, int32_
 #endif
     {
         STAM_COUNTER_INC(&pVCpu->pgm.s.CTX_SUFF(pStats)->StatRZDynMapPageInvlPg);
-        ASMInvalidatePage(pvPage);
+        ASMInvalidatePage((uintptr_t)pvPage);
     }
 
     *ppvPage = pvPage;
@@ -1589,7 +1591,6 @@ static int pgmRZDynMapAssertIntegrity(PPGMRZDYNMAP pThis)
     uint32_t            cGuard      = 0;
     uint32_t            cLoad       = 0;
     PPGMRZDYNMAPENTRY   paPages     = pThis->paPages;
-    uint32_t            iPage       = pThis->cPages;
 
 #ifndef IN_RC
     if (pThis->fLegacyMode)
@@ -1598,6 +1599,7 @@ static int pgmRZDynMapAssertIntegrity(PPGMRZDYNMAP pThis)
 #ifdef IN_RING0
         PCX86PGUINT     paSavedPTEs = (PCX86PGUINT)pThis->pvSavedPTEs; NOREF(paSavedPTEs);
 #endif
+        uint32_t        iPage       = pThis->cPages;
         while (iPage-- > 0)
         {
             CHECK_RET(!((uintptr_t)paPages[iPage].pvPage & PAGE_OFFSET_MASK), ("#%u: %p\n", iPage, paPages[iPage].pvPage));
@@ -1640,6 +1642,7 @@ static int pgmRZDynMapAssertIntegrity(PPGMRZDYNMAP pThis)
 #ifdef IN_RING0
         PCX86PGPAEUINT  paSavedPTEs = (PCX86PGPAEUINT)pThis->pvSavedPTEs; NOREF(paSavedPTEs);
 #endif
+        uint32_t        iPage       = pThis->cPages;
         while (iPage-- > 0)
         {
             CHECK_RET(!((uintptr_t)paPages[iPage].pvPage & PAGE_OFFSET_MASK), ("#%u: %p\n", iPage, paPages[iPage].pvPage));
@@ -1825,7 +1828,7 @@ static void pgmDynMapOptimizeAutoSet(PPGMMAPSET pSet)
  * Mostly for strictness. PGMDynMapHCPage won't work unless this
  * API is called.
  *
- * @param   pVCpu       The shared data for the current virtual CPU.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  */
 VMMDECL(void) PGMRZDynMapStartAutoSet(PVMCPU pVCpu)
 {
@@ -1847,7 +1850,7 @@ VMMDECL(void) PGMRZDynMapStartAutoSet(PVMCPU pVCpu)
  * guest memory.
  *
  * @returns @c true if started, @c false if migrated.
- * @param   pVCpu       The shared data for the current virtual CPU.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  * @thread  EMT
  */
 VMMR0DECL(bool) PGMR0DynMapStartOrMigrateAutoSet(PVMCPU pVCpu)
@@ -1924,7 +1927,7 @@ DECLINLINE(void) pgmDynMapFlushAutoSetWorker(PPGMMAPSET pSet, uint32_t cEntries)
  * Releases the dynamic memory mappings made by PGMDynMapHCPage and associates
  * since the PGMDynMapStartAutoSet call.
  *
- * @param   pVCpu       The shared data for the current virtual CPU.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  */
 VMMDECL(void) PGMRZDynMapReleaseAutoSet(PVMCPU pVCpu)
 {
@@ -1957,7 +1960,7 @@ VMMDECL(void) PGMRZDynMapReleaseAutoSet(PVMCPU pVCpu)
 /**
  * Flushes the set if it's above a certain threshold.
  *
- * @param   pVCpu       The shared data for the current virtual CPU.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  */
 VMMDECL(void) PGMRZDynMapFlushAutoSet(PVMCPU pVCpu)
 {
@@ -1999,7 +2002,7 @@ VMMDECL(void) PGMRZDynMapFlushAutoSet(PVMCPU pVCpu)
  * be valid on the new CPU.  If the cpu didn't change nothing will happen as all
  * the entries will have been flagged as invalidated.
  *
- * @param   pVCpu       The shared data for the current virtual CPU.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  * @thread  EMT
  */
 VMMR0DECL(void) PGMR0DynMapMigrateAutoSet(PVMCPU pVCpu)
@@ -2028,7 +2031,7 @@ VMMR0DECL(void) PGMR0DynMapMigrateAutoSet(PVMCPU pVCpu)
                         RTCpuSetDelByIndex(&pThis->paPages[iPage].PendingSet, iRealCpu);
                         PGMRZDYNMAP_SPINLOCK_RELEASE(pThis);
 
-                        ASMInvalidatePage(pThis->paPages[iPage].pvPage);
+                        ASMInvalidatePage((uintptr_t)pThis->paPages[iPage].pvPage);
                         STAM_COUNTER_INC(&pVCpu->pgm.s.CTX_SUFF(pStats)->StatRZDynMapMigrateInvlPg);
 
                         PGMRZDYNMAP_SPINLOCK_REACQUIRE(pThis);
@@ -2096,7 +2099,7 @@ static void pgmDynMapFlushSubset(PPGMMAPSET pSet)
  *
  * @returns The index of the previous subset. Pass this to
  *          PGMDynMapPopAutoSubset when popping it.
- * @param   pVCpu           Pointer to the virtual cpu data.
+ * @param   pVCpu           The cross context virtual CPU structure of the calling EMT.
  */
 VMMDECL(uint32_t) PGMRZDynMapPushAutoSubset(PVMCPU pVCpu)
 {
@@ -2127,7 +2130,7 @@ VMMDECL(uint32_t) PGMRZDynMapPushAutoSubset(PVMCPU pVCpu)
 /**
  * Pops a subset created by a previous call to PGMDynMapPushAutoSubset.
  *
- * @param   pVCpu           Pointer to the virtual cpu data.
+ * @param   pVCpu           The cross context virtual CPU structure of the calling EMT.
  * @param   iPrevSubset     What PGMDynMapPushAutoSubset returned.
  */
 VMMDECL(void) PGMRZDynMapPopAutoSubset(PVMCPU pVCpu, uint32_t iPrevSubset)
@@ -2156,7 +2159,7 @@ VMMDECL(void) PGMRZDynMapPopAutoSubset(PVMCPU pVCpu, uint32_t iPrevSubset)
 /**
  * Indicates that the given page is unused and its mapping can be re-used.
  *
- * @param   pVCpu           The current CPU.
+ * @param   pVCpu           The cross context virtual CPU structure of the calling EMT.
  * @param   pvHint          The page that is now unused.  This does not have to
  *                          point at the start of the page.  NULL is ignored.
  */

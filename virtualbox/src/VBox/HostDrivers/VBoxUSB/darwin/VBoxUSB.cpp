@@ -8,7 +8,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,12 +17,21 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP  LOG_GROUP_USB_DRV
 /* Deal with conflicts first.
  * (This is mess inherited from BSD. The *BSDs has clean this up long ago.) */
@@ -66,27 +75,27 @@ extern void     *get_bsdtask_info(task_t);
 RT_C_DECLS_END
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Locks the lists. */
 #define VBOXUSB_LOCK()      do { int rc = RTSemFastMutexRequest(g_Mtx); AssertRC(rc); } while (0)
 /** Unlocks the lists. */
 #define VBOXUSB_UNLOCK()    do { int rc = RTSemFastMutexRelease(g_Mtx); AssertRC(rc); } while (0)
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 RT_C_DECLS_BEGIN
 static kern_return_t    VBoxUSBStart(struct kmod_info *pKModInfo, void *pvData);
 static kern_return_t    VBoxUSBStop(struct kmod_info *pKModInfo, void *pvData);
 RT_C_DECLS_END
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The service class.
  *
@@ -100,6 +109,8 @@ class org_virtualbox_VBoxUSB : public IOService
     OSDeclareDefaultStructors(org_virtualbox_VBoxUSB);
 
 public:
+    RTR0MEMEF_NEW_AND_DELETE_OPERATORS_IOKIT();
+
     /** @name IOService
      * @{ */
     virtual bool init(OSDictionary *pDictionary = 0);
@@ -110,6 +121,10 @@ public:
     virtual void stop(IOService *pProvider);
     virtual void free();
     /** @} */
+
+private:
+    /** Guard against the parent class growing and us using outdated headers. */
+    uint8_t m_abSafetyPadding[256];
 };
 OSDefineMetaClassAndStructors(org_virtualbox_VBoxUSB, IOService);
 
@@ -122,6 +137,8 @@ class org_virtualbox_VBoxUSBClient : public IOUserClient
     OSDeclareDefaultStructors(org_virtualbox_VBoxUSBClient);
 
 public:
+    RTR0MEMEF_NEW_AND_DELETE_OPERATORS_IOKIT();
+
     /** @name IOService & IOUserClient
      * @{ */
     virtual bool initWithTask(task_t OwningTask, void *pvSecurityId, UInt32 u32Type);
@@ -144,6 +161,8 @@ public:
     static bool isClientTask(task_t ClientTask);
 
 private:
+    /** Guard against the parent class growing and us using outdated headers. */
+    uint8_t m_abSafetyPadding[256];
     /** The service provider. */
     org_virtualbox_VBoxUSB *m_pProvider;
     /** The client task. */
@@ -180,6 +199,8 @@ class org_virtualbox_VBoxUSBDevice : public IOUSBUserClientInit
     OSDeclareDefaultStructors(org_virtualbox_VBoxUSBDevice);
 
 public:
+    RTR0MEMEF_NEW_AND_DELETE_OPERATORS_IOKIT();
+
     /** @name IOService
      * @{ */
     virtual bool init(OSDictionary *pDictionary = 0);
@@ -193,6 +214,8 @@ public:
 
     static void  scheduleReleaseByOwner(RTPROCESS Owner);
 private:
+    /** Padding to guard against parent class expanding (see class remarks). */
+    uint8_t m_abSafetyPadding[256];
     /** The interface we're driving (aka. the provider). */
     IOUSBDevice *m_pDevice;
     /** The owner process, meaning the VBoxSVC process. */
@@ -240,6 +263,8 @@ class org_virtualbox_VBoxUSBInterface : public IOUSBUserClientInit
     OSDeclareDefaultStructors(org_virtualbox_VBoxUSBInterface);
 
 public:
+    RTR0MEMEF_NEW_AND_DELETE_OPERATORS_IOKIT();
+
     /** @name IOService
      * @{ */
     virtual bool init(OSDictionary *pDictionary = 0);
@@ -252,6 +277,8 @@ public:
     /** @} */
 
 private:
+    /** Padding to guard against parent class expanding (see class remarks). */
+    uint8_t m_abSafetyPadding[256];
     /** The interface we're driving (aka. the provider). */
     IOUSBInterface *m_pInterface;
     /** Have we opened the device or not? */
@@ -265,9 +292,9 @@ OSDefineMetaClassAndStructors(org_virtualbox_VBoxUSBInterface, IOUSBUserClientIn
 
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /*
  * Declare the module stuff.
  */
@@ -295,6 +322,7 @@ static volatile uint32_t g_cInstances = 0;
  */
 static kern_return_t VBoxUSBStart(struct kmod_info *pKModInfo, void *pvData)
 {
+    RT_NOREF(pKModInfo, pvData);
     int rc;
     Log(("VBoxUSBStart\n"));
 
@@ -348,7 +376,7 @@ static kern_return_t VBoxUSBStart(struct kmod_info *pKModInfo, void *pvData)
  */
 static kern_return_t VBoxUSBStop(struct kmod_info *pKModInfo, void *pvData)
 {
-    int rc;
+    RT_NOREF(pKModInfo, pvData);
     Log(("VBoxUSBStop: g_cInstances=%d\n", g_cInstances));
 
     /** @todo Fix problem with crashing when unloading a driver that's in use. */
@@ -358,7 +386,7 @@ static kern_return_t VBoxUSBStop(struct kmod_info *pKModInfo, void *pvData)
      */
     VBoxUSBFilterTerm();
 
-    rc = RTSemFastMutexDestroy(g_Mtx);
+    int rc = RTSemFastMutexDestroy(g_Mtx);
     AssertRC(rc);
     g_Mtx = NIL_RTSEMFASTMUTEX;
 
@@ -372,7 +400,7 @@ static kern_return_t VBoxUSBStop(struct kmod_info *pKModInfo, void *pvData)
 
 
 
-
+#ifdef LOG_ENABLED
 /**
  * Gets the name of a IOKit message.
  *
@@ -381,10 +409,9 @@ static kern_return_t VBoxUSBStop(struct kmod_info *pKModInfo, void *pvData)
  */
 DECLINLINE(const char *) DbgGetIOKitMessageName(UInt32 enmMsg)
 {
-#ifdef DEBUG
     switch (enmMsg)
     {
-#define MY_CASE(enm) case enm: return #enm; break
+# define MY_CASE(enm) case enm: return #enm; break
         MY_CASE(kIOMessageServiceIsTerminated);
         MY_CASE(kIOMessageServiceIsSuspended);
         MY_CASE(kIOMessageServiceIsResumed);
@@ -420,11 +447,11 @@ DECLINLINE(const char *) DbgGetIOKitMessageName(UInt32 enmMsg)
         MY_CASE(kIOUSBMessagePortWasNotSuspended);
         MY_CASE(kIOUSBMessageExpressCardCantWake);
 //        MY_CASE(kIOUSBMessageCompositeDriverReconfigured);
-#undef MY_CASE
+# undef MY_CASE
     }
-#endif /* DEBUG */
     return "unknown";
 }
+#endif /* LOG_ENABLED */
 
 
 
@@ -446,6 +473,8 @@ org_virtualbox_VBoxUSB::init(OSDictionary *pDictionary)
 {
     uint32_t cInstances = ASMAtomicIncU32(&g_cInstances);
     Log(("VBoxUSB::init([%p], %p) new g_cInstances=%d\n", this, pDictionary, cInstances));
+    RT_NOREF_PV(cInstances);
+
     if (IOService::init(pDictionary))
     {
         /* init members. */
@@ -566,12 +595,24 @@ org_virtualbox_VBoxUSBClient::initWithTask(task_t OwningTask, void *pvSecurityId
         Log(("VBoxUSBClient::initWithTask([%p], %p, %p, %#x) -> false (no task)\n", this, OwningTask, pvSecurityId, u32Type));
         return false;
     }
+    if (u32Type != VBOXUSB_DARWIN_IOSERVICE_COOKIE)
+    {
+        Log(("VBoxUSBClient::initWithTask: Bade cookie %#x\n", u32Type));
+        return false;
+    }
+
     proc_t pProc = (proc_t)get_bsdtask_info(OwningTask); /* we need the pid */
     Log(("VBoxUSBClient::initWithTask([%p], %p(->%p:{.pid=%d}, %p, %#x)\n",
              this, OwningTask, pProc, pProc ? proc_pid(pProc) : -1, pvSecurityId, u32Type));
 
     if (IOUserClient::initWithTask(OwningTask, pvSecurityId , u32Type))
     {
+        /*
+         * In theory we have to call task_reference() to make sure that the task is
+         * valid during the lifetime of this object. The pointer is only used to check
+         * for the context this object is called in though and never dereferenced
+         * or passed to anything which might, so we just skip this step.
+         */
         m_pProvider = NULL;
         m_Task = OwningTask;
         m_Process = pProc ? proc_pid(pProc) : NIL_RTPROCESS;
@@ -580,6 +621,7 @@ org_virtualbox_VBoxUSBClient::initWithTask(task_t OwningTask, void *pvSecurityId
         uint32_t cInstances = ASMAtomicIncU32(&g_cInstances);
         Log(("VBoxUSBClient::initWithTask([%p], %p(->%p:{.pid=%d}, %p, %#x) -> true; new g_cInstances=%d\n",
                  this, OwningTask, pProc, pProc ? proc_pid(pProc) : -1, pvSecurityId, u32Type, cInstances));
+        RT_NOREF_PV(cInstances);
         return true;
     }
 
@@ -952,6 +994,7 @@ org_virtualbox_VBoxUSBDevice::init(OSDictionary *pDictionary)
 {
     uint32_t cInstances = ASMAtomicIncU32(&g_cInstances);
     Log(("VBoxUSBDevice::init([%p], %p) new g_cInstances=%d\n", this, pDictionary, cInstances));
+    RT_NOREF_PV(cInstances);
 
     m_pDevice = NULL;
     m_Owner = NIL_RTPROCESS;
@@ -1057,7 +1100,8 @@ org_virtualbox_VBoxUSBDevice::probe(IOService *pProvider, SInt32 *pi32Score)
             if (pStr)
             {
                 Log2(("VBoxUSBDevice::probe: %d/%s - %s\n", i, s_aProps[i].pszName, pStr->getCStringNoCopy()));
-                int vrc = USBFilterSetStringExact(&Device, s_aProps[i].enmIdx, pStr->getCStringNoCopy(), true);
+                int vrc = USBFilterSetStringExact(&Device, s_aProps[i].enmIdx, pStr->getCStringNoCopy(),
+                                                  true /*fMustBePresent*/, true /*fPurge*/);
                 if (RT_FAILURE(vrc))
                     Log(("VBoxUSBDevice::probe: pObj=%p pStr=%p - %d/%s - rc=%d!\n", pObj, pStr, i, s_aProps[i].pszName, vrc));
             }
@@ -1082,8 +1126,9 @@ org_virtualbox_VBoxUSBDevice::probe(IOService *pProvider, SInt32 *pi32Score)
     /*
      * It matched. Save the owner in the provider registry (hope that works).
      */
-    IOService *pRet = IOUSBUserClientInit::probe(pProvider, pi32Score);
-    Assert(pRet == this);
+    /*IOService *pRet = IOUSBUserClientInit::probe(pProvider, pi32Score); - call always returns NULL on 10.11+ */
+    /*AssertMsg(pRet == this, ("pRet=%p this=%p *pi32Score=%d \n", pRet, this, pi32Score ? *pi32Score : 0)); - call always returns NULL on 10.11+ */
+    IOService *pRet = this;
     m_Owner = Owner;
     m_uId = uId;
     Log(("%p: m_Owner=%d m_uId=%d\n", this, (int)m_Owner, (int)m_uId));
@@ -1312,7 +1357,7 @@ IOReturn
 org_virtualbox_VBoxUSBDevice::message(UInt32 enmMsg, IOService *pProvider, void *pvArg)
 {
     Log(("VBoxUSBDevice::message([%p], %#x {%s}, %p {%s}, %p) - pid=%d\n",
-             this, enmMsg, DbgGetIOKitMessageName(enmMsg), pProvider, pProvider->getName(), pvArg, RTProcSelf()));
+         this, enmMsg, DbgGetIOKitMessageName(enmMsg), pProvider, pProvider->getName(), pvArg, RTProcSelf()));
 
     IOReturn irc;
     switch (enmMsg)
@@ -1445,7 +1490,7 @@ org_virtualbox_VBoxUSBDevice::message(UInt32 enmMsg, IOService *pProvider, void 
     }
 
     Log(("VBoxUSBDevice::message([%p], %#x {%s}, %p {%s}, %p) -> %#x\n",
-             this, enmMsg, DbgGetIOKitMessageName(enmMsg), pProvider, pProvider->getName(), pvArg, irc));
+         this, enmMsg, DbgGetIOKitMessageName(enmMsg), pProvider, pProvider->getName(), pvArg, irc));
     return irc;
 }
 
@@ -1535,27 +1580,27 @@ org_virtualbox_VBoxUSBDevice::MyInterestHandler(void *pvTarget, void *pvRefCon, 
             /* pvMsgArg == the open() fOptions, so we could check for kIOServiceSeize if we care.
                We'll also get a kIIOServiceRequestingClose message() for that...  */
             Log(("VBoxUSBDevice::MyInterestHandler: kIOMessageServiceIsAttemptingOpen - pvRefCon=%p pProvider=%p pvMsgArg=%p cbMsgArg=%d\n",
-                     pvRefCon, pProvider, pvMsgArg, cbMsgArg));
+                 pvRefCon, pProvider, pvMsgArg, cbMsgArg));
             break;
 
         case kIOMessageServiceWasClosed:
             Log(("VBoxUSBDevice::MyInterestHandler: kIOMessageServiceWasClosed - pvRefCon=%p pProvider=%p pvMsgArg=%p cbMsgArg=%d\n",
-                     pvRefCon, pProvider, pvMsgArg, cbMsgArg));
+                 pvRefCon, pProvider, pvMsgArg, cbMsgArg));
             break;
 
         case kIOMessageServiceIsTerminated:
             Log(("VBoxUSBDevice::MyInterestHandler: kIOMessageServiceIsTerminated - pvRefCon=%p pProvider=%p pvMsgArg=%p cbMsgArg=%d\n",
-                     pvRefCon, pProvider, pvMsgArg, cbMsgArg));
+                 pvRefCon, pProvider, pvMsgArg, cbMsgArg));
             break;
 
         case kIOUSBMessagePortHasBeenReset:
             Log(("VBoxUSBDevice::MyInterestHandler: kIOUSBMessagePortHasBeenReset - pvRefCon=%p pProvider=%p pvMsgArg=%p cbMsgArg=%d\n",
-                     pvRefCon, pProvider, pvMsgArg, cbMsgArg));
+                 pvRefCon, pProvider, pvMsgArg, cbMsgArg));
             break;
 
         default:
             Log(("VBoxUSBDevice::MyInterestHandler: %#x (%s) - pvRefCon=%p pProvider=%p pvMsgArg=%p cbMsgArg=%d\n",
-                     enmMsgType, DbgGetIOKitMessageName(enmMsgType), pvRefCon, pProvider, pvMsgArg, cbMsgArg));
+                 enmMsgType, DbgGetIOKitMessageName(enmMsgType), pvRefCon, pProvider, pvMsgArg, cbMsgArg));
             break;
     }
 
@@ -1590,6 +1635,7 @@ org_virtualbox_VBoxUSBInterface::init(OSDictionary *pDictionary)
 {
     uint32_t cInstances = ASMAtomicIncU32(&g_cInstances);
     Log(("VBoxUSBInterface::init([%p], %p) new g_cInstances=%d\n", this, pDictionary, cInstances));
+    RT_NOREF_PV(cInstances);
 
     m_pInterface = NULL;
     m_fOpen = false;
@@ -1658,7 +1704,8 @@ org_virtualbox_VBoxUSBInterface::probe(IOService *pProvider, SInt32 *pi32Score)
         return NULL;
     }
 
-    IOService *pRet = IOUSBUserClientInit::probe(pProvider, pi32Score);
+    /* IOService *pRet = IOUSBUserClientInit::probe(pProvider, pi32Score); - call always returns NULL on 10.11+ */
+    IOService *pRet = this;
     *pi32Score = _1G;
     Log(("VBoxUSBInterface::probe: returns %p and *pi32Score=%d - hijack it.\n", pRet, *pi32Score));
     return pRet;
@@ -1753,7 +1800,7 @@ IOReturn
 org_virtualbox_VBoxUSBInterface::message(UInt32 enmMsg, IOService *pProvider, void *pvArg)
 {
     Log(("VBoxUSBInterface::message([%p], %#x {%s}, %p {%s}, %p)\n",
-             this, enmMsg, DbgGetIOKitMessageName(enmMsg), pProvider, pProvider->getName(), pvArg));
+         this, enmMsg, DbgGetIOKitMessageName(enmMsg), pProvider, pProvider->getName(), pvArg));
 
     IOReturn irc;
     switch (enmMsg)
@@ -1837,7 +1884,7 @@ org_virtualbox_VBoxUSBInterface::message(UInt32 enmMsg, IOService *pProvider, vo
     }
 
     Log(("VBoxUSBInterface::message([%p], %#x {%s}, %p {%s}, %p) -> %#x\n",
-             this, enmMsg, DbgGetIOKitMessageName(enmMsg), pProvider, pProvider->getName(), pvArg, irc));
+         this, enmMsg, DbgGetIOKitMessageName(enmMsg), pProvider, pProvider->getName(), pvArg, irc));
     return irc;
 }
 

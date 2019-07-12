@@ -1,12 +1,10 @@
 /* $Id: QIRichTextLabel.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: QIRichTextLabel class implementation
+ * VBox Qt GUI - VirtualBox Qt extensions: QIRichTextLabel class implementation.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,12 +15,19 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QVBoxLayout>
-#include <QUrl>
+# include <QVBoxLayout>
+# include <QUrl>
 
 /* Local includes: */
-#include "QIRichTextLabel.h"
+# include "QIRichTextLabel.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 /* Constructor: */
 QIRichTextLabel::QIRichTextLabel(QWidget *pParent)

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/path.h>
 
 #include <iprt/err.h>
@@ -173,7 +174,7 @@ static void testParserAndSplitter(RTTEST hTest)
                 RTTESTI_CHECK(pSplit->cbNeeded == u.Split.cbNeeded);
                 RTTESTI_CHECK(!strcmp(pSplit->pszSuffix, u.Split.pszSuffix));
                 for (uint32_t idxComp = 0; idxComp < u.Split.cComps; idxComp++)
-                    RTTESTI_CHECK(!strcmp(pSplit->apszComps[idxComp], pSplit->apszComps[idxComp]));
+                    RTTESTI_CHECK(!strcmp(pSplit->apszComps[idxComp], u.Split.apszComps[idxComp]));
                 RTPathSplitFree(pSplit);
             }
 
@@ -444,7 +445,7 @@ int main()
         "/x",                   "",                     "/x",
         "/x",                   "/",                    "/x/",
         "/",                    "x",                    "/x",
-        "dir",                  "file",                 "dir/file",
+        "dir",                  "file",                 "dir" RTPATH_SLASH_STR "file",
         "dir",                  "/file",                "dir/file",
         "dir",                  "//file",               "dir/file",
         "dir",                  "///file",              "dir/file",
@@ -455,12 +456,12 @@ int main()
         "dir//",                "/file",                "dir/file",
         "dir//",                "//file",               "dir/file",
         "dir///",               "///file",              "dir/file",
-        "/bin/testcase",        "foo.r0",               "/bin/testcase/foo.r0",
+        "/bin/testcase",        "foo.r0",               "/bin/testcase" RTPATH_SLASH_STR "foo.r0",
 #if defined (RT_OS_OS2) || defined (RT_OS_WINDOWS)
         "/",                    "\\",                   "/",
         "\\",                   "/",                    "\\",
-        "\\\\srv\\shr",         "dir//",                "\\\\srv\\shr/dir//",
-        "\\\\srv\\shr",         "dir//file",            "\\\\srv\\shr/dir//file",
+        "\\\\srv\\shr",         "dir//",                "\\\\srv\\shr" RTPATH_SLASH_STR "dir//",
+        "\\\\srv\\shr",         "dir//file",            "\\\\srv\\shr" RTPATH_SLASH_STR "dir//file",
         "\\\\srv\\shr",         "//dir//",              "\\\\srv\\shr/dir//",
         "\\\\srv\\shr",         "/\\dir//",             "\\\\srv\\shr\\dir//",
         "\\\\",                 "not-srv/not-shr/file", "\\not-srv/not-shr/file",
@@ -469,7 +470,7 @@ int main()
         "C:",                   "\\autoexec.bat",       "C:\\autoexec.bat",
         "C:\\",                 "/autoexec.bat",        "C:\\autoexec.bat",
         "C:\\\\",               "autoexec.bat",         "C:\\autoexec.bat",
-        "E:\\bin\\testcase",    "foo.r0",               "E:\\bin\\testcase/foo.r0",
+        "E:\\bin\\testcase",    "foo.r0",               "E:\\bin\\testcase" RTPATH_SLASH_STR "foo.r0",
 #endif
     };
     for (unsigned i = 0; i < RT_ELEMENTS(s_apszAppendTests); i += 3)
@@ -597,9 +598,9 @@ int main()
         "D:\\",                 "D:\\",
         "D:\\/\\",              "D:\\",
         "D:/\\/\\",             "D:/",
-        "C:/Temp",              "D:/Temp",
-        "C:/Temp/",             "D:/Temp/",
-        "C:/Temp\\/",           "D:/Temp",
+        "C:/Temp",              "C:/Temp",
+        "C:/Temp/",             "C:/Temp",
+        "C:/Temp\\/",           "C:/Temp",
 #endif
     };
     for (unsigned i = 0; i < RT_ELEMENTS(s_apszStripTrailingSlash); i += 2)
@@ -704,9 +705,9 @@ int main()
 
 
     /*
-     * RTPathStripExt
+     * RTPathStripSuffix
      */
-    RTTestSub(hTest, "RTPathStripExt");
+    RTTestSub(hTest, "RTPathStripSuffix");
     struct
     {
         const char *pszSrc;
@@ -716,7 +717,7 @@ int main()
         { "filename.ext",               "filename" },
         { "filename.ext1.ext2.ext3",    "filename.ext1.ext2" },
         { "filename..ext",              "filename." },
-        { "filename.ext.",              "filename.ext" }, /** @todo This is a bit weird/wrong, but not half as weird as the way Windows+OS/2 deals with a trailing dots. */
+        { "filename.ext.",              "filename.ext." },
     };
     for (unsigned i = 0; i < RT_ELEMENTS(s_aStripExt); i++)
     {
@@ -724,7 +725,7 @@ int main()
         const char *pszResult   = s_aStripExt[i].pszResult;
 
         strcpy(szPath, pszInput);
-        RTPathStripExt(szPath);
+        RTPathStripSuffix(szPath);
         if (strcmp(szPath, pszResult))
             RTTestIFailed("Unexpected result\n"
                           "   input: '%s'\n"
@@ -747,8 +748,8 @@ int main()
     {
         { "/home/test.ext", "/home/test2.ext", VINF_SUCCESS, "test2.ext"},
         { "/dir/test.ext", "/dir/dir2/test2.ext", VINF_SUCCESS, "dir2/test2.ext"},
-        { "/dir/dir2/test.ext", "/dir/test2.ext", VINF_SUCCESS, "../test2.ext"},
-        { "/dir/dir2/test.ext", "/dir/dir3/test2.ext", VINF_SUCCESS, "../dir3/test2.ext"},
+        { "/dir/dir2/test.ext", "/dir/test2.ext", VINF_SUCCESS, ".." RTPATH_SLASH_STR "test2.ext"},
+        { "/dir/dir2/test.ext", "/dir/dir3/test2.ext", VINF_SUCCESS, ".." RTPATH_SLASH_STR "dir3/test2.ext"},
 #if defined (RT_OS_OS2) || defined (RT_OS_WINDOWS)
         { "\\\\server\\share\\test.ext", "\\\\server\\share2\\test2.ext", VERR_NOT_SUPPORTED, ""},
         { "c:\\dir\\test.ext", "f:\\dir\\test.ext", VERR_NOT_SUPPORTED, ""}

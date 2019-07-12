@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_EM
 #include <VBox/vmm/em.h>
 #include <VBox/vmm/vmm.h>
@@ -40,6 +41,7 @@
 #include <VBox/vmm/hm.h>
 #include "EMInternal.h"
 #include <VBox/vmm/vm.h>
+#include <VBox/vmm/gim.h>
 #include <VBox/vmm/cpumdis.h>
 #include <VBox/dis.h>
 #include <VBox/disopcode.h>
@@ -49,17 +51,17 @@
 #include <iprt/asm.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #if 0 /* Disabled till after 2.1.0 when we've time to test it. */
 #define EM_NOTIFY_HM
 #endif
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 DECLINLINE(int) emR3HmExecuteInstruction(PVM pVM, PVMCPU pVCpu, const char *pszPrefix, int rcGC = VINF_SUCCESS);
 static int      emR3HmExecuteIOInstruction(PVM pVM, PVMCPU pVCpu);
 static int      emR3HmForcedActions(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx);
@@ -80,10 +82,9 @@ static int      emR3HmForcedActions(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx);
  * @retval  VERR_EM_CANNOT_EXEC_GUEST if we cannot execute guest instructions in
  *          HM right now.
  *
- * @param   pVM                 Pointer to the cross context VM structure.
- * @param   pVCpu               Pointer to the cross context CPU structure for
- *                              the calling EMT.
- * @param   fFlags              Combinations of EM_ONE_INS_FLAGS_XXX.
+ * @param   pVM     The cross context VM structure.
+ * @param   pVCpu   The cross context virtual CPU structure for the calling EMT.
+ * @param   fFlags  Combinations of EM_ONE_INS_FLAGS_XXX.
  * @thread  EMT.
  */
 VMMR3_INT_DECL(VBOXSTRICTRC) EMR3HmSingleInstruction(PVM pVM, PVMCPU pVCpu, uint32_t fFlags)
@@ -114,9 +115,9 @@ VMMR3_INT_DECL(VBOXSTRICTRC) EMR3HmSingleInstruction(PVM pVM, PVMCPU pVCpu, uint
         /*
          * Go execute it.
          */
-        bool fOld = HMSetSingleInstruction(pVCpu, true);
+        bool fOld = HMSetSingleInstruction(pVM, pVCpu, true);
         VBOXSTRICTRC rcStrict = VMMR3HmRunGC(pVM, pVCpu);
-        HMSetSingleInstruction(pVCpu, fOld);
+        HMSetSingleInstruction(pVM, pVCpu, fOld);
         LogFlow(("EMR3HmSingleInstruction: %Rrc\n", VBOXSTRICTRC_VAL(rcStrict)));
 
         /*
@@ -158,13 +159,13 @@ VMMR3_INT_DECL(VBOXSTRICTRC) EMR3HmSingleInstruction(PVM pVM, PVMCPU pVCpu, uint
  *
  * @returns VBox status code suitable for EM.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   rcRC        Return code from RC.
  * @param   pszPrefix   Disassembly prefix. If not NULL we'll disassemble the
  *                      instruction and prefix the log output with this text.
  */
-#ifdef LOG_ENABLED
+#if defined(LOG_ENABLED) || defined(DOXYGEN_RUNNING)
 static int emR3HmExecuteInstructionWorker(PVM pVM, PVMCPU pVCpu, int rcRC, const char *pszPrefix)
 #else
 static int emR3HmExecuteInstructionWorker(PVM pVM, PVMCPU pVCpu, int rcRC)
@@ -183,7 +184,7 @@ static int emR3HmExecuteInstructionWorker(PVM pVM, PVMCPU pVCpu, int rcRC)
     Log(("EMINS: %04x:%RGv RSP=%RGv\n", pCtx->cs.Sel, (RTGCPTR)pCtx->rip, (RTGCPTR)pCtx->rsp));
     if (pszPrefix)
     {
-        DBGFR3_INFO_LOG(pVM, "cpumguest", pszPrefix);
+        DBGFR3_INFO_LOG(pVM, pVCpu, "cpumguest", pszPrefix);
         DBGFR3_DISAS_INSTR_CUR_LOG(pVCpu, pszPrefix);
     }
 #endif
@@ -192,22 +193,15 @@ static int emR3HmExecuteInstructionWorker(PVM pVM, PVMCPU pVCpu, int rcRC)
      * Use IEM and fallback on REM if the functionality is missing.
      * Once IEM gets mature enough, nothing should ever fall back.
      */
-#if defined(VBOX_WITH_FIRST_IEM_STEP) || !defined(VBOX_WITH_REM)
     STAM_PROFILE_START(&pVCpu->em.s.StatIEMEmu, a);
     rc = VBOXSTRICTRC_TODO(IEMExecOne(pVCpu));
     STAM_PROFILE_STOP(&pVCpu->em.s.StatIEMEmu, a);
 
     if (   rc == VERR_IEM_ASPECT_NOT_IMPLEMENTED
         || rc == VERR_IEM_INSTR_NOT_IMPLEMENTED)
-#endif
     {
 #ifdef VBOX_WITH_REM
         STAM_PROFILE_START(&pVCpu->em.s.StatREMEmu, b);
-# ifndef VBOX_WITH_FIRST_IEM_STEP
-        Log(("EMINS[rem]: %04x:%RGv RSP=%RGv\n", pCtx->cs.Sel, (RTGCPTR)pCtx->rip, (RTGCPTR)pCtx->rsp));
-//# elif defined(DEBUG_bird)
-//        AssertFailed();
-# endif
         EMRemLock(pVM);
         /* Flush the recompiler TLB if the VCPU has changed. */
         if (pVM->em.s.idLastRemCpu != pVCpu->idCpu)
@@ -235,8 +229,8 @@ static int emR3HmExecuteInstructionWorker(PVM pVM, PVMCPU pVCpu, int rcRC)
  * This is just a wrapper for discarding pszPrefix in non-logging builds.
  *
  * @returns VBox status code suitable for EM.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pszPrefix   Disassembly prefix. If not NULL we'll disassemble the
  *                      instruction and prefix the log output with this text.
  * @param   rcGC        GC return code
@@ -246,6 +240,7 @@ DECLINLINE(int) emR3HmExecuteInstruction(PVM pVM, PVMCPU pVCpu, const char *pszP
 #ifdef LOG_ENABLED
     return emR3HmExecuteInstructionWorker(pVM, pVCpu, rcGC, pszPrefix);
 #else
+    RT_NOREF_PV(pszPrefix);
     return emR3HmExecuteInstructionWorker(pVM, pVCpu, rcGC);
 #endif
 }
@@ -254,8 +249,8 @@ DECLINLINE(int) emR3HmExecuteInstruction(PVM pVM, PVMCPU pVCpu, const char *pszP
  * Executes one (or perhaps a few more) IO instruction(s).
  *
  * @returns VBox status code suitable for EM.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  */
 static int emR3HmExecuteIOInstruction(PVM pVM, PVMCPU pVCpu)
 {
@@ -276,7 +271,6 @@ static int emR3HmExecuteIOInstruction(PVM pVM, PVMCPU pVCpu)
     AssertMsgReturn(rcStrict == VERR_NOT_FOUND, ("%Rrc\n", VBOXSTRICTRC_VAL(rcStrict)),
                     RT_SUCCESS_NP(rcStrict) ? VERR_IPE_UNEXPECTED_INFO_STATUS : VBOXSTRICTRC_TODO(rcStrict));
 
-#ifdef VBOX_WITH_FIRST_IEM_STEP
     /*
      * Hand it over to the interpreter.
      */
@@ -285,94 +279,6 @@ static int emR3HmExecuteIOInstruction(PVM pVM, PVMCPU pVCpu)
     STAM_COUNTER_INC(&pVCpu->em.s.CTX_SUFF(pStats)->StatIoIem);
     STAM_PROFILE_STOP(&pVCpu->em.s.StatIOEmu, a);
     return VBOXSTRICTRC_TODO(rcStrict);
-
-#else
-    /** @todo probably we should fall back to the recompiler; otherwise we'll go back and forth between HC & GC
-     *   as io instructions tend to come in packages of more than one
-     */
-    DISCPUSTATE Cpu;
-    int rc2 = CPUMR3DisasmInstrCPU(pVM, pVCpu, pCtx, pCtx->rip, &Cpu, "IO EMU");
-    if (RT_SUCCESS(rc2))
-    {
-        rcStrict = VINF_EM_RAW_EMULATE_INSTR;
-
-        if (!(Cpu.fPrefix & (DISPREFIX_REP | DISPREFIX_REPNE)))
-        {
-            switch (Cpu.pCurInstr->uOpcode)
-            {
-                case OP_IN:
-                {
-                    STAM_COUNTER_INC(&pVCpu->em.s.CTX_SUFF(pStats)->StatIn);
-                    rcStrict = IOMInterpretIN(pVM, pVCpu, CPUMCTX2CORE(pCtx), &Cpu);
-                    break;
-                }
-
-                case OP_OUT:
-                {
-                    STAM_COUNTER_INC(&pVCpu->em.s.CTX_SUFF(pStats)->StatOut);
-                    rcStrict = IOMInterpretOUT(pVM, pVCpu, CPUMCTX2CORE(pCtx), &Cpu);
-                    break;
-                }
-            }
-        }
-        else if (Cpu.fPrefix & DISPREFIX_REP)
-        {
-            switch (Cpu.pCurInstr->uOpcode)
-            {
-                case OP_INSB:
-                case OP_INSWD:
-                {
-                    STAM_COUNTER_INC(&pVCpu->em.s.CTX_SUFF(pStats)->StatIn);
-                    rcStrict = IOMInterpretINS(pVM, pVCpu, CPUMCTX2CORE(pCtx), &Cpu);
-                    break;
-                }
-
-                case OP_OUTSB:
-                case OP_OUTSWD:
-                {
-                    STAM_COUNTER_INC(&pVCpu->em.s.CTX_SUFF(pStats)->StatOut);
-                    rcStrict = IOMInterpretOUTS(pVM, pVCpu, CPUMCTX2CORE(pCtx), &Cpu);
-                    break;
-                }
-            }
-        }
-
-        /*
-         * Handled the I/O return codes.
-         * (The unhandled cases end up with rcStrict == VINF_EM_RAW_EMULATE_INSTR.)
-         */
-        if (IOM_SUCCESS(rcStrict))
-        {
-            pCtx->rip += Cpu.cbInstr;
-            STAM_PROFILE_STOP(&pVCpu->em.s.StatIOEmu, a);
-            LogFlow(("emR3HmExecuteIOInstruction: %Rrc 1\n", VBOXSTRICTRC_VAL(rcStrict)));
-            return VBOXSTRICTRC_TODO(rcStrict);
-        }
-
-        if (rcStrict == VINF_EM_RAW_GUEST_TRAP)
-        {
-            /* The active trap will be dispatched. */
-            Assert(TRPMHasTrap(pVCpu));
-            STAM_PROFILE_STOP(&pVCpu->em.s.StatIOEmu, a);
-            LogFlow(("emR3HmExecuteIOInstruction: VINF_SUCCESS 2\n"));
-            return VINF_SUCCESS;
-        }
-        AssertMsg(rcStrict != VINF_TRPM_XCPT_DISPATCHED, ("Handle VINF_TRPM_XCPT_DISPATCHED\n"));
-
-        if (RT_FAILURE(rcStrict))
-        {
-            STAM_PROFILE_STOP(&pVCpu->em.s.StatIOEmu, a);
-            LogFlow(("emR3HmExecuteIOInstruction: %Rrc 3\n", VBOXSTRICTRC_VAL(rcStrict)));
-            return VBOXSTRICTRC_TODO(rcStrict);
-        }
-        AssertMsg(rcStrict == VINF_EM_RAW_EMULATE_INSTR || rcStrict == VINF_EM_RESCHEDULE_REM, ("rcStrict=%Rrc\n", VBOXSTRICTRC_VAL(rcStrict)));
-    }
-
-    STAM_PROFILE_STOP(&pVCpu->em.s.StatIOEmu, a);
-    int rc3 = emR3HmExecuteInstruction(pVM, pVCpu, "IO: ");
-    LogFlow(("emR3HmExecuteIOInstruction: %Rrc 4 (rc2=%Rrc, rc3=%Rrc)\n", VBOXSTRICTRC_VAL(rcStrict), rc2, rc3));
-    return rc3;
-#endif
 }
 
 
@@ -383,8 +289,8 @@ static int emR3HmExecuteIOInstruction(PVM pVM, PVMCPU pVCpu)
  *
  * @returns VBox status code. May return VINF_EM_NO_MEMORY but none of the other
  *          EM statuses.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pCtx        Pointer to the guest CPU context.
  */
 static int emR3HmForcedActions(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
@@ -458,8 +364,8 @@ static int emR3HmForcedActions(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
  * @returns VBox status code. The most important ones are: VINF_EM_RESCHEDULE, VINF_EM_RESCHEDULE_RAW,
  *          VINF_EM_RESCHEDULE_REM, VINF_EM_SUSPEND, VINF_EM_RESET and VINF_EM_TERMINATE.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pfFFDone    Where to store an indicator telling whether or not
  *                      FFs were done before returning.
  */

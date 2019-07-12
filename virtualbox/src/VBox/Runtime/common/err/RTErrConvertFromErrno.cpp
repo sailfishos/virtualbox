@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,12 +25,13 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/err.h>
 #include "internal/iprt.h"
 
+#include <iprt/log.h>
 #include <iprt/assert.h>
 #include <iprt/errno.h>
 
@@ -68,7 +69,7 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
         case EIO:               return VERR_DEV_IO_ERROR;
 #endif
 #ifdef ENXIO
-        case ENXIO:             return VERR_DEV_IO_ERROR; /**@todo fix this duplicate error */
+        case ENXIO:             return VERR_DEV_IO_ERROR; /** @todo fix this duplicate error */
 #endif
 #ifdef E2BIG
         case E2BIG:             return VERR_TOO_MUCH_DATA;
@@ -80,7 +81,7 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
         case EBADF:             return VERR_INVALID_HANDLE;
 #endif
 #ifdef ECHILD
-        case ECHILD:            return VERR_PROCESS_NOT_FOUND;                  /*  10 */ /**@todo fix duplicate error */
+        case ECHILD:            return VERR_PROCESS_NOT_FOUND;                  /*  10 */ /** @todo fix duplicate error */
 #endif
 #ifdef EAGAIN
         case EAGAIN:            return VERR_TRY_AGAIN;
@@ -89,7 +90,7 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
         case ENOMEM:            return VERR_NO_MEMORY;
 #endif
 #ifdef EACCES
-        case EACCES:            return VERR_ACCESS_DENIED; /**@todo fix duplicate error */
+        case EACCES:            return VERR_ACCESS_DENIED; /** @todo fix duplicate error */
 #endif
 #ifdef EFAULT
         case EFAULT:            return VERR_INVALID_POINTER;
@@ -107,7 +108,7 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
         case EXDEV:             return VERR_NOT_SAME_DEVICE;
 #endif
 #ifdef ENODEV
-        case ENODEV:            return VERR_NOT_SUPPORTED; /**@todo fix duplicate error */
+        case ENODEV:            return VERR_NOT_SUPPORTED; /** @todo fix duplicate error */
 #endif
 #ifdef ENOTDIR
         case ENOTDIR:           return VERR_PATH_NOT_FOUND;                     /*  20 */
@@ -119,7 +120,7 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
         case EINVAL:            return VERR_INVALID_PARAMETER;
 #endif
 #ifdef ENFILE
-        case ENFILE:            return VERR_TOO_MANY_OPEN_FILES; /**@Todo fix duplicate error */
+        case ENFILE:            return VERR_TOO_MANY_OPEN_FILES; /** @todo fix duplicate error */
 #endif
 #ifdef EMFILE
         case EMFILE:            return VERR_TOO_MANY_OPEN_FILES;
@@ -149,10 +150,10 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
         case EPIPE:             return VERR_BROKEN_PIPE;
 #endif
 #ifdef EDOM
-        case EDOM:              return VERR_INVALID_PARAMETER;  /**@todo fix duplicate error */
+        case EDOM:              return VERR_INVALID_PARAMETER;  /** @todo fix duplicate error */
 #endif
 #ifdef ERANGE
-        case ERANGE:            return VERR_INVALID_PARAMETER;  /**@todo fix duplicate error */
+        case ERANGE:            return VERR_INVALID_PARAMETER;  /** @todo fix duplicate error */
 #endif
 #ifdef EDEADLK
         case EDEADLK:           return VERR_DEADLOCK;
@@ -271,13 +272,13 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
         //case EBADMSG          74      /* Not a data message */
 #endif
 #ifdef EOVERFLOW
-        case EOVERFLOW:         return VERR_TOO_MUCH_DATA;   /**@todo fix duplicate error */
+        case EOVERFLOW:         return VERR_TOO_MUCH_DATA;   /** @todo fix duplicate error */
 #endif
 #ifdef ENOTUNIQ
         case ENOTUNIQ:          return VERR_NET_NOT_UNIQUE_NAME;
 #endif
 #ifdef EBADFD
-        case EBADFD:            return VERR_INVALID_HANDLE; /**@todo fix duplicate error? */
+        case EBADFD:            return VERR_INVALID_HANDLE; /** @todo fix duplicate error? */
 #endif
 #ifdef EREMCHG
         //case EREMCHG          78      /* Remote address changed */
@@ -301,7 +302,7 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
         case EILSEQ:            return VERR_NO_TRANSLATION;
 #endif
 #ifdef ERESTART
-        case ERESTART:          return VERR_INTERRUPTED;/**@todo fix duplicate error?*/
+        case ERESTART:          return VERR_INTERRUPTED;/** @todo fix duplicate error?*/
 #endif
 #ifdef ESTRPIPE
         //case ESTRPIPE 86      /* Streams pipe error */
@@ -412,7 +413,7 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
         //case EREMOTEIO        121     /* Remote I/O error */
 #endif
 #ifdef EDQUOT
-        case EDQUOT:            return VERR_DISK_FULL; /**@todo fix duplicate error */
+        case EDQUOT:            return VERR_DISK_FULL; /** @todo fix duplicate error */
 #endif
 #ifdef ENOMEDIUM
         case ENOMEDIUM:         return VERR_MEDIA_NOT_PRESENT;
@@ -444,7 +445,7 @@ RTDECL(int)  RTErrConvertFromErrno(unsigned uNativeCode)
 # endif
 #endif
         default:
-            AssertMsgFailed(("Unhandled error code %d\n", uNativeCode));
+            AssertLogRelMsgFailed(("Unhandled error code %d\n", uNativeCode));
             return VERR_UNRESOLVED_ERROR;
     }
 }

@@ -1,9 +1,10 @@
+/* $Id: VBoxSeamless.h $ */
 /** @file
  * VBoxSeamless - Seamless windows
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,16 +18,11 @@
 #ifndef __VBOXSERVICESEAMLESS__H
 #define __VBOXSERVICESEAMLESS__H
 
-/* The seamless windows service prototypes */
-int                VBoxSeamlessInit     (const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread);
-unsigned __stdcall VBoxSeamlessThread   (void *pInstance);
-void               VBoxSeamlessDestroy  (const VBOXSERVICEENV *pEnv, void *pInstance);
-
-
 void VBoxSeamlessEnable();
 void VBoxSeamlessDisable();
 void VBoxSeamlessCheckWindows(bool fForce);
 
 void VBoxSeamlessSetSupported(BOOL fSupported);
 
-#endif /* __VBOXSERVICESEAMLESS__H */
+#endif /* !__VBOXSERVICESEAMLESS__H */
+

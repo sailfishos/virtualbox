@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/asm.h>
 #include <iprt/asm-amd64-x86.h>
 #include <iprt/buildconfig.h>
@@ -39,10 +39,12 @@
 #include <VBox/vmm/cpum.h>
 #include <VBox/sup.h>
 
+#include "VBoxCpuReport.h"
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Write only register. */
 #define VBCPUREPMSR_F_WRITE_ONLY      RT_BIT(0)
 
@@ -57,9 +59,9 @@ typedef struct VBCPUREPMSR
 } VBCPUREPMSR;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The CPU vendor.  Used by the MSR code. */
 static CPUMCPUVENDOR    g_enmVendor = CPUMCPUVENDOR_INVALID;
 /** The CPU microarchitecture.  Used by the MSR code. */
@@ -70,12 +72,18 @@ static bool             g_fIntelNetBurst = false;
 static PRTSTREAM        g_pReportOut;
 /** The alternative debug stream. */
 static PRTSTREAM        g_pDebugOut;
+/** Whether to skip MSR collection.   */
+static bool             g_fNoMsrs = false;
 
 /** Snooping info storage for vbCpuRepGuessScalableBusFrequencyName. */
 static uint64_t         g_uMsrIntelP6FsbFrequency = UINT64_MAX;
 
+/** The MSR accessors interface. */
+static VBCPUREPMSRACCESSORS g_MsrAcc;
 
-static void vbCpuRepDebug(const char *pszMsg, ...)
+
+
+void vbCpuRepDebug(const char *pszMsg, ...)
 {
     va_list va;
 
@@ -99,7 +107,7 @@ static void vbCpuRepDebug(const char *pszMsg, ...)
 }
 
 
-static void vbCpuRepPrintf(const char *pszMsg, ...)
+void vbCpuRepPrintf(const char *pszMsg, ...)
 {
     va_list va;
 
@@ -162,16 +170,19 @@ static int vbCpuRepMsrsAddOne(VBCPUREPMSR **ppaMsrs, uint32_t *pcMsrs,
 static uint8_t vbCpuRepGetPhysAddrWidth(void)
 {
     uint8_t  cMaxWidth;
-    uint32_t cMaxExt = ASMCpuId_EAX(0x80000000);
     if (!ASMHasCpuId())
         cMaxWidth = 32;
-    else if (ASMIsValidExtRange(cMaxExt)&& cMaxExt >= 0x80000008)
-        cMaxWidth = ASMCpuId_EAX(0x80000008) & 0xff;
-    else if (   ASMIsValidStdRange(ASMCpuId_EAX(0))
-             && (ASMCpuId_EDX(1) & X86_CPUID_FEATURE_EDX_PSE36))
-        cMaxWidth = 36;
     else
-        cMaxWidth = 32;
+    {
+        uint32_t cMaxExt = ASMCpuId_EAX(0x80000000);
+        if (ASMIsValidExtRange(cMaxExt)&& cMaxExt >= 0x80000008)
+            cMaxWidth = ASMCpuId_EAX(0x80000008) & 0xff;
+        else if (   ASMIsValidStdRange(ASMCpuId_EAX(0))
+                 && (ASMCpuId_EDX(1) & X86_CPUID_FEATURE_EDX_PSE36))
+            cMaxWidth = 36;
+        else
+            cMaxWidth = 32;
+    }
     return cMaxWidth;
 }
 
@@ -209,20 +220,22 @@ static bool vbCpuRepSupportsX2Apic(void)
 
 
 
+#if 0 /* unused */
 static bool msrProberWrite(uint32_t uMsr, uint64_t uValue)
 {
     bool fGp;
-    int rc = SUPR3MsrProberWrite(uMsr, NIL_RTCPUID, uValue, &fGp);
+    int rc = g_MsrAcc.pfnMsrWrite(uMsr, NIL_RTCPUID, uValue, &fGp);
     AssertRC(rc);
     return RT_SUCCESS(rc) && !fGp;
 }
+#endif
 
 
 static bool msrProberRead(uint32_t uMsr, uint64_t *puValue)
 {
     *puValue = 0;
     bool fGp;
-    int rc = SUPR3MsrProberRead(uMsr, NIL_RTCPUID, puValue, &fGp);
+    int rc = g_MsrAcc.pfnMsrProberRead(uMsr, NIL_RTCPUID, puValue, &fGp);
     AssertRC(rc);
     return RT_SUCCESS(rc) && !fGp;
 }
@@ -232,7 +245,7 @@ static bool msrProberRead(uint32_t uMsr, uint64_t *puValue)
 static bool msrProberModifyNoChange(uint32_t uMsr)
 {
     SUPMSRPROBERMODIFYRESULT Result;
-    int rc = SUPR3MsrProberModify(uMsr, NIL_RTCPUID, UINT64_MAX, 0, &Result);
+    int rc = g_MsrAcc.pfnMsrProberModify(uMsr, NIL_RTCPUID, UINT64_MAX, 0, &Result);
     return RT_SUCCESS(rc)
         && !Result.fBeforeGp
         && !Result.fModifyGp
@@ -245,7 +258,7 @@ static bool msrProberModifyNoChange(uint32_t uMsr)
 static bool msrProberModifyZero(uint32_t uMsr)
 {
     SUPMSRPROBERMODIFYRESULT Result;
-    int rc = SUPR3MsrProberModify(uMsr, NIL_RTCPUID, 0, 0, &Result);
+    int rc = g_MsrAcc.pfnMsrProberModify(uMsr, NIL_RTCPUID, 0, 0, &Result);
     return RT_SUCCESS(rc)
         && !Result.fBeforeGp
         && !Result.fModifyGp
@@ -273,15 +286,15 @@ static int msrProberModifyBitChanges(uint32_t uMsr, uint64_t *pfIgnMask, uint64_
 
         /* Set it. */
         SUPMSRPROBERMODIFYRESULT ResultSet;
-        int rc = SUPR3MsrProberModify(uMsr, NIL_RTCPUID, ~fBitMask, fBitMask, &ResultSet);
+        int rc = g_MsrAcc.pfnMsrProberModify(uMsr, NIL_RTCPUID, ~fBitMask, fBitMask, &ResultSet);
         if (RT_FAILURE(rc))
-            return RTMsgErrorRc(rc, "SUPR3MsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, ~fBitMask, fBitMask, rc);
+            return RTMsgErrorRc(rc, "pfnMsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, ~fBitMask, fBitMask, rc);
 
         /* Clear it. */
         SUPMSRPROBERMODIFYRESULT ResultClear;
-        rc = SUPR3MsrProberModify(uMsr, NIL_RTCPUID, ~fBitMask, 0, &ResultClear);
+        rc = g_MsrAcc.pfnMsrProberModify(uMsr, NIL_RTCPUID, ~fBitMask, 0, &ResultClear);
         if (RT_FAILURE(rc))
-            return RTMsgErrorRc(rc, "SUPR3MsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, ~fBitMask, 0, rc);
+            return RTMsgErrorRc(rc, "pfnMsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, ~fBitMask, 0, rc);
 
         if (ResultSet.fModifyGp || ResultClear.fModifyGp)
             *pfGpMask |= fBitMask;
@@ -298,6 +311,7 @@ static int msrProberModifyBitChanges(uint32_t uMsr, uint64_t *pfIgnMask, uint64_
 }
 
 
+#if 0 /* currently unused */
 /**
  * Tries to modify one bit.
  *
@@ -315,15 +329,15 @@ static int msrProberModifyBit(uint32_t uMsr, unsigned iBit)
 
     /* Set it. */
     SUPMSRPROBERMODIFYRESULT ResultSet;
-    int rc = SUPR3MsrProberModify(uMsr, NIL_RTCPUID, ~fBitMask, fBitMask, &ResultSet);
+    int rc = g_MsrAcc.pfnMsrProberModify(uMsr, NIL_RTCPUID, ~fBitMask, fBitMask, &ResultSet);
     if (RT_FAILURE(rc))
-        return RTMsgErrorRc(-2, "SUPR3MsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, ~fBitMask, fBitMask, rc);
+        return RTMsgErrorRc(-2, "pfnMsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, ~fBitMask, fBitMask, rc);
 
     /* Clear it. */
     SUPMSRPROBERMODIFYRESULT ResultClear;
-    rc = SUPR3MsrProberModify(uMsr, NIL_RTCPUID, ~fBitMask, 0, &ResultClear);
+    rc = g_MsrAcc.pfnMsrProberModify(uMsr, NIL_RTCPUID, ~fBitMask, 0, &ResultClear);
     if (RT_FAILURE(rc))
-        return RTMsgErrorRc(-2, "SUPR3MsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, ~fBitMask, 0, rc);
+        return RTMsgErrorRc(-2, "pfnMsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, ~fBitMask, 0, rc);
 
     if (ResultSet.fModifyGp || ResultClear.fModifyGp)
         return -1;
@@ -338,6 +352,7 @@ static int msrProberModifyBit(uint32_t uMsr, unsigned iBit)
 
     return 0;
 }
+#endif
 
 
 /**
@@ -353,10 +368,10 @@ static int msrProberModifyBit(uint32_t uMsr, unsigned iBit)
 static bool msrProberModifySimpleGp(uint32_t uMsr, uint64_t fAndMask, uint64_t fOrMask)
 {
     SUPMSRPROBERMODIFYRESULT Result;
-    int rc = SUPR3MsrProberModify(uMsr, NIL_RTCPUID, fAndMask, fOrMask, &Result);
+    int rc = g_MsrAcc.pfnMsrProberModify(uMsr, NIL_RTCPUID, fAndMask, fOrMask, &Result);
     if (RT_FAILURE(rc))
     {
-        RTMsgError("SUPR3MsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, fAndMask, fOrMask, rc);
+        RTMsgError("g_MsrAcc.pfnMsrProberModify(%#x,,%#llx,%#llx,): %Rrc", uMsr, fAndMask, fOrMask, rc);
         return false;
     }
     return !Result.fBeforeGp
@@ -507,26 +522,33 @@ static int findMsrs(VBCPUREPMSR **ppaMsrs, uint32_t *pcMsrs, uint32_t fMsrMask)
             }
 #endif
             /* Skip 0xc0011012..13 as it seems to be bad for our health (Phenom II X6 1100T). */
-            if ((uMsr >= 0xc0011012 && uMsr <= 0xc0011013) && g_enmVendor == CPUMCPUVENDOR_AMD)
+            /* Ditto for 0x0000002a (EBL_CR_POWERON) and 0x00000277 (MSR_IA32_CR_PAT) on Intel (Atom 330). */
+            /* And more of the same for 0x280 on Intel Pentium III. */
+            if (   ((uMsr >= 0xc0011012 && uMsr <= 0xc0011013) && g_enmVendor == CPUMCPUVENDOR_AMD)
+                || (   (uMsr == 0x2a || uMsr == 0x277)
+                    && g_enmVendor == CPUMCPUVENDOR_INTEL
+                    && g_enmMicroarch == kCpumMicroarch_Intel_Atom_Bonnell)
+                || (   (uMsr == 0x280)
+                    && g_enmMicroarch == kCpumMicroarch_Intel_P6_III))
                 vbCpuRepDebug("Skipping %#x\n", uMsr);
             else
             {
                 /* Read probing normally does it. */
                 uint64_t uValue = 0;
                 bool     fGp    = true;
-                int rc = SUPR3MsrProberRead(uMsr, NIL_RTCPUID, &uValue, &fGp);
+                int rc = g_MsrAcc.pfnMsrProberRead(uMsr, NIL_RTCPUID, &uValue, &fGp);
                 if (RT_FAILURE(rc))
                 {
                     RTMemFree(*ppaMsrs);
                     *ppaMsrs = NULL;
-                    return RTMsgErrorRc(rc, "SUPR3MsrProberRead failed on %#x: %Rrc\n", uMsr, rc);
+                    return RTMsgErrorRc(rc, "pfnMsrProberRead failed on %#x: %Rrc\n", uMsr, rc);
                 }
 
                 uint32_t fFlags;
                 if (!fGp)
                     fFlags = 0;
-                /* VIA HACK - writing to 0x0000317e on a quad core make the core unresponsive. */
-                else if (uMsr == 0x0000317e && g_enmVendor == CPUMCPUVENDOR_VIA)
+                /* VIA/Shanghai HACK - writing to 0x0000317e on a quad core make the core unresponsive. */
+                else if (uMsr == 0x0000317e && (g_enmVendor == CPUMCPUVENDOR_VIA || g_enmVendor == CPUMCPUVENDOR_SHANGHAI))
                 {
                     uValue = 0;
                     fFlags = VBCPUREPMSR_F_WRITE_ONLY;
@@ -545,12 +567,12 @@ static int findMsrs(VBCPUREPMSR **ppaMsrs, uint32_t *pcMsrs, uint32_t fMsrMask)
                     }
 #endif
                     fGp = true;
-                    rc = SUPR3MsrProberWrite(uMsr, NIL_RTCPUID, 0, &fGp);
+                    rc = g_MsrAcc.pfnMsrProberWrite(uMsr, NIL_RTCPUID, 0, &fGp);
                     if (RT_FAILURE(rc))
                     {
                         RTMemFree(*ppaMsrs);
                         *ppaMsrs = NULL;
-                        return RTMsgErrorRc(rc, "SUPR3MsrProberWrite failed on %#x: %Rrc\n", uMsr, rc);
+                        return RTMsgErrorRc(rc, "pfnMsrProberWrite failed on %#x: %Rrc\n", uMsr, rc);
                     }
                     uValue = 0;
                     fFlags = VBCPUREPMSR_F_WRITE_ONLY;
@@ -578,7 +600,7 @@ static int findMsrs(VBCPUREPMSR **ppaMsrs, uint32_t *pcMsrs, uint32_t fMsrMask)
                     rc = vbCpuRepMsrsAddOne(ppaMsrs, pcMsrs, uMsr, uValue, fFlags);
                     if (RT_FAILURE(rc))
                         return RTMsgErrorRc(rc, "Out of memory (uMsr=%#x).\n", uMsr);
-                    if (   g_enmVendor != CPUMCPUVENDOR_VIA
+                    if (   (g_enmVendor != CPUMCPUVENDOR_VIA && g_enmVendor != CPUMCPUVENDOR_SHANGHAI)
                         || uValue
                         || fFlags)
                         vbCpuRepDebug("%#010x: uValue=%#llx fFlags=%#x\n", uMsr, uValue, fFlags);
@@ -625,7 +647,9 @@ static const char *getMsrNameHandled(uint32_t uMsr)
         case 0x0000002f: return "P6_UNK_0000_002f"; /* P6_M_Dothan. */
         case 0x00000032: return "P6_UNK_0000_0032"; /* P6_M_Dothan. */
         case 0x00000033: return "TEST_CTL";
-        case 0x00000034: return "P6_UNK_0000_0034"; /* P6_M_Dothan. */
+        case 0x00000034: return CPUMMICROARCH_IS_INTEL_CORE7(g_enmMicroarch)
+                             || CPUMMICROARCH_IS_INTEL_SILVERMONT_PLUS(g_enmMicroarch)
+                              ? "MSR_SMI_COUNT" : "P6_UNK_0000_0034"; /* P6_M_Dothan. */
         case 0x00000035: return CPUMMICROARCH_IS_INTEL_CORE7(g_enmMicroarch) ? "MSR_CORE_THREAD_COUNT" : "P6_UNK_0000_0035"; /* P6_M_Dothan. */
         case 0x00000036: return "I7_UNK_0000_0036"; /* SandyBridge, IvyBridge. */
         case 0x00000039: return "C2_UNK_0000_0039"; /* Core2_Penryn */
@@ -719,6 +743,7 @@ static const char *getMsrNameHandled(uint32_t uMsr)
         case 0x0000011b: return "P6_UNK_0000_011b"; /* P6_M_Dothan. */
         case 0x0000011c: return "C2_UNK_0000_011c"; /* Core2_Penryn. */
         case 0x0000011e: return "BBL_CR_CTL3";
+        case 0x00000120: return "SILV_UNK_0000_0120"; /* Silvermont */
         case 0x00000130: return g_enmMicroarch == kCpumMicroarch_Intel_Core7_Westmere
                              || g_enmMicroarch == kCpumMicroarch_Intel_Core7_Nehalem
                               ? "CPUID1_FEATURE_MASK" : NULL;
@@ -1031,6 +1056,7 @@ static const char *getMsrNameHandled(uint32_t uMsr)
         case 0x0000048e: return "IA32_VMX_TRUE_PROCBASED_CTLS";
         case 0x0000048f: return "IA32_VMX_TRUE_EXIT_CTLS";
         case 0x00000490: return "IA32_VMX_TRUE_ENTRY_CTLS";
+        case 0x00000491: return "IA32_VMX_VMFUNC";
         case 0x000004c1: return "IA32_A_PMC0";
         case 0x000004c2: return "IA32_A_PMC1";
         case 0x000004c3: return "IA32_A_PMC2";
@@ -1083,6 +1109,31 @@ static const char *getMsrNameHandled(uint32_t uMsr)
         case 0x0000064a: return "I7_IB_MSR_CONFIG_TDP_LEVEL2";
         case 0x0000064b: return "I7_IB_MSR_CONFIG_TDP_CONTROL";
         case 0x0000064c: return "I7_IB_MSR_TURBO_ACTIVATION_RATIO";
+        case 0x00000660: return "SILV_CORE_C1_RESIDENCY";
+        case 0x00000661: return "SILV_UNK_0000_0661";
+        case 0x00000662: return "SILV_UNK_0000_0662";
+        case 0x00000663: return "SILV_UNK_0000_0663";
+        case 0x00000664: return "SILV_UNK_0000_0664";
+        case 0x00000665: return "SILV_UNK_0000_0665";
+        case 0x00000666: return "SILV_UNK_0000_0666";
+        case 0x00000667: return "SILV_UNK_0000_0667";
+        case 0x00000668: return "SILV_UNK_0000_0668";
+        case 0x00000669: return "SILV_UNK_0000_0669";
+        case 0x0000066a: return "SILV_UNK_0000_066a";
+        case 0x0000066b: return "SILV_UNK_0000_066b";
+        case 0x0000066c: return "SILV_UNK_0000_066c";
+        case 0x0000066d: return "SILV_UNK_0000_066d";
+        case 0x0000066e: return "SILV_UNK_0000_066e";
+        case 0x0000066f: return "SILV_UNK_0000_066f";
+        case 0x00000670: return "SILV_UNK_0000_0670";
+        case 0x00000671: return "SILV_UNK_0000_0671";
+        case 0x00000672: return "SILV_UNK_0000_0672";
+        case 0x00000673: return "SILV_UNK_0000_0673";
+        case 0x00000674: return "SILV_UNK_0000_0674";
+        case 0x00000675: return "SILV_UNK_0000_0675";
+        case 0x00000676: return "SILV_UNK_0000_0676";
+        case 0x00000677: return "SILV_UNK_0000_0677";
+
         case 0x00000680: return "MSR_LASTBRANCH_0_FROM_IP";
         case 0x00000681: return "MSR_LASTBRANCH_1_FROM_IP";
         case 0x00000682: return "MSR_LASTBRANCH_2_FROM_IP";
@@ -1116,6 +1167,14 @@ static const char *getMsrNameHandled(uint32_t uMsr)
         case 0x000006ce: return "MSR_LASTBRANCH_14_TO_IP";
         case 0x000006cf: return "MSR_LASTBRANCH_15_TO_IP";
         case 0x000006e0: return "IA32_TSC_DEADLINE";
+
+        case 0x00000768: return "SILV_UNK_0000_0768";
+        case 0x00000769: return "SILV_UNK_0000_0769";
+        case 0x0000076a: return "SILV_UNK_0000_076a";
+        case 0x0000076b: return "SILV_UNK_0000_076b";
+        case 0x0000076c: return "SILV_UNK_0000_076c";
+        case 0x0000076d: return "SILV_UNK_0000_076d";
+        case 0x0000076e: return "SILV_UNK_0000_076e";
 
         case 0x00000c80: return g_enmMicroarch >= kCpumMicroarch_Intel_Core7_IvyBridge ? "IA32_DEBUG_INTERFACE" : NULL; /* Mentioned in an intel dataskit called 4th-gen-core-family-desktop-vol-1-datasheet.pdf. */
         case 0x00000c81: return g_enmMicroarch >= kCpumMicroarch_Intel_Core7_IvyBridge ? "I7_IB_UNK_0000_0c81"  : NULL; /* Probably related to IA32_DEBUG_INTERFACE... */
@@ -1870,6 +1929,9 @@ static const char *getMsrFnName(uint32_t uMsr, bool *pfTakesValue)
         case 0x0000002b: *pfTakesValue = true; return g_fIntelNetBurst ? "IntelP4EbcSoftPowerOn" : NULL;
         case 0x0000002c: *pfTakesValue = true; return g_fIntelNetBurst ? "IntelP4EbcFrequencyId" : NULL;
         //case 0x00000033: return "IntelTestCtl";
+        case 0x00000034: return CPUMMICROARCH_IS_INTEL_CORE7(g_enmMicroarch)
+                             || CPUMMICROARCH_IS_INTEL_SILVERMONT_PLUS(g_enmMicroarch)
+                              ? "IntelI7SmiCount" : NULL;
         case 0x00000035: return CPUMMICROARCH_IS_INTEL_CORE7(g_enmMicroarch) ? "IntelI7CoreThreadCount" : NULL;
         case 0x0000003a: return "Ia32FeatureControl";
 
@@ -2059,6 +2121,7 @@ static const char *getMsrFnName(uint32_t uMsr, bool *pfTakesValue)
         case 0x0000048e: *pfTakesValue = true; return "Ia32VmxTrueProcbasedCtls";
         case 0x0000048f: *pfTakesValue = true; return "Ia32VmxTrueExitCtls";
         case 0x00000490: *pfTakesValue = true; return "Ia32VmxTrueEntryCtls";
+        case 0x00000491: *pfTakesValue = true; return "Ia32VmxVmFunc";
 
         case 0x000004c1:
         case 0x000004c2:
@@ -2073,34 +2136,36 @@ static const char *getMsrFnName(uint32_t uMsr, bool *pfTakesValue)
         case 0x000005a0: return "IntelCore2PeciControl"; /* Core2_Penryn. */
 
         case 0x00000600: return "Ia32DsArea";
-        case 0x00000601: return "IntelI7SandyVrCurrentConfig";
-        case 0x00000603: return "IntelI7SandyVrMiscConfig";
-        case 0x00000606: return "IntelI7SandyRaplPowerUnit";
-        case 0x0000060a: return "IntelI7SandyPkgCnIrtlN";
-        case 0x0000060b: return "IntelI7SandyPkgCnIrtlN";
-        case 0x0000060c: return "IntelI7SandyPkgCnIrtlN";
-        case 0x0000060d: return "IntelI7SandyPkgC2Residency";
+        case 0x00000601: *pfTakesValue = true; return "IntelI7SandyVrCurrentConfig";
+        case 0x00000603: *pfTakesValue = true; return "IntelI7SandyVrMiscConfig";
+        case 0x00000606: *pfTakesValue = true; return "IntelI7SandyRaplPowerUnit";
+        case 0x0000060a: *pfTakesValue = true; return "IntelI7SandyPkgCnIrtlN";
+        case 0x0000060b: *pfTakesValue = true; return "IntelI7SandyPkgCnIrtlN";
+        case 0x0000060c: *pfTakesValue = true; return "IntelI7SandyPkgCnIrtlN";
+        case 0x0000060d: *pfTakesValue = true; return "IntelI7SandyPkgC2Residency";
 
-        case 0x00000610: return "IntelI7RaplPkgPowerLimit";
-        case 0x00000611: return "IntelI7RaplPkgEnergyStatus";
-        case 0x00000613: return "IntelI7RaplPkgPerfStatus";
-        case 0x00000614: return "IntelI7RaplPkgPowerInfo";
-        case 0x00000618: return "IntelI7RaplDramPowerLimit";
-        case 0x00000619: return "IntelI7RaplDramEnergyStatus";
-        case 0x0000061b: return "IntelI7RaplDramPerfStatus";
-        case 0x0000061c: return "IntelI7RaplDramPowerInfo";
-        case 0x00000638: return "IntelI7RaplPp0PowerLimit";
-        case 0x00000639: return "IntelI7RaplPp0EnergyStatus";
-        case 0x0000063a: return "IntelI7RaplPp0Policy";
-        case 0x0000063b: return "IntelI7RaplPp0PerfStatus";
-        case 0x00000640: return "IntelI7RaplPp1PowerLimit";
-        case 0x00000641: return "IntelI7RaplPp1EnergyStatus";
-        case 0x00000642: return "IntelI7RaplPp1Policy";
-        case 0x00000648: return "IntelI7IvyConfigTdpNominal";
-        case 0x00000649: return "IntelI7IvyConfigTdpLevel1";
-        case 0x0000064a: return "IntelI7IvyConfigTdpLevel2";
+        case 0x00000610: *pfTakesValue = true; return "IntelI7RaplPkgPowerLimit";
+        case 0x00000611: *pfTakesValue = true; return "IntelI7RaplPkgEnergyStatus";
+        case 0x00000613: *pfTakesValue = true; return "IntelI7RaplPkgPerfStatus";
+        case 0x00000614: *pfTakesValue = true; return "IntelI7RaplPkgPowerInfo";
+        case 0x00000618: *pfTakesValue = true; return "IntelI7RaplDramPowerLimit";
+        case 0x00000619: *pfTakesValue = true; return "IntelI7RaplDramEnergyStatus";
+        case 0x0000061b: *pfTakesValue = true; return "IntelI7RaplDramPerfStatus";
+        case 0x0000061c: *pfTakesValue = true; return "IntelI7RaplDramPowerInfo";
+        case 0x00000638: *pfTakesValue = true; return "IntelI7RaplPp0PowerLimit";
+        case 0x00000639: *pfTakesValue = true; return "IntelI7RaplPp0EnergyStatus";
+        case 0x0000063a: *pfTakesValue = true; return "IntelI7RaplPp0Policy";
+        case 0x0000063b: *pfTakesValue = true; return "IntelI7RaplPp0PerfStatus";
+        case 0x00000640: *pfTakesValue = true; return "IntelI7RaplPp1PowerLimit";
+        case 0x00000641: *pfTakesValue = true; return "IntelI7RaplPp1EnergyStatus";
+        case 0x00000642: *pfTakesValue = true; return "IntelI7RaplPp1Policy";
+        case 0x00000648: *pfTakesValue = true; return "IntelI7IvyConfigTdpNominal";
+        case 0x00000649: *pfTakesValue = true; return "IntelI7IvyConfigTdpLevel1";
+        case 0x0000064a: *pfTakesValue = true; return "IntelI7IvyConfigTdpLevel2";
         case 0x0000064b: return "IntelI7IvyConfigTdpControl";
         case 0x0000064c: return "IntelI7IvyTurboActivationRatio";
+
+        case 0x00000660: return "IntelAtSilvCoreC1Recidency";
 
         case 0x00000680: case 0x00000681: case 0x00000682: case 0x00000683:
         case 0x00000684: case 0x00000685: case 0x00000686: case 0x00000687:
@@ -2449,7 +2514,7 @@ static VBCPUREPBADNESS queryMsrWriteBadness(uint32_t uMsr)
         case 0x00001436:
         case 0x00001438:
         case 0x0000317f:
-            if (g_enmVendor == CPUMCPUVENDOR_VIA)
+            if (g_enmVendor == CPUMCPUVENDOR_VIA || g_enmVendor == CPUMCPUVENDOR_SHANGHAI)
                 return VBCPUREPBADNESS_BOND_VILLAIN;
             break;
 
@@ -2480,9 +2545,48 @@ static VBCPUREPBADNESS queryMsrWriteBadness(uint32_t uMsr)
                 return VBCPUREPBADNESS_MIGHT_BITE;
             break;
 
+        /* KVM MSRs that are unsafe to touch. */
+        case 0x00000011: /* KVM */
+        case 0x00000012: /* KVM */
+            return VBCPUREPBADNESS_BOND_VILLAIN;
+
+        /*
+         * The TSC is tricky -- writing it isn't a problem, but if we put back the original
+         * value, we'll throw it out of whack. If we're on an SMP OS that uses the TSC for timing,
+         * we'll likely kill it, especially if we can't do the modification very quickly.
+         */
+        case 0x00000010: /* IA32_TIME_STAMP_COUNTER */
+            if (!g_MsrAcc.fAtomic)
+                return VBCPUREPBADNESS_BOND_VILLAIN;
+            break;
+
+        /*
+         * The following MSRs are not safe to modify in a typical OS if we can't do it atomically,
+         * i.e. read/modify/restore without allowing any other code to execute. Everything related
+         * to syscalls will blow up in our face if we go back to userland with modified MSRs.
+         */
+//        case 0x0000001b: /* IA32_APIC_BASE */
+        case 0xc0000081: /* MSR_K6_STAR */
+        case 0xc0000082: /* AMD64_STAR64 */
+        case 0xc0000083: /* AMD64_STARCOMPAT */
+        case 0xc0000084: /* AMD64_SYSCALL_FLAG_MASK */
+        case 0xc0000100: /* AMD64_FS_BASE */
+        case 0xc0000101: /* AMD64_GS_BASE */
+        case 0xc0000102: /* AMD64_KERNEL_GS_BASE */
+            if (!g_MsrAcc.fAtomic)
+                return VBCPUREPBADNESS_MIGHT_BITE;
+            break;
+
         case 0x000001a0: /* IA32_MISC_ENABLE */
         case 0x00000199: /* IA32_PERF_CTL */
             return VBCPUREPBADNESS_MIGHT_BITE;
+
+        case 0x000005a0: /* C2_PECI_CTL */
+        case 0x000005a1: /* C2_UNK_0000_05a1 */
+            if (g_enmVendor == CPUMCPUVENDOR_INTEL)
+                return VBCPUREPBADNESS_MIGHT_BITE;
+            break;
+
         case 0x00002000: /* P6_CR0. */
         case 0x00002003: /* P6_CR3. */
         case 0x00002004: /* P6_CR4. */
@@ -2497,16 +2601,16 @@ static VBCPUREPBADNESS queryMsrWriteBadness(uint32_t uMsr)
 
 
 /**
- * Checks if this might be a VIA dummy register.
+ * Checks if this might be a VIA/Shanghai dummy register.
  *
  * @returns true if it's a dummy, false if it isn't.
  * @param   uMsr                The MSR.
  * @param   uValue              The value.
  * @param   fFlags              The flags.
  */
-static bool isMsrViaDummy(uint32_t uMsr, uint64_t uValue, uint32_t fFlags)
+static bool isMsrViaShanghaiDummy(uint32_t uMsr, uint64_t uValue, uint32_t fFlags)
 {
-    if (g_enmVendor != CPUMCPUVENDOR_VIA)
+    if (g_enmVendor != CPUMCPUVENDOR_VIA && g_enmVendor != CPUMCPUVENDOR_SHANGHAI)
         return false;
 
     if (uValue)
@@ -2567,6 +2671,7 @@ static bool isMsrViaDummy(uint32_t uMsr, uint64_t uValue, uint32_t fFlags)
  */
 static void adjustCanonicalIgnAndGpMasks(uint32_t uMsr, uint64_t *pfIgn, uint64_t *pfGp)
 {
+    RT_NOREF1(pfIgn);
     if (!vbCpuRepSupportsLongMode())
         return;
     switch (uMsr)
@@ -3107,7 +3212,7 @@ static int reportMsr_GenRangeFunctionEx(VBCPUREPMSR const *paMsrs, uint32_t cMsr
             || (fIgnMaskN != fIgnMask0 && !fNoIgnMask)
             || fGpMaskN   != fGpMask0)
         {
-            if (!fEarlyEndOk && !isMsrViaDummy(uMsr, paMsrs[i].uValue, paMsrs[i].fFlags))
+            if (!fEarlyEndOk && !isMsrViaShanghaiDummy(uMsr, paMsrs[i].uValue, paMsrs[i].fFlags))
             {
                 vbCpuRepDebug("MSR %s (%#x) range ended unexpectedly early on %#x: ro=%d ign=%#llx/%#llx gp=%#llx/%#llx [N/0]\n",
                               getMsrNameHandled(uMsr), uMsr, paMsrs[i].uMsr,
@@ -3197,7 +3302,7 @@ static int reportMsr_GenFunctionEx(uint32_t uMsr, const char *pszRdWrFnName, uin
 
 
 /**
- * Reports a VIA dummy range.
+ * Reports a VIA/Shanghai dummy range.
  *
  * @returns VBox status code.
  * @param   paMsrs              Pointer to the first MSR.
@@ -3205,14 +3310,14 @@ static int reportMsr_GenFunctionEx(uint32_t uMsr, const char *pszRdWrFnName, uin
  * @param   pidxLoop            Index variable that should be advanced to the
  *                              last MSR entry in the range.
  */
-static int reportMsr_ViaDummyRange(VBCPUREPMSR const *paMsrs, uint32_t cMsrs, uint32_t *pidxLoop)
+static int reportMsr_ViaShanghaiDummyRange(VBCPUREPMSR const *paMsrs, uint32_t cMsrs, uint32_t *pidxLoop)
 {
     /* Figure how many. */
     uint32_t uMsr  = paMsrs[0].uMsr;
     uint32_t cRegs = 1;
     while (   cRegs < cMsrs
            && paMsrs[cRegs].uMsr == uMsr + cRegs
-           && isMsrViaDummy(paMsrs[cRegs].uMsr, paMsrs[cRegs].uValue, paMsrs[cRegs].fFlags))
+           && isMsrViaShanghaiDummy(paMsrs[cRegs].uMsr, paMsrs[cRegs].uValue, paMsrs[cRegs].fFlags))
     {
         cRegs++;
         if (!(cRegs % 0x80))
@@ -3252,6 +3357,14 @@ static int reportMsr_Ia32ApicBase(uint32_t uMsr, uint64_t uValue)
     uint64_t fSkipMask = RT_BIT_64(11);
     if (vbCpuRepSupportsX2Apic())
         fSkipMask |= RT_BIT_64(10);
+    /* For some reason, twiddling this bit kills a Tualatin PIII-S. */
+    if (g_enmMicroarch == kCpumMicroarch_Intel_P6_III)
+        fSkipMask |= RT_BIT(9);
+
+    /* If the OS uses the APIC, we have to be super careful. */
+    if (!g_MsrAcc.fAtomic)
+        fSkipMask |= UINT64_C(0x0000000ffffff000);
+
     return reportMsr_GenFunctionEx(uMsr, "Ia32ApicBase", uValue, fSkipMask, 0, NULL);
 }
 
@@ -3277,6 +3390,10 @@ static int reportMsr_Ia32MiscEnable(uint32_t uMsr, uint64_t uValue)
         vbCpuRepPrintf("WARNING: IA32_MISC_ENABLE probing needs hacking on this CPU!\n");
         RTThreadSleep(128);
     }
+
+    /* If the OS is using MONITOR/MWAIT we'd better not disable it! */
+    if (!g_MsrAcc.fAtomic)
+        fSkipMask |= RT_BIT(18);
 
     /* The no execute related flag is deadly if clear.  */
     if (   !(uValue & MSR_IA32_MISC_ENABLE_XD_DISABLE)
@@ -3340,7 +3457,7 @@ static int reportMsr_Ia32MtrrPhysBaseMaskN(VBCPUREPMSR const *paMsrs, uint32_t c
     uint32_t cRegs = 1;
     while (   cRegs < cMsrs
            && paMsrs[cRegs].uMsr == uMsr + cRegs
-           && !isMsrViaDummy(paMsrs[cRegs].uMsr, paMsrs[cRegs].uValue, paMsrs[cRegs].fFlags) )
+           && !isMsrViaShanghaiDummy(paMsrs[cRegs].uMsr, paMsrs[cRegs].uValue, paMsrs[cRegs].fFlags) )
         cRegs++;
     if (cRegs & 1)
         return RTMsgErrorRc(VERR_INVALID_PARAMETER, "MTRR variable MSR range is odd: cRegs=%#x\n", cRegs);
@@ -3516,7 +3633,9 @@ static int reportMsr_Ia32McCtlStatusAddrMiscN(VBCPUREPMSR const *paMsrs, uint32_
     while (   cDetectedRegs < cMsrs
            && (   paMsrs[cDetectedRegs].uMsr == uMsr + cRegs
                || (cRegs & 3) == 2 /* ADDR may or may not be there, depends on STATUS and CPU. */
-               || (cRegs & 3) == 3 /* MISC may or may not be there, depends on STATUS and CPU. */)
+               || (cRegs & 3) == 3 /* MISC may or may not be there, depends on STATUS and CPU. */
+               || cRegs == 0x13 /* MC4_MISC may not be there, depends on CPU. */
+               || cRegs == 0x14 /* MC5_CTL may not be there, depends on CPU. */)
            && cRegs < 0x7f )
     {
         if (paMsrs[cDetectedRegs].uMsr == uMsr + cRegs)
@@ -3569,7 +3688,11 @@ static int reportMsr_Amd64Efer(uint32_t uMsr, uint64_t uValue)
 {
     uint64_t fSkipMask = 0;
     if (vbCpuRepSupportsLongMode())
+    {
         fSkipMask |= MSR_K6_EFER_LME;
+        if (!g_MsrAcc.fAtomic && (uValue & MSR_K6_EFER_SCE))
+            fSkipMask |= MSR_K6_EFER_SCE;
+    }
     if (   (uValue & MSR_K6_EFER_NXE)
         || vbCpuRepSupportsNX())
         fSkipMask |= MSR_K6_EFER_NXE;
@@ -4076,8 +4199,9 @@ static int produceMsrReport(VBCPUREPMSR *paMsrs, uint32_t cMsrs)
          * VIA implement MSRs in a interesting way, so we have to select what we
          * want to handle there to avoid making the code below unreadable.
          */
-        else if (isMsrViaDummy(uMsr, uValue, fFlags))
-            rc = reportMsr_ViaDummyRange(&paMsrs[i], cMsrs - i, &i);
+        /** @todo r=klaus check if Shanghai CPUs really are behaving the same */
+        else if (isMsrViaShanghaiDummy(uMsr, uValue, fFlags))
+            rc = reportMsr_ViaShanghaiDummyRange(&paMsrs[i], cMsrs - i, &i);
         /*
          * This shall be sorted by uMsr as much as possible.
          */
@@ -4270,26 +4394,39 @@ static int probeMsrs(bool fHacking, const char *pszNameC, const char *pszCpuDesc
         vbCpuRepDebug("Skipping MSR probing, CPUID indicates there isn't any MSR support.\n");
         return VINF_SUCCESS;
     }
-
-    /*
-     * Initialize the support library and check if we can read MSRs.
-     */
-    int rc = SUPR3Init(NULL);
-    if (RT_FAILURE(rc))
+    if (g_fNoMsrs)
     {
-        vbCpuRepDebug("warning: Unable to initialize the support library (%Rrc), skipping MSR detection.\n", rc);
+        vbCpuRepDebug("Skipping MSR probing (--no-msr).\n");
         return VINF_SUCCESS;
     }
+
+    /*
+     * First try the the support library (also checks if we can really read MSRs).
+     */
+    int rc = VbCpuRepMsrProberInitSupDrv(&g_MsrAcc);
+    if (RT_FAILURE(rc))
+    {
+#ifdef VBCR_HAVE_PLATFORM_MSR_PROBER
+        /* Next try a platform-specific interface. */
+        rc = VbCpuRepMsrProberInitPlatform(&g_MsrAcc);
+#endif
+        if (RT_FAILURE(rc))
+        {
+            vbCpuRepDebug("warning: Unable to initialize any MSR access interface (%Rrc), skipping MSR detection.\n", rc);
+            return VINF_SUCCESS;
+        }
+    }
+
     uint64_t uValue;
     bool     fGp;
-    rc = SUPR3MsrProberRead(MSR_IA32_TSC, NIL_RTCPUID, &uValue, &fGp);
+    rc = g_MsrAcc.pfnMsrProberRead(MSR_IA32_TSC, NIL_RTCPUID, &uValue, &fGp);
     if (RT_FAILURE(rc))
     {
         vbCpuRepDebug("warning: MSR probing not supported by the support driver (%Rrc), skipping MSR detection.\n", rc);
         return VINF_SUCCESS;
     }
     vbCpuRepDebug("MSR_IA32_TSC: %#llx fGp=%RTbool\n", uValue, fGp);
-    rc = SUPR3MsrProberRead(0xdeadface, NIL_RTCPUID, &uValue, &fGp);
+    rc = g_MsrAcc.pfnMsrProberRead(0xdeadface, NIL_RTCPUID, &uValue, &fGp);
     vbCpuRepDebug("0xdeadface: %#llx fGp=%RTbool rc=%Rrc\n", uValue, fGp, rc);
 
     /*
@@ -4347,6 +4484,9 @@ static int probeMsrs(bool fHacking, const char *pszNameC, const char *pszCpuDesc
         RTMemFree(paMsrs);
         paMsrs = NULL;
     }
+    if (g_MsrAcc.pfnTerm)
+        g_MsrAcc.pfnTerm();
+    RT_ZERO(g_MsrAcc);
     return rc;
 }
 
@@ -4388,10 +4528,20 @@ static int produceCpuIdArray(const char *pszNameC, const char *pszCpuDesc)
         {
             vbCpuRepPrintf("0");
             uint32_t fFlags = paLeaves[i].fFlags;
-            if (paLeaves[i].fFlags & CPUMCPUIDLEAF_F_SUBLEAVES_ECX_UNCHANGED)
+            if (paLeaves[i].fFlags & CPUMCPUIDLEAF_F_INTEL_TOPOLOGY_SUBLEAVES)
             {
-                vbCpuRepPrintf(" | CPUMCPUIDLEAF_F_SUBLEAVES_ECX_UNCHANGED");
-                fFlags &= ~CPUMCPUIDLEAF_F_SUBLEAVES_ECX_UNCHANGED;
+                vbCpuRepPrintf(" | CPUMCPUIDLEAF_F_INTEL_TOPOLOGY_SUBLEAVES");
+                fFlags &= ~CPUMCPUIDLEAF_F_INTEL_TOPOLOGY_SUBLEAVES;
+            }
+            if (paLeaves[i].fFlags & CPUMCPUIDLEAF_F_CONTAINS_APIC_ID)
+            {
+                vbCpuRepPrintf(" | CPUMCPUIDLEAF_F_CONTAINS_APIC_ID");
+                fFlags &= ~CPUMCPUIDLEAF_F_CONTAINS_APIC_ID;
+            }
+            if (paLeaves[i].fFlags & CPUMCPUIDLEAF_F_CONTAINS_APIC)
+            {
+                vbCpuRepPrintf(" | CPUMCPUIDLEAF_F_CONTAINS_APIC");
+                fFlags &= ~CPUMCPUIDLEAF_F_CONTAINS_APIC;
             }
             if (fFlags)
             {
@@ -4417,6 +4567,7 @@ static const char *cpuVendorToString(CPUMCPUVENDOR enmCpuVendor)
         case CPUMCPUVENDOR_AMD:         return "AMD";
         case CPUMCPUVENDOR_VIA:         return "VIA";
         case CPUMCPUVENDOR_CYRIX:       return "Cyrix";
+        case CPUMCPUVENDOR_SHANGHAI:    return "Shanghai";
         case CPUMCPUVENDOR_INVALID:
         case CPUMCPUVENDOR_UNKNOWN:
         case CPUMCPUVENDOR_32BIT_HACK:
@@ -4522,7 +4673,7 @@ static int produceCpuReport(void)
             size_t      cchWord = strlen(pszWord);
             char       *pszHit;
             while ((pszHit = strstr(pszName, pszWord)) != NULL)
-                memmove(pszHit, pszHit + cchWord, strlen(pszHit + cchWord) + 1);
+                memset(pszHit, ' ', cchWord);
         }
 
         RTStrStripR(pszName);
@@ -4588,7 +4739,7 @@ static int produceCpuReport(void)
                        " */\n"
                        "\n"
                        "/*\n"
-                       " * Copyright (C) 2013 Oracle Corporation\n"
+                       " * Copyright (C) 2013-2017 Oracle Corporation\n"
                        " *\n"
                        " * This file is part of VirtualBox Open Source Edition (OSE), as\n"
                        " * available from http://www.virtualbox.org. This file is free software;\n"
@@ -4614,7 +4765,7 @@ static int produceCpuReport(void)
     if (RT_FAILURE(rc))
         return rc;
 
-    CPUMUKNOWNCPUID enmUnknownMethod;
+    CPUMUNKNOWNCPUID enmUnknownMethod;
     CPUMCPUID       DefUnknown;
     rc = CPUMR3CpuIdDetectUnknownLeafMethod(&enmUnknownMethod, &DefUnknown);
     if (RT_FAILURE(rc))
@@ -4647,16 +4798,17 @@ static int produceCpuReport(void)
                    "    /*.uScalableBusFreq = */ CPUM_SBUSFREQ_%s,\n"
                    "    /*.fFlags           = */ 0,\n"
                    "    /*.cMaxPhysAddrWidth= */ %u,\n"
+                   "    /*.fMxCsrMask       = */ %#010x,\n"
                    "    /*.paCpuIdLeaves    = */ NULL_ALONE(g_aCpuIdLeaves_%s),\n"
                    "    /*.cCpuIdLeaves     = */ ZERO_ALONE(RT_ELEMENTS(g_aCpuIdLeaves_%s)),\n"
-                   "    /*.enmUnknownCpuId  = */ CPUMUKNOWNCPUID_%s,\n"
+                   "    /*.enmUnknownCpuId  = */ CPUMUNKNOWNCPUID_%s,\n"
                    "    /*.DefUnknownCpuId  = */ { %#010x, %#010x, %#010x, %#010x },\n"
                    "    /*.fMsrMask         = */ %s,\n"
                    "    /*.cMsrRanges       = */ ZERO_ALONE(RT_ELEMENTS(g_aMsrRanges_%s)),\n"
                    "    /*.paMsrRanges      = */ NULL_ALONE(g_aMsrRanges_%s),\n"
                    "};\n"
                    "\n"
-                   "#endif /* !VBOX_DB_%s */\n"
+                   "#endif /* !VBOX_CPUDB_%s */\n"
                    "\n",
                    pszCpuDesc,
                    szNameC,
@@ -4669,13 +4821,14 @@ static int produceCpuReport(void)
                    CPUMR3MicroarchName(enmMicroarch),
                    vbCpuRepGuessScalableBusFrequencyName(),
                    vbCpuRepGetPhysAddrWidth(),
+                   CPUMR3DeterminHostMxCsrMask(),
                    szNameC,
                    szNameC,
                    CPUMR3CpuIdUnknownLeafMethodName(enmUnknownMethod),
-                   DefUnknown.eax,
-                   DefUnknown.ebx,
-                   DefUnknown.ecx,
-                   DefUnknown.edx,
+                   DefUnknown.uEax,
+                   DefUnknown.uEbx,
+                   DefUnknown.uEcx,
+                   DefUnknown.uEdx,
                    szMsrMask,
                    szNameC,
                    szNameC,
@@ -4699,6 +4852,7 @@ int main(int argc, char **argv)
     {
         { "--msrs-only", 'm', RTGETOPT_REQ_NOTHING },
         { "--msrs-dev",  'd', RTGETOPT_REQ_NOTHING },
+        { "--no-msrs",   'n', RTGETOPT_REQ_NOTHING },
         { "--output",    'o', RTGETOPT_REQ_STRING  },
         { "--log",       'l', RTGETOPT_REQ_STRING  },
     };
@@ -4730,6 +4884,10 @@ int main(int argc, char **argv)
                 enmOp = kCpuReportOp_MsrsHacking;
                 break;
 
+            case 'n':
+                g_fNoMsrs = true;
+                break;
+
             case 'o':
                 pszOutput = ValueUnion.psz;
                 break;
@@ -4739,7 +4897,7 @@ int main(int argc, char **argv)
                 break;
 
             case 'h':
-                RTPrintf("Usage: VBoxCpuReport [-m|--msrs-only] [-d|--msrs-dev] [-h|--help] [-V|--version] [-o filename.h] [-l debug.log]\n");
+                RTPrintf("Usage: VBoxCpuReport [-m|--msrs-only] [-d|--msrs-dev] [-n|--no-msrs] [-h|--help] [-V|--version] [-o filename.h] [-l debug.log]\n");
                 RTPrintf("Internal tool for gathering information to the VMM CPU database.\n");
                 return RTEXITCODE_SUCCESS;
             case 'V':

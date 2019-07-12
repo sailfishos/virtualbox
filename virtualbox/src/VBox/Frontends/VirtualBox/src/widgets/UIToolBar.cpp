@@ -1,12 +1,10 @@
 /* $Id: UIToolBar.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIToolBar class implementation
+ * VBox Qt GUI - UIToolBar class implementation.
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,56 +15,47 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/* Local includes */
-#include "UIToolBar.h"
-#ifdef Q_WS_MAC
-# include "VBoxUtils.h"
-#endif /* Q_WS_MAC */
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
 /* Qt includes: */
-#include <QLayout>
-#include <QMainWindow>
-/* Note: These styles are available on _all_ platforms: */
-#include <QCleanlooksStyle>
-#include <QWindowsStyle>
+# include <QLayout>
+# include <QMainWindow>
 
-UIToolBar::UIToolBar(QWidget *pParent /* = 0*/)
+/* GUI includes: */
+# include "UIToolBar.h"
+# ifdef VBOX_WS_MAC
+#  include "VBoxUtils.h"
+# endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+#endif /* VBOX_WS_MAC */
+
+
+UIToolBar::UIToolBar(QWidget *pParent /* = 0 */)
     : QToolBar(pParent)
     , m_pMainWindow(qobject_cast<QMainWindow*>(pParent))
 {
-    /* Configure tool-bar: */
-    setFloatable(false);
-    setMovable(false);
-
-    /* Remove that ugly frame panel around the toolbar.
-     * Doing that currently for Cleanlooks & Windows styles. */
-    if (qobject_cast <QCleanlooksStyle*>(QToolBar::style()) ||
-        qobject_cast <QWindowsStyle*>(QToolBar::style()))
-        setStyleSheet("QToolBar { border: 0px none black; }");
-
-    /* Configure layout: */
-    if (layout())
-        layout()->setContentsMargins(0, 0, 0, 0);;
-
-    /* Configure context-menu policy: */
-    setContextMenuPolicy(Qt::NoContextMenu);
+    /* Prepare: */
+    prepare();
 }
 
-void UIToolBar::setUsesTextLabel(bool fEnable)
+void UIToolBar::setUseTextLabels(bool fEnable)
 {
-    Qt::ToolButtonStyle tbs = Qt::ToolButtonTextUnderIcon;
-    if (!fEnable)
-        tbs = Qt::ToolButtonIconOnly;
+    /* Determine tool-button style on the basis of passed flag: */
+    Qt::ToolButtonStyle tbs = fEnable ? Qt::ToolButtonTextUnderIcon : Qt::ToolButtonIconOnly;
 
+    /* Depending on parent, assign this style: */
     if (m_pMainWindow)
         m_pMainWindow->setToolButtonStyle(tbs);
     else
         setToolButtonStyle(tbs);
 }
 
-#ifdef Q_WS_MAC
-void UIToolBar::setMacToolbar()
+#ifdef VBOX_WS_MAC
+void UIToolBar::enableMacToolbar()
 {
+    /* Depending on parent, enable unified title/tool-bar: */
     if (m_pMainWindow)
         m_pMainWindow->setUnifiedTitleAndToolBarOnMac(true);
 }
@@ -89,5 +78,23 @@ void UIToolBar::updateLayout()
     layout()->invalidate();
     layout()->activate();
 }
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
+
+void UIToolBar::prepare()
+{
+    /* Configure tool-bar: */
+    setFloatable(false);
+    setMovable(false);
+
+#ifdef VBOX_WS_MAC
+        setStyleSheet("QToolBar { border: 0px none black; }");
+#endif /* VBOX_WS_MAC */
+
+    /* Configure tool-bar' layout: */
+    if (layout())
+        layout()->setContentsMargins(0, 0, 0, 0);
+
+    /* Configure tool-bar' context-menu policy: */
+    setContextMenuPolicy(Qt::NoContextMenu);
+}
 

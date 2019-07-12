@@ -1,11 +1,10 @@
+/* $Id: UINetworkManager.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UINetworkManager stuff declaration
+ * VBox Qt GUI - UINetworkManager stuff declaration.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,25 +18,24 @@
 #ifndef __UINetworkManager_h__
 #define __UINetworkManager_h__
 
-/* Global includes: */
-#include <QNetworkAccessManager>
+/* Qt includes: */
+#include <QObject>
 #include <QUuid>
-#include <QMap>
-#include <QNetworkRequest>
 
 /* Local inludes: */
 #include "UINetworkDefs.h"
 
 /* Forward declarations: */
+class QUrl;
 class QWidget;
 class UINetworkRequest;
 class UINetworkCustomer;
 class UINetworkManagerDialog;
 class UINetworkManagerIndicator;
 
-/* QNetworkAccessManager class reimplementation.
+/* QObject class reimplementation.
  * Providing network access for VirtualBox application purposes. */
-class UINetworkManager : public QNetworkAccessManager
+class UINetworkManager : public QObject
 {
     Q_OBJECT;
 
@@ -45,6 +43,11 @@ signals:
 
     /* Ask listeners (network-requests) to cancel: */
     void sigCancelNetworkRequests();
+
+    /** Requests to add @a pNetworkRequest to network-manager state-indicators. */
+    void sigAddNetworkManagerIndicatorDescription(UINetworkRequest *pNetworkRequest);
+    /** Requests to remove network-request with @a uuid from network-manager state-indicators. */
+    void sigRemoveNetworkManagerIndicatorDescription(const QUuid &uuid);
 
 public:
 
@@ -58,8 +61,14 @@ public:
     /* Pointer to network-manager dialog: */
     UINetworkManagerDialog* window() const;
 
-    /* Pointer to network-manager state-indicator: */
-    UINetworkManagerIndicator* indicator() const;
+    /** Creates network-manager state-indicator.
+      * @remarks To be cleaned up by the caller. */
+    UINetworkManagerIndicator* createIndicator() const;
+
+    /** Registers @a pNetworkRequest in network-manager. */
+    void registerNetworkRequest(UINetworkRequest *pNetworkRequest);
+    /** Unregisters network-request with @a uuid from network-manager. */
+    void unregisterNetworkRequest(const QUuid &uuid);
 
 public slots:
 
@@ -70,11 +79,10 @@ protected:
 
     /* Allow UINetworkCustomer to create network-request: */
     friend class UINetworkCustomer;
-    /* Network-request creation wrappers for UINetworkCustomer: */
-    void createNetworkRequest(const QNetworkRequest &request, UINetworkRequestType type, const QString &strDescription,
-                              UINetworkCustomer *pCustomer);
-    void createNetworkRequest(const QList<QNetworkRequest> &requests, UINetworkRequestType type, const QString &strDescription,
-                              UINetworkCustomer *pCustomer);
+    /** Creates network-request of the passed @a type
+      * on the basis of the passed @a urls and the @a requestHeaders for the @a pCustomer specified. */
+    void createNetworkRequest(UINetworkRequestType type, const QList<QUrl> &urls,
+                              const UserDictionary &requestHeaders, UINetworkCustomer *pCustomer);
 
 private:
 
@@ -114,7 +122,6 @@ private:
 
     /* Network-manager dialog: */
     UINetworkManagerDialog *m_pNetworkManagerDialog;
-    UINetworkManagerIndicator *m_pNetworkManagerIndicator;
 };
 #define gNetworkManager UINetworkManager::instance()
 

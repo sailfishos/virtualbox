@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/vmm/ssm.h>
 #include "VMInternal.h" /* createFakeVM */
 #include <VBox/vmm/vm.h>
@@ -41,9 +41,9 @@
 #include <iprt/path.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define TSTSSM_BIG_CONFIG   1
 
 #ifdef TSTSSM_BIG_CONFIG
@@ -53,9 +53,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 const uint8_t   gabPage[PAGE_SIZE] = {0};
 const char      gachMem1[] = "sdfg\1asdfa\177hjkl;sdfghjkl;dfghjkl;dfghjkl;\0\0asdf;kjasdf;lkjasd;flkjasd;lfkjasd\0;lfk";
 #ifdef TSTSSM_BIG_CONFIG
@@ -632,7 +632,7 @@ static int createFakeVM(PVM *ppVM)
     /*
      * Allocate and init the UVM structure.
      */
-    PUVM pUVM = (PUVM)RTMemAllocZ(sizeof(*pUVM));
+    PUVM pUVM = (PUVM)RTMemPageAllocZ(sizeof(*pUVM));
     AssertReturn(pUVM, 1);
     pUVM->u32Magic = UVM_MAGIC;
     pUVM->vm.s.idxTLS = RTTlsAlloc();
@@ -684,10 +684,26 @@ static int createFakeVM(PVM *ppVM)
 
 
 /**
+ * Destroy the VM structure.
+ *
+ * @param   pVM     Pointer to the VM.
+ *
+ * @todo    Move this to VMM/VM since it's stuff done by several testcases.
+ */
+static void destroyFakeVM(PVM pVM)
+{
+    STAMR3TermUVM(pVM->pUVM);
+    MMR3TermUVM(pVM->pUVM);
+}
+
+
+/**
  *  Entry point.
  */
 extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
+    RT_NOREF1(envp);
+
     /*
      * Init runtime and static data.
      */
@@ -911,6 +927,8 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
         RTPrintf("SSMR3Close #1 -> %Rrc\n", rc);
         return 1;
     }
+
+    destroyFakeVM(pVM);
 
     /* delete */
     RTFileDelete(pszFilename);

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/crypto/x509.h>
 
@@ -40,6 +40,8 @@
 
 static int rtCrX509Validity_CheckSanityExtra(PCRTCRX509VALIDITY pThis, uint32_t fFlags, PRTERRINFO pErrInfo, const char *pszErrorTag)
 {
+    RT_NOREF_PV(fFlags);
+
     if (RTAsn1Time_Compare(&pThis->NotBefore, &pThis->NotAfter) > 0)
         return RTErrInfoSetF(pErrInfo, VERR_CR_X509_VALIDITY_SWAPPED, "%s: NotBefore is after NotAfter", pszErrorTag);
     /** @todo check tag constraints? */
@@ -49,25 +51,30 @@ static int rtCrX509Validity_CheckSanityExtra(PCRTCRX509VALIDITY pThis, uint32_t 
 
 static int rtCrX509Name_CheckSanityExtra(PCRTCRX509NAME pThis, uint32_t fFlags, PRTERRINFO pErrInfo, const char *pszErrorTag)
 {
+    RT_NOREF_PV(fFlags);
+
     if (pThis->cItems == 0)
         return RTErrInfoSetF(pErrInfo, VERR_CR_X509_NAME_EMPTY_SET, "%s: Has no components.", pszErrorTag);
 
     for (uint32_t i = 0; i < pThis->cItems; i++)
     {
-        if (pThis->cItems == 0)
+        PCRTCRX509RELATIVEDISTINGUISHEDNAME const pRdn = pThis->papItems[i];
+        if (pRdn->cItems == 0)
             return RTErrInfoSetF(pErrInfo, VERR_CR_X509_NAME_EMPTY_SUB_SET,
                                  "%s: Items[%u] has no sub components.", pszErrorTag, i);
 
-        for (uint32_t j = 0; j < pThis->paItems[i].cItems; j++)
+        for (uint32_t j = 0; j < pRdn->cItems; j++)
         {
-            if (pThis->paItems[i].paItems[j].Value.enmType != RTASN1TYPE_STRING)
+            PCRTCRX509ATTRIBUTETYPEANDVALUE const pAttr = pRdn->papItems[j];
+
+            if (pAttr->Value.enmType != RTASN1TYPE_STRING)
                 return RTErrInfoSetF(pErrInfo, VERR_CR_X509_NAME_NOT_STRING,
                                      "%s: Items[%u].paItems[%u].enmType is %d instead of string (%d).",
-                                     pszErrorTag, i, j, pThis->paItems[i].paItems[j].Value.enmType, RTASN1TYPE_STRING);
-            if (pThis->paItems[i].paItems[j].Value.u.String.Asn1Core.cb == 0)
+                                     pszErrorTag, i, j, pAttr->Value.enmType, RTASN1TYPE_STRING);
+            if (pAttr->Value.u.String.Asn1Core.cb == 0)
                 return RTErrInfoSetF(pErrInfo, VERR_CR_X509_NAME_EMPTY_STRING,
                                      "%s: Items[%u].paItems[%u] is an empty string", pszErrorTag, i, j);
-            switch (pThis->paItems[i].paItems[j].Value.u.String.Asn1Core.uTag)
+            switch (pAttr->Value.u.String.Asn1Core.uTag)
             {
                 case ASN1_TAG_PRINTABLE_STRING:
                 case ASN1_TAG_UTF8_STRING:
@@ -81,7 +88,7 @@ static int rtCrX509Name_CheckSanityExtra(PCRTCRX509NAME pThis, uint32_t fFlags, 
                 default:
                     return RTErrInfoSetF(pErrInfo, VERR_CR_X509_INVALID_NAME_STRING_TAG,
                                          "%s: Items[%u].paItems[%u] invalid string type: %u",  pszErrorTag, i, j,
-                                         pThis->paItems[i].paItems[j].Value.u.String.Asn1Core.uTag);
+                                         pAttr->Value.u.String.Asn1Core.uTag);
             }
         }
     }
@@ -93,6 +100,7 @@ static int rtCrX509Name_CheckSanityExtra(PCRTCRX509NAME pThis, uint32_t fFlags, 
 static int rtCrX509SubjectPublicKeyInfo_CheckSanityExtra(PCRTCRX509SUBJECTPUBLICKEYINFO pThis, uint32_t fFlags,
                                                          PRTERRINFO pErrInfo, const char *pszErrorTag)
 {
+    RT_NOREF_PV(fFlags);
     if (pThis->SubjectPublicKey.cBits <= 32)
         return RTErrInfoSetF(pErrInfo, VERR_CR_X509_PUBLIC_KEY_TOO_SMALL,
                              "%s: SubjectPublicKey is too small, only %u bits", pszErrorTag, pThis->SubjectPublicKey.cBits);
@@ -103,6 +111,8 @@ static int rtCrX509SubjectPublicKeyInfo_CheckSanityExtra(PCRTCRX509SUBJECTPUBLIC
 static int rtCrX509TbsCertificate_CheckSanityExtra(PCRTCRX509TBSCERTIFICATE pThis, uint32_t fFlags,
                                                    PRTERRINFO pErrInfo, const char *pszErrorTag)
 {
+    RT_NOREF_PV(fFlags);
+
     if (   RTAsn1Integer_IsPresent(&pThis->T0.Version)
         && RTAsn1Integer_UnsignedCompareWithU32(&pThis->T0.Version, RTCRX509TBSCERTIFICATE_V1) != 0
         && RTAsn1Integer_UnsignedCompareWithU32(&pThis->T0.Version, RTCRX509TBSCERTIFICATE_V2) != 0
@@ -133,6 +143,8 @@ static int rtCrX509TbsCertificate_CheckSanityExtra(PCRTCRX509TBSCERTIFICATE pThi
 static int rtCrX509Certificate_CheckSanityExtra(PCRTCRX509CERTIFICATE pThis, uint32_t fFlags,
                                                PRTERRINFO pErrInfo, const char *pszErrorTag)
 {
+    RT_NOREF_PV(fFlags);
+
     if (RTCrX509AlgorithmIdentifier_Compare(&pThis->SignatureAlgorithm, &pThis->TbsCertificate.Signature) != 0)
         return RTErrInfoSetF(pErrInfo, VERR_CR_X509_CERT_TBS_SIGN_ALGO_MISMATCH,
                              "%s: SignatureAlgorithm (%s) does not match TbsCertificate.Signature (%s).", pszErrorTag,

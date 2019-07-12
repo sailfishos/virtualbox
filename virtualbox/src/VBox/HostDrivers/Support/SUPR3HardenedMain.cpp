@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,372 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/** @page pg_hardening      %VirtualBox %VM Process Hardening
+ *
+ * The %VM process hardening is to prevent malicious software from using
+ * %VirtualBox as a vehicle to obtain kernel level access.
+ *
+ * The %VirtualBox %VMM requires supervisor (kernel) level access to the CPU.
+ * For both practical and historical reasons, part of the %VMM is realized in
+ * ring-3, with a rich interface to the kernel part.  While the device
+ * emulations can be executed exclusively in ring-3, we have performance
+ * optimizations that loads device emulation code into ring-0 and our special
+ * raw-mode execution context (none VT-x/AMD-V mode) for handling frequent
+ * operations a lot more efficiently.  These share data between all three
+ * context (ring-3, ring-0 and raw-mode).  All this poses a rather broad attack
+ * surface, which the hardening protects.
+ *
+ * The hardening focuses primarily on restricting access to the support driver,
+ * VBoxDrv or vboxdrv depending on the OS, as it is ultimately the link and
+ * instigator of the communication between ring-3 and the ring-0 and raw-mode
+ * contexts.  A secondary focus is to make sure malicious code cannot be loaded
+ * and executed in the %VM process.  Exactly how we go about this depends a lot
+ * on the host OS.
+ *
+ * @section sec_hardening_supdrv    The Support Driver Interfaces
+ *
+ * The support driver has several interfaces thru which it can be accessed:
+ *      - /dev/vboxdrv (win: \\Device\\VBoxDrv) for full unrestricted access.
+ *        Offers a rich I/O control interface, which needs protecting.
+ *      - /dev/vboxdrvu (win: \\Device\\VBoxDrvU) for restricted access, which
+ *        VBoxSVC uses to query VT-x and AMD-V capabilities.  This does not
+ *        require protecting, though we limit it to the vboxgroup on some
+ *        systems.
+ *      - \\Device\\VBoxDrvStub on Windows for protecting the second stub
+ *        process and its child, the %VM process.  This is an open+close
+ *        interface, only available to partially verified stub processes.
+ *      - \\Device\\VBoxDrvErrorInfo on Windows for obtaining detailed error
+ *        information on a previous attempt to open \\Device\\VBoxDrv or
+ *        \\Device\\VBoxDrvStub.  Open, read and close only interface.
+ *
+ * The rest of VBox accesses the device interface thru the support library,
+ * @ref grp_sup "SUPR3" / sup.h.
+ *
+ * The support driver also exposes a set of functions and data that other VBox
+ * ring-0 modules can import from.  This includes much of the IPRT we need in
+ * the ring-0 part of the %VMM and device emulations.
+ *
+ * The ring-0 part of the %VMM and device emulations are loaded via the
+ * #SUPR3LoadModule and #SUPR3LoadServiceModule support library function, which
+ * both translates to a sequence of I/O controls against /dev/vboxdrv.  On
+ * Windows we use the native kernel loader to load the module, while on the
+ * other systems ring-3 prepares the bits with help from the IPRT loader code.
+ *
+ *
+ * @section sec_hardening_unix  Hardening on UNIX-like OSes
+ *
+ * On UNIX-like systems (Solaris, Linux, darwin, freebsd, ...) we put our trust
+ * in root and that root knows what he/she/it is doing.
+ *
+ * We only allow root to get full unrestricted access to the support driver.
+ * The device node corresponding to unrestricted access (/dev/vboxdrv) is own by
+ * root and has a 0600 access mode (i.e. only accessible to the owner, root). In
+ * addition to this file system level restriction, the support driver also
+ * checks that the effective user ID (EUID) is root when it is being opened.
+ *
+ * The %VM processes temporarily assume root privileges using the set-uid-bit on
+ * the executable with root as owner.  In fact, all the files and directories we
+ * install are owned by root and the wheel (or equivalent gid = 0) group,
+ * including extension pack files.
+ *
+ * The executable with the set-uid-to-root-bit set is a stub binary that has no
+ * unnecessary library dependencies (only libc, pthreads, dynamic linker) and
+ * simply calls #SUPR3HardenedMain.  It does the following:
+ *      1. Validate the VirtualBox installation (#supR3HardenedVerifyAll):
+ *          - Check that the executable file of the process is one of the known
+ *            VirtualBox executables.
+ *          - Check that all mandatory files are present.
+ *          - Check that all installed files and directories (both optional and
+ *            mandatory ones) are owned by root:wheel and are not writable by
+ *            anyone except root.
+ *          - Check that all the parent directories, all the way up to the root
+ *            if possible, only permits root (or system admin) to change them.
+ *            This is that to rule out unintentional rename races.
+ *          - On some systems we may also validate the cryptographic signtures
+ *            of executable images.
+ *
+ *      2. Open a file descriptor for the support device driver
+ *         (#supR3HardenedMainOpenDevice).
+ *
+ *      3. Grab ICMP capabilities for NAT ping support, if required by the OS
+ *         (#supR3HardenedMainGrabCapabilites).
+ *
+ *      4. Correctly drop the root privileges
+ *         (#supR3HardenedMainDropPrivileges).
+ *
+ *      5. Load the VBoxRT dynamic link library and hand over the file
+ *         descriptor to the support library code in it
+ *         (#supR3HardenedMainInitRuntime).
+ *
+ *      6. Load the dynamic library containing the actual %VM front end code and
+ *         run it (tail of #SUPR3HardenedMain).
+ *
+ * The set-uid-to-root stub executable is paired with a dynamic link library
+ * which export one TrustedMain entry point (see #FNSUPTRUSTEDMAIN) that we
+ * call. In case of error reporting, the library may also export a TrustedError
+ * function (#FNSUPTRUSTEDERROR).
+ *
+ * That the set-uid-to-root-bit modifies the dynamic linker behavior on all
+ * systems, even after we've dropped back to the real user ID, is something we
+ * take advantage of.  The dynamic linkers takes special care to prevent users
+ * from using clever tricks to inject their own code into set-uid processes and
+ * causing privilege escalation issues.  This is the exact help we need.
+ *
+ * The VirtualBox installation location is hardcoded, which means the any
+ * dynamic linker paths embedded or inferred from the executable and dynamic
+ * libraries are also hardcoded.  This helps eliminating search path attack
+ * vectors at the cost of being inflexible regarding installation location.
+ *
+ * In addition to what the dynamic linker does for us, the VirtualBox code will
+ * not directly be calling either RTLdrLoad or dlopen to load dynamic link
+ * libraries into the process.  Instead it will call #SUPR3HardenedLdrLoad,
+ * #SUPR3HardenedLdrLoadAppPriv and #SUPR3HardenedLdrLoadPlugIn to do the
+ * loading. These functions will perform the same validations on the file being
+ * loaded as #SUPR3HardenedMain did in its validation step.  So, anything we
+ * load must be installed with root/wheel as owner/group, the directory we load
+ * it from must also be owned by root:wheel and now allow for renaming the file.
+ * Similar ownership restrictions applies to all the parent directories (except
+ * on darwin).
+ *
+ * So, we place the responsibility of not installing malicious software on the
+ * root user on UNIX-like systems.  Which is fair enough, in our opinion.
+ *
+ *
+ * @section sec_hardening_win   Hardening on Windows
+ *
+ * On Windows we cannot put the same level or trust in the Administrator user(s)
+ * (equivalent of root/wheel on unix) as on the UNIX-like systems, which
+ * complicates things greatly.
+ *
+ * Some of the blame for this can be given to Windows being a descendant /
+ * replacement for a set of single user systems: DOS, Windows 1.0-3.11 Windows
+ * 95-ME, and OS/2.  Users of NT 3.1 and later was inclined to want to always
+ * run it with full root/administrator privileges like they had done on the
+ * predecessors, while Microsoft didn't provide much incentive for more secure
+ * alternatives.  Bad idea, security wise, but execellent for the security
+ * software industry.  For this reason using a set-uid-to-root approach is
+ * pointless, even if Windows had one.
+ *
+ * So, in order to protect access to the support driver and protect the %VM
+ * process while it's running we have to do a lot more work.  A keystone in the
+ * defences is cryptographic code signing.  Here's the short version of what we
+ * do:
+ *      - Minimal stub executable, signed with the same certificate as the
+ *        kernel driver.
+ *
+ *      - The stub executable respawns itself twice, hooking the NTDLL init
+ *        routine to perform protection tasks as early as possible.  The parent
+ *        stub helps keep in the child clean for verification as does the
+ *        support driver.
+ *
+ *      - In order to protect against loading unwanted code into the process,
+ *        the stub processes installs DLL load hooks with NTDLL as well as
+ *        directly intercepting the LdrLoadDll and NtCreateSection APIs.
+ *
+ *      - The support driver will verify all but the initial process very
+ *        thoroughly before allowing them protection and in the final case full
+ *        unrestricted access.
+ *
+ *
+ * @subsection  sec_hardening_win_protsoft      3rd Party "Protection" Software
+ *
+ * What makes our life REALLY difficult on Windows is this 3rd party "security"
+ * software which is more or less required to keep a Windows system safe for
+ * normal users and all corporate IT departments rightly insists on installing.
+ * After the kernel patching clampdown in Vista, anti-* software has to do a
+ * lot more mucking about in user mode to get their job (kind of) done.  So, it
+ * is common practice to patch a lot of NTDLL, KERNEL32, the executable import
+ * table, load extra DLLs into the process, allocate executable memory in the
+ * process (classic code injection) and more.
+ *
+ * The BIG problem with all this is that it is indistinguishable from what
+ * malicious software would be doing in order to intercept process activity
+ * (network sniffing, maybe password snooping) or gain a level of kernel access
+ * via the support driver.  So, the "protection" software is what is currently
+ * forcing us to do the pre-NTDLL initialization.
+ *
+ *
+ * @subsection  sec_hardening_win_1st_stub  The Initial Stub Process
+ *
+ * We share the stub executable approach with the UNIX-like systems, so there's
+ * the #SUPR3HardenedMain calling stub executable with its partner DLL exporting
+ * TrustedMain and TrustedError.   However, the stub executable does a lot more,
+ * while doing it in a more bare metal fashion:
+ *      - It does not use the Microsoft CRT, what we need of CRT functions comes
+ *        from IPRT.
+ *      - It does not statically import anything.  This is to avoid having an
+ *        import table that can be patched to intercept our calls or extended to
+ *        load additional DLLs.
+ *      - Direct NT system calls.  System calls normally going thru NTDLL, but
+ *        since there is so much software out there which wants to patch known
+ *        NTDLL entry points to control our software (either for good or
+ *        malicious reasons), we do it ourselves.
+ *
+ * The initial stub process is not really to be trusted, though we try our best
+ * to limit potential harm (user mode debugger checks, disable thread creation).
+ * So, when it enters #SUPR3HardenedMain we only call #supR3HardenedVerifyAll to
+ * verify the installation (known executables and DLLs, checking their code
+ * signing signatures, keeping them all open to deny deletion and replacing) and
+ * does a respawn via #supR3HardenedWinReSpawn.
+ *
+ *
+ * @subsection  sec_hardening_win_2nd_stub  The Second Stub Process
+ *
+ * The second stub process will be created in suspended state, i.e. the main
+ * thread is suspended before it executes a single instruction.  It is also
+ * created with a less generous ACLs, though this doesn't protect us from admin
+ * users.  In order for #SUPR3HardenedMain to figure that it is the second stub
+ * process, the zeroth command line argument has been replaced by a known magic
+ * string (UUID).
+ *
+ * Now, before the process starts executing, the parent (initial stub) will
+ * patch the LdrInitializeThunk entry point in NTDLL to call
+ * #supR3HardenedEarlyProcessInit via #supR3HardenedEarlyProcessInitThunk.  The
+ * parent will also plant some synchronization stuff via #g_ProcParams (NTDLL
+ * location, inherited event handles and associated ping-pong equipment).
+ *
+ * The LdrInitializeThunk entry point of NTDLL is where the kernel sets up
+ * process execution to start executing (via a user alert, so it is not subject
+ * to SetThreadContext).  LdrInitializeThunk performs process, NTDLL and
+ * sub-system client (kernel32) initialization.  A lot of "protection" software
+ * uses triggers in this initialization sequence (like the KERNEL32.DLL load
+ * event), so we avoid quite a bit of problems by getting our stuff done early
+ * on.
+ *
+ * However, there are also those that uses events that triggers immediately when
+ * the process is created or/and starts executing the first instruction.  But we
+ * can easily counter these as we have a known process state we can restore. So,
+ * the first thing that #supR3HardenedEarlyProcessInit does is to signal the
+ * parent to  perform a child purification, so the potentially evil influences
+ * can be exorcised.
+ *
+ * What the parent does during the purification is very similar to what the
+ * kernel driver will do later on when verifying the second stub and the %VM
+ * processes, except that instead of failing when encountering an shortcoming it
+ * will take corrective actions:
+ *      - Executable memory regions not belonging to a DLL mapping will be
+ *        attempted freed, and we'll only fail if we can't evict them.
+ *      - All pages in the executable images in the process (should be just the
+ *        stub executable and NTDLL) will be compared to the pristine fixed-up
+ *        copy prepared by the IPRT PE loader code, restoring any bytes which
+ *        appears differently in the child.  (#g_ProcParams is exempted,
+ *        LdrInitializeThunk is set to call NtTerminateThread.)
+ *      - Unwanted DLLs will be unloaded (we have a set of DLLs we like).
+ *
+ * Before signalling the second stub process that it has been purified and should
+ * get on with it, the parent will close all handles with unrestricted access to
+ * the process and thread so that the initial stub process no longer can
+ * influence the child in any really harmful way.  (The caller of CreateProcess
+ * usually receives handles with unrestricted access to the child process and
+ * its main thread.  These could in theory be used with DuplicateHandle or
+ * WriteProcessMemory to get at the %VM process if we're not careful.)
+ *
+ * #supR3HardenedEarlyProcessInit will continue with opening the log file
+ * (requires command line parsing).  It will continue to initialize a bunch of
+ * global variables, system calls and trustworthy/harmless NTDLL imports.
+ * #supR3HardenedWinInit is then called to setup image verification, that is:
+ *      - Hook the NtCreateSection entry point in NTDLL so we can check all
+ *        executable mappings before they're created and can be mapped.  The
+ *        NtCreateSection code jumps to #supR3HardenedMonitor_NtCreateSection.
+ *      - Hook (ditto) the LdrLoadDll entry point in NTDLL so we can
+ *        pre-validate all images that gets loaded the normal way (partly
+ *        because the NtCreateSection context is restrictive because the NTDLL
+ *        loader lock is usually held, which prevents us from safely calling
+ *        WinVerityTrust).  The LdrLoadDll code jumps to
+ *        #supR3HardenedMonitor_LdrLoadDll.
+ *
+ * The image/DLL verification hooks are at this point able to verify DLLs
+ * containing embedded code signing signatures, and will restrict the locations
+ * from which DLLs will be loaded.  When #SUPR3HardenedMain gets going later on,
+ * they will start insisting on everything having valid signatures, either
+ * embedded or in a signed installer catalog file.
+ *
+ * The function also irrevocably disables debug notifications related to the
+ * current thread, just to make attaching a debugging that much more difficult
+ * and less useful.
+ *
+ * Now, the second stub process will open the so called stub device
+ * (\\Device\\VBoxDrvStub), that is a special support driver device node that
+ * tells the support driver to:
+ *      - Protect the process against the OpenProcess and OpenThread attack
+ *        vectors by stripping risky access rights.
+ *      - Check that the process isn't being debugged.
+ *      - Check that the process contains exactly one thread.
+ *      - Check that the process doesn't have any unknown DLLs loaded into it.
+ *      - Check that the process doesn't have any executable memory (other than
+ *        DLL sections) in it.
+ *      - Check that the process executable is a known VBox executable which may
+ *        access the support driver.
+ *      - Check that the process executable is signed with the same code signing
+ *        certificate as the driver and that the on disk image is valid
+ *        according to its embedded signature.
+ *      - Check all the signature of all DLLs in the process (NTDLL) if they are
+ *        signed, and only accept unsigned ones in versions where they are known
+ *        not to be signed.
+ *      - Check that the code and readonly parts of the executable and DLLs
+ *        mapped into the process matches the on disk content (no patches other
+ *        than our own two in NTDLL are allowed).
+ *
+ * Once granted access to the stub device, #supR3HardenedEarlyProcessInit will
+ * restore the LdrInitializeThunk code and let the process perform normal
+ * initialization.  Leading us to #SUPR3HardenedMain where we detect that this
+ * is the 2nd stub process and does another respawn.
+ *
+ *
+ * @subsection  sec_hardening_win_3rd_stub  The Final Stub / VM Process
+ *
+ * The third stub process is what becomes the %VM process.  Because the parent
+ * has opened \\Device\\VBoxDrvSub, it is protected from malicious OpenProcess &
+ * OpenThread calls from the moment of inception, practically speaking.
+ *
+ * It goes thru the same suspended creation, patching, purification and such as
+ * its parent (the second stub process).  However, instead of opening
+ * \\Device\\VBoxDrvStub from #supR3HardenedEarlyProcessInit, it opens the
+ * support driver for full unrestricted access, i.e. \\Device\\VBoxDrv.
+ *
+ * The support driver will perform the same checks as it did when
+ * \\Device\\VBoxDrvStub was opened, but in addition it will:
+ *      - Check that the process is the first child of a process that opened
+ *        \\Device\\VBoxDrvStub.
+ *      - Check that the parent process is still alive.
+ *      - Scan all open handles in the system for potentially harmful ones to
+ *        the process or the primary thread.
+ *
+ * Knowing that the process is genuinly signed with the same certificate as the
+ * kernel driver, and the exectuable code in the process is either shipped by us
+ * or Microsoft, the support driver will trust it with full access and to keep
+ * the handle secure.
+ *
+ * We also trust the protection the support driver gives the process to keep out
+ * malicious ring-3 code, and therefore any code, patching or other mysterious
+ * stuff that enteres the process must be from kernel mode and that we can trust
+ * it (the alternative interpretation is that the kernel has been breanched
+ * already, which isn't our responsibility).  This means that, the anti-software
+ * products can do whatever they like from this point on.  However, should they
+ * do unrevertable changes to the process before this point, VirtualBox won't
+ * work.
+ *
+ * As in the second stub process, we'll now do normal process initialization and
+ * #SUPR3HardenedMain will take control.  It will detect that it is being called
+ * by the 3rd stub process because of a different magic string starting the
+ * command line, and not respawn itself any more.  #SUPR3HardenedMain will
+ * recheck the VirtualBox installation, keeping all known files open just like
+ * in two previous stub processes.
+ *
+ * It will then load the Windows cryptographic API and load the trusted root
+ * certificates from the Windows store.  The API enables using installation
+ * catalog files for signature checking as well as providing a second
+ * verification in addition to our own implementation (IPRT).  The certificates
+ * allows our signature validation implementation to validate all embedded
+ * signatures, not just the microsoft ones and the one signed by our own
+ * certificate.
+ *
+ */
+
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #if defined(RT_OS_OS2)
 # define INCL_BASE
 # define INCL_ERRORS
@@ -40,6 +403,9 @@
 # include <iprt/nt/nt-and-windows.h>
 
 #else /* UNIXes */
+# ifdef RT_OS_DARWIN
+#  define _POSIX_C_SOURCE 1 /* pick the correct prototype for unsetenv. */
+# endif
 # include <iprt/types.h> /* stdint fun on darwin. */
 
 # include <stdio.h>
@@ -88,9 +454,9 @@
 #include "SUPLibInternal.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @def SUP_HARDENED_SUID
  * Whether we're employing set-user-ID-on-execute in the hardening.
  */
@@ -110,9 +476,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** @see RTR3InitEx */
 typedef DECLCALLBACK(int) FNRTR3INITEX(uint32_t iVersion, uint32_t fFlags, int cArgs,
                                        char **papszArgs, const char *pszProgramPath);
@@ -123,9 +489,46 @@ typedef DECLCALLBACK(void) FNRTLOGRELPRINTF(const char *pszFormat, ...);
 typedef FNRTLOGRELPRINTF *PFNRTLOGRELPRINTF;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/**
+ * Descriptor of an environment variable to purge.
+ */
+typedef struct SUPENVPURGEDESC
+{
+    /** Name of the environment variable to purge. */
+    const char         *pszEnv;
+    /** The length of the variable name. */
+    uint8_t             cchEnv;
+    /** Flag whether a failure in purging the variable leads to
+     * a fatal error resulting in an process exit. */
+    bool                fPurgeErrFatal;
+} SUPENVPURGEDESC;
+/** Pointer to a environment variable purge descriptor. */
+typedef SUPENVPURGEDESC *PSUPENVPURGEDESC;
+/** Pointer to a const environment variable purge descriptor. */
+typedef const SUPENVPURGEDESC *PCSUPENVPURGEDESC;
+
+/**
+ * Descriptor of an command line argument to purge.
+ */
+typedef struct SUPARGPURGEDESC
+{
+    /** Name of the argument to purge. */
+    const char         *pszArg;
+    /** The length of the argument name. */
+    uint8_t             cchArg;
+    /** Flag whether the argument is followed by an extra argument
+     * which must be purged too */
+    bool                fTakesValue;
+} SUPARGPURGEDESC;
+/** Pointer to a environment variable purge descriptor. */
+typedef SUPARGPURGEDESC *PSUPARGPURGEDESC;
+/** Pointer to a const environment variable purge descriptor. */
+typedef const SUPARGPURGEDESC *PCSUPARGPURGEDESC;
+
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The pre-init data we pass on to SUPR3 (residing in VBoxRT). */
 static SUPPREINITDATA   g_SupPreInitData;
 /** The program executable path. */
@@ -133,8 +536,8 @@ static SUPPREINITDATA   g_SupPreInitData;
 static
 #endif
 char                    g_szSupLibHardenedExePath[RTPATH_MAX];
-/** The program directory path. */
-static char             g_szSupLibHardenedDirPath[RTPATH_MAX];
+/** The application bin directory path. */
+static char             g_szSupLibHardenedAppBinPath[RTPATH_MAX];
 
 /** The program name. */
 static const char      *g_pszSupLibHardenedProgName;
@@ -148,6 +551,7 @@ static uid_t            g_uid;
 static gid_t            g_gid;
 # ifdef RT_OS_LINUX
 static uint32_t         g_uCaps;
+static uint32_t         g_uCapsVersion;
 # endif
 #endif
 
@@ -168,12 +572,36 @@ AssertCompileSize(g_enmSupR3HardenedMainState, sizeof(uint32_t));
 /** Pointer to VBoxRT's RTLogRelPrintf function so we can write errors to the
  * release log at runtime. */
 static PFNRTLOGRELPRINTF g_pfnRTLogRelPrintf = NULL;
+/** Log volume name (for attempting volume flush). */
+static RTUTF16          g_wszStartupLogVol[16];
 #endif
 
+/** Environment variables to purge from the process because
+ * they are known to be harmful. */
+static const SUPENVPURGEDESC g_aSupEnvPurgeDescs[] =
+{
+    /* pszEnv                                       fPurgeErrFatal */
+    /* Qt related environment variables: */
+    { RT_STR_TUPLE("QT_QPA_PLATFORM_PLUGIN_PATH"),  true },
+    { RT_STR_TUPLE("QT_PLUGIN_PATH"),               true },
+    /* ALSA related environment variables: */
+    { RT_STR_TUPLE("ALSA_MIXER_SIMPLE_MODULES"),    true },
+    { RT_STR_TUPLE("LADSPA_PATH"),                  true },
+};
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/** Arguments to purge from the argument vector because
+ * they are known to be harmful. */
+static const SUPARGPURGEDESC g_aSupArgPurgeDescs[] =
+{
+    /* pszArg                        fTakesValue */
+    /* Qt related environment variables: */
+    { RT_STR_TUPLE("-platformpluginpath"),          true },
+};
+
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef SUP_HARDENED_SUID
 static void supR3HardenedMainDropPrivileges(void);
 #endif
@@ -277,7 +705,8 @@ static void suplibHardenedPrintStrN(const char *pch, size_t cch)
         }
     }
 #else
-    (void)write(2, pch, cch);
+    int res = write(2, pch, cch);
+    NOREF(res);
 #endif
 }
 
@@ -303,6 +732,7 @@ static void suplibHardenedPrintChr(char ch)
     suplibHardenedPrintStrN(&ch, 1);
 }
 
+#ifndef IPRT_NO_CRT
 
 /**
  * Writes a decimal number to stdard error.
@@ -389,7 +819,7 @@ static void suplibHardenedPrintWideStr(PCRTUTF16 pwsz)
     }
 }
 
-#ifdef IPRT_NO_CRT
+#else /* IPRT_NO_CRT */
 
 /** Buffer structure used by suplibHardenedOutput. */
 struct SUPLIBHARDENEDOUTPUTBUF
@@ -612,6 +1042,7 @@ DECLHIDDEN(void) suplibHardenedPrintFV(const char *pszFormat, va_list va)
                             break;
                         case 'X':
                             fFlags |= RTSTR_F_CAPITAL;
+                            RT_FALL_THRU();
                         case 'x':
                             uBase = 16;
                             break;
@@ -652,7 +1083,7 @@ DECLHIDDEN(void) suplibHardenedPrintFV(const char *pszFormat, va_list va)
                         pszFormat += 2;
                         break;
                     }
-                    /* fall thru */
+                    RT_FALL_THRU();
 
                 /*
                  * Custom format.
@@ -692,7 +1123,7 @@ DECLHIDDEN(void) suplibHardenedPrintF(const char *pszFormat, ...)
 
 
 /**
- * @copydoc RTPathStripFilename.
+ * @copydoc RTPathStripFilename
  */
 static void suplibHardenedPathStripFilename(char *pszPath)
 {
@@ -760,7 +1191,6 @@ DECLHIDDEN(char *) supR3HardenedPathFilename(const char *pszPath)
     }
 
     /* will never get here */
-    return NULL;
 }
 
 
@@ -778,7 +1208,7 @@ DECLHIDDEN(int) supR3HardenedPathAppPrivateNoArch(char *pszPath, size_t cchPath)
     return VINF_SUCCESS;
 
 #else
-    return supR3HardenedPathExecDir(pszPath, cchPath);
+    return supR3HardenedPathAppBin(pszPath, cchPath);
 #endif
 }
 
@@ -797,7 +1227,7 @@ DECLHIDDEN(int) supR3HardenedPathAppPrivateArch(char *pszPath, size_t cchPath)
     return VINF_SUCCESS;
 
 #else
-    return supR3HardenedPathExecDir(pszPath, cchPath);
+    return supR3HardenedPathAppBin(pszPath, cchPath);
 #endif
 }
 
@@ -805,18 +1235,18 @@ DECLHIDDEN(int) supR3HardenedPathAppPrivateArch(char *pszPath, size_t cchPath)
 /**
  * @copydoc RTPathSharedLibs
  */
-DECLHIDDEN(int) supR3HardenedPathSharedLibs(char *pszPath, size_t cchPath)
+DECLHIDDEN(int) supR3HardenedPathAppSharedLibs(char *pszPath, size_t cchPath)
 {
 #if !defined(RT_OS_WINDOWS) && defined(RTPATH_SHARED_LIBS)
     const char *pszSrcPath = RTPATH_SHARED_LIBS;
     size_t cchPathSharedLibs = suplibHardenedStrLen(pszSrcPath);
     if (cchPathSharedLibs >= cchPath)
-        supR3HardenedFatal("supR3HardenedPathSharedLibs: Buffer overflow, %zu >= %zu\n", cchPathSharedLibs, cchPath);
+        supR3HardenedFatal("supR3HardenedPathAppSharedLibs: Buffer overflow, %zu >= %zu\n", cchPathSharedLibs, cchPath);
     suplibHardenedMemCopy(pszPath, pszSrcPath, cchPathSharedLibs + 1);
     return VINF_SUCCESS;
 
 #else
-    return supR3HardenedPathExecDir(pszPath, cchPath);
+    return supR3HardenedPathAppBin(pszPath, cchPath);
 #endif
 }
 
@@ -835,17 +1265,15 @@ DECLHIDDEN(int) supR3HardenedPathAppDocs(char *pszPath, size_t cchPath)
     return VINF_SUCCESS;
 
 #else
-    return supR3HardenedPathExecDir(pszPath, cchPath);
+    return supR3HardenedPathAppBin(pszPath, cchPath);
 #endif
 }
 
 
 /**
- * Returns the full path to the executable.
+ * Returns the full path to the executable in g_szSupLibHardenedExePath.
  *
  * @returns IPRT status code.
- * @param   pszPath     Where to store it.
- * @param   cchPath     How big that buffer is.
  */
 static void supR3HardenedGetFullExePath(void)
 {
@@ -908,10 +1336,23 @@ static void supR3HardenedGetFullExePath(void)
 #endif
 
     /*
-     * Strip off the filename part (RTPathStripFilename()).
+     * Determine the application binary directory location.
      */
-    suplibHardenedStrCopy(g_szSupLibHardenedDirPath, g_szSupLibHardenedExePath);
-    suplibHardenedPathStripFilename(g_szSupLibHardenedDirPath);
+    suplibHardenedStrCopy(g_szSupLibHardenedAppBinPath, g_szSupLibHardenedExePath);
+    suplibHardenedPathStripFilename(g_szSupLibHardenedAppBinPath);
+
+    if (g_enmSupR3HardenedMainState < SUPR3HARDENEDMAINSTATE_HARDENED_MAIN_CALLED)
+        supR3HardenedFatal("supR3HardenedExecDir: Called before SUPR3HardenedMain! (%d)\n", g_enmSupR3HardenedMainState);
+    switch (g_fSupHardenedMain & SUPSECMAIN_FLAGS_LOC_MASK)
+    {
+        case SUPSECMAIN_FLAGS_LOC_APP_BIN:
+            break;
+        case SUPSECMAIN_FLAGS_LOC_TESTCASE:
+            suplibHardenedPathStripFilename(g_szSupLibHardenedAppBinPath);
+            break;
+        default:
+            supR3HardenedFatal("supR3HardenedExecDir: Unknown program binary location: %#x\n", g_fSupHardenedMain);
+    }
 }
 
 
@@ -936,27 +1377,28 @@ static bool supR3HardenedMainIsProcSelfExeAccssible(void)
 
 /**
  * @copydoc RTPathExecDir
+ * @remarks not quite like RTPathExecDir actually...
  */
-DECLHIDDEN(int) supR3HardenedPathExecDir(char *pszPath, size_t cchPath)
+DECLHIDDEN(int) supR3HardenedPathAppBin(char *pszPath, size_t cchPath)
 {
     /*
      * Lazy init (probably not required).
      */
-    if (!g_szSupLibHardenedDirPath[0])
+    if (!g_szSupLibHardenedAppBinPath[0])
         supR3HardenedGetFullExePath();
 
     /*
      * Calc the length and check if there is space before copying.
      */
-    size_t cch = suplibHardenedStrLen(g_szSupLibHardenedDirPath) + 1;
+    size_t cch = suplibHardenedStrLen(g_szSupLibHardenedAppBinPath) + 1;
     if (cch <= cchPath)
     {
-        suplibHardenedMemCopy(pszPath, g_szSupLibHardenedDirPath, cch + 1);
+        suplibHardenedMemCopy(pszPath, g_szSupLibHardenedAppBinPath, cch + 1);
         return VINF_SUCCESS;
     }
 
-    supR3HardenedFatal("supR3HardenedPathExecDir: Buffer too small (%u < %u)\n", cchPath, cch);
-    return VERR_BUFFER_OVERFLOW;
+    supR3HardenedFatal("supR3HardenedPathAppBin: Buffer too small (%u < %u)\n", cchPath, cch);
+    /* not reached */
 }
 
 
@@ -966,7 +1408,7 @@ extern "C" uint32_t g_uNtVerCombined;
 
 DECLHIDDEN(void) supR3HardenedOpenLog(int *pcArgs, char **papszArgs)
 {
-    static const char s_szLogOption[] = "--sup-startup-log=";
+    static const char s_szLogOption[] = "--sup-hardening-log=";
 
     /*
      * Scan the argument vector.
@@ -975,7 +1417,9 @@ DECLHIDDEN(void) supR3HardenedOpenLog(int *pcArgs, char **papszArgs)
     for (int iArg = 1; iArg < cArgs; iArg++)
         if (strncmp(papszArgs[iArg], s_szLogOption, sizeof(s_szLogOption) - 1) == 0)
         {
+#ifdef RT_OS_WINDOWS
             const char *pszLogFile = &papszArgs[iArg][sizeof(s_szLogOption) - 1];
+#endif
 
             /*
              * Drop the argument from the vector (has trailing NULL entry).
@@ -1001,12 +1445,29 @@ DECLHIDDEN(void) supR3HardenedOpenLog(int *pcArgs, char **papszArgs)
                                       &g_hStartupLog,
                                       NULL);
                 if (RT_SUCCESS(rc))
+                {
                     SUP_DPRINTF(("Log file opened: " VBOX_VERSION_STRING "r%u g_hStartupLog=%p g_uNtVerCombined=%#x\n",
                                  VBOX_SVN_REV, g_hStartupLog, g_uNtVerCombined));
+
+                    /*
+                     * If the path contains a drive volume, save it so we can
+                     * use it to flush the volume containing the log file.
+                     */
+                    if (RT_C_IS_ALPHA(pszLogFile[0]) && pszLogFile[1] == ':')
+                    {
+                        RTUtf16CopyAscii(g_wszStartupLogVol, RT_ELEMENTS(g_wszStartupLogVol), "\\??\\");
+                        g_wszStartupLogVol[sizeof("\\??\\") - 1] = RT_C_TO_UPPER(pszLogFile[0]);
+                        g_wszStartupLogVol[sizeof("\\??\\") + 0] = ':';
+                        g_wszStartupLogVol[sizeof("\\??\\") + 1] = '\0';
+                    }
+                }
                 else
                     g_hStartupLog = NULL;
             }
 #else
+            /* Just some mumbo jumbo to shut up the compiler. */
+            g_hStartupLog  -= 1;
+            g_cbStartupLog += 1;
             //g_hStartupLog = open()
 #endif
         }
@@ -1039,6 +1500,7 @@ DECLHIDDEN(void) supR3HardenedLogV(const char *pszFormat, va_list va)
                     &Ios, szBuf, (ULONG)cch, &Offset, NULL /*Key*/);
     }
 #else
+    RT_NOREF(pszFormat, va);
     /* later */
 #endif
 }
@@ -1053,6 +1515,74 @@ DECLHIDDEN(void) supR3HardenedLog(const char *pszFormat,  ...)
 }
 
 
+DECLHIDDEN(void) supR3HardenedLogFlush(void)
+{
+#ifdef RT_OS_WINDOWS
+    if (   g_hStartupLog != NULL
+        && g_cbStartupLog < 16*_1M)
+    {
+        IO_STATUS_BLOCK Ios = RTNT_IO_STATUS_BLOCK_INITIALIZER;
+        NTSTATUS rcNt = NtFlushBuffersFile(g_hStartupLog, &Ios);
+
+        /*
+         * Try flush the volume containing the log file too.
+         */
+        if (g_wszStartupLogVol[0])
+        {
+            HANDLE              hLogVol = RTNT_INVALID_HANDLE_VALUE;
+            UNICODE_STRING      NtName;
+            NtName.Buffer        = g_wszStartupLogVol;
+            NtName.Length        = (USHORT)(RTUtf16Len(g_wszStartupLogVol) * sizeof(RTUTF16));
+            NtName.MaximumLength = NtName.Length + 1;
+            OBJECT_ATTRIBUTES   ObjAttr;
+            InitializeObjectAttributes(&ObjAttr, &NtName, OBJ_CASE_INSENSITIVE, NULL /*hRootDir*/, NULL /*pSecDesc*/);
+            RTNT_IO_STATUS_BLOCK_REINIT(&Ios);
+            rcNt = NtCreateFile(&hLogVol,
+                                GENERIC_WRITE | GENERIC_READ | SYNCHRONIZE | FILE_READ_ATTRIBUTES,
+                                &ObjAttr,
+                                &Ios,
+                                NULL /* Allocation Size*/,
+                                0 /*FileAttributes*/,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                FILE_OPEN,
+                                FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+                                NULL /*EaBuffer*/,
+                                0 /*EaLength*/);
+            if (NT_SUCCESS(rcNt))
+                rcNt = Ios.Status;
+            if (NT_SUCCESS(rcNt))
+            {
+                RTNT_IO_STATUS_BLOCK_REINIT(&Ios);
+                rcNt = NtFlushBuffersFile(hLogVol, &Ios);
+                NtClose(hLogVol);
+            }
+            else
+            {
+                /* This may have sideeffects similar to what we want... */
+                hLogVol = RTNT_INVALID_HANDLE_VALUE;
+                RTNT_IO_STATUS_BLOCK_REINIT(&Ios);
+                rcNt = NtCreateFile(&hLogVol,
+                                    GENERIC_READ | SYNCHRONIZE | FILE_READ_ATTRIBUTES,
+                                    &ObjAttr,
+                                    &Ios,
+                                    NULL /* Allocation Size*/,
+                                    0 /*FileAttributes*/,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                    FILE_OPEN,
+                                    FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+                                    NULL /*EaBuffer*/,
+                                    0 /*EaLength*/);
+                if (NT_SUCCESS(rcNt) && NT_SUCCESS(Ios.Status))
+                    NtClose(hLogVol);
+            }
+        }
+    }
+#else
+    /* later */
+#endif
+}
+
+
 /**
  * Prints the message prefix.
  */
@@ -1064,7 +1594,8 @@ static void suplibHardenedPrintPrefix(void)
 }
 
 
-DECLHIDDEN(void)   supR3HardenedFatalMsgV(const char *pszWhere, SUPINITOP enmWhat, int rc, const char *pszMsgFmt, va_list va)
+DECL_NO_RETURN(DECLHIDDEN(void)) supR3HardenedFatalMsgV(const char *pszWhere, SUPINITOP enmWhat, int rc,
+                                                        const char *pszMsgFmt, va_list va)
 {
     /*
      * First to the log.
@@ -1128,35 +1659,40 @@ DECLHIDDEN(void)   supR3HardenedFatalMsgV(const char *pszWhere, SUPINITOP enmWha
     if (g_enmSupR3HardenedMainState >= SUPR3HARDENEDMAINSTATE_WIN_IMPORTS_RESOLVED)
     {
 #ifdef SUP_HARDENED_SUID
-        /*
-         * Drop any root privileges we might be holding, this won't return
-         * if it fails but end up calling supR3HardenedFatal[V].
-         */
+        /* Drop any root privileges we might be holding, this won't return
+           if it fails but end up calling supR3HardenedFatal[V]. */
         supR3HardenedMainDropPrivileges();
 #endif
+        /* Close the driver, if we succeeded opening it.  Both because
+           TrustedError may be untrustworthy and because the driver deosn't
+           like us if we fork().  @bugref{8838} */
+        suplibOsTerm(&g_SupPreInitData.Data);
 
         /*
-         * Now try resolve and call the TrustedError entry point if we can
-         * find it.  We'll fork before we attempt this because that way the
-         * session management in main will see us exiting immediately (if
-         * it's involved with us).
+         * Now try resolve and call the TrustedError entry point if we can find it.
+         * Note! Loader involved, so we must guard against loader hooks calling us.
          */
-#if !defined(RT_OS_WINDOWS) && !defined(RT_OS_OS2)
-        int pid = fork();
-        if (pid <= 0)
-#endif
+        static volatile bool s_fRecursive = false;
+        if (!s_fRecursive)
         {
-            static volatile bool s_fRecursive = false; /* Loader hooks may cause recursion. */
-            if (!s_fRecursive)
+            s_fRecursive = true;
+
+            PFNSUPTRUSTEDERROR pfnTrustedError = supR3HardenedMainGetTrustedError(g_pszSupLibHardenedProgName);
+            if (pfnTrustedError)
             {
-                s_fRecursive = true;
-
-                PFNSUPTRUSTEDERROR pfnTrustedError = supR3HardenedMainGetTrustedError(g_pszSupLibHardenedProgName);
-                if (pfnTrustedError)
+                /* We'll fork before we make the call because that way the session management
+                   in main will see us exiting immediately (if it's involved with us) and possibly
+                   get an error back to the API / user. */
+#if !defined(RT_OS_WINDOWS) && !defined(RT_OS_OS2)
+                int pid = fork();
+                if (pid <= 0)
+#endif
+                {
                     pfnTrustedError(pszWhere, enmWhat, rc, pszMsgFmt, va);
-
-                s_fRecursive = false;
+                }
             }
+
+            s_fRecursive = false;
         }
     }
 #if defined(RT_OS_WINDOWS)
@@ -1175,16 +1711,17 @@ DECLHIDDEN(void)   supR3HardenedFatalMsgV(const char *pszWhere, SUPINITOP enmWha
 }
 
 
-DECLHIDDEN(void)   supR3HardenedFatalMsg(const char *pszWhere, SUPINITOP enmWhat, int rc, const char *pszMsgFmt, ...)
+DECL_NO_RETURN(DECLHIDDEN(void)) supR3HardenedFatalMsg(const char *pszWhere, SUPINITOP enmWhat, int rc,
+                                                       const char *pszMsgFmt, ...)
 {
     va_list va;
     va_start(va, pszMsgFmt);
     supR3HardenedFatalMsgV(pszWhere, enmWhat, rc, pszMsgFmt, va);
-    va_end(va);
+    /* not reached */
 }
 
 
-DECLHIDDEN(void) supR3HardenedFatalV(const char *pszFormat, va_list va)
+DECL_NO_RETURN(DECLHIDDEN(void)) supR3HardenedFatalV(const char *pszFormat, va_list va)
 {
     supR3HardenedLog("Fatal error:\n");
     va_list vaCopy;
@@ -1219,12 +1756,12 @@ DECLHIDDEN(void) supR3HardenedFatalV(const char *pszFormat, va_list va)
 }
 
 
-DECLHIDDEN(void) supR3HardenedFatal(const char *pszFormat, ...)
+DECL_NO_RETURN(DECLHIDDEN(void)) supR3HardenedFatal(const char *pszFormat, ...)
 {
     va_list va;
     va_start(va, pszFormat);
     supR3HardenedFatalV(pszFormat, va);
-    va_end(va);
+    /* not reached */
 }
 
 
@@ -1339,10 +1876,15 @@ static void supR3HardenedMainGrabCapabilites(void)
         prctl(PR_SET_DUMPABLE, 1 /*dump*/, 0, 0, 0);
 #  else
         cap_user_header_t hdr = (cap_user_header_t)alloca(sizeof(*hdr));
-        cap_user_data_t   cap = (cap_user_data_t)alloca(sizeof(*cap));
+        cap_user_data_t   cap = (cap_user_data_t)alloca(2 /*_LINUX_CAPABILITY_U32S_3*/ * sizeof(*cap));
         memset(hdr, 0, sizeof(*hdr));
-        hdr->version = _LINUX_CAPABILITY_VERSION;
-        memset(cap, 0, sizeof(*cap));
+        capget(hdr, NULL);
+        if (   hdr->version != 0x19980330 /* _LINUX_CAPABILITY_VERSION_1, _LINUX_CAPABILITY_U32S_1 = 1 */
+            && hdr->version != 0x20071026 /* _LINUX_CAPABILITY_VERSION_2, _LINUX_CAPABILITY_U32S_2 = 2 */
+            && hdr->version != 0x20080522 /* _LINUX_CAPABILITY_VERSION_3, _LINUX_CAPABILITY_U32S_3 = 2 */)
+            hdr->version = _LINUX_CAPABILITY_VERSION;
+        g_uCapsVersion = hdr->version;
+        memset(cap, 0, 2 /* _LINUX_CAPABILITY_U32S_3 */ * sizeof(*cap));
         cap->effective = g_uCaps;
         cap->permitted = g_uCaps;
         if (!capset(hdr, cap))
@@ -1402,8 +1944,6 @@ static void supR3HardenedMainGrabCapabilites(void)
  */
 static void supR3GrabOptions(void)
 {
-    const char *pszOpt;
-
 # ifdef RT_OS_LINUX
     g_uCaps = 0;
 
@@ -1419,7 +1959,7 @@ static void supR3GrabOptions(void)
          * Default: enabled.
          * Can be disabled with 'export VBOX_HARD_CAP_NET_RAW=0'.
          */
-        pszOpt = getenv("VBOX_HARD_CAP_NET_RAW");
+        const char *pszOpt = getenv("VBOX_HARD_CAP_NET_RAW");
         if (   !pszOpt
             || memcmp(pszOpt, "0", sizeof("0")) != 0)
             g_uCaps = CAP_TO_MASK(CAP_NET_RAW);
@@ -1475,8 +2015,10 @@ static void supR3HardenedMainDropPrivileges(void)
 # else
     /* This is the preferred one, full control no questions about semantics.
        PORTME: If this isn't work, try join one of two other gangs above. */
-    setresgid(g_gid, g_gid, g_gid);
-    setresuid(g_uid, g_uid, g_uid);
+    int res = setresgid(g_gid, g_gid, g_gid);
+    NOREF(res);
+    res = setresuid(g_uid, g_uid, g_uid);
+    NOREF(res);
     if (getresuid(&ruid, &euid, &suid) != 0)
     {
         euid = geteuid();
@@ -1513,10 +2055,10 @@ static void supR3HardenedMainDropPrivileges(void)
         cap_set_proc(cap_from_text("cap_net_raw+ep"));
 #  else
         cap_user_header_t hdr = (cap_user_header_t)alloca(sizeof(*hdr));
-        cap_user_data_t   cap = (cap_user_data_t)alloca(sizeof(*cap));
+        cap_user_data_t   cap = (cap_user_data_t)alloca(2 /* _LINUX_CAPABILITY_U32S_3 */ * sizeof(*cap));
         memset(hdr, 0, sizeof(*hdr));
-        hdr->version = _LINUX_CAPABILITY_VERSION;
-        memset(cap, 0, sizeof(*cap));
+        hdr->version = g_uCapsVersion;
+        memset(cap, 0, 2 /* _LINUX_CAPABILITY_U32S_3 */ * sizeof(*cap));
         cap->effective = g_uCaps;
         cap->permitted = g_uCaps;
         /** @todo Warn if that does not work? */
@@ -1527,6 +2069,137 @@ static void supR3HardenedMainDropPrivileges(void)
 }
 
 #endif /* SUP_HARDENED_SUID */
+
+/**
+ * Purge the process environment from any environment vairable which can lead
+ * to loading untrusted binaries compromising the process address space.
+ *
+ * @param   envp        The initial environment vector. (Can be NULL.)
+ */
+static void supR3HardenedMainPurgeEnvironment(char **envp)
+{
+    for (unsigned i = 0; i < RT_ELEMENTS(g_aSupEnvPurgeDescs); i++)
+    {
+        /*
+         * Update the initial environment vector, just in case someone actually cares about it.
+         */
+        if (envp)
+        {
+            const char * const  pszEnv = g_aSupEnvPurgeDescs[i].pszEnv;
+            size_t const        cchEnv = g_aSupEnvPurgeDescs[i].cchEnv;
+            unsigned            iSrc   = 0;
+            unsigned            iDst   = 0;
+            char               *pszTmp;
+
+            while ((pszTmp = envp[iSrc]) != NULL)
+            {
+                if (   memcmp(pszTmp, pszEnv, cchEnv) != 0
+                    || (pszTmp[cchEnv] != '=' && pszTmp[cchEnv] != '\0'))
+                {
+                    if (iDst != iSrc)
+                        envp[iDst] = pszTmp;
+                    iDst++;
+                }
+                else
+                    SUP_DPRINTF(("supR3HardenedMainPurgeEnvironment: dropping envp[%d]=%s\n", iSrc, pszTmp));
+                iSrc++;
+            }
+
+            if (iDst != iSrc)
+                while (iDst <= iSrc)
+                    envp[iDst++] = NULL;
+        }
+
+        /*
+         * Remove from the process environment if present.
+         */
+#ifndef RT_OS_WINDOWS
+        const char *pszTmp = getenv(g_aSupEnvPurgeDescs[i].pszEnv);
+        if (pszTmp != NULL)
+        {
+            if (unsetenv((char *)g_aSupEnvPurgeDescs[i].pszEnv) == 0)
+                SUP_DPRINTF(("supR3HardenedMainPurgeEnvironment: dropped %s\n", pszTmp));
+            else
+                if (g_aSupEnvPurgeDescs[i].fPurgeErrFatal)
+                    supR3HardenedFatal("SUPR3HardenedMain: failed to purge %s environment variable! (errno=%d %s)\n",
+                                       g_aSupEnvPurgeDescs[i].pszEnv, errno, strerror(errno));
+                else
+                    SUP_DPRINTF(("supR3HardenedMainPurgeEnvironment: dropping %s failed! errno=%d\n", pszTmp, errno));
+        }
+#else
+        /** @todo Call NT API to do the same. */
+#endif
+    }
+}
+
+
+/**
+ * Returns the argument purge descriptor of the given argument if available.
+ *
+ * @retval 0 if it should not be purged.
+ * @retval 1 if it only the current argument should be purged.
+ * @retval 2 if the argument and the following (if present) should be purged.
+ * @param   pszArg           The argument to look for.
+ */
+static unsigned supR3HardenedMainShouldPurgeArg(const char *pszArg)
+{
+    for (unsigned i = 0; i < RT_ELEMENTS(g_aSupArgPurgeDescs); i++)
+    {
+        size_t const cchPurge = g_aSupArgPurgeDescs[i].cchArg;
+        if (!memcmp(pszArg, g_aSupArgPurgeDescs[i].pszArg, cchPurge))
+        {
+            if (pszArg[cchPurge] == '\0')
+                return 1 + g_aSupArgPurgeDescs[i].fTakesValue;
+            if (   g_aSupArgPurgeDescs[i].fTakesValue
+                && (pszArg[cchPurge] == ':' || pszArg[cchPurge] == '='))
+                return 1;
+        }
+    }
+
+    return 0;
+}
+
+
+/**
+ * Purges any command line arguments considered harmful.
+ *
+ * @returns nothing.
+ * @param   cArgsOrig        The original number of arguments.
+ * @param   papszArgsOrig    The original argument vector.
+ * @param   pcArgsNew        Where to store the new number of arguments on success.
+ * @param   ppapszArgsNew    Where to store the pointer to the purged argument vector.
+ */
+static void supR3HardenedMainPurgeArgs(int cArgsOrig, char **papszArgsOrig, int *pcArgsNew, char ***ppapszArgsNew)
+{
+    int    iDst = 0;
+#ifdef RT_OS_WINDOWS
+    char **papszArgsNew = papszArgsOrig; /* We allocated this, no need to allocate again. */
+#else
+    char **papszArgsNew = (char **)malloc((cArgsOrig + 1) * sizeof(char *));
+#endif
+    if (papszArgsNew)
+    {
+        for (int iSrc = 0; iSrc < cArgsOrig; iSrc++)
+        {
+            unsigned cPurgedArgs = supR3HardenedMainShouldPurgeArg(papszArgsOrig[iSrc]);
+            if (!cPurgedArgs)
+                papszArgsNew[iDst++] = papszArgsOrig[iSrc];
+            else
+                iSrc += cPurgedArgs - 1;
+        }
+
+        papszArgsNew[iDst] = NULL; /* The array is NULL terminated, just like envp. */
+    }
+    else
+        supR3HardenedFatal("SUPR3HardenedMain: failed to allocate memory for purged command line!\n");
+    *pcArgsNew     = iDst;
+    *ppapszArgsNew = papszArgsNew;
+
+#ifdef RT_OS_WINDOWS
+    /** @todo Update command line pointers in PEB, wont really work without it. */
+#endif
+}
+
 
 /**
  * Loads the VBoxRT DLL/SO/DYLIB, hands it the open driver,
@@ -1543,14 +2216,14 @@ static void supR3HardenedMainInitRuntime(uint32_t fFlags)
      * Construct the name.
      */
     char szPath[RTPATH_MAX];
-    supR3HardenedPathSharedLibs(szPath, sizeof(szPath) - sizeof("/VBoxRT" SUPLIB_DLL_SUFF));
+    supR3HardenedPathAppSharedLibs(szPath, sizeof(szPath) - sizeof("/VBoxRT" SUPLIB_DLL_SUFF));
     suplibHardenedStrCat(szPath, "/VBoxRT" SUPLIB_DLL_SUFF);
 
     /*
      * Open it and resolve the symbols.
      */
 #if defined(RT_OS_WINDOWS)
-    HMODULE hMod = (HMODULE)supR3HardenedWinLoadLibrary(szPath, false /*fSystem32Only*/);
+    HMODULE hMod = (HMODULE)supR3HardenedWinLoadLibrary(szPath, false /*fSystem32Only*/, g_fSupHardenedMain);
     if (!hMod)
         supR3HardenedFatalMsg("supR3HardenedMainInitRuntime", kSupInitOp_IPRT, VERR_MODULE_NOT_FOUND,
                               "LoadLibrary \"%s\" failed (rc=%d)",
@@ -1621,6 +2294,43 @@ static void supR3HardenedMainInitRuntime(uint32_t fFlags)
 
 
 /**
+ * Construct the path to the DLL/SO/DYLIB containing the actual program.
+ *
+ * @returns VBox status code.
+ * @param   pszProgName     The program name.
+ * @param   fMainFlags      The flags passed to SUPR3HardenedMain.
+ * @param   pszPath         The output buffer.
+ * @param   cbPath          The size of the output buffer, in bytes.  Must be at
+ *                          least 128 bytes!
+ */
+static int supR3HardenedMainGetTrustedLib(const char *pszProgName, uint32_t fMainFlags, char *pszPath, size_t cbPath)
+{
+    supR3HardenedPathAppPrivateArch(pszPath, sizeof(cbPath) - 10);
+    const char *pszSubDirSlash;
+    switch (g_fSupHardenedMain & SUPSECMAIN_FLAGS_LOC_MASK)
+    {
+        case SUPSECMAIN_FLAGS_LOC_APP_BIN:
+            pszSubDirSlash = "/";
+            break;
+        case SUPSECMAIN_FLAGS_LOC_TESTCASE:
+            pszSubDirSlash = "/testcase/";
+            break;
+        default:
+            pszSubDirSlash = "/";
+            supR3HardenedFatal("supR3HardenedMainGetTrustedMain: Unknown program binary location: %#x\n", g_fSupHardenedMain);
+    }
+#ifdef RT_OS_DARWIN
+    if (fMainFlags & SUPSECMAIN_FLAGS_OSX_VM_APP)
+        pszProgName = "VirtualBox";
+#else
+    RT_NOREF1(fMainFlags);
+#endif
+    size_t cch = suplibHardenedStrLen(pszPath);
+    return suplibHardenedStrCopyEx(&pszPath[cch], cbPath - cch, pszSubDirSlash, pszProgName, SUPLIB_DLL_SUFF, NULL);
+}
+
+
+/**
  * Loads the DLL/SO/DYLIB containing the actual program and
  * resolves the TrustedError symbol.
  *
@@ -1644,16 +2354,14 @@ static PFNSUPTRUSTEDERROR supR3HardenedMainGetTrustedError(const char *pszProgNa
      * Construct the name.
      */
     char szPath[RTPATH_MAX];
-    supR3HardenedPathAppPrivateArch(szPath, sizeof(szPath) - 10);
-    size_t cch = suplibHardenedStrLen(szPath);
-    suplibHardenedStrCopyEx(&szPath[cch], sizeof(szPath) - cch, "/", pszProgName, SUPLIB_DLL_SUFF, NULL);
+    supR3HardenedMainGetTrustedLib(pszProgName, g_fSupHardenedMain, szPath, sizeof(szPath));
 
     /*
      * Open it and resolve the symbol.
      */
 #if defined(RT_OS_WINDOWS)
     supR3HardenedWinEnableThreadCreation();
-    HMODULE hMod = (HMODULE)supR3HardenedWinLoadLibrary(szPath, false /*fSystem32Only*/);
+    HMODULE hMod = (HMODULE)supR3HardenedWinLoadLibrary(szPath, false /*fSystem32Only*/, 0 /*fMainFlags*/);
     if (!hMod)
         return NULL;
     FARPROC pfn = GetProcAddress(hMod, SUP_HARDENED_SYM("TrustedError"));
@@ -1680,30 +2388,29 @@ static PFNSUPTRUSTEDERROR supR3HardenedMainGetTrustedError(const char *pszProgNa
  *
  * @returns Pointer to the trusted main of the actual program.
  * @param   pszProgName     The program name.
+ * @param   fMainFlags      The flags passed to SUPR3HardenedMain.
  * @remarks This function will not return on failure.
  */
-static PFNSUPTRUSTEDMAIN supR3HardenedMainGetTrustedMain(const char *pszProgName)
+static PFNSUPTRUSTEDMAIN supR3HardenedMainGetTrustedMain(const char *pszProgName, uint32_t fMainFlags)
 {
     /*
      * Construct the name.
      */
     char szPath[RTPATH_MAX];
-    supR3HardenedPathAppPrivateArch(szPath, sizeof(szPath) - 10);
-    size_t cch = suplibHardenedStrLen(szPath);
-    suplibHardenedStrCopyEx(&szPath[cch], sizeof(szPath) - cch, "/", pszProgName, SUPLIB_DLL_SUFF, NULL);
+    supR3HardenedMainGetTrustedLib(pszProgName, fMainFlags, szPath, sizeof(szPath));
 
     /*
      * Open it and resolve the symbol.
      */
 #if defined(RT_OS_WINDOWS)
-    HMODULE hMod = (HMODULE)supR3HardenedWinLoadLibrary(szPath, false /*fSystem32Only*/);
+    HMODULE hMod = (HMODULE)supR3HardenedWinLoadLibrary(szPath, false /*fSystem32Only*/, 0 /*fMainFlags*/);
     if (!hMod)
         supR3HardenedFatal("supR3HardenedMainGetTrustedMain: LoadLibrary \"%s\" failed, rc=%d\n",
-                            szPath, RtlGetLastWin32Error());
+                           szPath, RtlGetLastWin32Error());
     FARPROC pfn = GetProcAddress(hMod, SUP_HARDENED_SYM("TrustedMain"));
     if (!pfn)
         supR3HardenedFatal("supR3HardenedMainGetTrustedMain: Entrypoint \"TrustedMain\" not found in \"%s\" (rc=%d)\n",
-                            szPath, RtlGetLastWin32Error());
+                           szPath, RtlGetLastWin32Error());
     return (PFNSUPTRUSTEDMAIN)pfn;
 
 #else
@@ -1711,11 +2418,11 @@ static PFNSUPTRUSTEDMAIN supR3HardenedMainGetTrustedMain(const char *pszProgName
     void *pvMod = dlopen(szPath, RTLD_NOW | RTLD_GLOBAL);
     if (!pvMod)
         supR3HardenedFatal("supR3HardenedMainGetTrustedMain: dlopen(\"%s\",) failed: %s\n",
-                            szPath, dlerror());
+                           szPath, dlerror());
     void *pvSym = dlsym(pvMod, SUP_HARDENED_SYM("TrustedMain"));
     if (!pvSym)
         supR3HardenedFatal("supR3HardenedMainGetTrustedMain: Entrypoint \"TrustedMain\" not found in \"%s\"!\ndlerror: %s\n",
-                            szPath, dlerror());
+                           szPath, dlerror());
     return (PFNSUPTRUSTEDMAIN)(uintptr_t)pvSym;
 #endif
 }
@@ -1759,15 +2466,17 @@ DECLHIDDEN(int) SUPR3HardenedMain(const char *pszProgName, uint32_t fFlags, int 
 #endif
         g_SupPreInitData.Data.hDevice = SUP_HDEVICE_NIL;
 
-#ifdef SUP_HARDENED_SUID
-# ifdef RT_OS_LINUX
     /*
-     * On linux we have to make sure the path is initialized because we
-     * *might* not be able to access /proc/self/exe after the seteuid call.
+     * Determine the full exe path as we'll be needing it for the verify all
+     * call(s) below.  (We have to do this early on Linux because we * *might*
+     * not be able to access /proc/self/exe after the seteuid call.)
      */
     supR3HardenedGetFullExePath();
-# endif
+#ifdef RT_OS_WINDOWS
+    supR3HardenedWinInitAppBin(fFlags);
+#endif
 
+#ifdef SUP_HARDENED_SUID
     /*
      * Grab any options from the environment.
      */
@@ -1796,7 +2505,7 @@ DECLHIDDEN(int) SUPR3HardenedMain(const char *pszProgName, uint32_t fFlags, int 
     {
         SUP_DPRINTF(("SUPR3HardenedMain: Respawn #1\n"));
         supR3HardenedWinInit(SUPSECMAIN_FLAGS_DONT_OPEN_DEV, false /*fAvastKludge*/);
-        supR3HardenedVerifyAll(true /* fFatal */, pszProgName);
+        supR3HardenedVerifyAll(true /* fFatal */, pszProgName, g_szSupLibHardenedExePath, fFlags);
         return supR3HardenedWinReSpawn(1 /*iWhich*/);
     }
 
@@ -1813,7 +2522,7 @@ DECLHIDDEN(int) SUPR3HardenedMain(const char *pszProgName, uint32_t fFlags, int 
     /*
      * Validate the installation.
      */
-    supR3HardenedVerifyAll(true /* fFatal */, pszProgName);
+    supR3HardenedVerifyAll(true /* fFatal */, pszProgName, g_szSupLibHardenedExePath, fFlags);
 
     /*
      * The next steps are only taken if we actually need to access the support
@@ -1857,7 +2566,14 @@ DECLHIDDEN(int) SUPR3HardenedMain(const char *pszProgName, uint32_t fFlags, int 
     supR3HardenedWinFlushLoaderCache();
     supR3HardenedWinResolveVerifyTrustApiAndHookThreadCreation(g_pszSupLibHardenedProgName);
     g_enmSupR3HardenedMainState = SUPR3HARDENEDMAINSTATE_WIN_VERIFY_TRUST_READY;
-#endif
+#else /* !RT_OS_WINDOWS */
+# ifndef RT_OS_FREEBSD /** @todo portme */
+    /*
+     * Posix: Hook the load library interface interface.
+     */
+    supR3HardenedPosixInit();
+# endif
+#endif /* !RT_OS_WINDOWS */
 
 #ifdef SUP_HARDENED_SUID
     /*
@@ -1872,12 +2588,22 @@ DECLHIDDEN(int) SUPR3HardenedMain(const char *pszProgName, uint32_t fFlags, int 
 #endif
 
     /*
+     * Purge any environment variables and command line arguments considered harmful.
+     */
+    /** @todo May need to move this to a much earlier stage on windows.  */
+    supR3HardenedMainPurgeEnvironment(envp);
+    supR3HardenedMainPurgeArgs(argc, argv, &argc, &argv);
+
+    /*
      * Load the IPRT, hand the SUPLib part the open driver and
      * call RTR3InitEx.
      */
     SUP_DPRINTF(("SUPR3HardenedMain: Load Runtime...\n"));
     g_enmSupR3HardenedMainState = SUPR3HARDENEDMAINSTATE_INIT_RUNTIME;
     supR3HardenedMainInitRuntime(fFlags);
+#ifdef RT_OS_WINDOWS
+    supR3HardenedWinModifyDllSearchPath(fFlags, g_szSupLibHardenedAppBinPath);
+#endif
 
     /*
      * Load the DLL/SO/DYLIB containing the actual program
@@ -1885,7 +2611,7 @@ DECLHIDDEN(int) SUPR3HardenedMain(const char *pszProgName, uint32_t fFlags, int 
      */
     SUP_DPRINTF(("SUPR3HardenedMain: Load TrustedMain...\n"));
     g_enmSupR3HardenedMainState = SUPR3HARDENEDMAINSTATE_GET_TRUSTED_MAIN;
-    PFNSUPTRUSTEDMAIN pfnTrustedMain = supR3HardenedMainGetTrustedMain(pszProgName);
+    PFNSUPTRUSTEDMAIN pfnTrustedMain = supR3HardenedMainGetTrustedMain(pszProgName, fFlags);
 
     SUP_DPRINTF(("SUPR3HardenedMain: Calling TrustedMain (%p)...\n", pfnTrustedMain));
     g_enmSupR3HardenedMainState = SUPR3HARDENEDMAINSTATE_CALLED_TRUSTED_MAIN;

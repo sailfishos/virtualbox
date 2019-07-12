@@ -3,7 +3,7 @@
  * VBox USB Monitor Device Filtering functionality
  */
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -12,12 +12,21 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "VBoxUsbMon.h"
 #include "../cmn/VBoxUsbTool.h"
 
@@ -386,9 +395,9 @@ static PVBOXUSBFLTCTX vboxUsbFltDevMatchLocked(PVBOXUSBFLT_DEVICE pDevice, uintp
     USBFilterSetNumExact(&DevFlt, USBFILTERIDX_DEVICE_CLASS, pDevice->bClass, true);
     USBFilterSetNumExact(&DevFlt, USBFILTERIDX_DEVICE_SUB_CLASS, pDevice->bSubClass, true);
     USBFilterSetNumExact(&DevFlt, USBFILTERIDX_DEVICE_PROTOCOL, pDevice->bProtocol, true);
-    USBFilterSetStringExact(&DevFlt, USBFILTERIDX_MANUFACTURER_STR, pDevice->szMfgName, true);
-    USBFilterSetStringExact(&DevFlt, USBFILTERIDX_PRODUCT_STR, pDevice->szProduct, true);
-    USBFilterSetStringExact(&DevFlt, USBFILTERIDX_SERIAL_NUMBER_STR, pDevice->szSerial, true);
+    USBFilterSetStringExact(&DevFlt, USBFILTERIDX_MANUFACTURER_STR, pDevice->szMfgName, true /*fMustBePresent*/, true /*fPurge*/);
+    USBFilterSetStringExact(&DevFlt, USBFILTERIDX_PRODUCT_STR, pDevice->szProduct, true /*fMustBePresent*/, true /*fPurge*/);
+    USBFilterSetStringExact(&DevFlt, USBFILTERIDX_SERIAL_NUMBER_STR, pDevice->szSerial, true /*fMustBePresent*/, true /*fPurge*/);
 
     /* Run filters on the thing. */
     PVBOXUSBFLTCTX pOwner = VBoxUSBFilterMatchEx(&DevFlt, puId, fRemoveFltIfOneShot, pfFilter, pfIsOneShot);
@@ -477,7 +486,7 @@ static NTSTATUS vboxUsbFltDevPopulate(PVBOXUSBFLT_DEVICE pDevice, PDEVICE_OBJECT
 
             if (pDevDr->iSerialNumber)
             {
-                Status = VBoxUsbToolGetStringDescriptorA(pDo, pDevice->szSerial, sizeof (pDevice->szSerial), pDevDr->iSerialNumber, langId, VBOXUSBMON_POPULATE_REQUEST_TIMEOUT_MS);
+                Status = VBoxUsbToolGetStringDescriptor(pDo, pDevice->szSerial, sizeof (pDevice->szSerial), pDevDr->iSerialNumber, langId, VBOXUSBMON_POPULATE_REQUEST_TIMEOUT_MS);
                 if (!NT_SUCCESS(Status))
                 {
                     WARN(("reading serial number failed"));
@@ -496,7 +505,7 @@ static NTSTATUS vboxUsbFltDevPopulate(PVBOXUSBFLT_DEVICE pDevice, PDEVICE_OBJECT
 
             if (pDevDr->iManufacturer)
             {
-                Status = VBoxUsbToolGetStringDescriptorA(pDo, pDevice->szMfgName, sizeof (pDevice->szMfgName), pDevDr->iManufacturer, langId, VBOXUSBMON_POPULATE_REQUEST_TIMEOUT_MS);
+                Status = VBoxUsbToolGetStringDescriptor(pDo, pDevice->szMfgName, sizeof (pDevice->szMfgName), pDevDr->iManufacturer, langId, VBOXUSBMON_POPULATE_REQUEST_TIMEOUT_MS);
                 if (!NT_SUCCESS(Status))
                 {
                     WARN(("reading manufacturer name failed"));
@@ -515,7 +524,7 @@ static NTSTATUS vboxUsbFltDevPopulate(PVBOXUSBFLT_DEVICE pDevice, PDEVICE_OBJECT
 
             if (pDevDr->iProduct)
             {
-                Status = VBoxUsbToolGetStringDescriptorA(pDo, pDevice->szProduct, sizeof (pDevice->szProduct), pDevDr->iProduct, langId, VBOXUSBMON_POPULATE_REQUEST_TIMEOUT_MS);
+                Status = VBoxUsbToolGetStringDescriptor(pDo, pDevice->szProduct, sizeof (pDevice->szProduct), pDevDr->iProduct, langId, VBOXUSBMON_POPULATE_REQUEST_TIMEOUT_MS);
                 if (!NT_SUCCESS(Status))
                 {
                     WARN(("reading product name failed"));
@@ -782,8 +791,10 @@ typedef struct VBOXUSBFLTCHECKWALKER
     PVBOXUSBFLTCTX pContext;
 } VBOXUSBFLTCHECKWALKER, *PVBOXUSBFLTCHECKWALKER;
 
-static DECLCALLBACK(BOOLEAN) vboxUsbFltFilterCheckWalker(PFILE_OBJECT pFile, PDEVICE_OBJECT pTopDo, PDEVICE_OBJECT pHubDo, PVOID pvContext)
+static DECLCALLBACK(BOOLEAN) vboxUsbFltFilterCheckWalker(PFILE_OBJECT pFile, PDEVICE_OBJECT pTopDo,
+                                                         PDEVICE_OBJECT pHubDo, PVOID pvContext)
 {
+    RT_NOREF1(pHubDo);
     PVBOXUSBFLTCHECKWALKER pData = (PVBOXUSBFLTCHECKWALKER)pvContext;
     PVBOXUSBFLTCTX pContext = pData->pContext;
 
@@ -842,9 +853,10 @@ static DECLCALLBACK(BOOLEAN) vboxUsbFltFilterCheckWalker(PFILE_OBJECT pFile, PDE
                 bool fIsOneShot = false;
                 VBOXUSBFLT_LOCK_ACQUIRE();
                 PVBOXUSBFLTCTX pCtx = vboxUsbFltDevMatchLocked(&Device, &uId,
-                        false, /* do not remove a one-shot filter */
-                        &fFilter, &fIsOneShot);
+                                                               false, /* do not remove a one-shot filter */
+                                                               &fFilter, &fIsOneShot);
                 VBOXUSBFLT_LOCK_RELEASE();
+                NOREF(pCtx);
                 LOG(("Matching Info: Filter (0x%p), pCtx(0x%p), fFilter(%d), fIsOneShot(%d)", uId, pCtx, (int)fFilter, (int)fIsOneShot));
                 if (fFilter)
                 {
@@ -930,7 +942,7 @@ NTSTATUS VBoxUsbFltClose(PVBOXUSBFLTCTX pContext)
     ASSERT_WARN(Irql == PASSIVE_LEVEL, ("irql==(%d)", Irql));
 
     VBOXUSBFLT_LOCK_ACQUIRE();
-    uint32_t cActiveFilters = pContext->cActiveFilters;
+
     pContext->bRemoved = TRUE;
     if (pContext->pChangeEvent)
     {
@@ -942,9 +954,7 @@ NTSTATUS VBoxUsbFltClose(PVBOXUSBFLTCTX pContext)
         pContext->pChangeEvent = NULL;
     }
     else
-    {
         LOG(("no change event"));
-    }
     RemoveEntryList(&pContext->ListEntry);
 
     LOG(("removing owner filters"));
@@ -955,8 +965,8 @@ NTSTATUS VBoxUsbFltClose(PVBOXUSBFLTCTX pContext)
     LOG(("enumerating devices.."));
     /* 2. check if there are devices owned */
     for (PLIST_ENTRY pEntry = g_VBoxUsbFltGlobals.DeviceList.Flink;
-            pEntry != &g_VBoxUsbFltGlobals.DeviceList;
-            pEntry = pEntry->Flink)
+         pEntry != &g_VBoxUsbFltGlobals.DeviceList;
+         pEntry = pEntry->Flink)
     {
         PVBOXUSBFLT_DEVICE pDevice = PVBOXUSBFLT_DEVICE_FROM_LE(pEntry);
         if (pDevice->pOwner != pContext)
@@ -983,6 +993,7 @@ NTSTATUS VBoxUsbFltClose(PVBOXUSBFLTCTX pContext)
             LOG(("device does NOT need replug"));
         }
     }
+
     VBOXUSBFLT_LOCK_RELEASE();
 
     /* this should replug all devices that were either skipped or grabbed due to the context's */
@@ -1191,6 +1202,8 @@ static void vboxUsbDevToUserInfo(PVBOXUSBFLTCTX pContext, PVBOXUSBFLT_DEVICE pDe
         strcpy(pDevInfo->szObjName, pDevice->szObjName);
     }
     pDevInfo->fHighSpeed = pDevice->fHighSpeed;
+#else
+    RT_NOREF3(pContext, pDevice, pDevInfo);
 #endif
 }
 
@@ -1315,6 +1328,7 @@ NTSTATUS VBoxUsbFltPdoAdd(PDEVICE_OBJECT pPdo, BOOLEAN *pbFiltered)
 
 NTSTATUS VBoxUsbFltPdoAddCompleted(PDEVICE_OBJECT pPdo)
 {
+    RT_NOREF1(pPdo);
     VBOXUSBFLT_LOCK_ACQUIRE();
     vboxUsbFltSignalChangeLocked();
     VBOXUSBFLT_LOCK_RELEASE();
@@ -1325,11 +1339,11 @@ BOOLEAN VBoxUsbFltPdoIsFiltered(PDEVICE_OBJECT pPdo)
 {
     VBOXUSBFLT_DEVSTATE enmState = VBOXUSBFLT_DEVSTATE_REMOVED;
     VBOXUSBFLT_LOCK_ACQUIRE();
+
     PVBOXUSBFLT_DEVICE pDevice = vboxUsbFltDevGetLocked(pPdo);
     if (pDevice)
-    {
         enmState = pDevice->enmState;
-    }
+
     VBOXUSBFLT_LOCK_RELEASE();
 
     return enmState >= VBOXUSBFLT_DEVSTATE_CAPTURING;
@@ -1418,7 +1432,7 @@ void VBoxUsbFltProxyStopped(HVBOXUSBFLTDEV hDev)
     }
     else
     {
-        if(pDevice->enmState != VBOXUSBFLT_DEVSTATE_REPLUGGING)
+        if (pDevice->enmState != VBOXUSBFLT_DEVSTATE_REPLUGGING)
         {
             WARN(("invalid state, %d", pDevice->enmState));
         }

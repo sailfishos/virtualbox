@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -73,6 +73,8 @@ DECL_FORCE_INLINE(bool) RTLocCIsBlank(int ch)
  *
  * @returns true / false.
  * @param   ch      The character to test.
+ *
+ * @note    Will return true of ch is '\0'!
  */
 DECL_FORCE_INLINE(bool) RTLocCIsCntrl(int ch)
 {

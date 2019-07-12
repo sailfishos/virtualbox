@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_STRING
 #include <iprt/string.h>
 #ifndef RT_NO_EXPORT_SYMBOL
@@ -56,6 +56,43 @@
 #include "internal/string.h"
 
 
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+static char g_szHexDigits[17] = "0123456789abcdef";
+
+
+/**
+ * Helper that formats a 16-bit hex word in a IPv6 address.
+ *
+ * @returns Length in chars.
+ * @param   pszDst      The output buffer.  Written from the start.
+ * @param   uWord       The word to format as hex.
+ */
+static size_t rtstrFormatIPv6HexWord(char *pszDst, uint16_t uWord)
+{
+    size_t   off;
+    uint16_t cDigits;
+
+    if (uWord & UINT16_C(0xff00))
+        cDigits = uWord & UINT16_C(0xf000) ? 4 : 3;
+    else
+        cDigits = uWord & UINT16_C(0x00f0) ? 2 : 1;
+
+    off = 0;
+    switch (cDigits)
+    {
+        case 4: pszDst[off++] = g_szHexDigits[(uWord >> 12) & 0xf]; RT_FALL_THRU();
+        case 3: pszDst[off++] = g_szHexDigits[(uWord >>  8) & 0xf]; RT_FALL_THRU();
+        case 2: pszDst[off++] = g_szHexDigits[(uWord >>  4) & 0xf]; RT_FALL_THRU();
+        case 1: pszDst[off++] = g_szHexDigits[(uWord >>  0) & 0xf];
+            break;
+    }
+    pszDst[off] = '\0';
+    return off;
+}
+
+
 /**
  * Helper function to format IPv6 address according to RFC 5952.
  *
@@ -66,13 +103,13 @@
  */
 static size_t rtstrFormatIPv6(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, PCRTNETADDRIPV6 pIpv6Addr)
 {
-    size_t cch = 0; /* result */
-
-    bool fEmbeddedIpv4;
+    size_t cch; /* result */
+    bool   fEmbeddedIpv4;
     size_t cwHexPart;
-    size_t cwZeroRun, cwLongestZeroRun;
-    size_t iZeroStart, iLongestZeroStart;
+    size_t cwLongestZeroRun;
+    size_t iLongestZeroStart;
     size_t idx;
+    char   szHexWord[8];
 
     Assert(pIpv6Addr != NULL);
 
@@ -85,78 +122,81 @@ static size_t rtstrFormatIPv6(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, PCRTN
      */
     fEmbeddedIpv4 = false;
     cwHexPart = RT_ELEMENTS(pIpv6Addr->au16);
-    if (pIpv6Addr->au64[0] == 0
-        && (   (pIpv6Addr->au32[2] == 0
-                && (   pIpv6Addr->au32[3] != 0
-                    && pIpv6Addr->au32[3] != RT_H2BE_U32_C(1)))
+    if (   pIpv6Addr->au64[0] == 0
+        && (   (   pIpv6Addr->au32[2] == 0
+                && pIpv6Addr->au32[3] != 0
+                && pIpv6Addr->au32[3] != RT_H2BE_U32_C(1) )
             || pIpv6Addr->au32[2] == RT_H2BE_U32_C(0x0000ffff)
-            || pIpv6Addr->au32[2] == RT_H2BE_U32_C(0xffff0000)))
+            || pIpv6Addr->au32[2] == RT_H2BE_U32_C(0xffff0000) ) )
     {
         fEmbeddedIpv4 = true;
         cwHexPart -= 2;
     }
 
-    cwZeroRun = cwLongestZeroRun = 0;
-    iZeroStart = iLongestZeroStart = -1;
-    for (idx = 0; idx <= cwHexPart; ++idx)
-    {
-        if (idx < cwHexPart && pIpv6Addr->au16[idx] == 0)
+    /*
+     * Find the longest sequences of two or more zero words.
+     */
+    cwLongestZeroRun  = 0;
+    iLongestZeroStart = 0;
+    for (idx = 0; idx < cwHexPart; idx++)
+        if (pIpv6Addr->au16[idx] == 0)
         {
-            if (cwZeroRun == 0)
+            size_t iZeroStart = idx;
+            size_t cwZeroRun;
+            do
+                idx++;
+            while (idx < cwHexPart && pIpv6Addr->au16[idx] == 0);
+            cwZeroRun = idx - iZeroStart;
+            if (cwZeroRun > 1 && cwZeroRun > cwLongestZeroRun)
             {
-                cwZeroRun = 1;
-                iZeroStart = idx;
-            }
-            else
-                ++cwZeroRun;
-        }
-        else
-        {
-            if (cwZeroRun != 0)
-            {
-                if (cwZeroRun > 1 && cwZeroRun > cwLongestZeroRun)
-                {
-                    cwLongestZeroRun = cwZeroRun;
-                    iLongestZeroStart = iZeroStart;
-                }
-                cwZeroRun = 0;
-                iZeroStart = -1;
+                cwLongestZeroRun  = cwZeroRun;
+                iLongestZeroStart = iZeroStart;
+                if (cwZeroRun >= cwHexPart - idx)
+                    break;
             }
         }
-    }
 
+    /*
+     * Do the formatting.
+     */
+    cch = 0;
     if (cwLongestZeroRun == 0)
     {
         for (idx = 0; idx < cwHexPart; ++idx)
-            cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0,
-                               "%s%x",
-                               idx == 0 ? "" : ":",
-                               RT_BE2H_U16(pIpv6Addr->au16[idx]));
+        {
+            if (idx > 0)
+                cch += pfnOutput(pvArgOutput, ":", 1);
+            cch += pfnOutput(pvArgOutput, szHexWord, rtstrFormatIPv6HexWord(szHexWord, RT_BE2H_U16(pIpv6Addr->au16[idx])));
+        }
 
         if (fEmbeddedIpv4)
-            cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0, ":");
+            cch += pfnOutput(pvArgOutput, ":", 1);
     }
     else
     {
         const size_t iLongestZeroEnd = iLongestZeroStart + cwLongestZeroRun;
 
         if (iLongestZeroStart == 0)
-            cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0, ":");
+            cch += pfnOutput(pvArgOutput, ":", 1);
         else
             for (idx = 0; idx < iLongestZeroStart; ++idx)
-                cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0,
-                                   "%x:", RT_BE2H_U16(pIpv6Addr->au16[idx]));
+            {
+                cch += pfnOutput(pvArgOutput, szHexWord, rtstrFormatIPv6HexWord(szHexWord, RT_BE2H_U16(pIpv6Addr->au16[idx])));
+                cch += pfnOutput(pvArgOutput, ":", 1);
+            }
 
         if (iLongestZeroEnd == cwHexPart)
-            cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0, ":");
+            cch += pfnOutput(pvArgOutput, ":", 1);
         else
         {
             for (idx = iLongestZeroEnd; idx < cwHexPart; ++idx)
-                cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0,
-                                   ":%x", RT_BE2H_U16(pIpv6Addr->au16[idx]));
+            {
+                cch += pfnOutput(pvArgOutput, ":", 1);
+                cch += pfnOutput(pvArgOutput, szHexWord, rtstrFormatIPv6HexWord(szHexWord, RT_BE2H_U16(pIpv6Addr->au16[idx])));
+            }
 
             if (fEmbeddedIpv4)
-                cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0, ":");
+                cch += pfnOutput(pvArgOutput, ":", 1);
         }
     }
 
@@ -211,6 +251,7 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
             case 'I':
             case 'X':
             case 'U':
+            case 'K':
             {
                 /*
                  * Interpret the type.
@@ -264,6 +305,7 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                     { STRMEM("I32"),     sizeof(int32_t),        10, RTSF_INT,   RTSTR_F_VALSIGNED },
                     { STRMEM("I64"),     sizeof(int64_t),        10, RTSF_INT,   RTSTR_F_VALSIGNED },
                     { STRMEM("I8"),      sizeof(int8_t),         10, RTSF_INT,   RTSTR_F_VALSIGNED },
+                    { STRMEM("Kv"),      sizeof(RTHCPTR),        16, RTSF_INT,   RTSTR_F_OBFUSCATE_PTR },
                     { STRMEM("Rv"),      sizeof(RTRCPTR),        16, RTSF_INTW,  0 },
                     { STRMEM("Tbool"),   sizeof(bool),           10, RTSF_BOOL,  0 },
                     { STRMEM("Tfile"),   sizeof(RTFILE),         10, RTSF_INT,   0 },
@@ -322,6 +364,7 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                     int16_t             i16;
                     int32_t             i32;
                     int64_t             i64;
+                    RTR0INTPTR          uR0Ptr;
                     RTFAR16             fp16;
                     RTFAR32             fp32;
                     RTFAR64             fp64;
@@ -334,6 +377,7 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                 } u;
 
                 AssertMsg(!chArgSize, ("Not argument size '%c' for RT types! '%.10s'\n", chArgSize, pszFormatOrg));
+                RT_NOREF_PV(chArgSize);
 
                 /*
                  * Lookup the type - binary search.
@@ -427,6 +471,17 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                             break;
                     }
                 }
+
+#ifndef DEBUG
+                /*
+                 * For now don't show the address.
+                 */
+                if (fFlags & RTSTR_F_OBFUSCATE_PTR)
+                {
+                    cch = rtStrFormatKernelAddress(szBuf, sizeof(szBuf), u.uR0Ptr, cchWidth, cchPrecision, fFlags);
+                    return pfnOutput(pvArgOutput, szBuf, cch);
+                }
+#endif
 
                 /*
                  * Format the output.
@@ -614,7 +669,7 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
             /* Group 3 */
 
             /*
-             * Base name printing.
+             * Base name printing, big endian UTF-16.
              */
             case 'b':
             {
@@ -644,6 +699,56 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                         return pfnOutput(pvArgOutput, pszLastSep, psz - pszLastSep);
                     }
 
+                    /* %lRbs */
+                    case 's':
+                        if (chArgSize == 'l')
+                        {
+                            /* utf-16BE -> utf-8 */
+                            int         cchStr;
+                            PCRTUTF16   pwszStr = va_arg(*pArgs, PRTUTF16);
+
+                            if (RT_VALID_PTR(pwszStr))
+                            {
+                                cchStr = 0;
+                                while (cchStr < cchPrecision && pwszStr[cchStr] != '\0')
+                                    cchStr++;
+                            }
+                            else
+                            {
+                                static RTUTF16  s_wszBigNull[] =
+                                {
+                                    RT_H2BE_U16_C((uint16_t)'<'), RT_H2BE_U16_C((uint16_t)'N'), RT_H2BE_U16_C((uint16_t)'U'),
+                                    RT_H2BE_U16_C((uint16_t)'L'), RT_H2BE_U16_C((uint16_t)'L'), RT_H2BE_U16_C((uint16_t)'>'), '\0'
+                                };
+                                pwszStr = s_wszBigNull;
+                                cchStr  = RT_ELEMENTS(s_wszBigNull) - 1;
+                            }
+
+                            cch = 0;
+                            if (!(fFlags & RTSTR_F_LEFT))
+                                while (--cchWidth >= cchStr)
+                                    cch += pfnOutput(pvArgOutput, " ", 1);
+                            cchWidth -= cchStr;
+                            while (cchStr-- > 0)
+                            {
+/** @todo \#ifndef IN_RC*/
+#ifdef IN_RING3
+                                RTUNICP Cp = 0;
+                                RTUtf16BigGetCpEx(&pwszStr, &Cp);
+                                char *pszEnd = RTStrPutCp(szBuf, Cp);
+                                *pszEnd = '\0';
+                                cch += pfnOutput(pvArgOutput, szBuf, pszEnd - szBuf);
+#else
+                                szBuf[0] = (char)(*pwszStr++ >> 8);
+                                cch += pfnOutput(pvArgOutput, szBuf, 1);
+#endif
+                            }
+                            while (--cchWidth >= 0)
+                                cch += pfnOutput(pvArgOutput, " ", 1);
+                            return cch;
+                        }
+                    RT_FALL_THRU();
+
                     default:
                         AssertMsgFailed(("Invalid status code format type '%.10s'!\n", pszFormatOrg));
                         break;
@@ -668,6 +773,8 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                     {
                         const char *pszStart;
                         const char *psz = pszStart = va_arg(*pArgs, const char *);
+                        int cAngle = 0;
+
                         if (!VALID_PTR(psz))
                             return pfnOutput(pvArgOutput, RT_STR_TUPLE("<null>"));
 
@@ -678,11 +785,21 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                                 psz++;
                                 while ((ch = *psz) != '\0' && (RT_C_IS_BLANK(ch) || ch == '('))
                                     psz++;
-                                if (ch)
+                                if (ch && cAngle == 0)
                                     pszStart = psz;
                             }
                             else if (ch == '(')
                                 break;
+                            else if (ch == '<')
+                            {
+                                cAngle++;
+                                psz++;
+                            }
+                            else if (ch == '>')
+                            {
+                                cAngle--;
+                                psz++;
+                            }
                             else
                                 psz++;
                         }
@@ -731,10 +848,12 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                                     while (off < cchPrecision)
                                     {
                                         int i;
-                                        cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0, "%s%0*p %04x:", off ? "\n" : "", sizeof(pu8) * 2, (uintptr_t)pu8, off);
+                                        cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0,
+                                                           "%s%0*p %04x:", off ? "\n" : "", sizeof(pu8) * 2, (uintptr_t)pu8, off);
                                         for (i = 0; i < cchWidth && off + i < cchPrecision ; i++)
                                             cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0,
-                                                               off + i < cchPrecision ? !(i & 7) && i ? "-%02x" : " %02x" : "   ", pu8[i]);
+                                                               off + i < cchPrecision ? !(i & 7) && i ? "-%02x" : " %02x" : "   ",
+                                                               pu8[i]);
                                         while (i++ < cchWidth)
                                             cch += pfnOutput(pvArgOutput, "   ", 3);
 
@@ -745,6 +864,66 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                                             uint8_t u8 = pu8[i];
                                             cch += pfnOutput(pvArgOutput, u8 < 127 && u8 >= 32 ? (const char *)&u8 : ".", 1);
                                         }
+
+                                        /* next */
+                                        pu8 += cchWidth;
+                                        off += cchWidth;
+                                    }
+                                    return cch;
+                                }
+
+                                /*
+                                 * Regular hex dump with dittoing.
+                                 */
+                                case 'D':
+                                {
+                                    int offEndDupCheck;
+                                    int cDuplicates = 0;
+                                    int off = 0;
+                                    cch = 0;
+
+                                    if (cchWidth <= 0)
+                                        cchWidth = 16;
+                                    offEndDupCheck = cchPrecision - cchWidth;
+
+                                    while (off < cchPrecision)
+                                    {
+                                        int i;
+                                        if (   off >= offEndDupCheck
+                                            || off <= 0
+                                            || memcmp(pu8, pu8 - cchWidth, cchWidth) != 0
+                                            || (   cDuplicates == 0
+                                                && (   off + cchWidth >= offEndDupCheck
+                                                    || memcmp(pu8 + cchWidth, pu8, cchWidth) != 0)) )
+                                        {
+                                            if (cDuplicates > 0)
+                                            {
+                                                cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0,
+                                                                   "\n%.*s ****  <ditto x %u>",
+                                                                   sizeof(pu8) * 2, "****************", cDuplicates);
+                                                cDuplicates = 0;
+                                            }
+
+                                            cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0,
+                                                               "%s%0*p %04x:", off ? "\n" : "", sizeof(pu8) * 2, (uintptr_t)pu8, off);
+                                            for (i = 0; i < cchWidth && off + i < cchPrecision ; i++)
+                                                cch += RTStrFormat(pfnOutput, pvArgOutput, NULL, 0,
+                                                                     off + i < cchPrecision ? !(i & 7) && i
+                                                                   ? "-%02x" : " %02x" : "   ",
+                                                                   pu8[i]);
+                                            while (i++ < cchWidth)
+                                                cch += pfnOutput(pvArgOutput, "   ", 3);
+
+                                            cch += pfnOutput(pvArgOutput, " ", 1);
+
+                                            for (i = 0; i < cchWidth && off + i < cchPrecision; i++)
+                                            {
+                                                uint8_t u8 = pu8[i];
+                                                cch += pfnOutput(pvArgOutput, u8 < 127 && u8 >= 32 ? (const char *)&u8 : ".", 1);
+                                            }
+                                        }
+                                        else
+                                            cDuplicates++;
 
                                         /* next */
                                         pu8 += cchWidth;
@@ -1159,13 +1338,14 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                         REG_OUT_BIT(cr4, X86_CR4_MCE, "MCE");
                         REG_OUT_BIT(cr4, X86_CR4_PGE, "PGE");
                         REG_OUT_BIT(cr4, X86_CR4_PCE, "PCE");
-                        REG_OUT_BIT(cr4, X86_CR4_OSFSXR, "OSFSXR");
+                        REG_OUT_BIT(cr4, X86_CR4_OSFXSR, "OSFXSR");
                         REG_OUT_BIT(cr4, X86_CR4_OSXMMEEXCPT, "OSXMMEEXCPT");
                         REG_OUT_BIT(cr4, X86_CR4_VMXE, "VMXE");
                         REG_OUT_BIT(cr4, X86_CR4_SMXE, "SMXE");
                         REG_OUT_BIT(cr4, X86_CR4_PCIDE, "PCIDE");
                         REG_OUT_BIT(cr4, X86_CR4_OSXSAVE, "OSXSAVE");
                         REG_OUT_BIT(cr4, X86_CR4_SMEP, "SMEP");
+                        REG_OUT_BIT(cr4, X86_CR4_SMAP, "SMAP");
                         REG_OUT_CLOSE(cr4);
                     }
                     else

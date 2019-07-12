@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2014-2015 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -45,7 +45,7 @@ extern void (*glXGetProcAddress(const GLubyte *procname))( void );
 
 #endif
 
-#undef GL_EXT_FUNCS_GEN 
+#undef GL_EXT_FUNCS_GEN
 #define GL_EXT_FUNCS_GEN \
     /* GL_ARB_shader_objects */ \
     USE_GL_FUNC(WINED3D_PFNGLGETOBJECTPARAMETERIVARBPROC, \
@@ -144,9 +144,10 @@ SHADERDECL(int) ShaderInitLib(PVBOXVMSVGASHADERIF pVBoxShaderIf)
 
     /* Dynamically load all GL core functions. */
 #ifdef RT_OS_WINDOWS
-# define USE_GL_FUNC(pfn) pfn = (void*)GetProcAddress(GetModuleHandle("opengl32.dll"), #pfn);
+    HANDLE hOpenGl32 = GetModuleHandle("opengl32.dll");
+# define USE_GL_FUNC(pfn) *(FARPROC *)(&pfn) = GetProcAddress(hOpenGl32, #pfn);
 #else
-# define USE_GL_FUNC(pfn) pfn = (void*)OGLGETPROCADDRESS(#pfn);
+# define USE_GL_FUNC(pfn) pfn = (void *)OGLGETPROCADDRESS(#pfn);
 #endif
     GL_FUNCS_GEN;
 #undef USE_GL_FUNC
@@ -154,7 +155,7 @@ SHADERDECL(int) ShaderInitLib(PVBOXVMSVGASHADERIF pVBoxShaderIf)
     /* Dynamically load all GL extension functions. */
 #define USE_GL_FUNC(type, pfn, ext, replace) \
 { \
-    gl_info->pfn = (void*)OGLGETPROCADDRESS(#pfn); \
+    gl_info->pfn = (type)OGLGETPROCADDRESS(#pfn); \
 }
     GL_EXT_FUNCS_GEN;
 
@@ -204,6 +205,7 @@ struct wined3d_context *context_get_current(void)
 
 struct wined3d_context *context_acquire(IWineD3DDeviceImpl *This, IWineD3DSurface *target, enum ContextUsage usage)
 {
+    RT_NOREF(This, target, usage);
     return g_pCurrentContext;
 }
 
@@ -322,7 +324,7 @@ SHADERDECL(int) ShaderCreateVertexShader(void *pShaderContext, const uint32_t *p
         return VERR_NO_MEMORY;
     }
 
-    hr = vertexshader_init(object, This, pShaderData, NULL, NULL, NULL);
+    hr = vertexshader_init(object, This, (DWORD const *)pShaderData, NULL, NULL, NULL);
     if (FAILED(hr))
     {
         Log(("Failed to initialize vertex shader, hr %#x.\n", hr));
@@ -356,7 +358,7 @@ SHADERDECL(int) ShaderCreatePixelShader(void *pShaderContext, const uint32_t *pS
         return VERR_NO_MEMORY;
     }
 
-    hr = pixelshader_init(object, This, pShaderData, NULL, NULL, NULL);
+    hr = pixelshader_init(object, This, (DWORD const *)pShaderData, NULL, NULL, NULL);
     if (FAILED(hr))
     {
         Log(("Failed to initialize pixel shader, hr %#x.\n", hr));
@@ -381,7 +383,7 @@ SHADERDECL(int) ShaderDestroyVertexShader(void *pShaderContext, void *pShaderObj
     SHADER_SET_CURRENT_CONTEXT(pShaderContext);
 
     object->lpVtbl->Release((IWineD3DVertexShader *)object);
-	return VINF_SUCCESS;
+        return VINF_SUCCESS;
 }
 
 SHADERDECL(int) ShaderDestroyPixelShader(void *pShaderContext, void *pShaderObj)
@@ -392,7 +394,7 @@ SHADERDECL(int) ShaderDestroyPixelShader(void *pShaderContext, void *pShaderObj)
     SHADER_SET_CURRENT_CONTEXT(pShaderContext);
 
     object->lpVtbl->Release((IWineD3DPixelShader *)object);
-	return VINF_SUCCESS;
+        return VINF_SUCCESS;
 }
 
 SHADERDECL(int) ShaderSetVertexShader(void *pShaderContext, void *pShaderObj)
@@ -462,8 +464,7 @@ SHADERDECL(int) ShaderSetVertexShaderConstantB(void *pShaderContext, uint32_t st
     SHADER_SET_CURRENT_CONTEXT(pShaderContext);
     This = g_pCurrentContext->pDeviceContext;
 
-    Log(("(ShaderSetVertexShaderConstantB %p, srcData %p, start %d, count %d)\n",
-            srcData, start, count));
+    Log(("(ShaderSetVertexShaderConstantB %p, srcData %p, start %d, count %d)\n", pShaderContext, srcData, start, count));
 
     if (!srcData || start >= MAX_CONST_B)
     {
@@ -492,8 +493,7 @@ SHADERDECL(int) ShaderSetVertexShaderConstantI(void *pShaderContext, uint32_t st
     SHADER_SET_CURRENT_CONTEXT(pShaderContext);
     This = g_pCurrentContext->pDeviceContext;
 
-    Log(("(ShaderSetVertexShaderConstantI %p, srcData %p, start %d, count %d)\n",
-            srcData, start, count));
+    Log(("(ShaderSetVertexShaderConstantI %p, srcData %p, start %d, count %d)\n", pShaderContext, srcData, start, count));
 
     if (!srcData || start >= MAX_CONST_I)
     {
@@ -519,8 +519,7 @@ SHADERDECL(int) ShaderSetVertexShaderConstantF(void *pShaderContext, uint32_t st
     SHADER_SET_CURRENT_CONTEXT(pShaderContext);
     This = g_pCurrentContext->pDeviceContext;
 
-    Log(("(ShaderSetVertexShaderConstantF %p, srcData %p, start %d, count %d)\n",
-            srcData, start, count));
+    Log(("(ShaderSetVertexShaderConstantF %p, srcData %p, start %d, count %d)\n", pShaderContext, srcData, start, count));
 
     if (srcData == NULL || start + count > This->d3d_vshader_constantF || start > This->d3d_vshader_constantF)
     {
@@ -547,8 +546,7 @@ SHADERDECL(int) ShaderSetPixelShaderConstantB(void *pShaderContext, uint32_t sta
     SHADER_SET_CURRENT_CONTEXT(pShaderContext);
     This = g_pCurrentContext->pDeviceContext;
 
-    Log(("(ShaderSetPixelShaderConstantB %p, srcData %p, start %d, count %d)\n",
-            srcData, start, count));
+    Log(("(ShaderSetPixelShaderConstantB %p, srcData %p, start %d, count %d)\n", pShaderContext, srcData, start, count));
 
     if (!srcData || start >= MAX_CONST_B)
     {
@@ -577,8 +575,7 @@ SHADERDECL(int) ShaderSetPixelShaderConstantI(void *pShaderContext, uint32_t sta
     SHADER_SET_CURRENT_CONTEXT(pShaderContext);
     This = g_pCurrentContext->pDeviceContext;
 
-    Log(("(ShaderSetPixelShaderConstantI %p, srcData %p, start %d, count %d)\n",
-            srcData, start, count));
+    Log(("(ShaderSetPixelShaderConstantI %p, srcData %p, start %d, count %d)\n", pShaderContext, srcData, start, count));
 
     if (!srcData || start >= MAX_CONST_I)
     {
@@ -604,8 +601,7 @@ SHADERDECL(int) ShaderSetPixelShaderConstantF(void *pShaderContext, uint32_t sta
     SHADER_SET_CURRENT_CONTEXT(pShaderContext);
     This = g_pCurrentContext->pDeviceContext;
 
-    Log(("(ShaderSetPixelShaderConstantF %p, srcData %p, start %d, count %d)\n",
-            srcData, start, count));
+    Log(("(ShaderSetPixelShaderConstantF %p, srcData %p, start %d, count %d)\n", pShaderContext, srcData, start, count));
 
     if (srcData == NULL || start + count > This->d3d_pshader_constantF || start > This->d3d_pshader_constantF)
     {
@@ -622,6 +618,35 @@ SHADERDECL(int) ShaderSetPixelShaderConstantF(void *pShaderContext, uint32_t sta
 
     g_pCurrentContext->fChangedPixelShaderConstant = true;
 
+    return VINF_SUCCESS;
+}
+
+SHADERDECL(int) ShaderSetPositionTransformed(void *pShaderContext, unsigned cxViewPort, unsigned cyViewPort, bool fPreTransformed)
+{
+    IWineD3DDeviceImpl *This;
+    int rc;
+
+    SHADER_SET_CURRENT_CONTEXT(pShaderContext);
+    This = g_pCurrentContext->pDeviceContext;
+
+    if (This->strided_streams.position_transformed == fPreTransformed)
+        return VINF_SUCCESS;    /* no changes; nothing to do. */
+
+    Log(("ShaderSetPositionTransformed viewport (%d,%d) fPreTransformed=%d\n", cxViewPort, cyViewPort, fPreTransformed));
+
+    if (fPreTransformed)
+    {   /* In the pre-transformed vertex coordinate case we need to disable all transformations as we're already using screen coordinates. */
+        /* Load the identity matrix for the model view */
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+
+        /* Reset the projection matrix too */
+        rc = ShaderTransformProjection(cxViewPort, cyViewPort, NULL, fPreTransformed);
+        AssertRCReturn(rc, rc);
+    }
+
+    This->strided_streams.position_transformed = fPreTransformed;
+    ((IWineD3DVertexDeclarationImpl *)(This->stateBlock->vertexDecl))->position_transformed = fPreTransformed;
     return VINF_SUCCESS;
 }
 
@@ -647,7 +672,7 @@ SHADERDECL(int) ShaderUpdateState(void *pShaderContext, uint32_t rtHeight)
 
     pThis->rtHeight = rtHeight;
 
-    /* @todo missing state:
+    /** @todo missing state:
      * - fog enable (stateblock->renderState[WINED3DRS_FOGENABLE])
      * - fog mode (stateblock->renderState[WINED3DRS_FOGTABLEMODE])
      * - stateblock->vertexDecl->position_transformed
@@ -667,7 +692,7 @@ SHADERDECL(int) ShaderUpdateState(void *pShaderContext, uint32_t rtHeight)
     return VINF_SUCCESS;
 }
 
-SHADERDECL(int) ShaderTransformProjection(unsigned cxViewPort, unsigned cyViewPort, float matrix[16])
+SHADERDECL(int) ShaderTransformProjection(unsigned cxViewPort, unsigned cyViewPort, float matrix[16], bool fPretransformed)
 {
 #ifdef DEBUG
     GLenum lastError;
@@ -722,11 +747,20 @@ SHADERDECL(int) ShaderTransformProjection(unsigned cxViewPort, unsigned cyViewPo
     yoffset = -(63.0f / 64.0f) / cyViewPort;
 
     glTranslatef(xoffset, -yoffset, -1.0f);
-    /* flip y coordinate origin too */
-    glScalef(1.0f, -1.0f, 2.0f);
 
-    glMultMatrixf(matrix);
+    if (fPretransformed)
+    {
+        /* One world coordinate equals one screen pixel; y-inversion no longer an issue */
+        glOrtho(0, cxViewPort, 0, cyViewPort, -1, 1);
+    }
+    else
+    {
+        /* flip y coordinate origin too */
+        glScalef(1.0f, -1.0f, 2.0f);
 
+        /* Apply the supplied projection matrix */
+        glMultMatrixf(matrix);
+    }
 #ifdef DEBUG
     lastError = glGetError();                                     \
     AssertMsgReturn(lastError == GL_NO_ERROR, ("%s (%d): last error 0x%x\n", __FUNCTION__, __LINE__, lastError), VERR_INTERNAL_ERROR);

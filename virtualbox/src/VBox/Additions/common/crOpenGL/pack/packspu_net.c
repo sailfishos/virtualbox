@@ -30,12 +30,12 @@ packspuWriteback( const CRMessageWriteback *wb )
 static void
 packspuReadback( const CRMessageReadback *rb, unsigned int len )
 {
-    /* minus the header, the destination pointer, 
+    /* minus the header, the destination pointer,
      * *and* the implicit writeback pointer at the head. */
 
     int payload_len = len - sizeof( *rb );
     int *writeback;
-    void *dest_ptr; 
+    void *dest_ptr;
     crMemcpy( &writeback, &(rb->writeback_ptr), sizeof( writeback ) );
     crMemcpy( &dest_ptr, &(rb->readback_ptr), sizeof( dest_ptr ) );
 
@@ -53,6 +53,7 @@ packspuReadPixels( const CRMessageReadPixels *rp, unsigned int len )
 static int
 packspuReceiveData( CRConnection *conn, CRMessage *msg, unsigned int len )
 {
+    RT_NOREF(conn);
     if (msg->header.type == CR_MESSAGE_REDIR_PTR)
         msg = (CRMessage*) msg->redirptr.pMessage;
 
@@ -79,6 +80,7 @@ __prependHeader( CRPackBuffer *buf, unsigned int *len, unsigned int senderID )
 {
     int num_opcodes;
     CRMessageOpcodes *hdr;
+    RT_NOREF(senderID);
 
     CRASSERT( buf );
     CRASSERT( buf->opcode_current < buf->opcode_start );
@@ -87,7 +89,7 @@ __prependHeader( CRPackBuffer *buf, unsigned int *len, unsigned int senderID )
     CRASSERT( buf->data_current <= buf->data_end );
 
     num_opcodes = buf->opcode_start - buf->opcode_current;
-    hdr = (CRMessageOpcodes *) 
+    hdr = (CRMessageOpcodes *)
         ( buf->data_start - ( ( num_opcodes + 3 ) & ~0x3 ) - sizeof(*hdr) );
 
     CRASSERT( (void *) hdr >= buf->pack );

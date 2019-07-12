@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/initterm.h>
 #include "internal/iprt.h"
 
@@ -39,9 +40,9 @@
 #include <iprt/thread.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to a termination callback record. */
 typedef struct RTTERMCALLBACKREC *PRTTERMCALLBACKREC;
 /**
@@ -58,9 +59,9 @@ typedef struct RTTERMCALLBACKREC
 } RTTERMCALLBACKREC;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Execute once construct protecting lazy callback initialization. */
 static RTONCE               g_InitTermCallbacksOnce = RTONCE_INITIALIZER;
 /** Mutex protecting the callback globals. */

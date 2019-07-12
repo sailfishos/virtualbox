@@ -1,11 +1,10 @@
 /* $Id: VBoxDispD3D.h $ */
-
 /** @file
  * VBoxVideo Display D3D User mode dll
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -144,7 +143,7 @@ typedef struct VBOXWDDMDISP_RENDERTGT
     VBOXWDDMDISP_RENDERTGT_FLAGS fFlags;
 } VBOXWDDMDISP_RENDERTGT, *PVBOXWDDMDISP_RENDERTGT;
 
-#define VBOXWDDMDISP_INDEX_UNDEFINED (~0)
+#define VBOXWDDMDISP_INDEX_UNDEFINED (~0U)
 typedef struct VBOXWDDMDISP_SWAPCHAIN_FLAGS
 {
     union
@@ -315,7 +314,7 @@ typedef struct VBOXWDDMDISP_OVERLAY
 } VBOXWDDMDISP_OVERLAY, *PVBOXWDDMDISP_OVERLAY;
 
 #define VBOXDISP_CUBEMAP_LEVELS_COUNT(pRc) (((pRc)->cAllocations)/6)
-#define VBOXDISP_CUBEMAP_INDEX_TO_FACE(pRc, idx) ((D3DCUBEMAP_FACES)(D3DCUBEMAP_FACE_POSITIVE_X+(idx)%VBOXDISP_CUBEMAP_LEVELS_COUNT(pRc)))
+#define VBOXDISP_CUBEMAP_INDEX_TO_FACE(pRc, idx) ((D3DCUBEMAP_FACES)(D3DCUBEMAP_FACE_POSITIVE_X+(idx)/VBOXDISP_CUBEMAP_LEVELS_COUNT(pRc)))
 #define VBOXDISP_CUBEMAP_INDEX_TO_LEVEL(pRc, idx) ((idx)%VBOXDISP_CUBEMAP_LEVELS_COUNT(pRc))
 
 DECLINLINE(PVBOXWDDMDISP_SWAPCHAIN) vboxWddmSwapchainForAlloc(PVBOXWDDMDISP_ALLOCATION pAlloc)

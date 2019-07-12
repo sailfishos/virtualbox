@@ -1,12 +1,10 @@
 /* $Id: UIHotKeyEditor.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: UIHotKeyEditor class implementation
+ * VBox Qt GUI - VirtualBox Qt extensions: UIHotKeyEditor class implementation.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,17 +15,25 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QApplication>
-#include <QHBoxLayout>
-#include <QLineEdit>
-#include <QKeyEvent>
+# include <QApplication>
+# include <QHBoxLayout>
+# include <QLineEdit>
+# include <QKeyEvent>
+# include <QStyle>
 
 /* GUI includes; */
-#include "UIHotKeyEditor.h"
-#include "UIIconPool.h"
-#include "UIHostComboEditor.h"
-#include "QIToolButton.h"
+# include "UIHotKeyEditor.h"
+# include "UIIconPool.h"
+# include "UIHostComboEditor.h"
+# include "QIToolButton.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 /* A line-edit representing hot-key editor: */
 class UIHotKeyLineEdit : public QLineEdit
@@ -117,7 +123,11 @@ UIHotKeyEditor::UIHotKeyEditor(QWidget *pParent)
     setFocusProxy(m_pLineEdit);
 
     /* Configure layout: */
-    m_pMainLayout->setSpacing(4);
+#ifdef VBOX_WS_MAC
+    m_pMainLayout->setSpacing(5);
+#else
+    m_pMainLayout->setSpacing(qApp->style()->pixelMetric(QStyle::PM_LayoutVerticalSpacing) / 2);
+#endif
     m_pMainLayout->setContentsMargins(0, 0, 0, 0);
     m_pMainLayout->addWidget(m_pLineEdit);
     m_pMainLayout->addLayout(m_pButtonLayout);
@@ -383,10 +393,10 @@ void UIHotKeyEditor::handleKeyPress(QKeyEvent *pKeyEvent)
     }
 }
 
-void UIHotKeyEditor::handleKeyRelease(QKeyEvent* /*pKeyEvent*/)
+void UIHotKeyEditor::handleKeyRelease(QKeyEvent *pKeyEvent)
 {
     /* If full sequence was taken already and no modifiers are currently held: */
-    if (m_fSequenceTaken && (QApplication::keyboardModifiers() == Qt::NoModifier))
+    if (m_fSequenceTaken && (pKeyEvent->modifiers() == Qt::NoModifier))
     {
         /* Reset taken sequence: */
         m_fSequenceTaken = false;

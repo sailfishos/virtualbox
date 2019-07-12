@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/dbg.h>
 #include "internal/iprt.h"
 
@@ -514,12 +514,12 @@ static DECLCALLBACK(RTUINTPTR) rtDbgModDeferredImg_ImageSize(PRTDBGMODINT pMod)
 
 
 /** @interface_method_impl{RTDBGMODVTIMG,pfnRvaToSegOffset} */
-static DECLCALLBACK(int) rtDbgModDeferredImg_RvaToSegOffset(PRTDBGMODINT pMod, RTLDRADDR uRva,
+static DECLCALLBACK(int) rtDbgModDeferredImg_RvaToSegOffset(PRTDBGMODINT pMod, RTLDRADDR Rva,
                                                             PRTDBGSEGIDX piSeg, PRTLDRADDR poffSeg)
 {
     int rc = rtDbgModDeferredDoIt(pMod, false /*fForceRetry*/);
     if (RT_SUCCESS(rc))
-        rc = pMod->pImgVt->pfnRvaToSegOffset(pMod, uRva, piSeg, poffSeg);
+        rc = pMod->pImgVt->pfnRvaToSegOffset(pMod, Rva, piSeg, poffSeg);
     return rc;
 }
 

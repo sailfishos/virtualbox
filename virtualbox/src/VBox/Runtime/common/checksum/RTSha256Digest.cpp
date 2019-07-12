@@ -1,3 +1,4 @@
+/* $Id: RTSha256Digest.cpp $ */
 /** @file
  * IPRT - SHA256 digest creation
  *
@@ -6,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 2009-2014 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,9 +28,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/sha.h>
 

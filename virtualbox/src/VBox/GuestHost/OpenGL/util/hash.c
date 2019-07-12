@@ -273,7 +273,7 @@ GLboolean crHashIdPoolAllocId( CRHashIdPool *pool, GLuint id )
         return GL_FALSE;
     }
 
-//    Assert(id != 2);
+/*    Assert(id != 2);*/
 
     RTListForEachSafe(&pool->freeList, f, next, FreeElem, Node)
     {
@@ -432,6 +432,47 @@ void crFreeHashtable( CRHashTable *hash, CRHashtableCallback deleteFunc )
     crFree( hash );
 }
 
+void crFreeHashtableEx(CRHashTable *hash, CRHashtableCallbackEx deleteFunc, void *pData)
+{
+    int i;
+    CRHashNode *entry, *next;
+
+    if (!hash) return;
+
+#ifdef CHROMIUM_THREADSAFE
+    crLockMutex(&hash->mutex);
+#endif
+
+    for (i = 0; i < CR_NUM_BUCKETS; i++)
+    {
+        entry = hash->buckets[i];
+        while (entry)
+        {
+            next = entry->next;
+            /* Clear the key in case crHashtableDelete() is called
+             * from this callback.
+             */
+            entry->key = 0;
+            if (deleteFunc && entry->data)
+            {
+                (*deleteFunc)(entry->data, pData);
+            }
+            crFree(entry);
+            entry = next;
+
+        }
+    }
+    crFreeHashIdPool(hash->idPool);
+
+#ifdef CHROMIUM_THREADSAFE
+    crUnlockMutex(&hash->mutex);
+    crFreeMutex(&hash->mutex);
+#endif
+
+    crFree(hash);
+}
+
+
 void crHashtableLock(CRHashTable *h)
 {
 #ifdef CHROMIUM_THREADSAFE
@@ -487,14 +528,15 @@ static unsigned int crHash( unsigned long key )
 
 void crHashtableAdd( CRHashTable *h, unsigned long key, void *data )
 {
+    unsigned int index = crHash(key);
     CRHashNode *node = (CRHashNode *) crCalloc( sizeof( CRHashNode ) );
 #ifdef CHROMIUM_THREADSAFE
     crLockMutex(&h->mutex);
 #endif
     node->key = key;
     node->data = data;
-    node->next = h->buckets[crHash( key )];
-    h->buckets[ crHash( key ) ] = node;
+    node->next = h->buckets[index];
+    h->buckets[index] = node;
     h->num_elements++;
     crHashIdPoolAllocId (h->idPool, key);
 #ifdef CHROMIUM_THREADSAFE
@@ -529,18 +571,20 @@ void crHashtableWalkKeys( CRHashTable *h, CRHashIdWalkKeys walkFunc , void *data
 GLuint crHashtableAllocKeys( CRHashTable *h,  GLsizei range)
 {
     GLuint res;
-    int i;
 
 #ifdef CHROMIUM_THREADSAFE
     crLockMutex(&h->mutex);
 #endif
     res = crHashIdPoolAllocBlock (h->idPool, range);
 #ifdef DEBUG_misha
-    Assert(res);
-    for (i = 0; i < range; ++i)
     {
-        void *search = crHashtableSearch( h, res+i );
-        Assert(!search);
+        int i;
+        Assert(res);
+        for (i = 0; i < range; ++i)
+        {
+            void *search = crHashtableSearch( h, res+i );
+            Assert(!search);
+        }
     }
 #endif
 #ifdef CHROMIUM_THREADSAFE
@@ -582,6 +626,41 @@ void crHashtableDelete( CRHashTable *h, unsigned long key, CRHashtableCallback d
     crUnlockMutex(&h->mutex);
 #endif
 }
+
+void crHashtableDeleteEx(CRHashTable *h, unsigned long key, CRHashtableCallbackEx deleteFunc, void *pData)
+{
+    unsigned int index = crHash( key );
+    CRHashNode *temp, *beftemp = NULL;
+
+#ifdef CHROMIUM_THREADSAFE
+    crLockMutex(&h->mutex);
+#endif
+    for (temp = h->buckets[index]; temp; temp = temp->next)
+    {
+        if (temp->key == key)
+            break;
+        beftemp = temp;
+    }
+    if (temp)
+    {
+        if (beftemp)
+            beftemp->next = temp->next;
+        else
+            h->buckets[index] = temp->next;
+        h->num_elements--;
+        if (temp->data && deleteFunc) {
+            (*deleteFunc)(temp->data, pData);
+        }
+
+        crFree(temp);
+    }
+
+    crHashIdPoolFreeBlock(h->idPool, key, 1);
+#ifdef CHROMIUM_THREADSAFE
+    crUnlockMutex(&h->mutex);
+#endif
+}
+
 
 void crHashtableDeleteBlock( CRHashTable *h, unsigned long key, GLsizei range, CRHashtableCallback deleteFunc )
 {

@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -97,6 +97,10 @@ RTDECL(int) RTFileQuerySize(const char *pszPath, uint64_t *pcbFile);
 
 /** @name Open flags
  * @{ */
+/** Attribute access only.
+ * @remarks Only accepted on windows, requires RTFILE_O_ACCESS_ATTR_MASK
+ *          to yield a non-zero result.  Otherwise, this is invalid. */
+#define RTFILE_O_ATTR_ONLY              UINT32_C(0x00000000)
 /** Open the file with read access. */
 #define RTFILE_O_READ                   UINT32_C(0x00000001)
 /** Open the file with write access. */
@@ -104,7 +108,7 @@ RTDECL(int) RTFileQuerySize(const char *pszPath, uint64_t *pcbFile);
 /** Open the file with read & write access. */
 #define RTFILE_O_READWRITE              UINT32_C(0x00000003)
 /** The file access mask.
- * @remarks The value 0 is invalid. */
+ * @remarks The value 0 is invalid, except for windows special case. */
 #define RTFILE_O_ACCESS_MASK            UINT32_C(0x00000003)
 
 /** Open file in APPEND mode, so all writes to the file handle will
@@ -270,7 +274,7 @@ RTDECL(int)  RTFileOpen(PRTFILE pFile, const char *pszFilename, uint64_t fOpen);
  *                          be opened. (UTF-8)
  * @param   ...             Arguments to the format string.
  */
-RTDECL(int)  RTFileOpenF(PRTFILE pFile, uint64_t fOpen, const char *pszFilenameFmt, ...);
+RTDECL(int)  RTFileOpenF(PRTFILE pFile, uint64_t fOpen, const char *pszFilenameFmt, ...) RT_IPRT_FORMAT_ATTR(3, 4);
 
 /**
  * Open a file given as a format string.
@@ -283,7 +287,7 @@ RTDECL(int)  RTFileOpenF(PRTFILE pFile, uint64_t fOpen, const char *pszFilenameF
  *                          be opened. (UTF-8)
  * @param   va              Arguments to the format string.
  */
-RTDECL(int)  RTFileOpenV(PRTFILE pFile, uint64_t fOpen, const char *pszFilenameFmt, va_list va);
+RTDECL(int)  RTFileOpenV(PRTFILE pFile, uint64_t fOpen, const char *pszFilenameFmt, va_list va) RT_IPRT_FORMAT_ATTR(3, 0);
 
 /**
  * Open the bit bucket (aka /dev/null or nul).
@@ -511,8 +515,8 @@ RTDECL(bool) RTFileIsValid(RTFILE File);
 /**
  * Copies a file.
  *
- * @returns VERR_ALREADY_EXISTS if the destination file exists.
- * @returns VBox Status code.
+ * @returns IPRT status code
+ * @retval VERR_ALREADY_EXISTS if the destination file exists.
  *
  * @param   pszSrc      The path to the source file.
  * @param   pszDst      The path to the destination file.
@@ -523,7 +527,7 @@ RTDECL(int) RTFileCopy(const char *pszSrc, const char *pszDst);
 /**
  * Copies a file given the handles to both files.
  *
- * @returns VBox Status code.
+ * @returns IPRT status code
  *
  * @param   FileSrc     The source file. The file position is unaltered.
  * @param   FileDst     The destination file.
@@ -547,8 +551,8 @@ RTDECL(int) RTFileCopyByHandles(RTFILE FileSrc, RTFILE FileDst);
 /**
  * Copies a file.
  *
- * @returns VERR_ALREADY_EXISTS if the destination file exists.
- * @returns VBox Status code.
+ * @returns IPRT status code
+ * @retval  VERR_ALREADY_EXISTS if the destination file exists.
  *
  * @param   pszSrc      The path to the source file.
  * @param   pszDst      The path to the destination file.
@@ -573,6 +577,77 @@ RTDECL(int) RTFileCopyEx(const char *pszSrc, const char *pszDst, uint32_t fFlags
  * @param   pvUser      User argument to pass to pfnProgress along with the completion percentage.
  */
 RTDECL(int) RTFileCopyByHandlesEx(RTFILE FileSrc, RTFILE FileDst, PFNRTPROGRESS pfnProgress, void *pvUser);
+
+
+/**
+ * Compares two file given the paths to both files.
+ *
+ * @returns IPRT status code.
+ * @retval  VINF_SUCCESS if equal.
+ * @retval  VERR_NOT_EQUAL if not equal.
+ *
+ * @param   pszFile1    The path to the first file.
+ * @param   pszFile2    The path to the second file.
+ */
+RTDECL(int) RTFileCompare(const char *pszFile1, const char *pszFile2);
+
+/**
+ * Compares two file given the handles to both files.
+ *
+ * @returns IPRT status code.
+ * @retval  VINF_SUCCESS if equal.
+ * @retval  VERR_NOT_EQUAL if not equal.
+ *
+ * @param   hFile1      The first file.  Undefined return position.
+ * @param   hFile2      The second file.  Undefined return position.
+ */
+RTDECL(int) RTFileCompareByHandles(RTFILE hFile1, RTFILE hFile2);
+
+/** Flags for RTFileCompareEx().
+ * @{ */
+/** Do not use RTFILE_O_DENY_WRITE on the first file. */
+#define RTFILECOMP_FLAGS_NO_DENY_WRITE_FILE1  RT_BIT(0)
+/** Do not use RTFILE_O_DENY_WRITE on the second file. */
+#define RTFILECOMP_FLAGS_NO_DENY_WRITE_FILE2  RT_BIT(1)
+/** Do not use RTFILE_O_DENY_WRITE on either of the two files. */
+#define RTFILECOMP_FLAGS_NO_DENY_WRITE      ( RTFILECOMP_FLAGS_NO_DENY_WRITE_FILE1 | RTFILECOMP_FLAGS_NO_DENY_WRITE_FILE2 )
+/** */
+#define RTFILECOMP_FLAGS_MASK               UINT32_C(0x00000003)
+/** @} */
+
+/**
+ * Compares two files, extended version with progress callback.
+ *
+ * @returns IPRT status code.
+ * @retval  VINF_SUCCESS if equal.
+ * @retval  VERR_NOT_EQUAL if not equal.
+ *
+ * @param   pszFile1    The path to the source file.
+ * @param   pszFile2    The path to the destination file. This file will be
+ *                      created.
+ * @param   fFlags      Flags, any of the RTFILECOMP_FLAGS_ \#defines.
+ * @param   pfnProgress Pointer to callback function for reporting progress.
+ * @param   pvUser      User argument to pass to pfnProgress along with the completion percentage.
+ */
+RTDECL(int) RTFileCompareEx(const char *pszFile1, const char *pszFile2, uint32_t fFlags, PFNRTPROGRESS pfnProgress, void *pvUser);
+
+/**
+ * Compares two files given their handles, extended version with progress
+ * callback.
+ *
+ * @returns IPRT status code.
+ * @retval  VINF_SUCCESS if equal.
+ * @retval  VERR_NOT_EQUAL if not equal.
+ *
+ * @param   hFile1      The first file.  Undefined return position.
+ * @param   hFile2      The second file.  Undefined return position.
+ *
+ * @param   fFlags      Flags, any of the RTFILECOMP_FLAGS_ \#defines, flags
+ *                      related to opening of the files will be ignored.
+ * @param   pfnProgress Pointer to callback function for reporting progress.
+ * @param   pvUser      User argument to pass to pfnProgress along with the completion percentage.
+ */
+RTDECL(int) RTFileCompareByHandlesEx(RTFILE hFile1, RTFILE hFile2, uint32_t fFlags, PFNRTPROGRESS pfnProgress, void *pvUser);
 
 /**
  * Renames a file.
@@ -603,49 +678,54 @@ RTDECL(int) RTFileRename(const char *pszSrc, const char *pszDst, unsigned fRenam
  * Converts file opening modes (used by fopen, for example) to IPRT
  * compatible flags, which then can be used with RTFileOpen* APIs.
  *
- * Note: Handling sharing modes is not supported yet, so RTFILE_O_DENY_NONE
- *       will be used by default.
+ * @note    Handling sharing modes is not supported yet, so RTFILE_O_DENY_NONE
+ *          will always be used.
  *
  * @return  IPRT status code.
  * @param   pszMode                 Mode string to convert.
- * @param   puMode                  Where to store the converted mode flags
- *                                  on success.
+ * @param   pfMode                  Where to store the converted mode flags on
+ *                                  success.
  */
-RTDECL(int) RTFileModeToFlags(const char *pszMode, uint64_t *puMode);
+RTDECL(int) RTFileModeToFlags(const char *pszMode, uint64_t *pfMode);
 
 /**
  * Converts file opening modes along with a separate disposition command
  * to IPRT compatible flags, which then can be used with RTFileOpen* APIs.
  *
  * Access modes:
- *      "r"  - Opens a file for reading.
- *      "r+" - Opens a file for reading and writing.
- *      "w"  - Opens a file for writing.
- *      "w+" - Opens a file for writing and reading.
+ *      - "r":  Opens a file for reading.
+ *      - "r+": Opens a file for reading and writing.
+ *      - "w":  Opens a file for writing.
+ *      - "w+": Opens a file for writing and reading.
  *
  * Disposition modes:
- *      "ca" - Creates a new file, always. Overwrites an existing file.
- *      "ce" - Creates a new file if it does not exist. Fail if exist.
- *      "oa" - Opens an existing file and places the file pointer at
- *             the end of the file, if opened with write access.
- *             Create the file if it does not exist.
- *      "oc" - Opens an existing file or create it if it does not exist.
- *      "oe" - Opens an existing file or fail if it does not exist.
- *      "ot" - Opens and truncate an existing file or fail if it does not exist.
+ *      - "oe", "open": Opens an existing file or fail if it does not exist.
+ *      - "oc", "open-create": Opens an existing file or create it if it does
+ *        not exist.
+ *      - "oa", "open-append": Opens an existing file and places the file
+ *        pointer at the end of the file, if opened with write access. Create
+ *        the file if it does not exist.
+ *      - "ot", "open-truncate": Opens and truncate an existing file or fail if
+ *        it does not exist.
+ *      - "ce", "create": Creates a new file if it does not exist. Fail if
+ *        exist.
+ *      - "ca", "create-replace": Creates a new file, always. Overwrites an
+ *        existing file.
  *
- * Sharing modes:
- *      Not implemented yet. RTFILE_O_DENY_NONE will be
- *      used by default.
+ * Sharing mode:
+ *      - "nr":     Deny read.
+ *      - "nw":     Deny write.
+ *      - "nrw":    Deny both read and write.
+ *      - "d":      Allow delete.
+ *      - "", NULL: Deny none, except delete.
  *
  * @return  IPRT status code.
- * @param   pszAccess               Access mode string to convert.
- * @param   pszDisposition          Disposition mode string to convert.
- * @param   pszSharing              Sharing mode string to convert. Not
- *                                  implemented yet.
- * @param   puMode                  Where to store the converted mode flags
- *                                  on success.
+ * @param   pszAccess       Access mode string to convert.
+ * @param   pszDisposition  Disposition mode string to convert.
+ * @param   pszSharing      Sharing mode string to convert.
+ * @param   pfMode          Where to store the converted mode flags on success.
  */
-RTDECL(int) RTFileModeToFlagsEx(const char *pszAccess, const char *pszDisposition, const char *pszSharing, uint64_t *puMode);
+RTDECL(int) RTFileModeToFlagsEx(const char *pszAccess, const char *pszDisposition, const char *pszSharing, uint64_t *pfMode);
 
 /**
  * Moves a file.
@@ -705,6 +785,24 @@ RTDECL(int) RTFileCreateTemp(char *pszTemplate, RTFMODE fMode);
  *                             file name on success. Empty string on failure.
  */
 RTDECL(int) RTFileCreateTempSecure(char *pszTemplate);
+
+/**
+ * Opens a new file with a unique name in the temp directory.
+ *
+ * Unlike the other temp file creation APIs, this does not allow you any control
+ * over the name.  Nor do you have to figure out where the temporary directory
+ * is.
+ *
+ * @returns iprt status code.
+ * @param   phFile          Where to return the handle to the file.
+ * @param   pszFilename     Where to return the name (+path) of the file .
+ * @param   cbFilename      The size of the buffer @a pszFilename points to.
+ * @param   fOpen           The RTFILE_O_XXX flags to open the file with.
+ *
+ * @remarks If actual control over the filename or location is required, we'll
+ *          create an extended edition of this API.
+ */
+RTDECL(int) RTFileOpenTemp(PRTFILE phFile, char *pszFilename, size_t cbFilename, uint64_t fOpen);
 
 
 /** @page   pg_rt_filelock      RT File locking API description
@@ -919,7 +1017,7 @@ RTDECL(int) RTFileGetOwner(RTFILE File, uint32_t *pUid, uint32_t *pGid);
  *
  * @returns iprt status code.
  * @param   File        Handle to the file.
- * @param   iRequest    IOCTL request to carry out.
+ * @param   ulRequest   IOCTL request to carry out.
  * @param   pvData      IOCTL data.
  * @param   cbData      Size of the IOCTL data.
  * @param   piRet       Return value of the IOCTL request.
@@ -1032,10 +1130,42 @@ RTDECL(void) RTFileReadAllFree(void *pvFile, size_t cbFile);
 #define RTFILE_RDALL_O_DENY_ALL             RTFILE_O_DENY_ALL
 #define RTFILE_RDALL_O_DENY_NOT_DELETE      RTFILE_O_DENY_NOT_DELETE
 #define RTFILE_RDALL_O_DENY_MASK            RTFILE_O_DENY_MASK
+/** Fail with VERR_OUT_OF_RANGE if the file size exceeds the specified maximum
+ * size.  The default behavior is to cap the size at cbMax. */
+#define RTFILE_RDALL_F_FAIL_ON_MAX_SIZE     RT_BIT_32(30)
+/** Add a trailing zero byte to facilitate reading text files. */
+#define RTFILE_RDALL_F_TRAILING_ZERO_BYTE   RT_BIT_32(31)
 /** Mask of valid flags. */
-#define RTFILE_RDALL_VALID_MASK             RTFILE_RDALL_O_DENY_MASK
+#define RTFILE_RDALL_VALID_MASK             (RTFILE_RDALL_O_DENY_MASK | UINT32_C(0xc0000000))
 /** @} */
 
+/** @name RTFileSetAllocationSize flags
+ * @{ */
+/** Default flags. */
+#define RTFILE_ALLOC_SIZE_F_DEFAULT         0
+/** Do not change the size of the file if the given size is
+ * bigger than the current file size. Useful to preallocate
+ * blocks beyond the current size for appending data in an efficient
+ * manner. Might not be supported on all hosts and will return
+ * VERR_NOT_SUPPORTED in that case. */
+#define RTFILE_ALLOC_SIZE_F_KEEP_SIZE       RT_BIT(0)
+/** Mask of valid flags. */
+#define RTFILE_ALLOC_SIZE_F_VALID           (RTFILE_ALLOC_SIZE_F_KEEP_SIZE)
+/** @} */
+
+/**
+ * Sets the current size of the file ensuring that all required blocks
+ * are allocated on the underlying medium.
+ *
+ * @returns IPRT status code.
+ * @retval  VERR_NOT_SUPPORTED if either this operation is not supported on the current host
+ *                             in an efficient manner or the given combination of flags is
+ *                             not supported.
+ * @param   hFile           The handle to the file.
+ * @param   cbSize          The new size of the file to allocate.
+ * @param   fFlags          Combination of RTFILE_ALLOC_SIZE_F_*
+ */
+RTDECL(int) RTFileSetAllocationSize(RTFILE hFile, uint64_t cbSize, uint32_t fFlags);
 
 #ifdef IN_RING3
 

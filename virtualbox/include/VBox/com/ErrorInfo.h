@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,8 +31,14 @@
 #include "VBox/com/Guid.h"
 #include "VBox/com/assert.h"
 
-struct IProgress;
-struct IVirtualBoxErrorInfo;
+
+/** @defgroup grp_com_errinfo   ErrorInfo Classes
+ * @ingroup grp_com
+ * @{
+ */
+
+COM_STRUCT_OR_CLASS(IProgress);
+COM_STRUCT_OR_CLASS(IVirtualBoxErrorInfo);
 
 namespace com
 {
@@ -190,10 +196,10 @@ public:
     }
 
     /** Specialization for the IVirtualBoxErrorInfo smart pointer */
-    ErrorInfo (const ComPtr <IVirtualBoxErrorInfo> &aPtr)
-        : mIsBasicAvailable (false), mIsFullAvailable (false)
-        , mResultCode (S_OK), mResultDetail(0)
-        { init (aPtr); }
+    ErrorInfo(const ComPtr<IVirtualBoxErrorInfo> &aPtr)
+        : mIsBasicAvailable(false), mIsFullAvailable(false)
+        , mResultCode(S_OK), mResultDetail(0)
+        { init(aPtr); }
 
     /**
      *  Constructs a new ErrorInfo instance from the IVirtualBoxErrorInfo
@@ -203,10 +209,10 @@ public:
      *  @param aInfo    pointer to the IVirtualBoxErrorInfo interface that
      *                  holds error info to be fetched by this instance
      */
-    ErrorInfo (IVirtualBoxErrorInfo *aInfo)
-        : mIsBasicAvailable (false), mIsFullAvailable (false)
-        , mResultCode (S_OK), mResultDetail(0)
-        { init (aInfo); }
+    ErrorInfo(IVirtualBoxErrorInfo *aInfo)
+        : mIsBasicAvailable(false), mIsFullAvailable(false)
+        , mResultCode(S_OK), mResultDetail(0)
+        { init(aInfo); }
 
     ErrorInfo(const ErrorInfo &x)
     {
@@ -319,8 +325,10 @@ public:
      *  Returns the IID of the interface that returned the error.
      *
      *  This method returns a non-null IID only if the instance was created
-     *  using #template <class I> ErrorInfo(I *i) or
-     *  template <class I> ErrorInfo(const ComPtr<I> &i) constructor.
+     *  using template \<class I\> ErrorInfo(I *i) or
+     *  template \<class I\> ErrorInfo(const ComPtr<I> &i) constructor.
+     *
+     *  @todo broken ErrorInfo documentation links, possibly misleading.
      */
     const Guid& getCalleeIID() const
     {
@@ -331,8 +339,10 @@ public:
      *  Returns the name of the interface that returned the error
      *
      *  This method returns a non-null name only if the instance was created
-     *  using #template <class I> ErrorInfo(I *i) or
-     *  template <class I> ErrorInfo(const ComPtr<I> &i) constructor.
+     *  using template \<class I\> ErrorInfo(I *i) or
+     *  template \<class I\> ErrorInfo(const ComPtr<I> &i) constructor.
+     *
+     *  @todo broken ErrorInfo documentation links, possibly misleading.
      */
     const Bstr& getCalleeName() const
     {
@@ -515,6 +525,8 @@ private:
 };
 
 } /* namespace com */
+
+/** @} */
 
 #endif
 

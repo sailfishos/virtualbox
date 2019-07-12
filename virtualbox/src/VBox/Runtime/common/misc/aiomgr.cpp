@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 
 #include <iprt/aiomgr.h>
 #include <iprt/err.h>
@@ -44,9 +45,10 @@
 
 #include "internal/magics.h"
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /** Pointer to an internal async I/O file instance. */
 typedef struct RTAIOMGRFILEINT *PRTAIOMGRFILEINT;
@@ -206,9 +208,10 @@ typedef RTAIOMGRREQ *PRTAIOMGRREQ;
 /** Flag whether the request was prepared already. */
 #define RTAIOMGRREQ_FLAGS_PREPARED RT_BIT_32(0)
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 /** Validates a handle and returns VERR_INVALID_HANDLE if not valid. */
 #define RTAIOMGR_VALID_RETURN_RC(a_hAioMgr, a_rc) \
@@ -227,9 +230,10 @@ typedef RTAIOMGRREQ *PRTAIOMGRREQ;
         AssertReturnVoid((a_hAioMgr)->u32Magic == RTAIOMGR_MAGIC); \
     } while (0)
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 static int rtAioMgrReqsEnqueue(PRTAIOMGRINT pThis, PRTAIOMGRFILEINT pFile,
                                PRTFILEAIOREQ pahReqs, unsigned cReqs);
@@ -239,7 +243,7 @@ static int rtAioMgrReqsEnqueue(PRTAIOMGRINT pThis, PRTAIOMGRFILEINT pFile,
  *
  * @returns TRUE if there are still requests pending on the current manager for this endpoint.
  *          FALSE otherwise.
- * @param   pEndpointRemove    The endpoint to remove.
+ * @param   pFile           The endpoint to remove.
  */
 static bool rtAioMgrFileRemove(PRTAIOMGRFILEINT pFile)
 {
@@ -505,7 +509,7 @@ static int rtAioMgrReqPrepareNonBuffered(PRTAIOMGRFILEINT pFile, PRTAIOMGRREQ pR
      * need to be on a 512 boundary.
      */
     if (   !fAlignedReq
-        /** @todo: || ((pEpClassFile->uBitmaskAlignment & (RTR3UINTPTR)pvBuf) != (RTR3UINTPTR)pvBuf) */)
+        /** @todo || ((pEpClassFile->uBitmaskAlignment & (RTR3UINTPTR)pvBuf) != (RTR3UINTPTR)pvBuf) */)
     {
         /* Create bounce buffer. */
         pReq->cbBounceBuffer = cbToTransfer;
@@ -514,7 +518,7 @@ static int rtAioMgrReqPrepareNonBuffered(PRTAIOMGRFILEINT pFile, PRTAIOMGRREQ pR
                   pReq->off, offStart));
         pReq->offBounceBuffer = pReq->off - offStart;
 
-        /** @todo: I think we need something like a RTMemAllocAligned method here.
+        /** @todo I think we need something like a RTMemAllocAligned method here.
          * Current assumption is that the maximum alignment is 4096byte
          * (GPT disk on Windows)
          * so we can use RTMemPageAlloc here.
@@ -672,10 +676,10 @@ static int rtAioMgrQueueWaitingReqs(PRTAIOMGRINT pThis, PRTAIOMGRFILEINT pFile)
     RTFILEAIOREQ  apReqs[20];
     unsigned      cRequests = 0;
     int           rc        = VINF_SUCCESS;
-    PRTAIOMGRREQ  pReqIt;
-    PRTAIOMGRREQ  pReqItNext;
 
     /* Go through the list and queue the requests. */
+    PRTAIOMGRREQ  pReqIt;
+    PRTAIOMGRREQ  pReqItNext;
     RTListForEachSafe(&pFile->AioMgr.ListWaitingReqs, pReqIt, pReqItNext, RTAIOMGRREQ, NodeWaitingList)
     {
         RTListNodeRemove(&pReqIt->NodeWaitingList);
@@ -730,7 +734,6 @@ static int rtAioMgrQueueWaitingReqs(PRTAIOMGRINT pThis, PRTAIOMGRFILEINT pFile)
 static int rtAioMgrQueueReqs(PRTAIOMGRINT pThis, PRTAIOMGRFILEINT pFile)
 {
     int rc = VINF_SUCCESS;
-    PRTAIOMGRFILEINT pReqsHead = NULL;
 
     /* Check the pending list first */
     if (!RTListIsEmpty(&pFile->AioMgr.ListWaitingReqs))
@@ -760,8 +763,8 @@ static int rtAioMgrQueueReqs(PRTAIOMGRINT pThis, PRTAIOMGRFILEINT pFile)
 static int rtAioMgrCheckFiles(PRTAIOMGRINT pThis)
 {
     int rc = VINF_SUCCESS;
-    PRTAIOMGRFILEINT pIt;
 
+    PRTAIOMGRFILEINT pIt;
     RTListForEach(&pThis->ListFiles, pIt, RTAIOMGRFILEINT, AioMgr.NodeAioMgrFiles)
     {
         rc = rtAioMgrQueueReqs(pThis, pIt);
@@ -845,7 +848,7 @@ static int rtAioMgrProcessBlockingEvent(PRTAIOMGRINT pThis)
 static DECLCALLBACK(int) rtAioMgrWorker(RTTHREAD hThreadSelf, void *pvUser)
 {
     PRTAIOMGRINT pThis = (PRTAIOMGRINT)pvUser;
-    bool fRunning = true;
+    /*bool fRunning = true;*/
     int rc = VINF_SUCCESS;
 
     do
@@ -863,7 +866,7 @@ static DECLCALLBACK(int) rtAioMgrWorker(RTTHREAD hThreadSelf, void *pvUser)
         else if (RT_FAILURE(rc))
         {
             /* Something bad happened. */
-            /** @todo: */
+            /** @todo */
         }
         else
         {
@@ -874,9 +877,10 @@ static DECLCALLBACK(int) rtAioMgrWorker(RTTHREAD hThreadSelf, void *pvUser)
             /* Check files for new requests and queue waiting requests. */
             rc = rtAioMgrCheckFiles(pThis);
         }
-    } while (   fRunning
-             && RT_SUCCESS(rc));
+    } while (   /*fRunning - never modified
+             && */ RT_SUCCESS(rc));
 
+    RT_NOREF_PV(hThreadSelf);
     return rc;
 }
 
@@ -1071,7 +1075,7 @@ static int rtAioMgrFileIoReqCreate(RTAIOMGRFILE hAioMgrFile, RTFOFF off, PRTSGBU
         }
         else
         {
-            /** @todo: Real S/G buffer support. */
+            /** @todo Real S/G buffer support. */
             rtAioMgrReqFree(pAioMgr, pReq);
             rc = VERR_NOT_SUPPORTED;
         }
@@ -1093,6 +1097,7 @@ static int rtAioMgrFileIoReqCreate(RTAIOMGRFILE hAioMgrFile, RTFOFF off, PRTSGBU
 static DECLCALLBACK(int) rtAioMgrReqCtor(RTMEMCACHE hMemCache, void *pvObj, void *pvUser)
 {
     PRTAIOMGRREQ pReq = (PRTAIOMGRREQ)pvObj;
+    RT_NOREF_PV(hMemCache); RT_NOREF_PV(pvUser);
 
     memset(pReq, 0, sizeof(RTAIOMGRREQ));
     return RTFileAioReqCreate(&pReq->hReqIo);
@@ -1109,8 +1114,9 @@ static DECLCALLBACK(void) rtAioMgrReqDtor(RTMEMCACHE hMemCache, void *pvObj, voi
 {
     PRTAIOMGRREQ pReq = (PRTAIOMGRREQ)pvObj;
     int rc = RTFileAioReqDestroy(pReq->hReqIo);
-
     AssertRC(rc);
+
+    RT_NOREF_PV(hMemCache); RT_NOREF_PV(pvUser);
 }
 
 RTDECL(int) RTAioMgrCreate(PRTAIOMGR phAioMgr, uint32_t cReqsMax)

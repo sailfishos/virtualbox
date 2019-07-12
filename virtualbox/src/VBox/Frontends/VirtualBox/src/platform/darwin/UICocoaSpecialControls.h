@@ -1,11 +1,10 @@
+/* $Id: UICocoaSpecialControls.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VBoxCocoaSpecialControls class declaration
+ * VBox Qt GUI - VBoxCocoaSpecialControls class declaration.
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,27 +23,14 @@
 
 /* Qt includes */
 #include <QWidget>
-
-/* Qt forward includes */
-class QMacCocoaViewContainer;
+#include <QMacCocoaViewContainer>
 
 /* Add typedefs for Cocoa types */
 ADD_COCOA_NATIVE_REF(NSButton);
 ADD_COCOA_NATIVE_REF(NSSegmentedControl);
 ADD_COCOA_NATIVE_REF(NSSearchField);
 
-class UICocoaWrapper: public QWidget
-{
-public:
-    UICocoaWrapper(QWidget *pParent = 0);
-
-protected:
-    virtual void resizeEvent(QResizeEvent *pEvent);
-
-    QMacCocoaViewContainer *m_pContainer;
-};
-
-class UICocoaButton: public UICocoaWrapper
+class UICocoaButton: public QMacCocoaViewContainer
 {
     Q_OBJECT
 
@@ -56,7 +42,7 @@ public:
         ResetButton
     };
 
-    UICocoaButton(CocoaButtonType aType, QWidget *pParent = 0);
+    UICocoaButton(QWidget *pParent, CocoaButtonType type);
     ~UICocoaButton();
 
     QSize sizeHint() const;
@@ -70,11 +56,10 @@ signals:
     void clicked(bool fChecked = false);
 
 private:
-    /* Private member vars */
-    NativeNSButtonRef m_pNativeRef;
+    NativeNSButtonRef nativeRef() const { return static_cast<NativeNSButtonRef>(cocoaView()); }
 };
 
-class UICocoaSegmentedButton: public UICocoaWrapper
+class UICocoaSegmentedButton: public QMacCocoaViewContainer
 {
     Q_OBJECT
 
@@ -85,8 +70,16 @@ public:
         TexturedRoundedSegment
     };
 
-    UICocoaSegmentedButton(int count, CocoaSegmentType type = RoundRectSegment, QWidget *pParent = 0);
-    ~UICocoaSegmentedButton();
+    UICocoaSegmentedButton(QWidget *pParent, int count, CocoaSegmentType type = RoundRectSegment);
+
+    /** Returns the number of segments. */
+    int count() const;
+
+    /** Returns whether the @a iSegment is selected. */
+    bool isSelected(int iSegment) const;
+
+    /** Returns the @a iSegment description. */
+    QString description(int iSegment) const;
 
     QSize sizeHint() const;
 
@@ -95,6 +88,7 @@ public:
     void setIcon(int iSegment, const QIcon& icon);
     void setEnabled(int iSegment, bool fEnabled);
 
+    void setSelected(int iSegment);
     void animateClick(int iSegment);
     void onClicked(int iSegment);
 
@@ -102,16 +96,15 @@ signals:
     void clicked(int iSegment, bool fChecked = false);
 
 private:
-    /* Private member vars */
-    NativeNSSegmentedControlRef m_pNativeRef;
+    NativeNSSegmentedControlRef nativeRef() const { return static_cast<NativeNSSegmentedControlRef>(cocoaView()); }
 };
 
-class UICocoaSearchField: public UICocoaWrapper
+class UICocoaSearchField: public QMacCocoaViewContainer
 {
     Q_OBJECT
 
 public:
-    UICocoaSearchField(QWidget* pParent = 0);
+    UICocoaSearchField(QWidget* pParent);
     ~UICocoaSearchField();
 
     QSize sizeHint() const;
@@ -130,8 +123,7 @@ signals:
     void textChanged(const QString& strText);
 
 private:
-    /* Private member vars */
-    NativeNSSearchFieldRef m_pNativeRef;
+    NativeNSSearchFieldRef nativeRef() const { return static_cast<NativeNSSearchFieldRef>(cocoaView()); }
 };
 
 #endif /* ___darwin_UICocoaSpecialControls_h__ */

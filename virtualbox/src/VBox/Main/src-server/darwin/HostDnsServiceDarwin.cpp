@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2004-2013 Oracle Corporation
+ * Copyright (C) 2004-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,6 +19,7 @@
 #include <VBox/com/ptr.h>
 
 
+#include <iprt/asm.h>
 #include <iprt/err.h>
 #include <iprt/thread.h>
 #include <iprt/semaphore.h>
@@ -33,11 +34,14 @@
 
 struct HostDnsServiceDarwin::Data
 {
+    Data()
+        : m_fStop(false) { }
+
     SCDynamicStoreRef m_store;
     CFRunLoopSourceRef m_DnsWatcher;
     CFRunLoopRef m_RunLoopRef;
     CFRunLoopSourceRef m_Stopper;
-    bool m_fStop;
+    volatile bool m_fStop;
     RTSEMEVENT m_evtStop;
     static void performShutdownCallback(void *);
 };
@@ -76,13 +80,12 @@ void HostDnsServiceDarwin::hostDnsServiceStoreCallback(void *, void *, void *inf
 {
     HostDnsServiceDarwin *pThis = (HostDnsServiceDarwin *)info;
 
-    ALock l(pThis);
+    RTCLock grab(pThis->m_LockMtx);
     pThis->updateInfo();
-    pThis->notifyAll();
 }
 
 
-HRESULT HostDnsServiceDarwin::init()
+HRESULT HostDnsServiceDarwin::init(HostDnsMonitorProxy *proxy)
 {
     SCDynamicStoreContext ctx;
     RT_ZERO(ctx);
@@ -107,7 +110,7 @@ HRESULT HostDnsServiceDarwin::init()
     m->m_Stopper = CFRunLoopSourceCreate(kCFAllocatorDefault, 0, &sctx);
     AssertReturn(m->m_Stopper, E_FAIL);
 
-    HRESULT hrc = HostDnsMonitor::init();
+    HRESULT hrc = HostDnsMonitor::init(proxy);
     AssertComRCReturn(hrc, hrc);
 
     return updateInfo();
@@ -116,11 +119,12 @@ HRESULT HostDnsServiceDarwin::init()
 
 void HostDnsServiceDarwin::monitorThreadShutdown()
 {
-    ALock l(this);
+    RTCLock grab(m_LockMtx);
     if (!m->m_fStop)
     {
+        ASMAtomicXchgBool(&m->m_fStop, true);
         CFRunLoopSourceSignal(m->m_Stopper);
-        CFRunLoopWakeUp(m->m_RunLoopRef);
+        CFRunLoopStop(m->m_RunLoopRef);
 
         RTSemEventWait(m->m_evtStop, RT_INDEFINITE_WAIT);
     }
@@ -150,7 +154,7 @@ int HostDnsServiceDarwin::monitorWorker()
 
     monitorThreadInitializationDone();
 
-    while (!m->m_fStop)
+    while (!ASMAtomicReadBool(&m->m_fStop))
     {
         CFRunLoopRun();
     }
@@ -169,16 +173,16 @@ HRESULT HostDnsServiceDarwin::updateInfo()
     CFPropertyListRef propertyRef = SCDynamicStoreCopyValue(m->m_store,
                                                             kStateNetworkGlobalDNSKey);
     /**
-     * 0:vvl@nb-mbp-i7-2(0)# scutil
-     * > get State:/Network/Global/DNS
-     * > d.show
-     * <dictionary> {
+     * # scutil
+     * \> get State:/Network/Global/DNS
+     * \> d.show
+     * \<dictionary\> {
      * DomainName : vvl-domain
-     * SearchDomains : <array> {
+     * SearchDomains : \<array\> {
      * 0 : vvl-domain
      * 1 : de.vvl-domain.com
      * }
-     * ServerAddresses : <array> {
+     * ServerAddresses : \<array\> {
      * 0 : 192.168.1.4
      * 1 : 192.168.1.1
      * 2 : 8.8.4.4
@@ -252,5 +256,6 @@ HRESULT HostDnsServiceDarwin::updateInfo()
 void HostDnsServiceDarwin::Data::performShutdownCallback(void *info)
 {
     HostDnsServiceDarwin::Data *pThis = static_cast<HostDnsServiceDarwin::Data *>(info);
+    AssertPtrReturnVoid(pThis);
     pThis->m_fStop = true;
 }

@@ -13,7 +13,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/VBoxTpG.h>
 
 #include <iprt/alloca.h>
@@ -48,9 +48,9 @@
 #include "scmstream.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The bitmap type. */
 #define VBCPP_BITMAP_TYPE                   uint64_t
 /** The bitmap size as a multiple of VBCPP_BITMAP_TYPE. */
@@ -65,9 +65,9 @@
 #define VBCPP_BITMAP_OR(a_bm1, a_bm2)       do { (a_bm1)[0] |= (a_bm2)[0]; (a_bm1)[1] |= (a_bm2)[1]; } while (0)
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to the C preprocessor instance data. */
 typedef struct VBCPP *PVBCPP;
 
@@ -518,9 +518,9 @@ typedef struct VBCPP
 } VBCPP;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static PVBCPPMACRO  vbcppMacroLookup(PVBCPP pThis, const char *pszDefine, size_t cchDefine);
 static RTEXITCODE   vbcppMacroExpandIt(PVBCPP pThis, PVBCPPMACROEXP pExp, size_t offMacro, PVBCPPMACRO pMacro, size_t offParameters);
 static RTEXITCODE   vbcppMacroExpandReScan(PVBCPP pThis, PVBCPPMACROEXP pExp, VBCPPMACRORESCANMODE enmMode, size_t *pcReplacements);
@@ -1061,6 +1061,8 @@ static RTEXITCODE vbcppOutputWrite(PVBCPP pThis, const char *pch, size_t cch)
 static RTEXITCODE vbcppOutputComment(PVBCPP pThis, PSCMSTREAM pStrmInput, size_t offStart, size_t cchOutputted,
                                      size_t cchMinIndent)
 {
+    RT_NOREF_PV(cchMinIndent); /** @todo  cchMinIndent */
+
     size_t offCur = ScmStreamTell(pStrmInput);
     if (offStart < offCur)
     {
@@ -1112,6 +1114,7 @@ static RTEXITCODE vbcppOutputComment(PVBCPP pThis, PSCMSTREAM pStrmInput, size_t
  */
 
 
+#if 0 /* unused */
 /**
  * Skips white spaces, including escaped new-lines.
  *
@@ -1140,6 +1143,7 @@ static void vbcppProcessSkipWhiteAndEscapedEol(PSCMSTREAM pStrmInput)
             break;
     }
 }
+#endif
 
 
 /**
@@ -1262,7 +1266,7 @@ static size_t vbcppProcessSkipWhite(PSCMSTREAM pStrmInput)
 static bool vbcppInputLookForLeftParenthesis(PVBCPP pThis, PSCMSTREAM pStrmInput)
 {
     size_t offSaved = ScmStreamTell(pStrmInput);
-    RTEXITCODE rcExit = vbcppProcessSkipWhiteEscapedEolAndComments(pThis, pStrmInput);
+    /*RTEXITCODE rcExit =*/ vbcppProcessSkipWhiteEscapedEolAndComments(pThis, pStrmInput);
     unsigned ch = ScmStreamPeekCh(pStrmInput);
     if (ch == '(')
         return true;
@@ -1546,9 +1550,8 @@ static RTEXITCODE vbcppProcessNumber(PVBCPP pThis, PSCMSTREAM pStrmInput, char c
  * @returns RTEXITCODE_SUCCESS or RTEXITCODE_FAILURE+msg.
  * @param   pThis               The C preprocessor instance.
  * @param   pStrmInput          The input stream.
- * @param   ch                  The first character.
  */
-static RTEXITCODE vbcppProcessIdentifier(PVBCPP pThis, PSCMSTREAM pStrmInput, char ch)
+static RTEXITCODE vbcppProcessIdentifier(PVBCPP pThis, PSCMSTREAM pStrmInput)
 {
     RTEXITCODE  rcExit;
     size_t      cchDefine;
@@ -1691,6 +1694,8 @@ static uint32_t vbcppMacroLookupArg(PVBCPPMACRO pMacro, const char *pchName, siz
 static RTEXITCODE vbcppMacroExpandReplace(PVBCPP pThis, PVBCPPMACROEXP pExp, size_t off, size_t cchToReplace,
                                           const char *pchReplacement, size_t cchReplacement)
 {
+    RT_NOREF_PV(pThis);
+
     /*
      * Figure how much space we actually need.
      * (Hope this whitespace stuff is correct...)
@@ -2291,7 +2296,7 @@ static bool vbcppMacroExpandLookForLeftParenthesis(PVBCPP pThis, PVBCPPMACROEXP 
      */
     PSCMSTREAM pStrmInput = pExp->pStrmInput;
     size_t     offSaved   = ScmStreamTell(pStrmInput);
-    RTEXITCODE rcExit     = vbcppProcessSkipWhiteEscapedEolAndComments(pThis, pStrmInput);
+    /*RTEXITCODE rcExit = */ vbcppProcessSkipWhiteEscapedEolAndComments(pThis, pStrmInput);
     unsigned ch = ScmStreamPeekCh(pStrmInput);
     if (ch == '(')
     {
@@ -2343,7 +2348,7 @@ static RTEXITCODE vbcppMacroExpandDefinedOperator(PVBCPP pThis, PVBCPPMACROEXP p
     while ((ch = vbcppMacroExpandGetCh(pExp, poff)) != ~(unsigned)0)
         if (!vbcppIsCIdentifierChar(ch))
             break;
-    size_t const cchDefine = *poff - offDefine;
+    size_t const cchDefine = *poff - offDefine - 1;
 
     /*
      * Check for closing parenthesis.
@@ -2439,6 +2444,7 @@ static RTEXITCODE vbcppMacroExpandReScan(PVBCPP pThis, PVBCPPMACROEXP pExp, VBCP
                 && (   !pMacro->fFunction
                     || vbcppMacroExpandLookForLeftParenthesis(pThis, pExp, &off)) )
             {
+                cReplacements++;
                 rcExit = vbcppMacroExpandIt(pThis, pExp, offDefine, pMacro, off);
                 off = offDefine;
             }
@@ -2448,7 +2454,10 @@ static RTEXITCODE vbcppMacroExpandReScan(PVBCPP pThis, PVBCPPMACROEXP pExp, VBCP
                          && enmMode == kMacroReScanMode_Expression
                          && cchDefine == sizeof("defined") - 1
                          && !strncmp(&pExp->StrBuf.pszBuf[offDefine], "defined", cchDefine))
+                {
+                    cReplacements++;
                     rcExit = vbcppMacroExpandDefinedOperator(pThis, pExp, offDefine, &off);
+                }
                 else
                     off = offDefine + cchDefine;
             }
@@ -2460,6 +2469,8 @@ static RTEXITCODE vbcppMacroExpandReScan(PVBCPP pThis, PVBCPPMACROEXP pExp, VBCP
         }
     }
 
+    if (pcReplacements)
+        *pcReplacements = cReplacements;
     return rcExit;
 }
 
@@ -2605,7 +2616,7 @@ static RTEXITCODE vbcppMacroInsert(PVBCPP pThis, PVBCPPMACRO pMacro)
             vbcppMacroFree(&pOld->Core, NULL);
 
             bool fRc = RTStrSpaceInsert(&pThis->StrSpace, &pMacro->Core);
-            Assert(fRc);
+            Assert(fRc); NOREF(fRc);
         }
         else
         {
@@ -2681,7 +2692,7 @@ static RTEXITCODE vbcppMacroAddFn(PVBCPP pThis, const char *pszDefine, size_t cc
     /*
      * Allocate a structure.
      */
-    size_t    cbDef = RT_OFFSETOF(VBCPPMACRO, szValue[cchValue + 1 + cchDefine + 1 + cchArgNames])
+    size_t    cbDef = RT_UOFFSETOF_DYN(VBCPPMACRO, szValue[cchValue + 1 + cchDefine + 1 + cchArgNames])
                     + sizeof(const char *) * cArgs;
     cbDef = RT_ALIGN_Z(cbDef, sizeof(const char *));
     PVBCPPMACRO pMacro  = (PVBCPPMACRO)RTMemAlloc(cbDef);
@@ -2799,7 +2810,7 @@ static RTEXITCODE vbcppMacroAdd(PVBCPP pThis, const char *pszDefine, size_t cchD
     if (!vbcppValidateCIdentifier(pThis, pszDefine, cchDefine))
         return RTEXITCODE_FAILURE;
 
-    PVBCPPMACRO pMacro = (PVBCPPMACRO)RTMemAlloc(RT_OFFSETOF(VBCPPMACRO, szValue[cchValue + 1 + cchDefine + 1]));
+    PVBCPPMACRO pMacro = (PVBCPPMACRO)RTMemAlloc(RT_UOFFSETOF_DYN(VBCPPMACRO, szValue[cchValue + 1 + cchDefine + 1]));
     if (!pMacro)
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "out of memory");
 
@@ -2971,6 +2982,8 @@ static RTEXITCODE vbcppMacroTryConvertToInlineD(PVBCPP pThis, PVBCPPMACRO pMacro
  */
 static RTEXITCODE vbcppDirectiveDefine(PVBCPP pThis, PSCMSTREAM pStrmInput, size_t offStart)
 {
+    RT_NOREF_PV(offStart);
+
     /*
      * Parse it.
      */
@@ -3085,6 +3098,8 @@ static RTEXITCODE vbcppDirectiveDefine(PVBCPP pThis, PSCMSTREAM pStrmInput, size
  */
 static RTEXITCODE vbcppDirectiveUndef(PVBCPP pThis, PSCMSTREAM pStrmInput, size_t offStart)
 {
+    RT_NOREF_PV(offStart);
+
     /*
      * Parse it.
      */
@@ -3185,6 +3200,9 @@ static RTEXITCODE vbcppCondPush(PVBCPP pThis, PSCMSTREAM pStrmInput, size_t offS
                                 VBCPPCONDKIND enmKind, VBCPPEVAL enmResult,
                                 const char *pchCondition, size_t cchCondition)
 {
+    RT_NOREF_PV(offStart); RT_NOREF_PV(pStrmInput);
+
+
     if (pThis->cCondStackDepth >= _64K)
         return vbcppError(pThis, "Too many nested #if/#ifdef/#ifndef statements");
 
@@ -3453,7 +3471,7 @@ static VBCPPEXPRRET vbcppExprParseBinaryOperator(PVBCPPEXPRPARSER pParser)
             }
             break;
         case '>':
-            enmOp = kVBCppBinary_GreaterThan; break;
+            enmOp = kVBCppBinary_GreaterThan;
             if (pParser->pszCur[1] == '=')
             {
                 pParser->pszCur++;
@@ -3778,7 +3796,8 @@ static VBCPPEXPRRET vbcppExprParseNumber(PVBCPPEXPRPARSER pParser)
  */
 static VBCPPEXPRRET vbcppExprParseCharacterConstant(PVBCPPEXPRPARSER pParser)
 {
-    char ch  = *pParser->pszCur++;
+    Assert(*pParser->pszCur == '\'');
+    pParser->pszCur++;
     char ch2 = *pParser->pszCur++;
     if (ch2 == '\'')
         return vbcppExprParseError(pParser, "Empty character constant");
@@ -4240,6 +4259,8 @@ static RTEXITCODE vbcppExprEvaluteTree(PVBCPP pThis, PVBCPPEXPR pRoot, PVBCPPEXP
 static RTEXITCODE vbcppExprEval(PVBCPP pThis, char *pszExpr, size_t cchExpr, size_t cReplacements, VBCPPEVAL *penmResult)
 {
     Assert(strlen(pszExpr) == cchExpr);
+    RT_NOREF_PV(cReplacements);
+
     size_t      cUndefined;
     PVBCPPEXPR  pExprTree;
     RTEXITCODE  rcExit = vbcppExprParse(pThis, pszExpr, cchExpr, &pExprTree, &cUndefined);
@@ -4268,6 +4289,8 @@ static RTEXITCODE vbcppExprEval(PVBCPP pThis, char *pszExpr, size_t cchExpr, siz
 
 static RTEXITCODE vbcppExtractSkipCommentLine(PVBCPP pThis, PSCMSTREAM pStrmInput)
 {
+    RT_NOREF_PV(pThis);
+
     unsigned chPrev = ScmStreamGetCh(pStrmInput); Assert(chPrev == '/');
     unsigned ch;
     while ((ch = ScmStreamPeekCh(pStrmInput)) != ~(unsigned)0)
@@ -4368,7 +4391,7 @@ static RTEXITCODE vbcppExtractDirectiveLine(PVBCPP pThis, PSCMSTREAM pStrmInput,
         if (ch == '/')
         {
             /* Comment? */
-            unsigned ch2 = ScmStreamGetCh(pStrmInput); Assert(ch == ch2);
+            unsigned ch2 = ScmStreamGetCh(pStrmInput); Assert(ch == ch2); NOREF(ch2);
             ch = ScmStreamPeekCh(pStrmInput);
             if (ch == '*')
             {
@@ -4400,7 +4423,7 @@ static RTEXITCODE vbcppExtractDirectiveLine(PVBCPP pThis, PSCMSTREAM pStrmInput,
                      || vbcppStrBufLastCh(pStrBuf) == '\0') )
         {
             unsigned ch2 = ScmStreamGetCh(pStrmInput);
-            Assert(ch == ch2);
+            Assert(ch == ch2); NOREF(ch2);
             rcExit = RTEXITCODE_SUCCESS;
         }
         else
@@ -4814,6 +4837,8 @@ static RTEXITCODE vbcppAddInclude(PVBCPP pThis, const char *pszDir)
  */
 static RTEXITCODE vbcppDirectiveInclude(PVBCPP pThis, PSCMSTREAM pStrmInput, size_t offStart)
 {
+    RT_NOREF_PV(offStart);
+
     /*
      * Parse it.
      */
@@ -4832,7 +4857,6 @@ static RTEXITCODE vbcppDirectiveInclude(PVBCPP pThis, PSCMSTREAM pStrmInput, siz
             ScmStreamGetCh(pStrmInput);
             pchFileSpec = pchFilename = ScmStreamGetCur(pStrmInput);
             unsigned chEnd  = chType == '<' ? '>' : '"';
-            unsigned chPrev = ch;
             while (   (ch = ScmStreamGetCh(pStrmInput)) != ~(unsigned)0
                    &&  ch != chEnd)
             {
@@ -4921,6 +4945,8 @@ static RTEXITCODE vbcppDirectiveInclude(PVBCPP pThis, PSCMSTREAM pStrmInput, siz
  */
 static RTEXITCODE vbcppDirectivePragma(PVBCPP pThis, PSCMSTREAM pStrmInput, size_t offStart)
 {
+    RT_NOREF_PV(offStart);
+
     /*
      * Parse out the first word.
      */
@@ -4981,6 +5007,8 @@ static RTEXITCODE vbcppDirectivePragma(PVBCPP pThis, PSCMSTREAM pStrmInput, size
  */
 static RTEXITCODE vbcppDirectiveError(PVBCPP pThis, PSCMSTREAM pStrmInput, size_t offStart)
 {
+    RT_NOREF_PV(offStart);
+    RT_NOREF_PV(pStrmInput);
     return vbcppError(pThis, "Hit an #error");
 }
 
@@ -4996,6 +5024,8 @@ static RTEXITCODE vbcppDirectiveError(PVBCPP pThis, PSCMSTREAM pStrmInput, size_
  */
 static RTEXITCODE vbcppDirectiveLineNo(PVBCPP pThis, PSCMSTREAM pStrmInput, size_t offStart)
 {
+    RT_NOREF_PV(offStart);
+    RT_NOREF_PV(pStrmInput);
     return vbcppError(pThis, "Not implemented: %s", __FUNCTION__);
 }
 
@@ -5009,6 +5039,7 @@ static RTEXITCODE vbcppDirectiveLineNo(PVBCPP pThis, PSCMSTREAM pStrmInput, size
  */
 static RTEXITCODE vbcppDirectiveLineNoShort(PVBCPP pThis, PSCMSTREAM pStrmInput)
 {
+    RT_NOREF_PV(pStrmInput);
     return vbcppError(pThis, "Not implemented: %s", __FUNCTION__);
 }
 
@@ -5156,7 +5187,7 @@ static RTEXITCODE vbcppPreprocess(PVBCPP pThis)
                     else if (ch == '\'')
                         rcExit = vbcppProcessCharacterConstant(pThis, pStrmInput);
                     else if (vbcppIsCIdentifierLeadChar(ch))
-                        rcExit = vbcppProcessIdentifier(pThis, pStrmInput, ch);
+                        rcExit = vbcppProcessIdentifier(pThis, pStrmInput);
                     else if (RT_C_IS_DIGIT(ch))
                         rcExit = vbcppProcessNumber(pThis, pStrmInput, ch);
                     else
@@ -5197,7 +5228,7 @@ static RTEXITCODE vbcppOpenStreams(PVBCPP pThis)
         return vbcppError(pThis, "Preprocessing the standard input stream is currently not supported");
 
     size_t      cchName = strlen(pThis->pszInput);
-    PVBCPPINPUT pInput = (PVBCPPINPUT)RTMemAlloc(RT_OFFSETOF(VBCPPINPUT, szName[cchName + 1]));
+    PVBCPPINPUT pInput = (PVBCPPINPUT)RTMemAlloc(RT_UOFFSETOF_DYN(VBCPPINPUT, szName[cchName + 1]));
     if (!pInput)
         return vbcppError(pThis, "out of memory");
     pInput->pUp          = pThis->pInputStack;
@@ -5359,7 +5390,7 @@ static RTEXITCODE vbcppParseOptions(PVBCPP pThis, int argc, char **argv, bool *p
             case 'V':
             {
                 /* The following is assuming that svn does it's job here. */
-                static const char s_szRev[] = "$Revision: 96257 $";
+                static const char s_szRev[] = "$Revision: 125570 $";
                 const char *psz = RTStrStripL(strchr(s_szRev, ' '));
                 RTPrintf("r%.*s\n", strchr(psz, ' ') - psz, psz);
                 *pfExit = true;

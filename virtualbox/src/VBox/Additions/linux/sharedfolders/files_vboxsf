@@ -1,11 +1,11 @@
 #!/bin/sh
 # $Id: files_vboxsf $
 ## @file
-# Shared file between Makefile.kmk and export_modules
+# Shared file between Makefile.kmk and export_modules.sh.
 #
 
 #
-# Copyright (C) 2007-2010 Oracle Corporation
+# Copyright (C) 2007-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -23,9 +23,11 @@ FILES_VBOXSF_NOBIN=" \
     ${PATH_ROOT}/include/iprt/asm-amd64-x86.h=>include/iprt/asm-amd64-x86.h \
     ${PATH_ROOT}/include/iprt/asm-math.h=>include/iprt/asm-math.h \
     ${PATH_ROOT}/include/iprt/assert.h=>include/iprt/assert.h \
+    ${PATH_ROOT}/include/iprt/assertcompile.h=>include/iprt/assertcompile.h \
     ${PATH_ROOT}/include/iprt/cdefs.h=>include/iprt/cdefs.h \
     ${PATH_ROOT}/include/iprt/err.h=>include/iprt/err.h \
     ${PATH_ROOT}/include/iprt/fs.h=>include/iprt/fs.h \
+    ${PATH_ROOT}/include/iprt/latin1.h=>include/iprt/latin1.h \
     ${PATH_ROOT}/include/iprt/log.h=>include/iprt/log.h \
     ${PATH_ROOT}/include/iprt/mangling.h=>include/iprt/mangling.h \
     ${PATH_ROOT}/include/iprt/mem.h=>include/iprt/mem.h \
@@ -37,7 +39,9 @@ FILES_VBOXSF_NOBIN=" \
     ${PATH_ROOT}/include/iprt/string.h=>include/iprt/string.h \
     ${PATH_ROOT}/include/iprt/time.h=>include/iprt/time.h \
     ${PATH_ROOT}/include/iprt/types.h=>include/iprt/types.h \
+    ${PATH_ROOT}/include/iprt/uint64.h=>include/iprt/uint64.h \
     ${PATH_ROOT}/include/iprt/uni.h=>include/iprt/uni.h \
+    ${PATH_ROOT}/include/iprt/utf16.h=>include/iprt/utf16.h \
     ${PATH_ROOT}/include/VBox/cdefs.h=>include/VBox/cdefs.h \
     ${PATH_ROOT}/include/VBox/err.h=>include/VBox/err.h \
     ${PATH_ROOT}/include/VBox/hgcmsvc.h=>include/VBox/hgcmsvc.h \
@@ -47,23 +51,17 @@ FILES_VBOXSF_NOBIN=" \
     ${PATH_ROOT}/include/VBox/shflsvc.h=>include/VBox/shflsvc.h \
     ${PATH_ROOT}/include/VBox/types.h=>include/VBox/types.h \
     ${PATH_ROOT}/include/VBox/VBoxGuest.h=>include/VBox/VBoxGuest.h \
-    ${PATH_ROOT}/include/VBox/VBoxGuest2.h=>include/VBox/VBoxGuest2.h \
+    ${PATH_ROOT}/include/VBox/VBoxGuestCoreTypes.h=>include/VBox/VBoxGuestCoreTypes.h \
     ${PATH_ROOT}/include/VBox/VBoxGuestLib.h=>include/VBox/VBoxGuestLib.h \
+    ${PATH_ROOT}/include/VBox/VBoxGuestLibSharedFolders.h=>include/VBox/VBoxGuestLibSharedFolders.h \
     ${PATH_ROOT}/include/VBox/VBoxGuestMangling.h=>include/VBox/VBoxGuestMangling.h \
     ${PATH_ROOT}/include/VBox/VMMDev.h=>include/VBox/VMMDev.h \
-    ${PATH_ROOT}/include/VBox/VMMDev2.h=>include/VBox/VMMDev2.h \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/GenericRequest.cpp=>GenericRequest.c \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/HGCM.cpp=>HGCM.c \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/Init.cpp=>Init.c \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/PhysHeap.cpp=>PhysHeap.c \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/SysHlp.cpp=>SysHlp.c \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/SysHlp.h=>SysHlp.h \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/VBGLInternal.h=>VBGLInternal.h \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.c=>VBoxGuestR0LibSharedFolders.c \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h=>VBoxGuestR0LibSharedFolders.h \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestLog.h=>VBoxGuestLog.h \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/VMMDev.cpp=>VMMDev.c \
-    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuestLib/VbglR0CanUsePhysPageList.cpp=>VbglR0CanUsePhysPageList.c \
+    ${PATH_ROOT}/include/VBox/VMMDevCoreTypes.h=>include/VBox/VMMDevCoreTypes.h \
+    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuest/lib/VBoxGuestR0LibInternal.h=>VBoxGuestR0LibInternal.h \
+    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuest/lib/VBoxGuestR0LibHGCM.cpp=>VBoxGuestR0LibHGCM.c \
+    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuest/lib/VBoxGuestR0LibIdc.cpp=>VBoxGuestR0LibIdc.c \
+    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuest/lib/VBoxGuestR0LibIdc-unix.cpp=>VBoxGuestR0LibIdc-unix.c \
+    ${PATH_ROOT}/src/VBox/Additions/common/VBoxGuest/lib/VBoxGuestR0LibSharedFolders.c=>VBoxGuestR0LibSharedFolders.c \
     ${PATH_ROOT}/src/VBox/Installer/linux/Makefile.include.header=>Makefile.include.header \
     ${PATH_ROOT}/src/VBox/Installer/linux/Makefile.include.footer=>Makefile.include.footer \
     ${PATH_ROOT}/src/VBox/Runtime/common/math/gcc/divdi3.c=>divdi3.c \
@@ -71,6 +69,7 @@ FILES_VBOXSF_NOBIN=" \
     ${PATH_ROOT}/src/VBox/Runtime/common/math/gcc/qdivrem.c=>qdivrem.c \
     ${PATH_ROOT}/src/VBox/Runtime/common/math/gcc/quad.h=>quad.h \
     ${PATH_ROOT}/src/VBox/Runtime/common/math/gcc/udivdi3.c=>udivdi3.c \
+    ${PATH_ROOT}/src/VBox/Runtime/common/math/gcc/udivmoddi4.c=>udivmoddi4.c \
     ${PATH_ROOT}/src/VBox/Runtime/common/math/gcc/umoddi3.c=>umoddi3.c \
     ${PATH_ROOT}/src/VBox/Runtime/r0drv/linux/the-linux-kernel.h=>r0drv/linux/the-linux-kernel.h \
     ${PATH_ROOT}/src/VBox/Additions/linux/sharedfolders/Makefile.module=>Makefile \
@@ -82,6 +81,7 @@ FILES_VBOXSF_NOBIN=" \
     ${PATH_ROOT}/src/VBox/Additions/linux/sharedfolders/vfsmod.c=>vfsmod.c \
     ${PATH_ROOT}/src/VBox/Additions/linux/sharedfolders/vfsmod.h=>vfsmod.h \
     ${PATH_OUT}/version-generated.h=>version-generated.h \
+    ${PATH_OUT}/revision-generated.h=>revision-generated.h \
     ${PATH_OUT}/product-generated.h=>product-generated.h \
 "
 

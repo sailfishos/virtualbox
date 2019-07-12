@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2010-2014 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -84,7 +84,8 @@ void importOVF(const char *pcszPrefix,
                std::list<Guid> &llMachinesCreated)
 {
     char szAbsOVF[RTPATH_MAX];
-    RTPathAbs(pcszOVF0, szAbsOVF, sizeof(szAbsOVF));
+    RTPathExecDir(szAbsOVF, sizeof(szAbsOVF));
+    RTPathAppend(szAbsOVF, sizeof(szAbsOVF), pcszOVF0);
 
     RTPrintf("%s: reading appliance \"%s\"...\n", pcszPrefix, szAbsOVF);
     ComPtr<IAppliance> pAppl;
@@ -265,11 +266,17 @@ void copyDummyDiskImage(const char *pcszPrefix,
                         std::list<Utf8Str> &llFiles2Delete,
                         const char *pcszDest)
 {
+    char szSrc[RTPATH_MAX];
+    char szDst[RTPATH_MAX];
+    RTPathExecDir(szSrc, sizeof(szSrc));
+    RTPathAppend(szSrc, sizeof(szSrc), "ovf-testcases/ovf-dummy.vmdk");
+    RTPathExecDir(szDst, sizeof(szDst));
+    RTPathAppend(szDst, sizeof(szDst), pcszDest);
     RTPrintf("%s: copying ovf-dummy.vmdk to \"%s\"...\n", pcszPrefix, pcszDest);
 
-    int vrc = RTFileCopy("ovf-testcases/ovf-dummy.vmdk", pcszDest);
+    int vrc = RTFileCopy(szSrc, szDst);
     if (RT_FAILURE(vrc)) throw MyError(0, Utf8StrFmt("Cannot copy ovf-dummy.vmdk to %s: %Rra\n", pcszDest, vrc).c_str());
-    llFiles2Delete.push_back(pcszDest);
+    llFiles2Delete.push_back(szDst);
 }
 
 /**
@@ -282,11 +289,13 @@ int main(int argc, char *argv[])
 {
     RTR3InitExe(argc, &argv, 0);
 
+    RTEXITCODE rcExit = RTEXITCODE_SUCCESS;
     HRESULT rc = S_OK;
 
     std::list<Utf8Str> llFiles2Delete;
     std::list<Guid> llMachinesCreated;
 
+    ComPtr<IVirtualBoxClient> pVirtualBoxClient;
     ComPtr<IVirtualBox> pVirtualBox;
 
     try
@@ -298,7 +307,9 @@ int main(int argc, char *argv[])
         ComPtr<ISession> pSession;
 
         RTPrintf("Creating VirtualBox object...\n");
-        rc = pVirtualBox.createLocalObject(CLSID_VirtualBox);
+        rc = pVirtualBoxClient.createInprocObject(CLSID_VirtualBoxClient);
+        if (SUCCEEDED(rc))
+            rc = pVirtualBoxClient->COMGETTER(VirtualBox)(pVirtualBox.asOutParam());
         if (FAILED(rc)) throw MyError(rc, "failed to create the VirtualBox object!\n");
 
         rc = pSession.createInprocObject(CLSID_Session);
@@ -328,6 +339,7 @@ int main(int argc, char *argv[])
     {
         rc = e.m_rc;
         RTPrintf("%s", e.m_str.c_str());
+        rcExit = RTEXITCODE_FAILURE;
     }
 
     try
@@ -360,6 +372,7 @@ int main(int argc, char *argv[])
     {
         rc = e.m_rc;
         RTPrintf("%s", e.m_str.c_str());
+        rcExit = RTEXITCODE_FAILURE;
     }
 
     // clean up the VMDK copies that we made in copyDummyDiskImage()
@@ -373,11 +386,12 @@ int main(int argc, char *argv[])
     }
 
     pVirtualBox.setNull();
+    pVirtualBoxClient.setNull();
 
     RTPrintf("Shutting down COM...\n");
     com::Shutdown();
-    RTPrintf ("tstOVF all done!\n");
+    RTPrintf("tstOVF all done: %s\n", rcExit ? "ERROR" : "SUCCESS");
 
-    return rc;
+    return rcExit;
 }
 

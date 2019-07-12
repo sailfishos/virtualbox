@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2013 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_INIP
 #include <iprt/cdefs.h>     /* include early to allow RT_C_DECLS_BEGIN hack */
 #include <iprt/mem.h>       /* include anything of ours that the lwip headers use. */
@@ -33,13 +33,11 @@ RT_C_DECLS_BEGIN
 #include "lwip/memp.h"
 #include "lwip/pbuf.h"
 #include "lwip/netif.h"
-#ifndef VBOX_WITH_NEW_LWIP
-# include "ipv4/lwip/ip.h"
-#else
-# include "lwip/api.h"
-# include "lwip/tcp_impl.h"
-# include "ipv6/lwip/ethip6.h"
-#endif
+#include "lwip/api.h"
+#include "lwip/tcp_impl.h"
+# if LWIP_IPV6
+#  include "ipv6/lwip/ethip6.h"
+# endif
 #include "lwip/udp.h"
 #include "lwip/tcp.h"
 #include "lwip/tcpip.h"
@@ -54,22 +52,20 @@ RT_C_DECLS_END
 #include <iprt/uuid.h>
 
 #include "VBoxDD.h"
+#include "VBoxLwipCore.h"
 
-#ifdef VBOX_WITH_NEW_LWIP
-# include "VBoxLwipCore.h"
-#endif
 
-/*******************************************************************************
-*   Macros and Defines                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Macros and Defines                                                                                                           *
+*********************************************************************************************************************************/
 
 /** Maximum frame size this device can handle. */
 #define DEVINIP_MAX_FRAME 1514
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * Internal Network IP stack device instance data.
@@ -114,15 +110,6 @@ typedef struct DEVINTNETIP
     const void             *pLinkHack;
     /** Flag whether the link is up. */
     bool                    fLnkUp;
-#ifndef VBOX_WITH_NEW_LWIP
-    /**
-     * This hack-flag for spliting initialization logic in devINIPTcpipInitDone,
-     * this is the only place when during initialization we can be called from TCPIP
-     * thread.
-     * This callback used for Initialization and Finalization with old lwip.
-     */
-    bool fTermination;
-#endif
     /**
      * In callback we're getting status of interface adding operation (TCPIP thread),
      * but we need inform constructing routine whether it was success or not(EMT thread).
@@ -131,9 +118,9 @@ typedef struct DEVINTNETIP
 } DEVINTNETIP, *PDEVINTNETIP;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 
 /**
  * Pointer to the (only) instance data in this device.
@@ -155,66 +142,7 @@ static const PFNRT g_pDevINILinkHack[] =
 };
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-#ifndef VBOX_WITH_NEW_LWIP
-static DECLCALLBACK(void) devINIPARPTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer);
-static DECLCALLBACK(void) devINIPTCPFastTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer);
-static DECLCALLBACK(void) devINIPTCPSlowTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer);
-#endif
-static DECLCALLBACK(err_t) devINIPOutput(struct netif *netif, struct pbuf *p, struct ip_addr *ipaddr);
-static DECLCALLBACK(err_t) devINIPOutputRaw(struct netif *netif, struct pbuf *p);
-static DECLCALLBACK(err_t) devINIPInterface(struct netif *netif);
-
-
-#ifndef VBOX_WITH_NEW_LWIP
-/**
- * ARP cache timeout handling for lwIP.
- *
- * @param   pDevIns     Device instance.
- * @param   pTimer      Pointer to timer.
- */
-static DECLCALLBACK(void) devINIPARPTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
-{
-    PDEVINTNETIP pThis = (PDEVINTNETIP)pvUser;
-    LogFlow(("%s: pDevIns=%p pTimer=%p\n", __FUNCTION__, pDevIns, pTimer));
-    lwip_etharp_tmr();
-    TMTimerSetMillies(pThis->ARPTimer, ARP_TMR_INTERVAL);
-    LogFlow(("%s: return\n", __FUNCTION__));
-}
-
-/**
- * TCP fast timer handling for lwIP.
- *
- * @param   pDevIns     Device instance.
- * @param   pTimer      Pointer to timer.
- */
-static DECLCALLBACK(void) devINIPTCPFastTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
-{
-    PDEVINTNETIP pThis = (PDEVINTNETIP)pvUser;
-    LogFlow(("%s: pDevIns=%p pTimer=%p\n", __FUNCTION__, pDevIns, pTimer));
-    lwip_tcp_fasttmr();
-    TMTimerSetMillies(pThis->TCPFastTimer, TCP_FAST_INTERVAL);
-    LogFlow(("%s: return\n", __FUNCTION__));
-}
-
-/**
- * TCP slow timer handling for lwIP.
- *
- * @param   pDevIns     Device instance.
- * @param   pTimer      Pointer to timer.
- */
-static DECLCALLBACK(void) devINIPTCPSlowTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
-{
-    PDEVINTNETIP pThis = (PDEVINTNETIP)pvUser;
-    LogFlow(("%s: pDevIns=%p pTimer=%p\n", __FUNCTION__, pDevIns, pTimer));
-    lwip_tcp_slowtmr();
-    TMTimerSetMillies(pThis->TCPSlowTimer, TCP_SLOW_INTERVAL);
-    LogFlow(("%s: return\n", __FUNCTION__));
-}
-#endif /* VBOX_WITH_NEW_LWIP */
-
+#if 0 /* unused */
 /**
  * Output a TCP/IP packet on the interface. Uses the generic lwIP ARP
  * code to resolve the address and call the link-level packet function.
@@ -224,19 +152,18 @@ static DECLCALLBACK(void) devINIPTCPSlowTimer(PPDMDEVINS pDevIns, PTMTIMER pTime
  * @param   p       Packet data.
  * @param   ipaddr  Destination IP address.
  */
-static DECLCALLBACK(err_t) devINIPOutput(struct netif *netif, struct pbuf *p, struct ip_addr *ipaddr)
+static err_t devINIPOutput(struct netif *netif, struct pbuf *p, struct ip_addr *ipaddr)
 {
     err_t lrc;
     LogFlow(("%s: netif=%p p=%p ipaddr=%#04x\n", __FUNCTION__, netif, p,
              ipaddr->addr));
-#ifndef VBOX_WITH_NEW_LWIP
-    lrc = lwip_etharp_output(netif, ipaddr, p);
-#else
+
     lrc = lwip_etharp_output(netif, p, ipaddr);
-#endif
+
     LogFlow(("%s: return %d\n", __FUNCTION__, lrc));
     return lrc;
 }
+#endif
 
 /**
  * Output a raw packet on the interface.
@@ -245,8 +172,9 @@ static DECLCALLBACK(err_t) devINIPOutput(struct netif *netif, struct pbuf *p, st
  * @param   netif   Interface on which to send frame.
  * @param   p       Frame data.
  */
-static DECLCALLBACK(err_t) devINIPOutputRaw(struct netif *netif, struct pbuf *p)
+static err_t devINIPOutputRaw(struct netif *netif, struct pbuf *p)
 {
+    NOREF(netif);
     int rc = VINF_SUCCESS;
 
     LogFlow(("%s: netif=%p p=%p\n", __FUNCTION__, netif, p));
@@ -317,7 +245,7 @@ static DECLCALLBACK(err_t) devINIPOutputRaw(struct netif *netif, struct pbuf *p)
  * @returns lwIP error code
  * @param   netif   Interface to configure.
  */
-static DECLCALLBACK(err_t) devINIPInterface(struct netif *netif)
+static err_t devINIPInterface(struct netif *netif)
 {
     LogFlow(("%s: netif=%p\n", __FUNCTION__, netif));
     Assert(g_pDevINIPData != NULL);
@@ -326,25 +254,18 @@ static DECLCALLBACK(err_t) devINIPInterface(struct netif *netif)
     memcpy(netif->hwaddr, &g_pDevINIPData->MAC, sizeof(g_pDevINIPData->MAC));
     netif->mtu = DEVINIP_MAX_FRAME;
     netif->flags = NETIF_FLAG_BROADCAST;
-#ifdef VBOX_WITH_NEW_LWIP
-    /** @todo why explicit ARP routing required for 1.2.0 case? */
     netif->flags |= NETIF_FLAG_ETHARP;
     netif->flags |= NETIF_FLAG_ETHERNET;
-    /* Note! We always assign link-local IPv6 address */
+
+#if LWIP_IPV6
     netif_create_ip6_linklocal_address(netif, 0);
     netif_ip6_addr_set_state(netif, 0, IP6_ADDR_VALID);
     netif->output_ip6 = ethip6_output;
     netif->ip6_autoconfig_enabled=1;
     LogFunc(("netif: ipv6:%RTnaipv6\n", &netif->ip6_addr[0].addr[0]));
+#endif
+
     netif->output = lwip_etharp_output;
-
-    lwip_etharp_init();
-#else
-    netif->output = devINIPOutput;
-
-    lwip_etharp_init();
-    TMTimerSetMillies(g_pDevINIPData->ARPTimer, ARP_TMR_INTERVAL);
- #endif
     netif->linkoutput = devINIPOutputRaw;
 
     LogFlow(("%s: success\n", __FUNCTION__));
@@ -362,7 +283,7 @@ static DECLCALLBACK(int) devINIPNetworkConfiguration(PPDMDEVINS pDevIns, PDEVINT
     {
         PDMDEV_SET_ERROR(pDevIns, rc,
                          N_("Configuration error: Failed to get the \"IP\" value"));
-        /* @todo: perhaps we should panic if IPv4 address isn't specify, with assumtion that
+        /** @todo perhaps we should panic if IPv4 address isn't specify, with assumtion that
          * ISCSI target specified in IPv6 form.
          */
         return rc;
@@ -395,6 +316,7 @@ static DECLCALLBACK(int) devINIPNetworkConfiguration(PPDMDEVINS pDevIns, PDEVINT
  */
 static DECLCALLBACK(int) devINIPNetworkDown_WaitInputAvail(PPDMINETWORKDOWN pInterface, RTMSINTERVAL cMillies)
 {
+    RT_NOREF(pInterface, cMillies);
     LogFlow(("%s: pInterface=%p\n", __FUNCTION__, pInterface));
     LogFlow(("%s: return VINF_SUCCESS\n", __FUNCTION__));
     return VINF_SUCCESS;
@@ -410,11 +332,11 @@ static DECLCALLBACK(int) devINIPNetworkDown_WaitInputAvail(PPDMINETWORKDOWN pInt
  */
 static DECLCALLBACK(int) devINIPNetworkDown_Input(PPDMINETWORKDOWN pInterface, const void *pvBuf, size_t cb)
 {
+    RT_NOREF(pInterface);
     const uint8_t *pbBuf = (const uint8_t *)pvBuf;
     size_t len = cb;
     const struct eth_hdr *ethhdr;
     struct pbuf *p, *q;
-    int rc = VINF_SUCCESS;
 
     LogFlow(("%s: pInterface=%p pvBuf=%p cb=%lu\n", __FUNCTION__, pInterface, pvBuf, cb));
     Assert(g_pDevINIPData);
@@ -423,7 +345,7 @@ static DECLCALLBACK(int) devINIPNetworkDown_Input(PPDMINETWORKDOWN pInterface, c
     /* Silently ignore packets being received while lwIP isn't set up. */
     if (!g_pDevINIPData)
     {
-        LogFlow(("%s: return %Rrc (no global)\n", __FUNCTION__, rc));
+        LogFlow(("%s: return %Rrc (no global)\n", __FUNCTION__, VINF_SUCCESS));
         return VINF_SUCCESS;
     }
 
@@ -432,7 +354,8 @@ static DECLCALLBACK(int) devINIPNetworkDown_Input(PPDMINETWORKDOWN pInterface, c
 #endif
 
     /* We allocate a pbuf chain of pbufs from the pool. */
-    p = lwip_pbuf_alloc(PBUF_RAW, len, PBUF_POOL);
+    Assert((u16_t)len == len);
+    p = lwip_pbuf_alloc(PBUF_RAW, (u16_t)len, PBUF_POOL);
     if (p != NULL)
     {
 #if ETH_PAD_SIZE
@@ -451,31 +374,14 @@ static DECLCALLBACK(int) devINIPNetworkDown_Input(PPDMINETWORKDOWN pInterface, c
 
         ethhdr = (const struct eth_hdr *)p->payload;
         struct netif *iface = &g_pDevINIPData->IntNetIF;
-#ifndef VBOX_WITH_NEW_LWIP
-        err_t lrc;
-        switch (htons(ethhdr->type))
-        {
-            case ETHTYPE_IP:    /* IP packet */
-                lwip_pbuf_header(p, -(ssize_t)sizeof(struct eth_hdr));
-                lrc = iface->input(p, iface);
-                if (lrc)
-                    rc = VERR_NET_IO_ERROR;
-                break;
-            case ETHTYPE_ARP:   /* ARP packet */
-                lwip_etharp_arp_input(iface, (struct eth_addr *)iface->hwaddr, p);
-                break;
-            default:
-                lwip_pbuf_free(p);
-        }
-#else
+
         /* We've setup flags NETIF_FLAG_ETHARP and NETIF_FLAG_ETHERNET
           so this should be thread-safe. */
         tcpip_input(p,iface);
-#endif
     }
 
-    LogFlow(("%s: return %Rrc\n", __FUNCTION__, rc));
-    return rc;
+    LogFlow(("%s: return %Rrc\n", __FUNCTION__, VINF_SUCCESS));
+    return VINF_SUCCESS;
 }
 
 /**
@@ -499,11 +405,7 @@ static DECLCALLBACK(void) devINIPTcpipInitDone(void *arg)
     AssertPtrReturnVoid(arg);
 
     pThis->rcInitialization = VINF_SUCCESS;
-#ifndef VBOX_WITH_NEW_LWIP
-    /* see PDEVINTNETIP::fTermination */
-    if (!pThis->fTermination)
     {
-#endif
         struct netif *ret;
         struct ip_addr ipaddr, netmask, gw;
         struct in_addr ip;
@@ -564,18 +466,12 @@ static DECLCALLBACK(void) devINIPTcpipInitDone(void *arg)
 
         lwip_netif_set_default(&pThis->IntNetIF);
         lwip_netif_set_up(&pThis->IntNetIF);
-
-#ifndef VBOX_WITH_NEW_LWIP
     }
     done:
-    lwip_sys_sem_signal(pThis->LWIPTcpInitSem);
-#else
-    done:
     return;
-#endif
 }
 
-#ifdef VBOX_WITH_NEW_LWIP
+
 /**
  * This callback is for finitializing our activity on TCPIP thread.
  * XXX: We do it only for new LWIP, old LWIP will stay broken for now.
@@ -589,7 +485,6 @@ static DECLCALLBACK(void) devINIPTcpipFiniDone(void *arg)
     netif_set_down(&pThis->IntNetIF);
     netif_remove(&pThis->IntNetIF);
 }
-#endif
 
 
 /**
@@ -676,7 +571,7 @@ static DECLCALLBACK(void *) devINIPQueryInterface(PPDMIBASE pInterface,
  * Most VM resources are freed by the VM. This callback is provided so that any non-VM
  * resources can be freed correctly.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pDevIns     The device instance data.
  */
 static DECLCALLBACK(int) devINIPDestruct(PPDMDEVINS pDevIns)
@@ -687,18 +582,7 @@ static DECLCALLBACK(int) devINIPDestruct(PPDMDEVINS pDevIns)
     PDMDEV_CHECK_VERSIONS_RETURN_QUIET(pDevIns);
 
     if (g_pDevINIPData != NULL)
-    {
-#ifndef VBOX_WITH_NEW_LWIP
-        netif_set_down(&pThis->IntNetIF);
-        netif_remove(&pThis->IntNetIF);
-        pThis->fTermination = true;
-        tcpip_terminate();
-        lwip_sys_sem_wait(pThis->LWIPTcpInitSem);
-        lwip_sys_sem_free(pThis->LWIPTcpInitSem);
-#else
         vboxLwipCoreFinalize(devINIPTcpipFiniDone, pThis);
-#endif
-    }
 
     MMR3HeapFree(pThis->pszIP);
     pThis->pszIP = NULL;
@@ -717,11 +601,9 @@ static DECLCALLBACK(int) devINIPDestruct(PPDMDEVINS pDevIns)
  */
 static DECLCALLBACK(int) devINIPConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
+    RT_NOREF(iInstance);
     PDEVINTNETIP pThis = PDMINS_2_DATA(pDevIns, PDEVINTNETIP);
-    int rc = VINF_SUCCESS;
-#ifdef VBOX_WITH_NEW_LWIP
-    err_t errRc = ERR_OK;
-#endif
+
     LogFlow(("%s: pDevIns=%p iInstance=%d pCfg=%p\n", __FUNCTION__,
              pDevIns, iInstance, pCfg));
 
@@ -732,9 +614,7 @@ static DECLCALLBACK(int) devINIPConstruct(PPDMDEVINS pDevIns, int iInstance, PCF
      * Validate the config.
      */
     if (!CFGMR3AreValuesValid(pCfg, "MAC\0IP\0"
-#ifdef VBOX_WITH_NEW_LWIP
                                     "IPv6\0"
-#endif
                                     "Netmask\0Gateway\0"))
         return PDMDEV_SET_ERROR(pDevIns, VERR_PDM_DEVINS_UNKNOWN_CFG_VALUES,
                                 N_("Unknown Internal Networking IP configuration option"));
@@ -761,7 +641,7 @@ static DECLCALLBACK(int) devINIPConstruct(PPDMDEVINS pDevIns, int iInstance, PCF
     /*
      * Get the configuration settings.
      */
-    rc = CFGMR3QueryBytes(pCfg, "MAC", &pThis->MAC, sizeof(pThis->MAC));
+    int rc = CFGMR3QueryBytes(pCfg, "MAC", &pThis->MAC, sizeof(pThis->MAC));
     if (rc == VERR_CFGM_NOT_BYTES)
     {
         char szMAC[64];
@@ -821,35 +701,7 @@ static DECLCALLBACK(int) devINIPConstruct(PPDMDEVINS pDevIns, int iInstance, PCF
     /*
      * Initialize lwIP.
      */
-#ifndef VBOX_WITH_NEW_LWIP
-    lwip_stats_init();
-    lwip_sys_init();
-# if MEM_LIBC_MALLOC == 0
-    lwip_mem_init();
-# endif
-    lwip_memp_init();
-    lwip_pbuf_init();
-    lwip_netif_init();
-    rc = PDMDevHlpTMTimerCreate(pDevIns, TMCLOCK_VIRTUAL, devINIPARPTimer, pThis,
-                                TMTIMER_FLAGS_NO_CRIT_SECT, "lwIP ARP", &pThis->ARPTimer);
-    AssertRCReturn(rc, rc);
-    rc = PDMDevHlpTMTimerCreate(pDevIns, TMCLOCK_VIRTUAL, devINIPTCPFastTimer, pThis,
-                                TMTIMER_FLAGS_NO_CRIT_SECT, "lwIP fast TCP", &pThis->TCPFastTimer);
-    AssertRCReturn(rc, rc);
-    TMTimerSetMillies(pThis->TCPFastTimer, TCP_FAST_INTERVAL);
-    rc = PDMDevHlpTMTimerCreate(pDevIns, TMCLOCK_VIRTUAL, devINIPTCPSlowTimer, pThis,
-                                TMTIMER_FLAGS_NO_CRIT_SECT, "lwIP slow TCP", &pThis->TCPSlowTimer);
-    AssertRCReturn(rc, rc);
-    TMTimerSetMillies(pThis->TCPFastTimer, TCP_SLOW_INTERVAL);
-
-    pThis->LWIPTcpInitSem = lwip_sys_sem_new(0);
-
-    lwip_tcpip_init(devINIPTcpipInitDone, pThis);
-    lwip_sys_sem_wait(pThis->LWIPTcpInitSem);
-
-#else /* VBOX_WITH_NEW_LWIP */
     vboxLwipCoreInitialize(devINIPTcpipInitDone, pThis);
-#endif
 
     /* this rc could be updated in devINIPTcpInitDone thread */
     AssertRCReturn(pThis->rcInitialization, pThis->rcInitialization);

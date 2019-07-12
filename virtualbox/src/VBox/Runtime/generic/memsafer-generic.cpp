@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/memsafer.h>
 
@@ -35,9 +35,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Allocation size alignment. */
 #define RTMEMSAFER_ALIGN        16
 /** Padding after the block to avoid small overruns. */
@@ -46,9 +46,9 @@
 #define RTMEMSAFER_PAD_AFTER    32
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** XOR scrabler value.
  * @todo determine this at runtime */
 #if ARCH_BITS == 32
@@ -102,11 +102,12 @@ RTDECL(int) RTMemSaferUnscramble(void *pv, size_t cb)
 RT_EXPORT_SYMBOL(RTMemSaferUnscramble);
 
 
-RTDECL(int) RTMemSaferAllocZExTag(void **ppvNew, size_t cb, uint32_t fFlags, const char *pszTag) RT_NO_THROW
+RTDECL(int) RTMemSaferAllocZExTag(void **ppvNew, size_t cb, uint32_t fFlags, const char *pszTag) RT_NO_THROW_DEF
 {
     AssertPtrReturn(ppvNew, VERR_INVALID_PARAMETER);
     *ppvNew = NULL;
     AssertReturn(cb, VERR_INVALID_PARAMETER);
+    RT_NOREF_PV(pszTag);
 
     /*
      * We support none of the hard requirements passed thru flags.
@@ -143,11 +144,11 @@ RTDECL(int) RTMemSaferAllocZExTag(void **ppvNew, size_t cb, uint32_t fFlags, con
 RT_EXPORT_SYMBOL(RTMemSaferAllocZExTag);
 
 
-RTDECL(void) RTMemSaferFree(void *pv, size_t cb) RT_NO_THROW
+RTDECL(void) RTMemSaferFree(void *pv, size_t cb) RT_NO_THROW_DEF
 {
     if (pv)
     {
-        Assert(cb);
+        Assert(cb); /* does not support openssl. */
         void *pvStart = (char *)pv - RTMEMSAFER_PAD_BEFORE;
         AssertMsg(*(size_t *)pvStart == cb, ("*pvStart=%#zx cb=%#zx\n", *(size_t *)pvStart, cb));
         RTMemWipeThoroughly(pv, RT_ALIGN_Z(cb, RTMEMSAFER_ALIGN), 3);
@@ -159,7 +160,7 @@ RTDECL(void) RTMemSaferFree(void *pv, size_t cb) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemSaferFree);
 
 
-RTDECL(int) RTMemSaferReallocZExTag(size_t cbOld, void *pvOld, size_t cbNew, void **ppvNew, uint32_t fFlags, const char *pszTag) RT_NO_THROW
+RTDECL(int) RTMemSaferReallocZExTag(size_t cbOld, void *pvOld, size_t cbNew, void **ppvNew, uint32_t fFlags, const char *pszTag) RT_NO_THROW_DEF
 {
     /*
      * We cannot let the heap move us around because we will be failing in our
@@ -203,7 +204,7 @@ RTDECL(int) RTMemSaferReallocZExTag(size_t cbOld, void *pvOld, size_t cbNew, voi
 RT_EXPORT_SYMBOL(RTMemSaferReallocZExTag);
 
 
-RTDECL(void *) RTMemSaferAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemSaferAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     void *pvNew = NULL;
     int rc = RTMemSaferAllocZExTag(&pvNew, cb, 0 /*fFlags*/, pszTag);
@@ -214,7 +215,7 @@ RTDECL(void *) RTMemSaferAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTMemSaferAllocZTag);
 
 
-RTDECL(void *) RTMemSaferReallocZTag(size_t cbOld, void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemSaferReallocZTag(size_t cbOld, void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW_DEF
 {
     void *pvNew = NULL;
     int rc = RTMemSaferReallocZExTag(cbOld, pvOld, cbNew, &pvNew, 0 /*fFlags*/, pszTag);

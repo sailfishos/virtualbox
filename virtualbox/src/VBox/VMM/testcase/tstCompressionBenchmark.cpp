@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/asm.h>
 #include <iprt/assert.h>
 #include <iprt/buildconfig.h>
@@ -38,9 +38,9 @@
 #include <iprt/zip.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static size_t   g_cPages = 20*_1M / PAGE_SIZE;
 static size_t   g_cbPages;
 static uint8_t *g_pabSrc;
@@ -609,7 +609,7 @@ int main(int argc, char **argv)
     size_t cZeroPages = 0;
     for (size_t iPage = 0; iPage < g_cPages; iPage++)
     {
-        if (!ASMMemIsAllU32(&g_pabSrc[iPage * PAGE_SIZE], PAGE_SIZE, 0))
+        if (ASMMemIsZeroPage(&g_pabSrc[iPage * PAGE_SIZE]))
             cZeroPages++;
     }
     RTPrintf("       %'10zu zero pages (%u %%)\n", cZeroPages, cZeroPages * 100 / g_cPages);

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -54,6 +54,25 @@ int rtFileRecalcAndValidateFlags(uint64_t *pfOpen);
  * @param   enmStdHandle    The standard handle.
  */
 RTFILE rtFileGetStandard(RTHANDLESTD enmStdHandle);
+
+#ifdef RT_OS_WINDOWS
+/**
+ * Helper for converting RTFILE_O_XXX to the various NtCreateFile flags.
+ *
+ * @returns IPRT status code
+ * @param   fOpen               The RTFILE_O_XXX flags to convert.
+ * @param   pfDesiredAccess     Where to return the desired access mask.
+ * @param   pfObjAttribs        Where to return the NT object attributes.
+ * @param   pfFileAttribs       Where to return the file attributes (create).
+ * @param   pfShareAccess       Where to return the file sharing access mask.
+ * @param   pfCreateDisposition Where to return the file create disposition.
+ * @param   pfCreateOptions     Where to return the file open/create options.
+ */
+DECLHIDDEN(int) rtFileNtValidateAndConvertFlags(uint64_t fOpen, uint32_t *pfDesiredAccess, uint32_t *pfObjAttribs,
+                                                uint32_t *pfFileAttribs, uint32_t *pfShareAccess, uint32_t *pfCreateDisposition,
+                                                uint32_t *pfCreateOptions);
+
+#endif
 
 RT_C_DECLS_END
 

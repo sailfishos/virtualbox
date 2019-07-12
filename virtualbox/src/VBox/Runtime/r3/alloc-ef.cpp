@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "alloc-ef.h"
 #include <iprt/mem.h>
 #include <iprt/log.h>
@@ -44,10 +44,28 @@
 #include <iprt/param.h>
 #include <iprt/string.h>
 
+#ifdef RTALLOC_REPLACE_MALLOC
+# include <VBox/dis.h>
+# include <VBox/disopcode.h>
+# include <dlfcn.h>
+# ifdef RT_OS_DARWIN
+#  include <malloc/malloc.h>
+# endif
+#endif
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
+#ifdef RTALLOC_REPLACE_MALLOC
+# define RTMEM_REPLACMENT_ALIGN(a_cb) ((a_cb) >= 16 ? RT_ALIGN_Z(a_cb, 16) \
+                                       : (a_cb) >= sizeof(uintptr_t) ? RT_ALIGN_Z(a_cb,  sizeof(uintptr_t)) : (a_cb))
+#endif
+
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef RTALLOC_EFENCE_TRACE
 /** Spinlock protecting the all the block's globals. */
 static volatile uint32_t    g_BlocksLock;
@@ -61,6 +79,16 @@ static volatile PRTMEMBLOCK g_pBlocksDelayTail;
 /** Number of bytes in the delay list (includes fences). */
 static volatile size_t      g_cbBlocksDelay;
 # endif /* RTALLOC_EFENCE_FREE_DELAYED */
+# ifdef RTALLOC_REPLACE_MALLOC
+/** @name For calling the real allocation API we've replaced.
+ * @{ */
+void * (*g_pfnOrgMalloc)(size_t);
+void * (*g_pfnOrgCalloc)(size_t, size_t);
+void * (*g_pfnOrgRealloc)(void *, size_t);
+void   (*g_pfnOrgFree)(void *);
+size_t (*g_pfnOrgMallocSize)(void *);
+/** @} */
+# endif
 #endif /* RTALLOC_EFENCE_TRACE */
 /** Array of pointers free watches for. */
 void   *gapvRTMemFreeWatch[4] = {NULL, NULL, NULL, NULL};
@@ -68,9 +96,14 @@ void   *gapvRTMemFreeWatch[4] = {NULL, NULL, NULL, NULL};
 bool    gfRTMemFreeLog = false;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
+#ifdef RTALLOC_REPLACE_MALLOC
+static void rtMemReplaceMallocAndFriends(void);
+#endif
+
+
 /**
  * Complains about something.
  */
@@ -130,7 +163,13 @@ DECLINLINE(void) rtmemBlockUnlock(void)
 DECLINLINE(PRTMEMBLOCK) rtmemBlockCreate(RTMEMTYPE enmType, size_t cbUnaligned, size_t cbAligned,
                                          const char *pszTag, void *pvCaller, RT_SRC_POS_DECL)
 {
+# ifdef RTALLOC_REPLACE_MALLOC
+    if (!g_pfnOrgMalloc)
+        rtMemReplaceMallocAndFriends();
+    PRTMEMBLOCK pBlock = (PRTMEMBLOCK)g_pfnOrgMalloc(sizeof(*pBlock));
+# else
     PRTMEMBLOCK pBlock = (PRTMEMBLOCK)malloc(sizeof(*pBlock));
+# endif
     if (pBlock)
     {
         pBlock->enmType     = enmType;
@@ -151,7 +190,11 @@ DECLINLINE(PRTMEMBLOCK) rtmemBlockCreate(RTMEMTYPE enmType, size_t cbUnaligned, 
  */
 DECLINLINE(void) rtmemBlockFree(PRTMEMBLOCK pBlock)
 {
+# ifdef RTALLOC_REPLACE_MALLOC
+    g_pfnOrgFree(pBlock);
+# else
     free(pBlock);
+# endif
 }
 
 
@@ -269,6 +312,235 @@ DECLINLINE(PRTMEMBLOCK) rtmemBlockDelayRemove(void)
 # endif  /* RTALLOC_EFENCE_FREE_DELAYED */
 
 #endif /* RTALLOC_EFENCE_TRACE */
+
+
+#if defined(RTALLOC_REPLACE_MALLOC) && defined(RTALLOC_EFENCE_TRACE)
+/*
+ *
+ * Replacing malloc, calloc, realloc, & free.
+ *
+ */
+
+/** Replacement for malloc. */
+static void *rtMemReplacementMalloc(size_t cb)
+{
+    size_t cbAligned = RTMEM_REPLACMENT_ALIGN(cb);
+    void *pv = rtR3MemAlloc("r-malloc", RTMEMTYPE_RTMEMALLOC, cb, cbAligned, "heap", ASMReturnAddress(), RT_SRC_POS);
+    if (!pv)
+        pv = g_pfnOrgMalloc(cb);
+    return pv;
+}
+
+/** Replacement for calloc. */
+static void *rtMemReplacementCalloc(size_t cbItem, size_t cItems)
+{
+    size_t cb = cbItem * cItems;
+    size_t cbAligned = RTMEM_REPLACMENT_ALIGN(cb);
+    void *pv = rtR3MemAlloc("r-calloc", RTMEMTYPE_RTMEMALLOCZ, cb, cbAligned, "heap", ASMReturnAddress(), RT_SRC_POS);
+    if (!pv)
+        pv = g_pfnOrgCalloc(cbItem, cItems);
+    return pv;
+}
+
+/** Replacement for realloc. */
+static void *rtMemReplacementRealloc(void *pvOld, size_t cbNew)
+{
+    if (pvOld)
+    {
+        /* We're not strict about where the memory was allocated. */
+        PRTMEMBLOCK pBlock = rtmemBlockGet(pvOld);
+        if (pBlock)
+        {
+            size_t cbAligned = RTMEM_REPLACMENT_ALIGN(cbNew);
+            return rtR3MemRealloc("r-realloc", RTMEMTYPE_RTMEMREALLOC, pvOld, cbAligned, "heap", ASMReturnAddress(), RT_SRC_POS);
+        }
+        return g_pfnOrgRealloc(pvOld, cbNew);
+    }
+    return rtMemReplacementMalloc(cbNew);
+}
+
+/** Replacement for free(). */
+static void rtMemReplacementFree(void *pv)
+{
+    if (pv)
+    {
+        /* We're not strict about where the memory was allocated. */
+        PRTMEMBLOCK pBlock = rtmemBlockGet(pv);
+        if (pBlock)
+            rtR3MemFree("r-free", RTMEMTYPE_RTMEMFREE, pv, ASMReturnAddress(), RT_SRC_POS);
+        else
+            g_pfnOrgFree(pv);
+    }
+}
+
+# ifdef RT_OS_DARWIN
+/** Replacement for malloc. */
+static size_t rtMemReplacementMallocSize(void *pv)
+{
+    size_t cb;
+    if (pv)
+    {
+        /* We're not strict about where the memory was allocated. */
+        PRTMEMBLOCK pBlock = rtmemBlockGet(pv);
+        if (pBlock)
+            cb = pBlock->cbUnaligned;
+        else
+            cb = g_pfnOrgMallocSize(pv);
+    }
+    else
+        cb = 0;
+    return cb;
+}
+# endif
+
+
+static void rtMemReplaceMallocAndFriends(void)
+{
+    struct
+    {
+        const char *pszName;
+        PFNRT       pfnReplacement;
+        PFNRT       pfnOrg;
+        PFNRT      *ppfnJumpBack;
+    } aApis[] =
+    {
+        { "free",    (PFNRT)rtMemReplacementFree,    (PFNRT)free,    (PFNRT *)&g_pfnOrgFree },
+        { "realloc", (PFNRT)rtMemReplacementRealloc, (PFNRT)realloc, (PFNRT *)&g_pfnOrgRealloc },
+        { "calloc",  (PFNRT)rtMemReplacementCalloc,  (PFNRT)calloc,  (PFNRT *)&g_pfnOrgCalloc },
+        { "malloc",  (PFNRT)rtMemReplacementMalloc,  (PFNRT)malloc,  (PFNRT *)&g_pfnOrgMalloc },
+#ifdef RT_OS_DARWIN
+        { "malloc_size", (PFNRT)rtMemReplacementMallocSize,  (PFNRT)malloc_size,  (PFNRT *)&g_pfnOrgMallocSize },
+#endif
+    };
+
+    /*
+     * Initialize the jump backs to avoid recursivly entering this function.
+     */
+    for (unsigned i = 0; i < RT_ELEMENTS(aApis); i++)
+        *aApis[i].ppfnJumpBack = aApis[i].pfnOrg;
+
+    /*
+     * Give the user an option to skip replacing malloc.
+     */
+    if (getenv("IPRT_DONT_REPLACE_MALLOC"))
+        return;
+
+    /*
+     * Allocate a page for jump back code (we leak it).
+     */
+    uint8_t *pbExecPage = (uint8_t *)RTMemPageAlloc(PAGE_SIZE); AssertFatal(pbExecPage);
+    int rc = RTMemProtect(pbExecPage, PAGE_SIZE, RTMEM_PROT_READ | RTMEM_PROT_WRITE | RTMEM_PROT_EXEC); AssertFatalRC(rc);
+
+    /*
+     * Do the ground work.
+     */
+    uint8_t *pb = pbExecPage;
+    for (unsigned i = 0; i < RT_ELEMENTS(aApis); i++)
+    {
+        /* Resolve it. */
+        PFNRT pfnOrg = (PFNRT)(uintptr_t)dlsym(RTLD_DEFAULT, aApis[i].pszName);
+        if (pfnOrg)
+            aApis[i].pfnOrg = pfnOrg;
+        else
+            pfnOrg = aApis[i].pfnOrg;
+
+        /* Figure what we can replace and how much to duplicate in the jump back code. */
+# ifdef RT_ARCH_AMD64
+        uint32_t         cbNeeded   = 12;
+        DISCPUMODE const enmCpuMode = DISCPUMODE_64BIT;
+# elif defined(RT_ARCH_X86)
+        uint32_t   const cbNeeded   = 5;
+        DISCPUMODE const enmCpuMode = DISCPUMODE_32BIT;
+# else
+#  error "Port me"
+# endif
+        uint32_t offJmpBack = 0;
+        uint32_t cbCopy = 0;
+        while (offJmpBack < cbNeeded)
+        {
+            DISCPUSTATE Dis;
+            uint32_t cbInstr = 1;
+            rc = DISInstr((void *)((uintptr_t)pfnOrg + offJmpBack), enmCpuMode, &Dis, &cbInstr); AssertFatalRC(rc);
+            AssertFatal(!(Dis.pCurInstr->fOpType & (DISOPTYPE_CONTROLFLOW)));
+# ifdef RT_ARCH_AMD64
+#  ifdef RT_OS_DARWIN
+            /* Kludge for: cmp [malloc_def_zone_state], 1; jg 2; call _malloc_initialize; 2: */
+            DISQPVPARAMVAL Parm;
+            if (   Dis.ModRM.Bits.Mod == 0
+                && Dis.ModRM.Bits.Rm == 5 /* wrt RIP */
+                && (Dis.Param2.fUse & (DISUSE_IMMEDIATE16_SX8 | DISUSE_IMMEDIATE32_SX8 | DISUSE_IMMEDIATE64_SX8))
+                && Dis.Param2.uValue == 1
+                && Dis.pCurInstr->uOpcode == OP_CMP)
+            {
+                cbCopy = offJmpBack;
+
+                offJmpBack += cbInstr;
+                rc = DISInstr((void *)((uintptr_t)pfnOrg + offJmpBack), enmCpuMode, &Dis, &cbInstr); AssertFatalRC(rc);
+                if (   Dis.pCurInstr->uOpcode == OP_JNBE
+                    && Dis.Param1.uDisp.i8 == 5)
+                {
+                    offJmpBack += cbInstr + 5;
+                    AssertFatal(offJmpBack >= cbNeeded);
+                    break;
+                }
+            }
+#  endif
+            AssertFatal(!(Dis.ModRM.Bits.Mod == 0 && Dis.ModRM.Bits.Rm == 5 /* wrt RIP */));
+# endif
+            offJmpBack += cbInstr;
+        }
+        if (!cbCopy)
+            cbCopy = offJmpBack;
+
+        /* Assemble the jump back. */
+        memcpy(pb, (void *)(uintptr_t)pfnOrg, cbCopy);
+        uint32_t off = cbCopy;
+# ifdef RT_ARCH_AMD64
+        pb[off++] = 0xff; /* jmp qword [$+8 wrt RIP] */
+        pb[off++] = 0x25;
+        *(uint32_t *)&pb[off] = 0;
+        off += 4;
+        *(uint64_t *)&pb[off] = (uintptr_t)pfnOrg + offJmpBack;
+        off += 8;
+        off = RT_ALIGN_32(off, 16);
+# elif defined(RT_ARCH_X86)
+        pb[off++] = 0xe9; /* jmp rel32 */
+        *(uint32_t *)&pb[off] = (uintptr_t)pfnOrg + offJmpBack - (uintptr_t)&pb[4];
+        off += 4;
+        off = RT_ALIGN_32(off, 8);
+# else
+#  error "Port me"
+# endif
+        *aApis[i].ppfnJumpBack = (PFNRT)(uintptr_t)pb;
+        pb += off;
+    }
+
+    /*
+     * Modify the APIs.
+     */
+    for (unsigned i = 0; i < RT_ELEMENTS(aApis); i++)
+    {
+        pb = (uint8_t *)(uintptr_t)aApis[i].pfnOrg;
+        rc = RTMemProtect(pb, 16, RTMEM_PROT_READ | RTMEM_PROT_WRITE | RTMEM_PROT_EXEC); AssertFatalRC(rc);
+
+# ifdef RT_ARCH_AMD64
+        /* Assemble the LdrLoadDll patch. */
+        *pb++ = 0x48; /* mov rax, qword */
+        *pb++ = 0xb8;
+        *(uint64_t *)pb = (uintptr_t)aApis[i].pfnReplacement;
+        pb += 8;
+        *pb++ = 0xff; /* jmp rax */
+        *pb++ = 0xe0;
+# elif defined(RT_ARCH_X86)
+        *pb++ = 0xe9; /* jmp rel32 */
+        *(uint32_t *)pb = (uintptr_t)aApis[i].pfnReplacement - (uintptr_t)&pb[4];
+# else
+#  error "Port me"
+# endif
+    }
+}
+
+#endif /* RTALLOC_REPLACE_MALLOC && RTALLOC_EFENCE_TRACE */
 
 
 /**
@@ -408,19 +680,19 @@ RTDECL(void) rtR3MemFree(const char *pszOp, RTMEMTYPE enmType, void *pv, void *p
          * Check whether the no man's land is untouched.
          */
 #  ifdef RTALLOC_EFENCE_IN_FRONT
-        void *pvWrong = ASMMemIsAll8((char *)pv + pBlock->cbUnaligned,
-                                     RT_ALIGN_Z(pBlock->cbAligned, PAGE_SIZE) - pBlock->cbUnaligned,
-                                     RTALLOC_EFENCE_NOMAN_FILLER);
+        void *pvWrong = ASMMemFirstMismatchingU8((char *)pv + pBlock->cbUnaligned,
+                                                 RT_ALIGN_Z(pBlock->cbAligned, PAGE_SIZE) - pBlock->cbUnaligned,
+                                                 RTALLOC_EFENCE_NOMAN_FILLER);
 #  else
         /* Alignment must match allocation alignment in rtMemAlloc(). */
-        void  *pvWrong   = ASMMemIsAll8((char *)pv + pBlock->cbUnaligned,
-                                        pBlock->cbAligned - pBlock->cbUnaligned,
-                                        RTALLOC_EFENCE_NOMAN_FILLER);
+        void  *pvWrong = ASMMemFirstMismatchingU8((char *)pv + pBlock->cbUnaligned,
+                                                  pBlock->cbAligned - pBlock->cbUnaligned,
+                                                  RTALLOC_EFENCE_NOMAN_FILLER);
         if (pvWrong)
             RTAssertDoPanic();
-        pvWrong = ASMMemIsAll8((void *)((uintptr_t)pv & ~(uintptr_t)PAGE_OFFSET_MASK),
-                               RT_ALIGN_Z(pBlock->cbAligned, PAGE_SIZE) - pBlock->cbAligned,
-                               RTALLOC_EFENCE_NOMAN_FILLER);
+        pvWrong = ASMMemFirstMismatchingU8((void *)((uintptr_t)pv & ~(uintptr_t)PAGE_OFFSET_MASK),
+                                           RT_ALIGN_Z(pBlock->cbAligned, PAGE_SIZE) - pBlock->cbAligned,
+                                           RTALLOC_EFENCE_NOMAN_FILLER);
 #  endif
         if (pvWrong)
             RTAssertDoPanic();
@@ -552,38 +824,38 @@ RTDECL(void *) rtR3MemRealloc(const char *pszOp, RTMEMTYPE enmType, void *pvOld,
 
 
 
-RTDECL(void *)  RTMemEfTmpAlloc(size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void *)  RTMemEfTmpAlloc(size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     return rtR3MemAlloc("TmpAlloc", RTMEMTYPE_RTMEMALLOC, cb, cb, pszTag, ASMReturnAddress(), RT_SRC_POS_ARGS);
 }
 
 
-RTDECL(void *)  RTMemEfTmpAllocZ(size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void *)  RTMemEfTmpAllocZ(size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     return rtR3MemAlloc("TmpAlloc", RTMEMTYPE_RTMEMALLOCZ, cb, cb, pszTag, ASMReturnAddress(), RT_SRC_POS_ARGS);
 }
 
 
-RTDECL(void)    RTMemEfTmpFree(void *pv, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void)    RTMemEfTmpFree(void *pv, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     if (pv)
         rtR3MemFree("Free", RTMEMTYPE_RTMEMFREE, pv, ASMReturnAddress(), RT_SRC_POS_ARGS);
 }
 
 
-RTDECL(void *)  RTMemEfAlloc(size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void *)  RTMemEfAlloc(size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     return rtR3MemAlloc("Alloc", RTMEMTYPE_RTMEMALLOC, cb, cb, pszTag, ASMReturnAddress(), RT_SRC_POS_ARGS);
 }
 
 
-RTDECL(void *)  RTMemEfAllocZ(size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void *)  RTMemEfAllocZ(size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     return rtR3MemAlloc("AllocZ", RTMEMTYPE_RTMEMALLOCZ, cb, cb, pszTag, ASMReturnAddress(), RT_SRC_POS_ARGS);
 }
 
 
-RTDECL(void *)  RTMemEfAllocVar(size_t cbUnaligned, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void *)  RTMemEfAllocVar(size_t cbUnaligned, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     size_t cbAligned;
     if (cbUnaligned >= 16)
@@ -594,7 +866,7 @@ RTDECL(void *)  RTMemEfAllocVar(size_t cbUnaligned, const char *pszTag, RT_SRC_P
 }
 
 
-RTDECL(void *)  RTMemEfAllocZVar(size_t cbUnaligned, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void *)  RTMemEfAllocZVar(size_t cbUnaligned, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     size_t cbAligned;
     if (cbUnaligned >= 16)
@@ -605,20 +877,20 @@ RTDECL(void *)  RTMemEfAllocZVar(size_t cbUnaligned, const char *pszTag, RT_SRC_
 }
 
 
-RTDECL(void *)  RTMemEfRealloc(void *pvOld, size_t cbNew, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void *)  RTMemEfRealloc(void *pvOld, size_t cbNew, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     return rtR3MemRealloc("Realloc", RTMEMTYPE_RTMEMREALLOC, pvOld, cbNew, pszTag, ASMReturnAddress(), RT_SRC_POS_ARGS);
 }
 
 
-RTDECL(void)    RTMemEfFree(void *pv, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void)    RTMemEfFree(void *pv, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     if (pv)
         rtR3MemFree("Free", RTMEMTYPE_RTMEMFREE, pv, ASMReturnAddress(), RT_SRC_POS_ARGS);
 }
 
 
-RTDECL(void *) RTMemEfDup(const void *pvSrc, size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void *) RTMemEfDup(const void *pvSrc, size_t cb, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     void *pvDst = RTMemEfAlloc(cb, pszTag, RT_SRC_POS_ARGS);
     if (pvDst)
@@ -627,7 +899,7 @@ RTDECL(void *) RTMemEfDup(const void *pvSrc, size_t cb, const char *pszTag, RT_S
 }
 
 
-RTDECL(void *) RTMemEfDupEx(const void *pvSrc, size_t cbSrc, size_t cbExtra, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW
+RTDECL(void *) RTMemEfDupEx(const void *pvSrc, size_t cbSrc, size_t cbExtra, const char *pszTag, RT_SRC_POS_DECL) RT_NO_THROW_DEF
 {
     void *pvDst = RTMemEfAlloc(cbSrc + cbExtra, pszTag, RT_SRC_POS_ARGS);
     if (pvDst)
@@ -649,38 +921,38 @@ RTDECL(void *) RTMemEfDupEx(const void *pvSrc, size_t cbSrc, size_t cbExtra, con
 
 
 
-RTDECL(void *)  RTMemEfTmpAllocNP(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemEfTmpAllocNP(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     return rtR3MemAlloc("TmpAlloc", RTMEMTYPE_RTMEMALLOC, cb, cb, pszTag, ASMReturnAddress(), NULL, 0, NULL);
 }
 
 
-RTDECL(void *)  RTMemEfTmpAllocZNP(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemEfTmpAllocZNP(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     return rtR3MemAlloc("TmpAllocZ", RTMEMTYPE_RTMEMALLOCZ, cb, cb, pszTag, ASMReturnAddress(), NULL, 0, NULL);
 }
 
 
-RTDECL(void)    RTMemEfTmpFreeNP(void *pv) RT_NO_THROW
+RTDECL(void)    RTMemEfTmpFreeNP(void *pv) RT_NO_THROW_DEF
 {
     if (pv)
         rtR3MemFree("Free", RTMEMTYPE_RTMEMFREE, pv, ASMReturnAddress(), NULL, 0, NULL);
 }
 
 
-RTDECL(void *)  RTMemEfAllocNP(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemEfAllocNP(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     return rtR3MemAlloc("Alloc", RTMEMTYPE_RTMEMALLOC, cb, cb, pszTag, ASMReturnAddress(), NULL, 0, NULL);
 }
 
 
-RTDECL(void *)  RTMemEfAllocZNP(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemEfAllocZNP(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     return rtR3MemAlloc("AllocZ", RTMEMTYPE_RTMEMALLOCZ, cb, cb, pszTag, ASMReturnAddress(), NULL, 0, NULL);
 }
 
 
-RTDECL(void *)  RTMemEfAllocVarNP(size_t cbUnaligned, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemEfAllocVarNP(size_t cbUnaligned, const char *pszTag) RT_NO_THROW_DEF
 {
     size_t cbAligned;
     if (cbUnaligned >= 16)
@@ -691,7 +963,7 @@ RTDECL(void *)  RTMemEfAllocVarNP(size_t cbUnaligned, const char *pszTag) RT_NO_
 }
 
 
-RTDECL(void *)  RTMemEfAllocZVarNP(size_t cbUnaligned, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemEfAllocZVarNP(size_t cbUnaligned, const char *pszTag) RT_NO_THROW_DEF
 {
     size_t cbAligned;
     if (cbUnaligned >= 16)
@@ -702,20 +974,20 @@ RTDECL(void *)  RTMemEfAllocZVarNP(size_t cbUnaligned, const char *pszTag) RT_NO
 }
 
 
-RTDECL(void *)  RTMemEfReallocNP(void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW
+RTDECL(void *)  RTMemEfReallocNP(void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW_DEF
 {
     return rtR3MemRealloc("Realloc", RTMEMTYPE_RTMEMREALLOC, pvOld, cbNew, pszTag, ASMReturnAddress(), NULL, 0, NULL);
 }
 
 
-RTDECL(void)    RTMemEfFreeNP(void *pv) RT_NO_THROW
+RTDECL(void)    RTMemEfFreeNP(void *pv) RT_NO_THROW_DEF
 {
     if (pv)
         rtR3MemFree("Free", RTMEMTYPE_RTMEMFREE, pv, ASMReturnAddress(), NULL, 0, NULL);
 }
 
 
-RTDECL(void *) RTMemEfDupNP(const void *pvSrc, size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemEfDupNP(const void *pvSrc, size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
     void *pvDst = RTMemEfAlloc(cb, pszTag, NULL, 0, NULL);
     if (pvDst)
@@ -724,7 +996,7 @@ RTDECL(void *) RTMemEfDupNP(const void *pvSrc, size_t cb, const char *pszTag) RT
 }
 
 
-RTDECL(void *) RTMemEfDupExNP(const void *pvSrc, size_t cbSrc, size_t cbExtra, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemEfDupExNP(const void *pvSrc, size_t cbSrc, size_t cbExtra, const char *pszTag) RT_NO_THROW_DEF
 {
     void *pvDst = RTMemEfAlloc(cbSrc + cbExtra, pszTag, NULL, 0, NULL);
     if (pvDst)

@@ -1,12 +1,10 @@
 /* $Id: UIMachineWindowSeamless.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineWindowSeamless class implementation
+ * VBox Qt GUI - UIMachineWindowSeamless class implementation.
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,39 +15,50 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QDesktopWidget>
-#include <QMenu>
-#include <QTimer>
+# include <QMenu>
+# include <QTimer>
 
 /* GUI includes: */
-#include "VBoxGlobal.h"
-#include "UISession.h"
-#include "UIActionPoolRuntime.h"
-#include "UIMachineLogicSeamless.h"
-#include "UIMachineWindowSeamless.h"
-#include "UIMachineView.h"
-#ifndef Q_WS_MAC
-# include "UIMachineDefs.h"
-# include "UIMiniToolBar.h"
-#endif /* !Q_WS_MAC */
-#ifdef Q_WS_MAC
-# include "VBoxUtils.h"
-#endif /* Q_WS_MAC */
+# include "VBoxGlobal.h"
+# include "UIDesktopWidgetWatchdog.h"
+# include "UIExtraDataManager.h"
+# include "UISession.h"
+# include "UIActionPoolRuntime.h"
+# include "UIMachineLogicSeamless.h"
+# include "UIMachineWindowSeamless.h"
+# include "UIMachineView.h"
+# if   defined(VBOX_WS_WIN) || defined(VBOX_WS_X11)
+#  include "UIMachineDefs.h"
+#  include "UIMiniToolBar.h"
+# elif defined(VBOX_WS_MAC)
+#  include "VBoxUtils.h"
+# endif /* VBOX_WS_MAC */
 
 /* COM includes: */
-#include "CSnapshot.h"
+# include "CSnapshot.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIMachineWindowSeamless::UIMachineWindowSeamless(UIMachineLogic *pMachineLogic, ulong uScreenId)
     : UIMachineWindow(pMachineLogic, uScreenId)
-    , m_pMainMenu(0)
-#ifndef Q_WS_MAC
+#if defined(VBOX_WS_WIN) || defined(VBOX_WS_X11)
     , m_pMiniToolBar(0)
-#endif /* !Q_WS_MAC */
+#endif /* VBOX_WS_WIN || VBOX_WS_X11 */
+    , m_fWasMinimized(false)
+#ifdef VBOX_WS_X11
+    , m_fIsMinimizationRequested(false)
+    , m_fIsMinimized(false)
+#endif
 {
 }
 
-#ifndef Q_WS_MAC
+#if defined(VBOX_WS_WIN) || defined(VBOX_WS_X11)
 void UIMachineWindowSeamless::sltMachineStateChanged()
 {
     /* Call to base-class: */
@@ -58,54 +67,37 @@ void UIMachineWindowSeamless::sltMachineStateChanged()
     /* Update mini-toolbar: */
     updateAppearanceOf(UIVisualElement_MiniToolBar);
 }
-#endif /* !Q_WS_MAC */
 
-void UIMachineWindowSeamless::sltPopupMainMenu()
+void UIMachineWindowSeamless::sltRevokeWindowActivation()
 {
-    /* Popup main-menu if present: */
-    if (m_pMainMenu && !m_pMainMenu->isEmpty())
-    {
-        m_pMainMenu->popup(geometry().center());
-        QTimer::singleShot(0, m_pMainMenu, SLOT(sltHighlightFirstAction()));
-    }
-}
+#ifdef VBOX_WS_X11
+    // WORKAROUND:
+    // We could be asked to minimize already, but just
+    // not yet executed that order to current moment.
+    if (m_fIsMinimizationRequested)
+        return;
+#endif
 
-void UIMachineWindowSeamless::sltRevokeFocus()
-{
     /* Make sure window is visible: */
-    if (!isVisible())
+    if (!isVisible() || isMinimized())
         return;
 
-    /* Revoke stolen focus: */
-    m_pMachineView->setFocus();
+    /* Revoke stolen activation: */
+#ifdef VBOX_WS_X11
+    raise();
+#endif /* VBOX_WS_X11 */
+    activateWindow();
 }
+#endif /* VBOX_WS_WIN || VBOX_WS_X11 */
 
-#ifndef VBOX_WITH_TRANSLUCENT_SEAMLESS
-# ifdef Q_WS_X11
-void UIMachineWindowSeamless::sltUpdateMiniToolbarMask(const QRect &geo)
+void UIMachineWindowSeamless::sltShowMinimized()
 {
-    /* Make sure mini-toolbar exists: */
-    AssertPtrReturnVoid(m_pMiniToolBar);
+#ifdef VBOX_WS_X11
+    /* Remember that we are asked to minimize: */
+    m_fIsMinimizationRequested = true;
+#endif
 
-    /* Remember mini-toolbar mask: */
-    m_maskMiniToolbar = geo;
-
-    /* Re-assign guest mask. */
-    setMask(m_maskGuest);
-}
-# endif /* Q_WS_X11 */
-#endif /* !VBOX_WITH_TRANSLUCENT_SEAMLESS */
-
-void UIMachineWindowSeamless::prepareMenu()
-{
-    /* Call to base-class: */
-    UIMachineWindow::prepareMenu();
-
-    /* Prepare menu: */
-    CMachine machine = session().GetMachine();
-    RuntimeMenuType restrictedMenus = VBoxGlobal::restrictedRuntimeMenuTypes(machine);
-    RuntimeMenuType allowedMenus = static_cast<RuntimeMenuType>(RuntimeMenuType_All ^ restrictedMenus);
-    m_pMainMenu = uisession()->newMenu(allowedMenus);
+    showMinimized();
 }
 
 void UIMachineWindowSeamless::prepareVisualState()
@@ -118,76 +110,52 @@ void UIMachineWindowSeamless::prepareVisualState()
     setAttribute(Qt::WA_NoSystemBackground);
 
 #ifdef VBOX_WITH_TRANSLUCENT_SEAMLESS
-# ifdef Q_WS_MAC
-    /* Using native API to enable translucent background for the Mac host.
-     * - We also want to disable window-shadows which is possible
-     *   using Qt::WA_MacNoShadow only since Qt 4.8,
-     *   while minimum supported version is 4.7.1 for now: */
-    ::darwinSetShowsWindowTransparent(this, true);
-# else /* Q_WS_MAC */
-    /* Using Qt API to enable translucent background:
-     * - Under Win host Qt conflicts with 3D stuff (black seamless regions).
-     * - Under Mac host Qt doesn't allows to disable window-shadows
-     *   until version 4.8, but minimum supported version is 4.7.1 for now.
-     * - Under x11 host Qt has it broken with KDE 4.9 (black background): */
+    /* Using Qt API to enable translucent background: */
     setAttribute(Qt::WA_TranslucentBackground);
-# endif /* !Q_WS_MAC */
-#else /* !VBOX_WITH_TRANSLUCENT_SEAMLESS */
+#endif /* VBOX_WITH_TRANSLUCENT_SEAMLESS */
+
+#ifdef VBOX_WITH_MASKED_SEAMLESS
     /* Make sure we have no background
      * until the first one set-region-event: */
     setMask(m_maskGuest);
-#endif /* !VBOX_WITH_TRANSLUCENT_SEAMLESS */
+#endif /* VBOX_WITH_MASKED_SEAMLESS */
 
-#ifndef Q_WS_MAC
+#if defined(VBOX_WS_WIN) || defined(VBOX_WS_X11)
     /* Prepare mini-toolbar: */
     prepareMiniToolbar();
-#endif /* !Q_WS_MAC */
+#endif /* VBOX_WS_WIN || VBOX_WS_X11 */
 }
 
-#ifndef Q_WS_MAC
+#if defined(VBOX_WS_WIN) || defined(VBOX_WS_X11)
 void UIMachineWindowSeamless::prepareMiniToolbar()
 {
-    /* Get machine: */
-    CMachine m = machine();
-
-    /* Make sure mini-toolbar is necessary: */
-    bool fIsActive = m.GetExtraData(GUI_ShowMiniToolBar) != "no";
-    if (!fIsActive)
+    /* Make sure mini-toolbar is not restricted: */
+    if (!gEDataManager->miniToolbarEnabled(vboxGlobal().managedVMUuid()))
         return;
 
-    /* Get the mini-toolbar alignment: */
-    bool fIsAtTop = m.GetExtraData(GUI_MiniToolBarAlignment) == "top";
-    /* Get the mini-toolbar auto-hide feature availability: */
-    bool fIsAutoHide = m.GetExtraData(GUI_MiniToolBarAutoHide) != "off";
     /* Create mini-toolbar: */
-    m_pMiniToolBar = new UIRuntimeMiniToolBar(this,
-                                              GeometryType_Available,
-                                              fIsAtTop ? Qt::AlignTop : Qt::AlignBottom,
-                                              fIsAutoHide);
-    m_pMiniToolBar->show();
-    QList<QMenu*> menus;
-    RuntimeMenuType restrictedMenus = VBoxGlobal::restrictedRuntimeMenuTypes(m);
-    RuntimeMenuType allowedMenus = static_cast<RuntimeMenuType>(RuntimeMenuType_All ^ restrictedMenus);
-    QList<QAction*> actions = uisession()->newMenu(allowedMenus)->actions();
-    for (int i=0; i < actions.size(); ++i)
-        menus << actions.at(i)->menu();
-    m_pMiniToolBar->addMenus(menus);
-    connect(m_pMiniToolBar, SIGNAL(sigMinimizeAction()), this, SLOT(showMinimized()));
-    connect(m_pMiniToolBar, SIGNAL(sigExitAction()),
-            gActionPool->action(UIActionIndexRuntime_Toggle_Seamless), SLOT(trigger()));
-    connect(m_pMiniToolBar, SIGNAL(sigCloseAction()),
-            gActionPool->action(UIActionIndexRuntime_Simple_Close), SLOT(trigger()));
-    connect(m_pMiniToolBar, SIGNAL(sigNotifyAboutFocusStolen()), this, SLOT(sltRevokeFocus()));
-#ifndef VBOX_WITH_TRANSLUCENT_SEAMLESS
-# ifdef Q_WS_X11
-    connect(m_pMiniToolBar, SIGNAL(sigNotifyAboutGeometryChange(const QRect&)),
-            this, SLOT(sltUpdateMiniToolbarMask(const QRect&)));
-# endif /* Q_WS_X11 */
-#endif /* !VBOX_WITH_TRANSLUCENT_SEAMLESS */
+    m_pMiniToolBar = new UIMiniToolBar(this,
+                                       GeometryType_Available,
+                                       gEDataManager->miniToolbarAlignment(vboxGlobal().managedVMUuid()),
+                                       gEDataManager->autoHideMiniToolbar(vboxGlobal().managedVMUuid()),
+                                       screenId());
+    AssertPtrReturnVoid(m_pMiniToolBar);
+    {
+        /* Configure mini-toolbar: */
+        m_pMiniToolBar->addMenus(actionPool()->menus());
+        connect(m_pMiniToolBar, SIGNAL(sigMinimizeAction()),
+                this, SLOT(sltShowMinimized()), Qt::QueuedConnection);
+        connect(m_pMiniToolBar, SIGNAL(sigExitAction()),
+                actionPool()->action(UIActionIndexRT_M_View_T_Seamless), SLOT(trigger()));
+        connect(m_pMiniToolBar, SIGNAL(sigCloseAction()),
+                actionPool()->action(UIActionIndex_M_Application_S_Close), SLOT(trigger()));
+        connect(m_pMiniToolBar, SIGNAL(sigNotifyAboutWindowActivationStolen()),
+                this, SLOT(sltRevokeWindowActivation()), Qt::QueuedConnection);
+    }
 }
-#endif /* !Q_WS_MAC */
+#endif /* VBOX_WS_WIN || VBOX_WS_X11 */
 
-#ifndef Q_WS_MAC
+#if defined(VBOX_WS_WIN) || defined(VBOX_WS_X11)
 void UIMachineWindowSeamless::cleanupMiniToolbar()
 {
     /* Make sure mini-toolbar was created: */
@@ -195,111 +163,133 @@ void UIMachineWindowSeamless::cleanupMiniToolbar()
         return;
 
     /* Save mini-toolbar settings: */
-    machine().SetExtraData(GUI_MiniToolBarAutoHide, m_pMiniToolBar->autoHide() ? QString() : "off");
+    gEDataManager->setAutoHideMiniToolbar(m_pMiniToolBar->autoHide(), vboxGlobal().managedVMUuid());
     /* Delete mini-toolbar: */
     delete m_pMiniToolBar;
     m_pMiniToolBar = 0;
 }
-#endif /* !Q_WS_MAC */
+#endif /* VBOX_WS_WIN || VBOX_WS_X11 */
 
 void UIMachineWindowSeamless::cleanupVisualState()
 {
-#ifndef Q_WS_MAC
+#if defined(VBOX_WS_WIN) || defined(VBOX_WS_X11)
     /* Cleanup mini-toolbar: */
     cleanupMiniToolbar();
-#endif /* !Q_WS_MAC */
+#endif /* VBOX_WS_WIN || VBOX_WS_X11 */
 
     /* Call to base-class: */
     UIMachineWindow::cleanupVisualState();
 }
 
-void UIMachineWindowSeamless::cleanupMenu()
-{
-    /* Cleanup menu: */
-    delete m_pMainMenu;
-    m_pMainMenu = 0;
-
-    /* Call to base-class: */
-    UIMachineWindow::cleanupMenu();
-}
-
 void UIMachineWindowSeamless::placeOnScreen()
-{
-    /* Get corresponding screen: */
-    int iScreen = qobject_cast<UIMachineLogicSeamless*>(machineLogic())->hostScreenForGuestScreen(m_uScreenId);
-    /* And corresponding working area: */
-    QRect workingArea = QApplication::desktop()->availableGeometry(iScreen);
-
-    /* Move to the appropriate position: */
-    move(workingArea.topLeft());
-
-    /* Resize to the appropriate size: */
-    resize(workingArea.size());
-}
-
-void UIMachineWindowSeamless::showInNecessaryMode()
 {
     /* Make sure this window has seamless logic: */
     UIMachineLogicSeamless *pSeamlessLogic = qobject_cast<UIMachineLogicSeamless*>(machineLogic());
     AssertPtrReturnVoid(pSeamlessLogic);
 
-    /* Make sure this window should be shown and mapped to some host-screen: */
+    /* Get corresponding host-screen: */
+    const int iHostScreen = pSeamlessLogic->hostScreenForGuestScreen(m_uScreenId);
+    /* And corresponding working area: */
+    const QRect workingArea = gpDesktop->availableGeometry(iHostScreen);
+    Q_UNUSED(workingArea);
+
+#ifdef VBOX_WS_X11
+
+    /* Make sure we are located on corresponding host-screen: */
+    if (   gpDesktop->screenCount() > 1
+        && (x() != workingArea.x() || y() != workingArea.y()))
+    {
+        // WORKAROUND:
+        // With Qt5 on KDE we can't just move the window onto desired host-screen if
+        // window is maximized. So we have to show it normal first of all:
+        if (isVisible() && isMaximized())
+            showNormal();
+
+        // WORKAROUND:
+        // With Qt5 on X11 we can't just move the window onto desired host-screen if
+        // window size is more than the available geometry (working area) of that
+        // host-screen. So we are resizing it to a smaller size first of all:
+        const QSize newSize = workingArea.size() * .9;
+        LogRel(("GUI: UIMachineWindowSeamless::placeOnScreen: Resize window: %d to smaller size: %dx%d\n",
+                m_uScreenId, newSize.width(), newSize.height()));
+        resize(newSize);
+        /* Move window onto required screen: */
+        const QPoint newPosition = workingArea.topLeft();
+        LogRel(("GUI: UIMachineWindowSeamless::placeOnScreen: Move window: %d to: %dx%d\n",
+                m_uScreenId, newPosition.x(), newPosition.y()));
+        move(newPosition);
+    }
+
+#else
+
+    /* Set appropriate window geometry: */
+    const QSize newSize = workingArea.size();
+    LogRel(("GUI: UIMachineWindowSeamless::placeOnScreen: Resize window: %d to: %dx%d\n",
+            m_uScreenId, newSize.width(), newSize.height()));
+    resize(newSize);
+    const QPoint newPosition = workingArea.topLeft();
+    LogRel(("GUI: UIMachineWindowSeamless::placeOnScreen: Move window: %d to: %dx%d\n",
+            m_uScreenId, newPosition.x(), newPosition.y()));
+    move(newPosition);
+
+#endif
+}
+
+void UIMachineWindowSeamless::showInNecessaryMode()
+{
+    /* Make sure window has seamless logic: */
+    UIMachineLogicSeamless *pSeamlessLogic = qobject_cast<UIMachineLogicSeamless*>(machineLogic());
+    AssertPtrReturnVoid(pSeamlessLogic);
+
+    /* If window shouldn't be shown or mapped to some host-screen: */
     if (!uisession()->isScreenVisible(m_uScreenId) ||
         !pSeamlessLogic->hasHostScreenForGuestScreen(m_uScreenId))
     {
-#ifndef Q_WS_MAC
-        /* Hide mini-toolbar: */
-        if (m_pMiniToolBar)
-            m_pMiniToolBar->hide();
-#endif /* !Q_WS_MAC */
-        /* Hide window: */
+        /* Remember whether the window was minimized: */
+        if (isMinimized())
+            m_fWasMinimized = true;
+
+        /* Hide window and reset it's state to NONE: */
+        setWindowState(Qt::WindowNoState);
         hide();
-        return;
     }
-
-    /* Make sure this window is not minimized: */
-    if (isMinimized())
-        return;
-
-    /* Make sure this window is maximized and placed on valid screen: */
-    placeOnScreen();
-
-    /* Show in normal mode: */
-    show();
-
-    /* Adjust machine-view size if necessary: */
-    adjustMachineViewSize();
-
-#ifndef Q_WS_MAC
-    /* Show mini-toolbar: */
-    if (m_pMiniToolBar)
-        m_pMiniToolBar->show();
-#endif /* !Q_WS_MAC */
-}
-
-void UIMachineWindowSeamless::adjustMachineViewSize()
-{
-    /* Call to base-class: */
-    UIMachineWindow::adjustMachineViewSize();
-
-#ifndef Q_WS_MAC
-    /* If mini-toolbar present: */
-    if (m_pMiniToolBar)
+    /* If window should be shown and mapped to some host-screen: */
+    else
     {
-        /* Make sure this window has seamless logic: */
-        const UIMachineLogicSeamless *pSeamlessLogic = qobject_cast<UIMachineLogicSeamless*>(machineLogic());
-        AssertPtrReturnVoid(pSeamlessLogic);
+        /* Check whether window was minimized: */
+        const bool fWasMinimized = isMinimized() && isVisible();
+        /* And reset it's state in such case before exposing: */
+        if (fWasMinimized)
+            setWindowState(Qt::WindowNoState);
 
-        /* Which host-screen should that machine-window located on? */
-        const int iHostScreen = pSeamlessLogic->hostScreenForGuestScreen(m_uScreenId);
+        /* Make sure window have appropriate geometry: */
+        placeOnScreen();
 
-        /* Move mini-toolbar into appropriate place: */
-        m_pMiniToolBar->adjustGeometry(iHostScreen);
+#ifdef VBOX_WS_X11
+        /* Show window: */
+        if (!isMaximized())
+            showMaximized();
+#else
+        /* Show window: */
+        show();
+#endif
+
+        /* Restore minimized state if necessary: */
+        if (m_fWasMinimized || fWasMinimized)
+        {
+            m_fWasMinimized = false;
+            QMetaObject::invokeMethod(this, "showMinimized", Qt::QueuedConnection);
+        }
+
+        /* Adjust machine-view size if necessary: */
+        adjustMachineViewSize();
+
+        /* Make sure machine-view have focus: */
+        m_pMachineView->setFocus();
     }
-#endif /* !Q_WS_MAC */
 }
 
-#ifndef Q_WS_MAC
+#if defined(VBOX_WS_WIN) || defined(VBOX_WS_X11)
 void UIMachineWindowSeamless::updateAppearanceOf(int iElement)
 {
     /* Call to base-class: */
@@ -308,37 +298,80 @@ void UIMachineWindowSeamless::updateAppearanceOf(int iElement)
     /* Update mini-toolbar: */
     if (iElement & UIVisualElement_MiniToolBar)
     {
+        /* If there is a mini-toolbar: */
         if (m_pMiniToolBar)
         {
-            /* Get machine: */
-            const CMachine &m = machine();
             /* Get snapshot(s): */
             QString strSnapshotName;
-            if (m.GetSnapshotCount() > 0)
+            if (machine().GetSnapshotCount() > 0)
             {
-                CSnapshot snapshot = m.GetCurrentSnapshot();
+                CSnapshot snapshot = machine().GetCurrentSnapshot();
                 strSnapshotName = " (" + snapshot.GetName() + ")";
             }
             /* Update mini-toolbar text: */
-            m_pMiniToolBar->setText(m.GetName() + strSnapshotName);
+            m_pMiniToolBar->setText(machineName() + strSnapshotName);
         }
     }
 }
-#endif /* !Q_WS_MAC */
+#endif /* VBOX_WS_WIN || VBOX_WS_X11 */
 
-#if defined(VBOX_WITH_TRANSLUCENT_SEAMLESS) && defined(Q_WS_WIN)
-void UIMachineWindowSeamless::showEvent(QShowEvent*)
+#ifdef VBOX_WS_X11
+void UIMachineWindowSeamless::changeEvent(QEvent *pEvent)
 {
-    /* Following workaround allows to fix the next Qt BUG:
-     * https://bugreports.qt-project.org/browse/QTBUG-17548
-     * https://bugreports.qt-project.org/browse/QTBUG-30974
-     * Widgets with Qt::WA_TranslucentBackground attribute
-     * stops repainting after minimizing/restoring, we have to call for single update. */
-    QApplication::postEvent(this, new QEvent(QEvent::UpdateRequest), Qt::LowEventPriority);
-}
-#endif /* VBOX_WITH_TRANSLUCENT_SEAMLESS && Q_WS_WIN */
+    switch (pEvent->type())
+    {
+        case QEvent::WindowStateChange:
+        {
+            /* Watch for window state changes: */
+            QWindowStateChangeEvent *pChangeEvent = static_cast<QWindowStateChangeEvent*>(pEvent);
+            LogRel2(("GUI: UIMachineWindowSeamless::changeEvent: Window state changed from %d to %d\n",
+                     (int)pChangeEvent->oldState(), (int)windowState()));
+            if (   windowState() == Qt::WindowMinimized
+                && pChangeEvent->oldState() == Qt::WindowNoState
+                && !m_fIsMinimized)
+            {
+                /* Mark window minimized, isMinimized() is not enough due to Qt5vsX11 fight: */
+                LogRel2(("GUI: UIMachineWindowSeamless::changeEvent: Window minimized\n"));
+                m_fIsMinimized = true;
+            }
+            else
+            if (   windowState() == Qt::WindowNoState
+                && pChangeEvent->oldState() == Qt::WindowMinimized
+                && m_fIsMinimized)
+            {
+                /* Mark window restored, and do manual restoring with showInNecessaryMode(): */
+                LogRel2(("GUI: UIMachineWindowSeamless::changeEvent: Window restored\n"));
+                m_fIsMinimized = false;
+                /* Remember that we no more asked to minimize: */
+                m_fIsMinimizationRequested = false;
+                showInNecessaryMode();
+            }
+            break;
+        }
+        default:
+            break;
+    }
 
-#ifndef VBOX_WITH_TRANSLUCENT_SEAMLESS
+    /* Call to base-class: */
+    UIMachineWindow::changeEvent(pEvent);
+}
+#endif /* VBOX_WS_X11 */
+
+#ifdef VBOX_WS_WIN
+void UIMachineWindowSeamless::showEvent(QShowEvent *pEvent)
+{
+    /* Expose workaround again,
+     * Qt devs will never fix that it seems.
+     * This time they forget to set 'Mapped'
+     * attribute for initially frame-less window. */
+    setAttribute(Qt::WA_Mapped);
+
+    /* Call to base-class: */
+    UIMachineWindow::showEvent(pEvent);
+}
+#endif /* VBOX_WS_WIN */
+
+#ifdef VBOX_WITH_MASKED_SEAMLESS
 void UIMachineWindowSeamless::setMask(const QRegion &maskGuest)
 {
     /* Remember new guest mask: */
@@ -350,12 +383,6 @@ void UIMachineWindowSeamless::setMask(const QRegion &maskGuest)
     /* Shift full mask if left or top spacer width is NOT zero: */
     if (m_pLeftSpacer->geometry().width() || m_pTopSpacer->geometry().height())
         maskFull.translate(m_pLeftSpacer->geometry().width(), m_pTopSpacer->geometry().height());
-
-# ifdef Q_WS_X11
-    /* Take into account mini-toolbar mask if necessary: */
-    if (m_pMiniToolBar)
-        maskFull += m_maskMiniToolbar;
-# endif /* Q_WS_X11 */
 
     /* Seamless-window for empty full mask should be empty too,
      * but the QWidget::setMask() wrapper doesn't allow this.
@@ -374,8 +401,9 @@ void UIMachineWindowSeamless::setMask(const QRegion &maskGuest)
         /* Assign new full mask: */
         UIMachineWindow::setMask(m_maskFull);
         /* Update viewport region finally: */
-        m_pMachineView->viewport()->update(toUpdate);
+        if (m_pMachineView)
+            m_pMachineView->viewport()->update(toUpdate);
     }
 }
-#endif /* !VBOX_WITH_TRANSLUCENT_SEAMLESS */
+#endif /* VBOX_WITH_MASKED_SEAMLESS */
 

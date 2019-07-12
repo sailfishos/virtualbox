@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,10 +15,11 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#define LOG_GROUP LOG_GROUP_DEFAULT /** @todo: Log group */
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define LOG_GROUP LOG_GROUP_VD_VHDX
 #include <VBox/vd-plugin.h>
 #include <VBox/err.h>
 
@@ -31,10 +32,12 @@
 #include <iprt/crc.h>
 
 #include "VDBackends.h"
+#include "VDBackendsInline.h"
 
-/*******************************************************************************
-*   On disk data structures                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   On disk data structures                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * VHDX file type identifier.
@@ -76,7 +79,7 @@ typedef struct VhdxHeader
     RTUUID      UuidLog;
     /** Version of the log format. */
     uint16_t    u16LogVersion;
-    /** VHDX format version.. */
+    /** VHDX format version. */
     uint16_t    u16Version;
     /** Length of the log region. */
     uint32_t    u32LogLength;
@@ -473,9 +476,10 @@ typedef struct VhdxParentLocatorEntry
 /** Pointer to an on disk VHDX parent locator entry. */
 typedef struct VhdxParentLocatorEntry *PVhdxParentLocatorEntry;
 
-/*******************************************************************************
-*   Constants And Macros, Structures and Typedefs                              *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Constants And Macros, Structures and Typedefs                                                                                *
+*********************************************************************************************************************************/
 
 typedef enum VHDXMETADATAITEM
 {
@@ -546,7 +550,8 @@ typedef struct VHDXIMAGE
     PVhdxBatEntry       paBat;
     /** Chunk ratio. */
     uint32_t            uChunkRatio;
-
+    /** The static region list. */
+    VDREGIONLIST        RegionList;
 } VHDXIMAGE, *PVHDXIMAGE;
 
 /**
@@ -565,9 +570,10 @@ typedef enum VHDXECONV
 #define SET_ENDIAN_U32(u32) (enmConv == VHDXECONV_H2F ? RT_H2LE_U32(u32) : RT_LE2H_U32(u32))
 #define SET_ENDIAN_U64(u64) (enmConv == VHDXECONV_H2F ? RT_H2LE_U64(u64) : RT_LE2H_U64(u64))
 
-/*******************************************************************************
-*   Static Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Static Variables                                                                                                             *
+*********************************************************************************************************************************/
 
 /**
  * NULL-terminated array of supported file extensions.
@@ -592,9 +598,10 @@ static const VHDXMETADATAITEMPROPS s_aVhdxMetadataItemProps[] =
     {VHDX_METADATA_TBL_ENTRY_ITEM_PARENT_LOCATOR, false,   false,    true,        VHDXMETADATAITEM_PARENT_LOCATOR}
 };
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 /**
  * Converts the file identifier between file and host endianness.
@@ -626,6 +633,7 @@ DECLINLINE(void) vhdxConvFileIdentifierEndianess(VHDXECONV enmConv, PVhdxFileIde
  */
 DECLINLINE(void) vhdxConvUuidEndianess(VHDXECONV enmConv, PRTUUID pUuidConv, PRTUUID pUuid)
 {
+    RT_NOREF1(enmConv);
 #if 1
     memcpy(pUuidConv, pUuid, sizeof(RTUUID));
 #else
@@ -701,6 +709,8 @@ DECLINLINE(void) vhdxConvRegionTblEntryEndianess(VHDXECONV enmConv, PVhdxRegionT
     pRegTblEntConv->u32Flags      = SET_ENDIAN_U32(pRegTblEnt->u32Flags);
 }
 
+#if 0 /* unused */
+
 /**
  * Converts a VHDX log entry header between file and host endianness.
  *
@@ -745,6 +755,7 @@ DECLINLINE(void) vhdxConvLogZeroDescEndianess(VHDXECONV enmConv, PVhdxLogZeroDes
     pLogZeroDescConv->u64SequenceNumber = SET_ENDIAN_U64(pLogZeroDesc->u64SequenceNumber);
 }
 
+
 /**
  * Converts a VHDX log data descriptor between file and host endianness.
  *
@@ -765,6 +776,7 @@ DECLINLINE(void) vhdxConvLogDataDescEndianess(VHDXECONV enmConv, PVhdxLogDataDes
     pLogDataDescConv->u64SequenceNumber = SET_ENDIAN_U64(pLogDataDesc->u64SequenceNumber);
 }
 
+
 /**
  * Converts a VHDX log data sector between file and host endianness.
  *
@@ -783,6 +795,8 @@ DECLINLINE(void) vhdxConvLogDataSectorEndianess(VHDXECONV enmConv, PVhdxLogDataS
     pLogDataSectorConv->u32SequenceLow   = SET_ENDIAN_U32(pLogDataSector->u32SequenceLow);
 }
 
+#endif /* unused */
+
 /**
  * Converts a BAT between file and host endianess.
  *
@@ -790,6 +804,7 @@ DECLINLINE(void) vhdxConvLogDataSectorEndianess(VHDXECONV enmConv, PVhdxLogDataS
  * @param   enmConv             Direction of the conversion.
  * @param   paBatEntriesConv    Where to store the converted BAT.
  * @param   paBatEntries        The VHDX BAT to convert.
+ * @param   cBatEntries         Number of entries in the BAT.
  *
  * @note It is safe to use the same pointer for paBatEntriesConv and paBatEntries.
  */
@@ -873,6 +888,8 @@ DECLINLINE(void) vhdxConvVDiskSizeEndianess(VHDXECONV enmConv, PVhdxVDiskSize pV
     pVDiskSizeConv->u64VDiskSize  = SET_ENDIAN_U64(pVDiskSize->u64VDiskSize);
 }
 
+#if 0 /* unused */
+
 /**
  * Converts a VHDX page 83 data item between file and host endianness.
  *
@@ -888,6 +905,7 @@ DECLINLINE(void) vhdxConvPage83DataEndianess(VHDXECONV enmConv, PVhdxPage83Data 
 {
     vhdxConvUuidEndianess(enmConv, &pPage83DataConv->UuidPage83Data, &pPage83Data->UuidPage83Data);
 }
+#endif /* unused */
 
 /**
  * Converts a VHDX logical sector size item between file and host endianness.
@@ -905,6 +923,8 @@ DECLINLINE(void) vhdxConvVDiskLogSectSizeEndianess(VHDXECONV enmConv, PVhdxVDisk
     pVDiskLogSectSizeConv->u32LogicalSectorSize = SET_ENDIAN_U32(pVDiskLogSectSize->u32LogicalSectorSize);
 }
 
+#if 0 /* unused */
+
 /**
  * Converts a VHDX physical sector size item between file and host endianness.
  *
@@ -920,6 +940,7 @@ DECLINLINE(void) vhdxConvVDiskPhysSectSizeEndianess(VHDXECONV enmConv, PVhdxVDis
 {
     pVDiskPhysSectSizeConv->u64PhysicalSectorSize = SET_ENDIAN_U64(pVDiskPhysSectSize->u64PhysicalSectorSize);
 }
+
 
 /**
  * Converts a VHDX parent locator header item between file and host endianness.
@@ -939,6 +960,7 @@ DECLINLINE(void) vhdxConvParentLocatorHeaderEndianness(VHDXECONV enmConv, PVhdxP
     pParentLocatorHdrConv->u16KeyValueCount = SET_ENDIAN_U16(pParentLocatorHdr->u16KeyValueCount);
 }
 
+
 /**
  * Converts a VHDX parent locator entry between file and host endianness.
  *
@@ -957,6 +979,8 @@ DECLINLINE(void) vhdxConvParentLocatorEntryEndianess(VHDXECONV enmConv, PVhdxPar
     pParentLocatorEntryConv->u16KeyLength   = SET_ENDIAN_U16(pParentLocatorEntry->u16KeyLength);
     pParentLocatorEntryConv->u16ValueLength = SET_ENDIAN_U16(pParentLocatorEntry->u16ValueLength);
 }
+
+#endif /* unused */
 
 /**
  * Internal. Free all allocated space for representing an image except pImage,
@@ -1065,10 +1089,10 @@ static int vhdxFindAndLoadCurrentHeader(PVHDXIMAGE pImage)
             /* Validate checksum. */
             u32ChkSumSaved = pHdr1->u32Checksum;
             pHdr1->u32Checksum = 0;
-            //u32ChkSum = RTCrc32C(pHdr1, RT_OFFSETOF(VhdxHeader, u8Reserved[502]));
+            u32ChkSum = RTCrc32C(pHdr1, sizeof(VhdxHeader));
 
             if (   pHdr1->u32Signature == VHDX_HEADER_SIGNATURE
-                /*&& u32ChkSum == u32ChkSumSaved*/)
+                && u32ChkSum == u32ChkSumSaved)
                 fHdr1Valid = true;
         }
 
@@ -1082,10 +1106,10 @@ static int vhdxFindAndLoadCurrentHeader(PVHDXIMAGE pImage)
             /* Validate checksum. */
             u32ChkSumSaved = pHdr2->u32Checksum;
             pHdr2->u32Checksum = 0;
-            //u32ChkSum = RTCrc32C(pHdr2, RT_OFFSETOF(VhdxHeader, u8Reserved[502]));
+            u32ChkSum = RTCrc32C(pHdr2, sizeof(VhdxHeader));
 
             if (   pHdr2->u32Signature == VHDX_HEADER_SIGNATURE
-                /*&& u32ChkSum == u32ChkSumSaved*/)
+                && u32ChkSum == u32ChkSumSaved)
                 fHdr2Valid = true;
         }
 
@@ -1227,7 +1251,7 @@ static int vhdxLoadBatRegion(PVHDXIMAGE pImage, uint64_t offRegion,
         else
             rc = vdIfError(pImage->pIfError, VERR_NO_MEMORY, RT_SRC_POS,
                            "VHDX: Out of memory allocating memory for %u BAT entries of image \'%s\'",
-                           cBatEntries);
+                           cBatEntries, pImage->pszFilename);
     }
     else
         rc = vdIfError(pImage->pIfError, VERR_VD_GEN_INVALID_HEADER, RT_SRC_POS,
@@ -1271,7 +1295,7 @@ static int vhdxLoadFileParametersMetadata(PVHDXIMAGE pImage, uint64_t offItem, s
             vhdxConvFileParamsEndianess(VHDXECONV_F2H, &FileParameters, &FileParameters);
             pImage->cbBlock = FileParameters.u32BlockSize;
 
-            /* @todo: No support for differencing images yet. */
+            /** @todo No support for differencing images yet. */
             if (FileParameters.u32Flags & VHDX_FILE_PARAMETERS_FLAGS_HAS_PARENT)
                 rc = vdIfError(pImage->pIfError, VERR_NOT_SUPPORTED, RT_SRC_POS,
                                "VHDX: Image \'%s\' is a differencing image which is not supported yet",
@@ -1557,7 +1581,6 @@ static int vhdxLoadRegionTable(PVHDXIMAGE pImage)
         {
             PVhdxRegionTblHdr pRegionTblHdr;
             VhdxRegionTblHdr RegionTblHdr;
-            uint32_t u32ChkSumSaved = 0;
             uint32_t u32ChkSum = 0;
 
             /*
@@ -1572,18 +1595,16 @@ static int vhdxLoadRegionTable(PVHDXIMAGE pImage)
             pRegionTblHdr->u32Checksum = 0;
 
             /* Verify the region table integrity. */
-            //u32ChkSum = RTCrc32C(pbRegionTbl, VHDX_REGION_TBL_SIZE_MAX);
+            u32ChkSum = RTCrc32C(pbRegionTbl, VHDX_REGION_TBL_SIZE_MAX);
 
             if (RegionTblHdr.u32Signature != VHDX_REGION_TBL_HDR_SIGNATURE)
                 rc = vdIfError(pImage->pIfError, VERR_VD_GEN_INVALID_HEADER, RT_SRC_POS,
                                "VHDX: Invalid signature for region table header of image \'%s\'",
                                pImage->pszFilename);
-#if 0
             else if (u32ChkSum != RegionTblHdr.u32Checksum)
                 rc = vdIfError(pImage->pIfError, VERR_VD_GEN_INVALID_HEADER, RT_SRC_POS,
                                "VHDX: CRC32 checksum mismatch for the region table of image \'%s\' (expected %#x got %#x)",
                                pImage->pszFilename, RegionTblHdr.u32Checksum, u32ChkSum);
-#endif
             else if (RegionTblHdr.u32EntryCount > VHDX_REGION_TBL_HDR_ENTRY_COUNT_MAX)
                 rc = vdIfError(pImage->pIfError, VERR_VD_GEN_INVALID_HEADER, RT_SRC_POS,
                                "VHDX: Invalid entry count field in the region table header of image \'%s\'",
@@ -1724,7 +1745,21 @@ static int vhdxOpenImage(PVHDXIMAGE pImage, unsigned uOpenFlags)
             rc = VERR_VD_GEN_INVALID_HEADER;
     }
 
-    if (RT_FAILURE(rc))
+    if (RT_SUCCESS(rc))
+    {
+        PVDREGIONDESC pRegion = &pImage->RegionList.aRegions[0];
+        pImage->RegionList.fFlags   = 0;
+        pImage->RegionList.cRegions = 1;
+
+        pRegion->offRegion            = 0; /* Disk start. */
+        pRegion->cbBlock              = pImage->cbLogicalSector;
+        pRegion->enmDataForm          = VDREGIONDATAFORM_RAW;
+        pRegion->enmMetadataForm      = VDREGIONMETADATAFORM_NONE;
+        pRegion->cbData               = pImage->cbLogicalSector;
+        pRegion->cbMetadata           = 0;
+        pRegion->cRegionBlocksOrBytes = pImage->cbSize;
+    }
+    else
         vhdxFreeImage(pImage, false);
 
     LogFlowFunc(("returns rc=%Rrc\n", rc));
@@ -1732,10 +1767,11 @@ static int vhdxOpenImage(PVHDXIMAGE pImage, unsigned uOpenFlags)
 }
 
 
-/** @copydoc VBOXHDDBACKEND::pfnCheckIfValid */
-static int vhdxCheckIfValid(const char *pszFilename, PVDINTERFACE pVDIfsDisk,
-                           PVDINTERFACE pVDIfsImage, VDTYPE *penmType)
+/** @copydoc VDIMAGEBACKEND::pfnProbe */
+static DECLCALLBACK(int) vhdxProbe(const char *pszFilename, PVDINTERFACE pVDIfsDisk,
+                                   PVDINTERFACE pVDIfsImage, VDTYPE *penmType)
 {
+    RT_NOREF1(pVDIfsDisk);
     LogFlowFunc(("pszFilename=\"%s\" pVDIfsDisk=%#p pVDIfsImage=%#p\n", pszFilename, pVDIfsDisk, pVDIfsImage));
     PVDIOSTORAGE pStorage = NULL;
     uint64_t cbFile;
@@ -1758,26 +1794,27 @@ static int vhdxCheckIfValid(const char *pszFilename, PVDINTERFACE pVDIfsDisk,
                                                           false /* fCreate */),
                                &pStorage);
         if (RT_SUCCESS(rc))
-            rc = vdIfIoIntFileGetSize(pIfIo, pStorage, &cbFile);
-
-        if (RT_SUCCESS(rc))
         {
-            if (cbFile > sizeof(FileIdentifier))
+            rc = vdIfIoIntFileGetSize(pIfIo, pStorage, &cbFile);
+            if (RT_SUCCESS(rc))
             {
-                rc = vdIfIoIntFileReadSync(pIfIo, pStorage, VHDX_FILE_IDENTIFIER_OFFSET,
-                                           &FileIdentifier, sizeof(FileIdentifier));
-                if (RT_SUCCESS(rc))
+                if (cbFile > sizeof(FileIdentifier))
                 {
-                    vhdxConvFileIdentifierEndianess(VHDXECONV_F2H, &FileIdentifier,
-                                                    &FileIdentifier);
-                    if (FileIdentifier.u64Signature != VHDX_FILE_IDENTIFIER_SIGNATURE)
-                        rc = VERR_VD_GEN_INVALID_HEADER;
-                    else
-                        *penmType = VDTYPE_HDD;
+                    rc = vdIfIoIntFileReadSync(pIfIo, pStorage, VHDX_FILE_IDENTIFIER_OFFSET,
+                                               &FileIdentifier, sizeof(FileIdentifier));
+                    if (RT_SUCCESS(rc))
+                    {
+                        vhdxConvFileIdentifierEndianess(VHDXECONV_F2H, &FileIdentifier,
+                                                        &FileIdentifier);
+                        if (FileIdentifier.u64Signature != VHDX_FILE_IDENTIFIER_SIGNATURE)
+                            rc = VERR_VD_GEN_INVALID_HEADER;
+                        else
+                            *penmType = VDTYPE_HDD;
+                    }
                 }
+                else
+                    rc = VERR_VD_GEN_INVALID_HEADER;
             }
-            else
-                rc = VERR_VD_GEN_INVALID_HEADER;
         }
 
         if (pStorage)
@@ -1788,14 +1825,16 @@ static int vhdxCheckIfValid(const char *pszFilename, PVDINTERFACE pVDIfsDisk,
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnOpen */
-static int vhdxOpen(const char *pszFilename, unsigned uOpenFlags,
-                   PVDINTERFACE pVDIfsDisk, PVDINTERFACE pVDIfsImage,
-                   VDTYPE enmType, void **ppBackendData)
+/** @copydoc VDIMAGEBACKEND::pfnOpen */
+static DECLCALLBACK(int) vhdxOpen(const char *pszFilename, unsigned uOpenFlags,
+                                  PVDINTERFACE pVDIfsDisk, PVDINTERFACE pVDIfsImage,
+                                  VDTYPE enmType, void **ppBackendData)
 {
-    LogFlowFunc(("pszFilename=\"%s\" uOpenFlags=%#x pVDIfsDisk=%#p pVDIfsImage=%#p ppBackendData=%#p\n", pszFilename, uOpenFlags, pVDIfsDisk, pVDIfsImage, ppBackendData));
+    LogFlowFunc(("pszFilename=\"%s\" uOpenFlags=%#x pVDIfsDisk=%#p pVDIfsImage=%#p enmType=%u ppBackendData=%#p\n", pszFilename, uOpenFlags, pVDIfsDisk, pVDIfsImage, enmType, ppBackendData));
     int rc;
     PVHDXIMAGE pImage;
+
+    NOREF(enmType); /**< @todo r=klaus make use of the type info. */
 
     /* Check open flags. All valid flags are supported. */
     if (   uOpenFlags & ~VD_OPEN_FLAGS_MASK
@@ -1804,7 +1843,7 @@ static int vhdxOpen(const char *pszFilename, unsigned uOpenFlags,
         rc = VERR_INVALID_PARAMETER;
     else
     {
-        pImage = (PVHDXIMAGE)RTMemAllocZ(sizeof(VHDXIMAGE));
+        pImage = (PVHDXIMAGE)RTMemAllocZ(RT_UOFFSETOF(VHDXIMAGE, RegionList.aRegions[1]));
         if (!pImage)
             rc = VERR_NO_MEMORY;
         else
@@ -1826,8 +1865,28 @@ static int vhdxOpen(const char *pszFilename, unsigned uOpenFlags,
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnRename */
-static int vhdxRename(void *pBackendData, const char *pszFilename)
+/** @interface_method_impl{VDIMAGEBACKEND,pfnCreate} */
+static DECLCALLBACK(int) vhdxCreate(const char *pszFilename, uint64_t cbSize,
+                                    unsigned uImageFlags, const char *pszComment,
+                                    PCVDGEOMETRY pPCHSGeometry, PCVDGEOMETRY pLCHSGeometry,
+                                    PCRTUUID pUuid, unsigned uOpenFlags,
+                                    unsigned uPercentStart, unsigned uPercentSpan,
+                                    PVDINTERFACE pVDIfsDisk, PVDINTERFACE pVDIfsImage,
+                                    PVDINTERFACE pVDIfsOperation, VDTYPE enmType,
+                                    void **ppBackendData)
+{
+    RT_NOREF8(pszFilename, cbSize, uImageFlags, pszComment, pPCHSGeometry, pLCHSGeometry, pUuid, uOpenFlags);
+    RT_NOREF7(uPercentStart, uPercentSpan, pVDIfsDisk, pVDIfsImage, pVDIfsOperation, enmType, ppBackendData);
+    LogFlowFunc(("pszFilename=\"%s\" cbSize=%llu uImageFlags=%#x pszComment=\"%s\" pPCHSGeometry=%#p pLCHSGeometry=%#p Uuid=%RTuuid uOpenFlags=%#x uPercentStart=%u uPercentSpan=%u pVDIfsDisk=%#p pVDIfsImage=%#p pVDIfsOperation=%#p enmType=%u ppBackendData=%#p",
+                 pszFilename, cbSize, uImageFlags, pszComment, pPCHSGeometry, pLCHSGeometry, pUuid, uOpenFlags, uPercentStart, uPercentSpan, pVDIfsDisk, pVDIfsImage, pVDIfsOperation, enmType, ppBackendData));
+    int rc = VERR_NOT_SUPPORTED;
+
+    LogFlowFunc(("returns %Rrc\n", rc));
+    return rc;
+}
+
+/** @copydoc VDIMAGEBACKEND::pfnRename */
+static DECLCALLBACK(int) vhdxRename(void *pBackendData, const char *pszFilename)
 {
     LogFlowFunc(("pBackendData=%#p pszFilename=%#p\n", pBackendData, pszFilename));
     int rc = VINF_SUCCESS;
@@ -1868,8 +1927,8 @@ static int vhdxRename(void *pBackendData, const char *pszFilename)
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnClose */
-static int vhdxClose(void *pBackendData, bool fDelete)
+/** @copydoc VDIMAGEBACKEND::pfnClose */
+static DECLCALLBACK(int) vhdxClose(void *pBackendData, bool fDelete)
 {
     LogFlowFunc(("pBackendData=%#p fDelete=%d\n", pBackendData, fDelete));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -1882,9 +1941,9 @@ static int vhdxClose(void *pBackendData, bool fDelete)
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnRead */
-static int vhdxRead(void *pBackendData, uint64_t uOffset, size_t cbToRead,
-                    PVDIOCTX pIoCtx, size_t *pcbActuallyRead)
+/** @copydoc VDIMAGEBACKEND::pfnRead */
+static DECLCALLBACK(int) vhdxRead(void *pBackendData, uint64_t uOffset, size_t cbToRead,
+                                  PVDIOCTX pIoCtx, size_t *pcbActuallyRead)
 {
     LogFlowFunc(("pBackendData=%#p uOffset=%llu pIoCtx=%#p cbToRead=%zu pcbActuallyRead=%#p\n",
                  pBackendData, uOffset, pIoCtx, cbToRead, pcbActuallyRead));
@@ -1940,11 +1999,12 @@ static int vhdxRead(void *pBackendData, uint64_t uOffset, size_t cbToRead,
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnWrite */
-static int vhdxWrite(void *pBackendData, uint64_t uOffset,  size_t cbToWrite,
-                     PVDIOCTX pIoCtx, size_t *pcbWriteProcess, size_t *pcbPreRead,
-                     size_t *pcbPostRead, unsigned fWrite)
+/** @copydoc VDIMAGEBACKEND::pfnWrite */
+static DECLCALLBACK(int) vhdxWrite(void *pBackendData, uint64_t uOffset,  size_t cbToWrite,
+                                   PVDIOCTX pIoCtx, size_t *pcbWriteProcess, size_t *pcbPreRead,
+                                   size_t *pcbPostRead, unsigned fWrite)
 {
+    RT_NOREF5(pIoCtx, pcbWriteProcess, pcbPreRead, pcbPostRead, fWrite);
     LogFlowFunc(("pBackendData=%#p uOffset=%llu pIoCtx=%#p cbToWrite=%zu pcbWriteProcess=%#p pcbPreRead=%#p pcbPostRead=%#p\n",
                  pBackendData, uOffset, pIoCtx, cbToWrite, pcbWriteProcess, pcbPreRead, pcbPostRead));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -1966,9 +2026,10 @@ static int vhdxWrite(void *pBackendData, uint64_t uOffset,  size_t cbToWrite,
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnFlush */
-static int vhdxFlush(void *pBackendData, PVDIOCTX pIoCtx)
+/** @copydoc VDIMAGEBACKEND::pfnFlush */
+static DECLCALLBACK(int) vhdxFlush(void *pBackendData, PVDIOCTX pIoCtx)
 {
+    RT_NOREF1(pIoCtx);
     LogFlowFunc(("pBackendData=%#p pIoCtx=%#p\n", pBackendData, pIoCtx));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
     int rc;
@@ -1982,8 +2043,8 @@ static int vhdxFlush(void *pBackendData, PVDIOCTX pIoCtx)
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnGetVersion */
-static unsigned vhdxGetVersion(void *pBackendData)
+/** @copydoc VDIMAGEBACKEND::pfnGetVersion */
+static DECLCALLBACK(unsigned) vhdxGetVersion(void *pBackendData)
 {
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -1996,40 +2057,8 @@ static unsigned vhdxGetVersion(void *pBackendData)
         return 0;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnGetSectorSize */
-static uint32_t vhdxGetSectorSize(void *pBackendData)
-{
-    LogFlowFunc(("pBackendData=%#p\n", pBackendData));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    uint32_t cb = 0;
-
-    AssertPtr(pImage);
-
-    if (pImage && pImage->pStorage)
-        cb = pImage->cbLogicalSector;
-
-    LogFlowFunc(("returns %u\n", cb));
-    return cb;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnGetSize */
-static uint64_t vhdxGetSize(void *pBackendData)
-{
-    LogFlowFunc(("pBackendData=%#p\n", pBackendData));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    uint64_t cb = 0;
-
-    AssertPtr(pImage);
-
-    if (pImage && pImage->pStorage)
-        cb = pImage->cbSize;
-
-    LogFlowFunc(("returns %llu\n", cb));
-    return cb;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnGetFileSize */
-static uint64_t vhdxGetFileSize(void *pBackendData)
+/** @copydoc VDIMAGEBACKEND::pfnGetFileSize */
+static DECLCALLBACK(uint64_t) vhdxGetFileSize(void *pBackendData)
 {
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -2052,9 +2081,9 @@ static uint64_t vhdxGetFileSize(void *pBackendData)
     return cb;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnGetPCHSGeometry */
-static int vhdxGetPCHSGeometry(void *pBackendData,
-                              PVDGEOMETRY pPCHSGeometry)
+/** @copydoc VDIMAGEBACKEND::pfnGetPCHSGeometry */
+static DECLCALLBACK(int) vhdxGetPCHSGeometry(void *pBackendData,
+                                             PVDGEOMETRY pPCHSGeometry)
 {
     LogFlowFunc(("pBackendData=%#p pPCHSGeometry=%#p\n", pBackendData, pPCHSGeometry));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -2079,9 +2108,9 @@ static int vhdxGetPCHSGeometry(void *pBackendData,
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnSetPCHSGeometry */
-static int vhdxSetPCHSGeometry(void *pBackendData,
-                              PCVDGEOMETRY pPCHSGeometry)
+/** @copydoc VDIMAGEBACKEND::pfnSetPCHSGeometry */
+static DECLCALLBACK(int) vhdxSetPCHSGeometry(void *pBackendData,
+                                             PCVDGEOMETRY pPCHSGeometry)
 {
     LogFlowFunc(("pBackendData=%#p pPCHSGeometry=%#p PCHS=%u/%u/%u\n", pBackendData, pPCHSGeometry, pPCHSGeometry->cCylinders, pPCHSGeometry->cHeads, pPCHSGeometry->cSectors));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -2103,9 +2132,9 @@ static int vhdxSetPCHSGeometry(void *pBackendData,
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnGetLCHSGeometry */
-static int vhdxGetLCHSGeometry(void *pBackendData,
-                              PVDGEOMETRY pLCHSGeometry)
+/** @copydoc VDIMAGEBACKEND::pfnGetLCHSGeometry */
+static DECLCALLBACK(int) vhdxGetLCHSGeometry(void *pBackendData,
+                                             PVDGEOMETRY pLCHSGeometry)
 {
      LogFlowFunc(("pBackendData=%#p pLCHSGeometry=%#p\n", pBackendData, pLCHSGeometry));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -2127,9 +2156,9 @@ static int vhdxGetLCHSGeometry(void *pBackendData,
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnSetLCHSGeometry */
-static int vhdxSetLCHSGeometry(void *pBackendData,
-                               PCVDGEOMETRY pLCHSGeometry)
+/** @copydoc VDIMAGEBACKEND::pfnSetLCHSGeometry */
+static DECLCALLBACK(int) vhdxSetLCHSGeometry(void *pBackendData,
+                                             PCVDGEOMETRY pLCHSGeometry)
 {
     LogFlowFunc(("pBackendData=%#p pLCHSGeometry=%#p LCHS=%u/%u/%u\n", pBackendData, pLCHSGeometry, pLCHSGeometry->cCylinders, pLCHSGeometry->cHeads, pLCHSGeometry->cSectors));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -2151,8 +2180,32 @@ static int vhdxSetLCHSGeometry(void *pBackendData,
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnGetImageFlags */
-static unsigned vhdxGetImageFlags(void *pBackendData)
+/** @copydoc VDIMAGEBACKEND::pfnQueryRegions */
+static DECLCALLBACK(int) vhdxQueryRegions(void *pBackendData, PCVDREGIONLIST *ppRegionList)
+{
+    LogFlowFunc(("pBackendData=%#p ppRegionList=%#p\n", pBackendData, ppRegionList));
+    PVHDXIMAGE pThis = (PVHDXIMAGE)pBackendData;
+
+    AssertPtrReturn(pThis, VERR_VD_NOT_OPENED);
+
+    *ppRegionList = &pThis->RegionList;
+    LogFlowFunc(("returns %Rrc\n", VINF_SUCCESS));
+    return VINF_SUCCESS;
+}
+
+/** @copydoc VDIMAGEBACKEND::pfnRegionListRelease */
+static DECLCALLBACK(void) vhdxRegionListRelease(void *pBackendData, PCVDREGIONLIST pRegionList)
+{
+    RT_NOREF1(pRegionList);
+    LogFlowFunc(("pBackendData=%#p pRegionList=%#p\n", pBackendData, pRegionList));
+    PVHDXIMAGE pThis = (PVHDXIMAGE)pBackendData;
+    AssertPtr(pThis); RT_NOREF(pThis);
+
+    /* Nothing to do here. */
+}
+
+/** @copydoc VDIMAGEBACKEND::pfnGetImageFlags */
+static DECLCALLBACK(unsigned) vhdxGetImageFlags(void *pBackendData)
 {
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -2169,8 +2222,8 @@ static unsigned vhdxGetImageFlags(void *pBackendData)
     return uImageFlags;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnGetOpenFlags */
-static unsigned vhdxGetOpenFlags(void *pBackendData)
+/** @copydoc VDIMAGEBACKEND::pfnGetOpenFlags */
+static DECLCALLBACK(unsigned) vhdxGetOpenFlags(void *pBackendData)
 {
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -2187,8 +2240,8 @@ static unsigned vhdxGetOpenFlags(void *pBackendData)
     return uOpenFlags;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnSetOpenFlags */
-static int vhdxSetOpenFlags(void *pBackendData, unsigned uOpenFlags)
+/** @copydoc VDIMAGEBACKEND::pfnSetOpenFlags */
+static DECLCALLBACK(int) vhdxSetOpenFlags(void *pBackendData, unsigned uOpenFlags)
 {
     LogFlowFunc(("pBackendData=%#p\n uOpenFlags=%#x", pBackendData, uOpenFlags));
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
@@ -2209,215 +2262,38 @@ static int vhdxSetOpenFlags(void *pBackendData, unsigned uOpenFlags)
     return rc;
 }
 
-/** @copydoc VBOXHDDBACKEND::pfnGetComment */
-static int vhdxGetComment(void *pBackendData, char *pszComment,
-                          size_t cbComment)
-{
-    LogFlowFunc(("pBackendData=%#p pszComment=%#p cbComment=%zu\n", pBackendData, pszComment, cbComment));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
+/** @copydoc VDIMAGEBACKEND::pfnGetComment */
+VD_BACKEND_CALLBACK_GET_COMMENT_DEF_NOT_SUPPORTED(vhdxGetComment);
 
-    AssertPtr(pImage);
+/** @copydoc VDIMAGEBACKEND::pfnSetComment */
+VD_BACKEND_CALLBACK_SET_COMMENT_DEF_NOT_SUPPORTED(vhdxSetComment, PVHDXIMAGE);
 
-    if (pImage)
-        rc = VERR_NOT_SUPPORTED;
-    else
-        rc = VERR_VD_NOT_OPENED;
+/** @copydoc VDIMAGEBACKEND::pfnGetUuid */
+VD_BACKEND_CALLBACK_GET_UUID_DEF_NOT_SUPPORTED(vhdxGetUuid);
 
-    LogFlowFunc(("returns %Rrc comment='%s'\n", rc, pszComment));
-    return rc;
-}
+/** @copydoc VDIMAGEBACKEND::pfnSetUuid */
+VD_BACKEND_CALLBACK_SET_UUID_DEF_NOT_SUPPORTED(vhdxSetUuid, PVHDXIMAGE);
 
-/** @copydoc VBOXHDDBACKEND::pfnSetComment */
-static int vhdxSetComment(void *pBackendData, const char *pszComment)
-{
-    LogFlowFunc(("pBackendData=%#p pszComment=\"%s\"\n", pBackendData, pszComment));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
+/** @copydoc VDIMAGEBACKEND::pfnGetModificationUuid */
+VD_BACKEND_CALLBACK_GET_UUID_DEF_NOT_SUPPORTED(vhdxGetModificationUuid);
 
-    AssertPtr(pImage);
+/** @copydoc VDIMAGEBACKEND::pfnSetModificationUuid */
+VD_BACKEND_CALLBACK_SET_UUID_DEF_NOT_SUPPORTED(vhdxSetModificationUuid, PVHDXIMAGE);
 
-    if (pImage)
-    {
-        if (pImage->uOpenFlags & VD_OPEN_FLAGS_READONLY)
-            rc = VERR_VD_IMAGE_READ_ONLY;
-        else
-            rc = VERR_NOT_SUPPORTED;
-    }
-    else
-        rc = VERR_VD_NOT_OPENED;
+/** @copydoc VDIMAGEBACKEND::pfnGetParentUuid */
+VD_BACKEND_CALLBACK_GET_UUID_DEF_NOT_SUPPORTED(vhdxGetParentUuid);
 
-    LogFlowFunc(("returns %Rrc\n", rc));
-    return rc;
-}
+/** @copydoc VDIMAGEBACKEND::pfnSetParentUuid */
+VD_BACKEND_CALLBACK_SET_UUID_DEF_NOT_SUPPORTED(vhdxSetParentUuid, PVHDXIMAGE);
 
-/** @copydoc VBOXHDDBACKEND::pfnGetUuid */
-static int vhdxGetUuid(void *pBackendData, PRTUUID pUuid)
-{
-    LogFlowFunc(("pBackendData=%#p pUuid=%#p\n", pBackendData, pUuid));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
+/** @copydoc VDIMAGEBACKEND::pfnGetParentModificationUuid */
+VD_BACKEND_CALLBACK_GET_UUID_DEF_NOT_SUPPORTED(vhdxGetParentModificationUuid);
 
-    AssertPtr(pImage);
+/** @copydoc VDIMAGEBACKEND::pfnSetParentModificationUuid */
+VD_BACKEND_CALLBACK_SET_UUID_DEF_NOT_SUPPORTED(vhdxSetParentModificationUuid, PVHDXIMAGE);
 
-    if (pImage)
-        rc = VERR_NOT_SUPPORTED;
-    else
-        rc = VERR_VD_NOT_OPENED;
-
-    LogFlowFunc(("returns %Rrc (%RTuuid)\n", rc, pUuid));
-    return rc;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnSetUuid */
-static int vhdxSetUuid(void *pBackendData, PCRTUUID pUuid)
-{
-    LogFlowFunc(("pBackendData=%#p Uuid=%RTuuid\n", pBackendData, pUuid));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
-
-    LogFlowFunc(("%RTuuid\n", pUuid));
-    AssertPtr(pImage);
-
-    if (pImage)
-    {
-        if (!(pImage->uOpenFlags & VD_OPEN_FLAGS_READONLY))
-            rc = VERR_NOT_SUPPORTED;
-        else
-            rc = VERR_VD_IMAGE_READ_ONLY;
-    }
-    else
-        rc = VERR_VD_NOT_OPENED;
-
-    LogFlowFunc(("returns %Rrc\n", rc));
-    return rc;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnGetModificationUuid */
-static int vhdxGetModificationUuid(void *pBackendData, PRTUUID pUuid)
-{
-    LogFlowFunc(("pBackendData=%#p pUuid=%#p\n", pBackendData, pUuid));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
-
-    AssertPtr(pImage);
-
-    if (pImage)
-        rc = VERR_NOT_SUPPORTED;
-    else
-        rc = VERR_VD_NOT_OPENED;
-
-    LogFlowFunc(("returns %Rrc (%RTuuid)\n", rc, pUuid));
-    return rc;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnSetModificationUuid */
-static int vhdxSetModificationUuid(void *pBackendData, PCRTUUID pUuid)
-{
-    LogFlowFunc(("pBackendData=%#p Uuid=%RTuuid\n", pBackendData, pUuid));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
-
-    AssertPtr(pImage);
-
-    if (pImage)
-    {
-        if (!(pImage->uOpenFlags & VD_OPEN_FLAGS_READONLY))
-            rc = VERR_NOT_SUPPORTED;
-        else
-            rc = VERR_VD_IMAGE_READ_ONLY;
-    }
-    else
-        rc = VERR_VD_NOT_OPENED;
-
-    LogFlowFunc(("returns %Rrc\n", rc));
-    return rc;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnGetParentUuid */
-static int vhdxGetParentUuid(void *pBackendData, PRTUUID pUuid)
-{
-    LogFlowFunc(("pBackendData=%#p pUuid=%#p\n", pBackendData, pUuid));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
-
-    AssertPtr(pImage);
-
-    if (pImage)
-        rc = VERR_NOT_SUPPORTED;
-    else
-        rc = VERR_VD_NOT_OPENED;
-
-    LogFlowFunc(("returns %Rrc (%RTuuid)\n", rc, pUuid));
-    return rc;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnSetParentUuid */
-static int vhdxSetParentUuid(void *pBackendData, PCRTUUID pUuid)
-{
-    LogFlowFunc(("pBackendData=%#p Uuid=%RTuuid\n", pBackendData, pUuid));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
-
-    AssertPtr(pImage);
-
-    if (pImage)
-    {
-        if (!(pImage->uOpenFlags & VD_OPEN_FLAGS_READONLY))
-            rc = VERR_NOT_SUPPORTED;
-        else
-            rc = VERR_VD_IMAGE_READ_ONLY;
-    }
-    else
-        rc = VERR_VD_NOT_OPENED;
-
-    LogFlowFunc(("returns %Rrc\n", rc));
-    return rc;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnGetParentModificationUuid */
-static int vhdxGetParentModificationUuid(void *pBackendData, PRTUUID pUuid)
-{
-    LogFlowFunc(("pBackendData=%#p pUuid=%#p\n", pBackendData, pUuid));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
-
-    AssertPtr(pImage);
-
-    if (pImage)
-        rc = VERR_NOT_SUPPORTED;
-    else
-        rc = VERR_VD_NOT_OPENED;
-
-    LogFlowFunc(("returns %Rrc (%RTuuid)\n", rc, pUuid));
-    return rc;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnSetParentModificationUuid */
-static int vhdxSetParentModificationUuid(void *pBackendData, PCRTUUID pUuid)
-{
-    LogFlowFunc(("pBackendData=%#p Uuid=%RTuuid\n", pBackendData, pUuid));
-    PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
-    int rc;
-
-    AssertPtr(pImage);
-
-    if (pImage)
-    {
-        if (!(pImage->uOpenFlags & VD_OPEN_FLAGS_READONLY))
-            rc = VERR_NOT_SUPPORTED;
-        else
-            rc = VERR_VD_IMAGE_READ_ONLY;
-    }
-    else
-        rc = VERR_VD_NOT_OPENED;
-
-    LogFlowFunc(("returns %Rrc\n", rc));
-    return rc;
-}
-
-/** @copydoc VBOXHDDBACKEND::pfnDump */
-static void vhdxDump(void *pBackendData)
+/** @copydoc VDIMAGEBACKEND::pfnDump */
+static DECLCALLBACK(void) vhdxDump(void *pBackendData)
 {
     PVHDXIMAGE pImage = (PVHDXIMAGE)pBackendData;
 
@@ -2432,24 +2308,24 @@ static void vhdxDump(void *pBackendData)
 }
 
 
-const VBOXHDDBACKEND g_VhdxBackend =
+const VDIMAGEBACKEND g_VhdxBackend =
 {
+    /* u32Version */
+    VD_IMGBACKEND_VERSION,
     /* pszBackendName */
     "VHDX",
-    /* cbSize */
-    sizeof(VBOXHDDBACKEND),
     /* uBackendCaps */
     VD_CAP_FILE | VD_CAP_VFS,
     /* paFileExtensions */
     s_aVhdxFileExtensions,
     /* paConfigInfo */
     NULL,
-    /* pfnCheckIfValid */
-    vhdxCheckIfValid,
+    /* pfnProbe */
+    vhdxProbe,
     /* pfnOpen */
     vhdxOpen,
     /* pfnCreate */
-    NULL,
+    vhdxCreate,
     /* pfnRename */
     vhdxRename,
     /* pfnClose */
@@ -2464,10 +2340,6 @@ const VBOXHDDBACKEND g_VhdxBackend =
     NULL,
     /* pfnGetVersion */
     vhdxGetVersion,
-    /* pfnGetSectorSize */
-    vhdxGetSectorSize,
-    /* pfnGetSize */
-    vhdxGetSize,
     /* pfnGetFileSize */
     vhdxGetFileSize,
     /* pfnGetPCHSGeometry */
@@ -2478,6 +2350,10 @@ const VBOXHDDBACKEND g_VhdxBackend =
     vhdxGetLCHSGeometry,
     /* pfnSetLCHSGeometry */
     vhdxSetLCHSGeometry,
+    /* pfnQueryRegions */
+    vhdxQueryRegions,
+    /* pfnRegionListRelease */
+    vhdxRegionListRelease,
     /* pfnGetImageFlags */
     vhdxGetImageFlags,
     /* pfnGetOpenFlags */
@@ -2506,11 +2382,11 @@ const VBOXHDDBACKEND g_VhdxBackend =
     vhdxSetParentModificationUuid,
     /* pfnDump */
     vhdxDump,
-    /* pfnGetTimeStamp */
+    /* pfnGetTimestamp */
     NULL,
-    /* pfnGetParentTimeStamp */
+    /* pfnGetParentTimestamp */
     NULL,
-    /* pfnSetParentTimeStamp */
+    /* pfnSetParentTimestamp */
     NULL,
     /* pfnGetParentFilename */
     NULL,
@@ -2527,5 +2403,7 @@ const VBOXHDDBACKEND g_VhdxBackend =
     /* pfnRepair */
     NULL,
     /* pfnTraverseMetadata */
-    NULL
+    NULL,
+    /* u32VersionEnd */
+    VD_IMGBACKEND_VERSION
 };

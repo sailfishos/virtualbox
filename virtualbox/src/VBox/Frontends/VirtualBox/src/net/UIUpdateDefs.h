@@ -1,11 +1,10 @@
+/* $Id: UIUpdateDefs.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * Update routine related declarations
+ * VBox Qt GUI - Update routine related declarations.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,11 +18,12 @@
 #ifndef ___UIUpdateDefs_h___
 #define ___UIUpdateDefs_h___
 
-/* Global includes: */
+/* Qt includes: */
 #include <QDate>
 
-/* Local includes: */
-#include "VBoxVersion.h"
+/* GUI includes: */
+#include "UIVersion.h"
+
 
 /* This structure is used to store retranslated reminder values. */
 struct VBoxUpdateDay
@@ -37,6 +37,7 @@ struct VBoxUpdateDay
     QString key;
 };
 typedef QList<VBoxUpdateDay> VBoxUpdateDayList;
+
 
 /* This class is used to encode/decode update data. */
 class VBoxUpdateData
@@ -84,7 +85,7 @@ public:
     QString date() const;
     BranchType branchIndex() const;
     QString branchName() const;
-    VBoxVersion version() const;
+    UIVersion version() const;
 
 private:
 
@@ -98,8 +99,8 @@ private:
     PeriodType m_periodIndex;
     QDate m_date;
     BranchType m_branchIndex;
-    VBoxVersion m_version;
+    UIVersion m_version;
 };
 
-#endif // !___UIUpdateDefs_h___
+#endif /* !___UIUpdateDefs_h___ */
 

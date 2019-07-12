@@ -9,7 +9,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,9 +27,14 @@
 #include <VBox/types.h>
 #include <VBox/vusb.h>
 #include <VBox/vmm/stam.h>
+#include <VBox/vmm/pdm.h>
+#include <VBox/vmm/vmapi.h>
+#include <VBox/vmm/pdmusb.h>
+#include <iprt/asm.h>
 #include <iprt/assert.h>
-#include <iprt/queueatomic.h>
 #include <iprt/req.h>
+#include <iprt/asm.h>
+#include <iprt/list.h>
 
 #include "VUSBSniffer.h"
 
@@ -66,6 +71,31 @@ typedef struct VUSBROOTHUB *PVUSBROOTHUB;
 
 /** Maximum number of endpoint addresses */
 #define VUSB_PIPE_MAX           16
+
+/**
+ * The VUSB URB data.
+ */
+typedef struct VUSBURBVUSBINT
+{
+    /** Node for one of the lists the URB can be in. */
+    RTLISTNODE      NdLst;
+    /** Pointer to the URB this structure is part of. */
+    PVUSBURB        pUrb;
+    /** Pointer to the original for control messages. */
+    PVUSBURB        pCtrlUrb;
+    /** Pointer to the VUSB device.
+     * This may be NULL if the destination address is invalid. */
+    PVUSBDEV        pDev;
+    /** Specific to the pfnFree function. */
+    void           *pvFreeCtx;
+    /**
+     * Callback which will free the URB once it's reaped and completed.
+     * @param   pUrb    The URB.
+     */
+    DECLCALLBACKMEMBER(void, pfnFree)(PVUSBURB pUrb);
+    /** Submit timestamp. (logging only) */
+    uint64_t        u64SubmitTS;
+} VUSBURBVUSBINT;
 
 /**
  * Control-pipe stages.
@@ -114,9 +144,6 @@ typedef struct vusb_ctrl_extra
 void vusbMsgFreeExtraData(PVUSBCTRLEXTRA pExtra);
 void vusbMsgResetExtraData(PVUSBCTRLEXTRA pExtra);
 
-/** Opaque VUSB read ahead buffer management handle. */
-typedef struct VUSBREADAHEADINT *VUSBREADAHEAD;
-
 /**
  * A VUSB pipe
  */
@@ -130,8 +157,10 @@ typedef struct vusb_pipe
     RTCRITSECT          CritSectCtrl;
     /** Count of active async transfers. */
     volatile uint32_t   async;
-    /** Read ahead handle. */
-    VUSBREADAHEAD       hReadAhead;
+    /** Last scheduled frame - only valid for isochronous IN endpoints. */
+    uint32_t            uLastFrameIn;
+    /** Last scheduled frame - only valid for isochronous OUT endpoints. */
+    uint32_t            uLastFrameOut;
 } VUSBPIPE;
 /** Pointer to a VUSB pipe structure. */
 typedef VUSBPIPE *PVUSBPIPE;
@@ -155,6 +184,25 @@ typedef const VUSBINTERFACESTATE *PCVUSBINTERFACESTATE;
 
 
 /**
+ * VUSB URB pool.
+ */
+typedef struct VUSBURBPOOL
+{
+    /** Critical section protecting the pool. */
+    RTCRITSECT              CritSectPool;
+    /** Chain of free URBs by type. (Singly linked) */
+    RTLISTANCHOR            aLstFreeUrbs[VUSBXFERTYPE_ELEMENTS];
+    /** The number of URBs in the pool. */
+    volatile uint32_t       cUrbsInPool;
+    /** Align the size to a 8 byte boundary. */
+    uint32_t                Alignment0;
+} VUSBURBPOOL;
+/** Pointer to a VUSB URB pool. */
+typedef VUSBURBPOOL *PVUSBURBPOOL;
+
+AssertCompileSizeAlignment(VUSBURBPOOL, 8);
+
+/**
  * A Virtual USB device (core).
  *
  * @implements  VUSBIDEVICE
@@ -173,6 +221,8 @@ typedef struct VUSBDEV
     PVUSBHUB            pHub;
     /** The device state. */
     VUSBDEVICESTATE volatile enmState;
+    /** Reference counter to protect the device structure from going away. */
+    uint32_t volatile        cRefs;
 
     /** The device address. */
     uint8_t             u8Address;
@@ -199,7 +249,7 @@ typedef struct VUSBDEV
     /** Critical section protecting the active URB list. */
     RTCRITSECT          CritSectAsyncUrbs;
     /** List of active async URBs. */
-    PVUSBURB            pAsyncUrbHead;
+    RTLISTANCHOR        LstAsyncUrbs;
 
     /** Dumper state. */
     union VUSBDEVURBDUMPERSTATE
@@ -217,40 +267,23 @@ typedef struct VUSBDEV
     /** Request queue for executing tasks on the I/O thread which should be done
      * synchronous and without any other thread accessing the USB device. */
     RTREQQUEUE          hReqQueueSync;
+    /** Sniffer instance for this device if configured. */
+    VUSBSNIFFER         hSniffer;
     /** Flag whether the URB I/O thread should terminate. */
     bool volatile       fTerminate;
     /** Flag whether the I/O thread was woken up. */
     bool volatile       fWokenUp;
 #if HC_ARCH_BITS == 32
     /** Align the size to a 8 byte boundary. */
-    bool                afAlignment0[6];
+    bool                afAlignment0[2];
 #endif
+    /** The pool of free URBs for faster allocation. */
+    VUSBURBPOOL         UrbPool;
 } VUSBDEV;
 AssertCompileSizeAlignment(VUSBDEV, 8);
 
 
-/** Pointer to the virtual method table for a kind of USB devices. */
-typedef struct vusb_dev_ops *PVUSBDEVOPS;
-
-/** Pointer to the const virtual method table for a kind of USB devices. */
-typedef const struct vusb_dev_ops *PCVUSBDEVOPS;
-
-/**
- * Virtual method table for USB devices - these are the functions you need to
- * implement when writing a new device (or hub)
- *
- * Note that when creating your structure, you are required to zero the
- * vusb_dev fields (ie. use calloc).
- */
-typedef struct vusb_dev_ops
-{
-    /* mandatory */
-    const char *name;
-} VUSBDEVOPS;
-
-
-int vusbDevInit(PVUSBDEV pDev, PPDMUSBINS pUsbIns);
-int vusbDevCreateOld(const char *pszDeviceName, void *pvDriverInit, PCRTUUID pUuid, PVUSBDEV *ppDev);
+int vusbDevInit(PVUSBDEV pDev, PPDMUSBINS pUsbIns, const char *pszCaptureFilename);
 void vusbDevDestroy(PVUSBDEV pDev);
 
 DECLINLINE(bool) vusbDevIsRh(PVUSBDEV pDev)
@@ -269,9 +302,6 @@ bool vusbDevStandardRequest(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, void *p
 
 
 /** @} */
-
-
-
 
 
 /** @name Internal Hub Operations, Structures and Constants.
@@ -304,6 +334,7 @@ typedef struct VUSBHUB
     /** Name of the hub. Used for logging. */
     char               *pszName;
 } VUSBHUB;
+AssertCompileMemberAlignment(VUSBHUB, pOps, 8);
 AssertCompileSizeAlignment(VUSBHUB, 8);
 
 /** @} */
@@ -347,45 +378,71 @@ typedef struct VUSBROOTHUB
 {
     /** The HUB.
      * @todo remove this? */
-    VUSBHUB                 Hub;
+    VUSBHUB                    Hub;
     /** Address hash table. */
-    PVUSBDEV                apAddrHash[VUSB_ADDR_HASHSZ];
+    PVUSBDEV                   apAddrHash[VUSB_ADDR_HASHSZ];
     /** The default address. */
-    PVUSBDEV                pDefaultAddress;
+    PVUSBDEV                   pDefaultAddress;
 
     /** Pointer to the driver instance. */
-    PPDMDRVINS              pDrvIns;
+    PPDMDRVINS                 pDrvIns;
     /** Pointer to the root hub port interface we're attached to. */
-    PVUSBIROOTHUBPORT       pIRhPort;
+    PVUSBIROOTHUBPORT          pIRhPort;
     /** Connector interface exposed upwards. */
-    VUSBIROOTHUBCONNECTOR   IRhConnector;
-
-#if HC_ARCH_BITS == 32
-    uint32_t                Alignment0;
-#endif
+    VUSBIROOTHUBCONNECTOR      IRhConnector;
 
     /** Critical section protecting the device list. */
-    RTCRITSECT              CritSectDevices;
+    RTCRITSECT                 CritSectDevices;
     /** Chain of devices attached to this hub. */
-    PVUSBDEV                pDevices;
+    PVUSBDEV                   pDevices;
 
 #if HC_ARCH_BITS == 32
-    uint32_t                Alignment1;
+    uint32_t                   Alignment0;
 #endif
 
     /** Availability Bitmap. */
-    VUSBPORTBITMAP          Bitmap;
+    VUSBPORTBITMAP             Bitmap;
 
-    /** Critical section protecting the free list. */
-    RTCRITSECT              CritSectFreeUrbs;
-    /** Chain of free URBs. (Singly linked) */
-    PVUSBURB                pFreeUrbs;
     /** Sniffer instance for the root hub. */
-    VUSBSNIFFER             hSniffer;
-    /** The number of URBs in the pool. */
-    uint32_t                cUrbsInPool;
+    VUSBSNIFFER                hSniffer;
     /** Version of the attached Host Controller. */
-    uint32_t                fHcVersions;
+    uint32_t                   fHcVersions;
+    /** Size of the HCI specific data for each URB. */
+    size_t                     cbHci;
+    /** Size of the HCI specific TD. */
+    size_t                     cbHciTd;
+
+    /** The periodic frame processing thread. */
+    R3PTRTYPE(PPDMTHREAD)      hThreadPeriodFrame;
+    /** Event semaphore to interact with the periodic frame processing thread. */
+    R3PTRTYPE(RTSEMEVENTMULTI) hSemEventPeriodFrame;
+    /** Event semaphore to release the thread waiting for the periodic frame processing thread to stop. */
+    R3PTRTYPE(RTSEMEVENTMULTI) hSemEventPeriodFrameStopped;
+    /** Current default frame rate for periodic frame processing thread. */
+    volatile uint32_t          uFrameRateDefault;
+    /** Current frame rate (can be lower than the default frame rate if there is no activity). */
+    uint32_t                   uFrameRate;
+    /** How long to wait until the next frame. */
+    uint64_t                   nsWait;
+    /** Timestamp when the last frame was processed. */
+    uint64_t                   tsFrameProcessed;
+    /** Number of USB work cycles with no transfers. */
+    uint32_t                   cIdleCycles;
+
+    /** Flag whether a frame is currently being processed. */
+    volatile bool              fFrameProcessing;
+
+#if HC_ARCH_BITS == 32
+    uint32_t                   Alignment1;
+#endif
+
+#ifdef LOG_ENABLED
+    /** A serial number for URBs submitted on the roothub instance.
+     * Only logging builds. */
+    uint32_t                   iSerial;
+    /** Alignment */
+    uint32_t                   Alignment2;
+#endif
 #ifdef VBOX_WITH_STATISTICS
     VUSBROOTHUBTYPESTATS    Total;
     VUSBROOTHUBTYPESTATS    aTypes[VUSBXFERTYPE_MSG];
@@ -410,18 +467,19 @@ typedef struct VUSBROOTHUB
 
     STAMPROFILE             StatReapAsyncUrbs;
     STAMPROFILE             StatSubmitUrb;
+    STAMCOUNTER             StatFramesProcessedClbk;
+    STAMCOUNTER             StatFramesProcessedThread;
 #endif
 } VUSBROOTHUB;
 AssertCompileMemberAlignment(VUSBROOTHUB, IRhConnector, 8);
 AssertCompileMemberAlignment(VUSBROOTHUB, Bitmap, 8);
 AssertCompileMemberAlignment(VUSBROOTHUB, CritSectDevices, 8);
-AssertCompileMemberAlignment(VUSBROOTHUB, CritSectFreeUrbs, 8);
 #ifdef VBOX_WITH_STATISTICS
 AssertCompileMemberAlignment(VUSBROOTHUB, Total, 8);
 #endif
 
 /** Converts a pointer to VUSBROOTHUB::IRhConnector to a PVUSBROOTHUB. */
-#define VUSBIROOTHUBCONNECTOR_2_VUSBROOTHUB(pInterface) (PVUSBROOTHUB)( (uintptr_t)(pInterface) - RT_OFFSETOF(VUSBROOTHUB, IRhConnector) )
+#define VUSBIROOTHUBCONNECTOR_2_VUSBROOTHUB(pInterface) (PVUSBROOTHUB)( (uintptr_t)(pInterface) - RT_UOFFSETOF(VUSBROOTHUB, IRhConnector) )
 
 /**
  * URB cancellation modes
@@ -441,8 +499,7 @@ typedef enum CANCELMODE
 /** @name Internal URB Operations, Structures and Constants.
  * @{ */
 int  vusbUrbSubmit(PVUSBURB pUrb);
-void vusbUrbTrace(PVUSBURB pUrb, const char *pszMsg, bool fComplete);
-void vusbUrbDoReapAsync(PVUSBURB pHead, RTMSINTERVAL cMillies);
+void vusbUrbDoReapAsync(PRTLISTANCHOR pUrbLst, RTMSINTERVAL cMillies);
 void vusbUrbDoReapAsyncDev(PVUSBDEV pDev, RTMSINTERVAL cMillies);
 void vusbUrbCancel(PVUSBURB pUrb, CANCELMODE mode);
 void vusbUrbCancelAsync(PVUSBURB pUrb, CANCELMODE mode);
@@ -453,29 +510,90 @@ int vusbUrbErrorRh(PVUSBURB pUrb);
 int vusbDevUrbIoThreadWakeup(PVUSBDEV pDev);
 int vusbDevUrbIoThreadCreate(PVUSBDEV pDev);
 int vusbDevUrbIoThreadDestroy(PVUSBDEV pDev);
+DECLHIDDEN(void) vusbDevCancelAllUrbs(PVUSBDEV pDev, bool fDetaching);
 DECLHIDDEN(int) vusbDevIoThreadExecV(PVUSBDEV pDev, uint32_t fFlags, PFNRT pfnFunction, unsigned cArgs, va_list Args);
 DECLHIDDEN(int) vusbDevIoThreadExec(PVUSBDEV pDev, uint32_t fFlags, PFNRT pfnFunction, unsigned cArgs, ...);
 DECLHIDDEN(int) vusbDevIoThreadExecSync(PVUSBDEV pDev, PFNRT pfnFunction, unsigned cArgs, ...);
 DECLHIDDEN(int) vusbUrbCancelWorker(PVUSBURB pUrb, CANCELMODE enmMode);
 
-void vusbUrbCompletionReadAhead(PVUSBURB pUrb);
-VUSBREADAHEAD vusbReadAheadStart(PVUSBDEV pDev, PVUSBPIPE pPipe);
-void vusbReadAheadStop(VUSBREADAHEAD hReadAhead);
-int  vusbUrbQueueAsyncRh(PVUSBURB pUrb);
-int  vusbUrbSubmitBufferedRead(PVUSBURB pUrb, VUSBREADAHEAD hReadAhead);
-PVUSBURB vusbRhNewUrb(PVUSBROOTHUB pRh, uint8_t DstAddress, uint32_t cbData, uint32_t cTds);
+DECLHIDDEN(uint64_t) vusbRhR3ProcessFrame(PVUSBROOTHUB pThis, bool fCallback);
 
+int  vusbUrbQueueAsyncRh(PVUSBURB pUrb);
+
+/**
+ * Initializes the given URB pool.
+ *
+ * @returns VBox status code.
+ * @param   pUrbPool    The URB pool to initialize.
+ */
+DECLHIDDEN(int) vusbUrbPoolInit(PVUSBURBPOOL pUrbPool);
+
+/**
+ * Destroy a given URB pool freeing all ressources.
+ *
+ * @returns nothing.
+ * @param   pUrbPool    The URB pool to destroy.
+ */
+DECLHIDDEN(void) vusbUrbPoolDestroy(PVUSBURBPOOL pUrbPool);
+
+/**
+ * Allocate a new URB from the given URB pool.
+ *
+ * @returns Pointer to the new URB or NULL if out of memory.
+ * @param   pUrbPool    The URB pool to allocate from.
+ * @param   enmType     Type of the URB.
+ * @param   enmDir      The direction of the URB.
+ * @param   cbData      The number of bytes to allocate for the data buffer.
+ * @param   cbHci       Size of the data private to the HCI for each URB when allocated.
+ * @param   cbHciTd     Size of one transfer descriptor.
+ * @param   cTds        Number of transfer descriptors.
+ */
+DECLHIDDEN(PVUSBURB) vusbUrbPoolAlloc(PVUSBURBPOOL pUrbPool, VUSBXFERTYPE enmType,
+                                      VUSBDIRECTION enmDir, size_t cbData,
+                                      size_t cbHci, size_t cbHciTd, unsigned cTds);
+
+/**
+ * Frees a given URB.
+ *
+ * @returns nothing.
+ * @param   pUrbPool    The URB pool the URB was allocated from.
+ * @param   pUrb        The URB to free.
+ */
+DECLHIDDEN(void) vusbUrbPoolFree(PVUSBURBPOOL pUrbPool, PVUSBURB pUrb);
+
+#ifdef LOG_ENABLED
+/**
+ * Logs an URB in the debug log.
+ *
+ * @returns nothing.
+ * @param   pUrb        The URB to log.
+ * @param   pszMsg      Additional message to log.
+ * @param   fComplete   Flag whther the URB is completing.
+ */
+DECLHIDDEN(void) vusbUrbTrace(PVUSBURB pUrb, const char *pszMsg, bool fComplete);
+
+/**
+ * Return the USB direction as a string from the given enum.
+ */
+DECLHIDDEN(const char *) vusbUrbDirName(VUSBDIRECTION enmDir);
+
+/**
+ * Return the URB type as string from the given enum.
+ */
+DECLHIDDEN(const char *) vusbUrbTypeName(VUSBXFERTYPE enmType);
+
+/**
+ * Return the URB status as string from the given enum.
+ */
+DECLHIDDEN(const char *) vusbUrbStatusName(VUSBSTATUS enmStatus);
+#endif
 
 DECLINLINE(void) vusbUrbUnlink(PVUSBURB pUrb)
 {
-    PVUSBDEV pDev = pUrb->VUsb.pDev;
+    PVUSBDEV pDev = pUrb->pVUsb->pDev;
 
     RTCritSectEnter(&pDev->CritSectAsyncUrbs);
-    *pUrb->VUsb.ppPrev = pUrb->VUsb.pNext;
-    if (pUrb->VUsb.pNext)
-        pUrb->VUsb.pNext->VUsb.ppPrev = pUrb->VUsb.ppPrev;
-    pUrb->VUsb.pNext = NULL;
-    pUrb->VUsb.ppPrev = NULL;
+    RTListNodeRemove(&pUrb->pVUsb->NdLst);
     RTCritSectLeave(&pDev->CritSectAsyncUrbs);
 }
 
@@ -580,6 +698,38 @@ DECLINLINE(bool) vusbDevSetStateCmp(PVUSBDEV pDev, VUSBDEVICESTATE enmStateNew, 
     VUSBDEV_ASSERT_VALID_STATE(enmStateNew);
     VUSBDEV_ASSERT_VALID_STATE(enmStateOld);
     return ASMAtomicCmpXchgU32((volatile uint32_t *)&pDev->enmState, enmStateNew, enmStateOld);
+}
+
+/**
+ * Retains the given VUSB device pointer.
+ *
+ * @returns New reference count.
+ * @param   pThis          The VUSB device pointer.
+ */
+DECLINLINE(uint32_t) vusbDevRetain(PVUSBDEV pThis)
+{
+    AssertPtrReturn(pThis, UINT32_MAX);
+
+    uint32_t cRefs = ASMAtomicIncU32(&pThis->cRefs);
+    AssertMsg(cRefs > 1 && cRefs < _1M, ("%#x %p\n", cRefs, pThis));
+    return cRefs;
+}
+
+/**
+ * Releases the given VUSB device pointer.
+ *
+ * @returns New reference count.
+ * @retval 0 if no onw is holding a reference anymore causing the device to be destroyed.
+ */
+DECLINLINE(uint32_t) vusbDevRelease(PVUSBDEV pThis)
+{
+    AssertPtrReturn(pThis, UINT32_MAX);
+
+    uint32_t cRefs = ASMAtomicDecU32(&pThis->cRefs);
+    AssertMsg(cRefs < _1M, ("%#x %p\n", cRefs, pThis));
+    if (cRefs == 0)
+        vusbDevDestroy(pThis);
+    return cRefs;
 }
 
 /** Strings for the CTLSTAGE enum values. */

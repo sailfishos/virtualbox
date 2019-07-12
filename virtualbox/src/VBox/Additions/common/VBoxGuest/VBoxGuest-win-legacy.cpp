@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,11 +13,21 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "VBoxGuest-win.h"
 #include "VBoxGuestInternal.h"
 #include <VBox/err.h>
@@ -27,24 +37,24 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #ifndef PCI_MAX_BUSES
 # define PCI_MAX_BUSES 256
 #endif
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 RT_C_DECLS_BEGIN
-static NTSTATUS vbgdNt4FindPciDevice(PULONG pulBusNumber, PPCI_SLOT_NUMBER pSlotNumber);
+static NTSTATUS vgdrvNt4FindPciDevice(PULONG pulBusNumber, PPCI_SLOT_NUMBER pSlotNumber);
 RT_C_DECLS_END
 
 #ifdef ALLOC_PRAGMA
-# pragma alloc_text(INIT, vbgdNt4CreateDevice)
-# pragma alloc_text(INIT, vbgdNt4FindPciDevice)
+# pragma alloc_text(INIT, vgdrvNt4CreateDevice)
+# pragma alloc_text(INIT, vgdrvNt4FindPciDevice)
 #endif
 
 
@@ -54,22 +64,21 @@ RT_C_DECLS_END
  * @returns NT status code.
  *
  * @param   pDrvObj         The driver object.
- * @param   pDevObj         Unused. NULL. Dunno why it's here, makes no sense.
  * @param   pRegPath        The driver registry path.
  */
-NTSTATUS vbgdNt4CreateDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pDevObj, PUNICODE_STRING pRegPath)
+NTSTATUS vgdrvNt4CreateDevice(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING pRegPath)
 {
-    Log(("VBoxGuest::vbgdNt4CreateDevice: pDrvObj=%p, pDevObj=%p, pRegPath=%p\n", pDrvObj, pDevObj, pRegPath));
+    Log(("vgdrvNt4CreateDevice: pDrvObj=%p, pRegPath=%p\n", pDrvObj, pRegPath));
 
     /*
      * Find our virtual PCI device
      */
     ULONG uBusNumber;
     PCI_SLOT_NUMBER SlotNumber;
-    NTSTATUS rc = vbgdNt4FindPciDevice(&uBusNumber, &SlotNumber);
+    NTSTATUS rc = vgdrvNt4FindPciDevice(&uBusNumber, &SlotNumber);
     if (NT_ERROR(rc))
     {
-        Log(("VBoxGuest::vbgdNt4CreateDevice: Device not found!\n"));
+        Log(("vgdrvNt4CreateDevice: Device not found!\n"));
         return rc;
     }
 
@@ -82,24 +91,24 @@ NTSTATUS vbgdNt4CreateDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pDevObj, PUN
     rc = IoCreateDevice(pDrvObj, sizeof(VBOXGUESTDEVEXTWIN), &szDevName, FILE_DEVICE_UNKNOWN, 0, FALSE, &pDeviceObject);
     if (NT_SUCCESS(rc))
     {
-        Log(("VBoxGuest::vbgdNt4CreateDevice: Device created\n"));
+        Log(("vgdrvNt4CreateDevice: Device created\n"));
 
         UNICODE_STRING DosName;
         RtlInitUnicodeString(&DosName, VBOXGUEST_DEVICE_NAME_DOS);
         rc = IoCreateSymbolicLink(&DosName, &szDevName);
         if (NT_SUCCESS(rc))
         {
-            Log(("VBoxGuest::vbgdNt4CreateDevice: Symlink created\n"));
+            Log(("vgdrvNt4CreateDevice: Symlink created\n"));
 
             /*
              * Setup the device extension.
              */
-            Log(("VBoxGuest::vbgdNt4CreateDevice: Setting up device extension ...\n"));
+            Log(("vgdrvNt4CreateDevice: Setting up device extension ...\n"));
 
             PVBOXGUESTDEVEXTWIN pDevExt = (PVBOXGUESTDEVEXTWIN)pDeviceObject->DeviceExtension;
             RT_ZERO(*pDevExt);
 
-            Log(("VBoxGuest::vbgdNt4CreateDevice: Device extension created\n"));
+            Log(("vgdrvNt4CreateDevice: Device extension created\n"));
 
             /* Store a reference to ourself. */
             pDevExt->pDeviceObject = pDeviceObject;
@@ -115,10 +124,10 @@ NTSTATUS vbgdNt4CreateDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pDevObj, PUN
             /* Do the actual VBox init ... */
             if (NT_SUCCESS(rc))
             {
-                rc = vbgdNtInit(pDrvObj, pDeviceObject, pRegPath);
+                rc = vgdrvNtInit(pDrvObj, pDeviceObject, pRegPath);
                 if (NT_SUCCESS(rc))
                 {
-                    Log(("VBoxGuest::vbgdNt4CreateDevice: Returning rc = 0x%x (succcess)\n", rc));
+                    Log(("vgdrvNt4CreateDevice: Returning rc = 0x%x (succcess)\n", rc));
                     return rc;
                 }
 
@@ -127,12 +136,12 @@ NTSTATUS vbgdNt4CreateDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pDevObj, PUN
             IoDeleteSymbolicLink(&DosName);
         }
         else
-            Log(("VBoxGuest::vbgdNt4CreateDevice: IoCreateSymbolicLink failed with rc = %#x\n", rc));
+            Log(("vgdrvNt4CreateDevice: IoCreateSymbolicLink failed with rc = %#x\n", rc));
         IoDeleteDevice(pDeviceObject);
     }
     else
-        Log(("VBoxGuest::vbgdNt4CreateDevice: IoCreateDevice failed with rc = %#x\n", rc));
-    Log(("VBoxGuest::vbgdNt4CreateDevice: Returning rc = 0x%x\n", rc));
+        Log(("vgdrvNt4CreateDevice: IoCreateDevice failed with rc = %#x\n", rc));
+    Log(("vgdrvNt4CreateDevice: Returning rc = 0x%x\n", rc));
     return rc;
 }
 
@@ -145,9 +154,9 @@ NTSTATUS vbgdNt4CreateDevice(PDRIVER_OBJECT pDrvObj, PDEVICE_OBJECT pDevObj, PUN
  * @param   pulBusNumber    Where to return the bus number on success.
  * @param   pSlotNumber     Where to return the slot number on success.
  */
-static NTSTATUS vbgdNt4FindPciDevice(PULONG pulBusNumber, PPCI_SLOT_NUMBER pSlotNumber)
+static NTSTATUS vgdrvNt4FindPciDevice(PULONG pulBusNumber, PPCI_SLOT_NUMBER pSlotNumber)
 {
-    Log(("VBoxGuest::vbgdNt4FindPciDevice\n"));
+    Log(("vgdrvNt4FindPciDevice\n"));
 
     PCI_SLOT_NUMBER SlotNumber;
     SlotNumber.u.AsULONG = 0;
@@ -184,7 +193,7 @@ static NTSTATUS vbgdNt4FindPciDevice(PULONG pulBusNumber, PPCI_SLOT_NUMBER pSlot
                     continue;
 
                 /* Hooray, we've found it! */
-                Log(("VBoxGuest::vbgdNt4FindPciDevice: Device found!\n"));
+                Log(("vgdrvNt4FindPciDevice: Device found!\n"));
 
                 *pulBusNumber = ulBusNumber;
                 *pSlotNumber  = SlotNumber;

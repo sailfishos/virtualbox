@@ -1,11 +1,10 @@
 /* $Id: VBoxD3DIf.cpp $ */
-
 /** @file
  * VBoxVideo Display D3D User mode dll
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,25 +14,26 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
+
 #include "VBoxDispD3DCmn.h"
 
 /* DDI2D3D */
 
 D3DFORMAT vboxDDI2D3DFormat(D3DDDIFORMAT format)
 {
-    /* @todo: check they are all equal */
+    /** @todo check they are all equal */
     return (D3DFORMAT)format;
 }
 
 D3DMULTISAMPLE_TYPE vboxDDI2D3DMultiSampleType(D3DDDIMULTISAMPLE_TYPE enmType)
 {
-    /* @todo: check they are all equal */
+    /** @todo check they are all equal */
     return (D3DMULTISAMPLE_TYPE)enmType;
 }
 
 D3DPOOL vboxDDI2D3DPool(D3DDDI_POOL enmPool)
 {
-    /* @todo: check they are all equal */
+    /** @todo check they are all equal */
     switch (enmPool)
     {
     case D3DDDIPOOL_SYSTEMMEM:
@@ -41,7 +41,7 @@ D3DPOOL vboxDDI2D3DPool(D3DDDI_POOL enmPool)
     case D3DDDIPOOL_VIDEOMEMORY:
     case D3DDDIPOOL_LOCALVIDMEM:
     case D3DDDIPOOL_NONLOCALVIDMEM:
-        /* @todo: what would be proper here? */
+        /** @todo what would be proper here? */
         return D3DPOOL_DEFAULT;
     default:
         Assert(0);
@@ -51,7 +51,7 @@ D3DPOOL vboxDDI2D3DPool(D3DDDI_POOL enmPool)
 
 D3DRENDERSTATETYPE vboxDDI2D3DRenderStateType(D3DDDIRENDERSTATETYPE enmType)
 {
-    /* @todo: @fixme: not entirely correct, need to check */
+    /** @todo not entirely correct, need to check */
     return (D3DRENDERSTATETYPE)enmType;
 }
 
@@ -220,7 +220,7 @@ void VBoxD3DIfLockUnlockMemSynch(PVBOXWDDMDISP_ALLOCATION pAlloc, D3DLOCKED_RECT
 
     if (!pRect)
     {
-        if (pAlloc->SurfDesc.pitch == pLockInfo->Pitch)
+        if (pAlloc->SurfDesc.pitch == (UINT)pLockInfo->Pitch)
         {
             Assert(pAlloc->SurfDesc.cbSize);
             if (bToLockInfo)
@@ -281,7 +281,7 @@ void VBoxD3DIfLockUnlockMemSynch(PVBOXWDDMDISP_ALLOCATION pAlloc, D3DLOCKED_RECT
             srcPitch = (uint32_t)pLockInfo->Pitch;
         }
 
-        if (pRect->right - pRect->left == pAlloc->SurfDesc.width && srcPitch == dstPitch)
+        if (pRect->right - pRect->left == (LONG)pAlloc->SurfDesc.width && srcPitch == dstPitch)
         {
             uint32_t cbSize = vboxWddmCalcSize(pAlloc->SurfDesc.pitch, pRect->bottom - pRect->top, pAlloc->SurfDesc.format);
             memcpy(pvDst, pvSrc, cbSize);
@@ -290,7 +290,7 @@ void VBoxD3DIfLockUnlockMemSynch(PVBOXWDDMDISP_ALLOCATION pAlloc, D3DLOCKED_RECT
         {
             uint32_t pitch = RT_MIN(srcPitch, dstPitch);
             uint32_t cbCopyLine = vboxWddmCalcRowSize(pRect->left, pRect->right, pAlloc->SurfDesc.format);
-            Assert(pitch);
+            Assert(pitch); NOREF(pitch);
             uint32_t cRows = vboxWddmCalcNumRows(pRect->top, pRect->bottom, pAlloc->SurfDesc.format);
             for (UINT j = 0; j < cRows; ++j)
             {
@@ -430,7 +430,7 @@ HRESULT VBoxD3DIfCreateForRc(struct VBOXWDDMDISP_RESOURCE *pRc)
     if (VBOXWDDMDISP_IS_TEXTURE(pRc->RcDesc.fFlags))
     {
         PVBOXWDDMDISP_ALLOCATION pAllocation = &pRc->aAllocations[0];
-        IDirect3DBaseTexture9 *pD3DIfTex;
+        IDirect3DBaseTexture9 *pD3DIfTex = NULL; /* Shut up MSC. */
         HANDLE hSharedHandle = pAllocation->hSharedHandle;
         void **pavClientMem = NULL;
         VBOXDISP_D3DIFTYPE enmD3DIfType = VBOXDISP_D3DIFTYPE_UNDEFINED;
@@ -569,7 +569,7 @@ HRESULT VBoxD3DIfCreateForRc(struct VBOXWDDMDISP_RESOURCE *pRc)
         {
             PVBOXWDDMDISP_ALLOCATION pAllocation = &pRc->aAllocations[i];
             HANDLE hSharedHandle = pAllocation->hSharedHandle;
-            IDirect3DSurface9* pD3D9Surf;
+            IDirect3DSurface9 *pD3D9Surf = NULL; /* Shut up MSC. */
             if (
 #ifdef VBOX_WITH_CROGL
                     (pDevice->pAdapter->u32VBox3DCaps & CR_VBOX_CAP_TEX_PRESENT) ||
@@ -643,9 +643,10 @@ HRESULT VBoxD3DIfCreateForRc(struct VBOXWDDMDISP_RESOURCE *pRc)
                 pAllocation->hSharedHandle = hSharedHandle;
                 hr = S_OK;
                 continue;
-
+#if 0 /* unreachable */
                 /* fail branch */
                 pD3D9Surf->Release();
+#endif
             }
 
             for (UINT j = 0; j < i; ++j)
@@ -675,7 +676,7 @@ HRESULT VBoxD3DIfCreateForRc(struct VBOXWDDMDISP_RESOURCE *pRc)
                     vboxDDI2D3DFormat(pRc->RcDesc.enmFormat),
                     vboxDDI2D3DMultiSampleType(pRc->RcDesc.enmMultisampleType),
                     pRc->RcDesc.MultisampleQuality,
-                    TRUE /* @todo: BOOL Discard */,
+                    TRUE /** @todo BOOL Discard */,
                     &pD3D9Surf,
                     NULL /*HANDLE* pSharedHandle*/);
             Assert(hr == S_OK);
@@ -711,9 +712,7 @@ HRESULT VBoxD3DIfCreateForRc(struct VBOXWDDMDISP_RESOURCE *pRc)
             IDirect3DVertexBuffer9  *pD3D9VBuf;
             hr = pDevice9If->CreateVertexBuffer(pAllocation->SurfDesc.width,
                     vboxDDI2D3DUsage(pRc->RcDesc.fFlags)
-#ifdef VBOX_WITH_NEW_WINE
                     & (~D3DUSAGE_DYNAMIC) /* <- avoid using dynamic to ensure wine does not switch do user buffer */
-#endif
                     ,
                     pRc->RcDesc.Fvf,
                     vboxDDI2D3DPool(pRc->RcDesc.enmPool),
@@ -833,7 +832,8 @@ HRESULT VBoxD3DIfDeviceCreateDummy(PVBOXWDDMDISP_DEVICE pDevice)
 #else
     Params.pHgsmi = NULL;
 #endif
-    DWORD fFlags = D3DCREATE_HARDWARE_VERTEXPROCESSING;
+    DWORD fFlags =   D3DCREATE_HARDWARE_VERTEXPROCESSING
+                   | D3DCREATE_FPU_PRESERVE; /* Do not allow Wine to mess with FPU control word. */
     PVBOXWDDMDISP_ADAPTER pAdapter = pDevice->pAdapter;
     IDirect3DDevice9 * pDevice9If = NULL;
 
@@ -955,7 +955,7 @@ IUnknown* vboxD3DIfCreateSharedPrimary(PVBOXWDDMDISP_ALLOCATION pAlloc)
                     }
                 }
 
-                pAlloc->hSharedHandle = (HANDLE)usedHostId;
+                pAlloc->hSharedHandle = (HANDLE)(uintptr_t)usedHostId;
 
                 hr = VBoxD3DIfCreateForRc(pRc);
                 if (!SUCCEEDED(hr))

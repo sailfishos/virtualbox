@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2013 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,12 +13,21 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/usblib.h>
 #include <VBox/err.h>
 #include <VBox/log.h>
@@ -30,22 +39,23 @@
 #include <mach/mach_port.h>
 #include <IOKit/IOKitLib.h>
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The IOClass key of the service (see VBoxUSB.cpp / Info.plist). */
 #define IOCLASS_NAME    "org_virtualbox_VBoxUSB"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Reference counter. */
 static uint32_t volatile    g_cUsers = 0;
 /** The IOMasterPort. */
 static mach_port_t          g_MasterPort = 0;
 /** The current service connection. */
-static io_connect_t         g_Connection = NULL;
+static io_connect_t         g_Connection = 0;
 
 
 
@@ -101,7 +111,7 @@ USBLIB_DECL(int) USBLibInit(void)
      * Open the service.
      * This will cause the user client class in VBoxUSB.cpp to be instantiated.
      */
-    kr = IOServiceOpen(ServiceObject, mach_task_self(), 0, &g_Connection);
+    kr = IOServiceOpen(ServiceObject, mach_task_self(), VBOXUSB_DARWIN_IOSERVICE_COOKIE, &g_Connection);
     IOObjectRelease(ServiceObject);
     if (kr != kIOReturnSuccess)
     {
@@ -130,7 +140,7 @@ USBLIB_DECL(int) USBLibTerm(void)
         LogRel(("USBLib: Warning: IOServiceClose(%p) returned %#x\n", g_Connection, kr));
         AssertMsgFailed(("%#x\n", kr));
     }
-    g_Connection = NULL;
+    g_Connection = 0;
 
     return VINF_SUCCESS;
 }

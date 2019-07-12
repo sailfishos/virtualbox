@@ -5,28 +5,36 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
- * This file is part of VirtualBox Open Source Edition (OSE), as
- * available from http://www.virtualbox.org. This file is free software;
- * you can redistribute it and/or modify it under the terms of the GNU
- * General Public License (GPL) as published by the Free Software
- * Foundation, in version 2 as it comes in the "COPYING" file of the
- * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
- * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <VBox/VBoxVideoGuest.h>
-#include <VBox/VBoxVideo.h>
-#include <VBox/VBoxGuest.h>
-#include <VBox/Hardware/VBoxVideoVBE.h>
-#include <VBox/VMMDev.h>
-
-#include <iprt/asm.h>
-#include <iprt/log.h>
+#include <VBoxVideoGuest.h>
+#include <VBoxVideoVBE.h>
+#include <HGSMIChannels.h>
 
 #ifndef VBOX_GUESTR3XF86MOD
-# include <string.h>
+# include <VBoxVideoIPRT.h>
 #endif
 
 /**
@@ -36,12 +44,12 @@
  * @returns the right count on success or 1 on failure.
  * @param  pCtx  the context containing the heap to use
  */
-RTDECL(uint32_t) VBoxHGSMIGetMonitorCount(PHGSMIGUESTCOMMANDCONTEXT pCtx)
+DECLHIDDEN(uint32_t) VBoxHGSMIGetMonitorCount(PHGSMIGUESTCOMMANDCONTEXT pCtx)
 {
     /* Query the configured number of displays. */
     uint32_t cDisplays = 0;
     VBoxQueryConfHGSMI(pCtx, VBOX_VBVA_CONF32_MONITOR_COUNT, &cDisplays);
-    LogFunc(("cDisplays = %d\n", cDisplays));
+    // LogFunc(("cDisplays = %d\n", cDisplays));
     if (cDisplays == 0 || cDisplays > VBOX_VIDEO_MAX_SCREENS)
         /* Host reported some bad value. Continue in the 1 screen mode. */
         cDisplays = 1;
@@ -54,10 +62,10 @@ RTDECL(uint32_t) VBoxHGSMIGetMonitorCount(PHGSMIGUESTCOMMANDCONTEXT pCtx)
  *
  * @returns the size
  */
-RTDECL(uint32_t) VBoxVideoGetVRAMSize(void)
+DECLHIDDEN(uint32_t) VBoxVideoGetVRAMSize(void)
 {
     /** @note A 32bit read on this port returns the VRAM size. */
-    return VBoxVideoCmnPortReadUlong(VBE_DISPI_IOPORT_DATA);
+    return VBVO_PORT_READ_U32(VBE_DISPI_IOPORT_DATA);
 }
 
 
@@ -67,12 +75,12 @@ RTDECL(uint32_t) VBoxVideoGetVRAMSize(void)
  *
  * @returns true if any width is allowed, false otherwise.
  */
-RTDECL(bool) VBoxVideoAnyWidthAllowed(void)
+DECLHIDDEN(bool) VBoxVideoAnyWidthAllowed(void)
 {
     unsigned DispiId;
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ID);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_DATA, VBE_DISPI_ID_ANYX);
-    DispiId = VBoxVideoCmnPortReadUshort(VBE_DISPI_IOPORT_DATA);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ID);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_DATA, VBE_DISPI_ID_ANYX);
+    DispiId = VBVO_PORT_READ_U16(VBE_DISPI_IOPORT_DATA);
     return (DispiId == VBE_DISPI_ID_ANYX);
 }
 
@@ -93,22 +101,22 @@ RTDECL(bool) VBoxVideoAnyWidthAllowed(void)
  *                   for all screens
  * @param  pvData    context data for @a pfnFill
  */
-RTDECL(int) VBoxHGSMISendViewInfo(PHGSMIGUESTCOMMANDCONTEXT pCtx,
-                                  uint32_t u32Count,
-                                  PFNHGSMIFILLVIEWINFO pfnFill,
-                                  void *pvData)
+DECLHIDDEN(int) VBoxHGSMISendViewInfo(PHGSMIGUESTCOMMANDCONTEXT pCtx,
+                                      uint32_t u32Count,
+                                      PFNHGSMIFILLVIEWINFO pfnFill,
+                                      void *pvData)
 {
     int rc;
     /* Issue the screen info command. */
-    void *p = VBoxHGSMIBufferAlloc(pCtx, sizeof(VBVAINFOVIEW) * u32Count,
-                                   HGSMI_CH_VBVA, VBVA_INFO_VIEW);
-    if (p)
+    VBVAINFOVIEW RT_UNTRUSTED_VOLATILE_HOST *pInfo =
+        (VBVAINFOVIEW RT_UNTRUSTED_VOLATILE_HOST *)VBoxHGSMIBufferAlloc(pCtx, sizeof(VBVAINFOVIEW) * u32Count,
+                                                                        HGSMI_CH_VBVA, VBVA_INFO_VIEW);
+    if (pInfo)
     {
-        VBVAINFOVIEW *pInfo = (VBVAINFOVIEW *)p;
-        rc = pfnFill(pvData, pInfo, u32Count);
+        rc = pfnFill(pvData, (VBVAINFOVIEW *)pInfo /* lazy bird */, u32Count);
         if (RT_SUCCESS(rc))
-            VBoxHGSMIBufferSubmit (pCtx, p);
-        VBoxHGSMIBufferFree(pCtx, p);
+            VBoxHGSMIBufferSubmit(pCtx, pInfo);
+        VBoxHGSMIBufferFree(pCtx, pInfo);
     }
     else
         rc = VERR_NO_MEMORY;
@@ -130,33 +138,28 @@ RTDECL(int) VBoxHGSMISendViewInfo(PHGSMIGUESTCOMMANDCONTEXT pCtx,
  * @param  cx          the horizontal panning offset
  * @param  cy          the vertical panning offset
  */
-RTDECL(void) VBoxVideoSetModeRegisters(uint16_t cWidth, uint16_t cHeight,
-                                       uint16_t cVirtWidth, uint16_t cBPP,
-                                       uint16_t fFlags, uint16_t cx,
-                                       uint16_t cy)
+DECLHIDDEN(void) VBoxVideoSetModeRegisters(uint16_t cWidth, uint16_t cHeight,
+                                           uint16_t cVirtWidth, uint16_t cBPP,
+                                           uint16_t fFlags, uint16_t cx,
+                                           uint16_t cy)
 {
     /* set the mode characteristics */
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_XRES);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_DATA, cWidth);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_YRES);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_DATA, cHeight);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                VBE_DISPI_INDEX_VIRT_WIDTH);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_DATA, cVirtWidth);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_BPP);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_DATA, cBPP);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_XRES);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_DATA, cWidth);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_YRES);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_DATA, cHeight);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_VIRT_WIDTH);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_DATA, cVirtWidth);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_BPP);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_DATA, cBPP);
     /* enable the mode */
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                VBE_DISPI_INDEX_ENABLE);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_DATA,
-                                fFlags | VBE_DISPI_ENABLED);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ENABLE);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_DATA, fFlags | VBE_DISPI_ENABLED);
     /* Panning registers */
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                VBE_DISPI_INDEX_X_OFFSET);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_DATA, cx);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                VBE_DISPI_INDEX_Y_OFFSET);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_DATA, cy);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_X_OFFSET);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_DATA, cx);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_Y_OFFSET);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_DATA, cy);
     /** @todo read from the port to see if the mode switch was successful */
 }
 
@@ -174,38 +177,33 @@ RTDECL(void) VBoxVideoSetModeRegisters(uint16_t cWidth, uint16_t cHeight,
  * @param  pcBPP        where to store the colour depth of the mode
  * @param  pfFlags      where to store the flags for the mode
  */
-RTDECL(bool) VBoxVideoGetModeRegisters(uint16_t *pcWidth, uint16_t *pcHeight,
-                                       uint16_t *pcVirtWidth, uint16_t *pcBPP,
-                                       uint16_t *pfFlags)
+DECLHIDDEN(bool) VBoxVideoGetModeRegisters(uint16_t *pcWidth, uint16_t *pcHeight,
+                                           uint16_t *pcVirtWidth, uint16_t *pcBPP,
+                                           uint16_t *pfFlags)
 {
     uint16_t fFlags;
 
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                VBE_DISPI_INDEX_ENABLE);
-    fFlags = VBoxVideoCmnPortReadUshort(VBE_DISPI_IOPORT_DATA);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ENABLE);
+    fFlags = VBVO_PORT_READ_U16(VBE_DISPI_IOPORT_DATA);
     if (pcWidth)
     {
-        VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                    VBE_DISPI_INDEX_XRES);
-        *pcWidth = VBoxVideoCmnPortReadUshort(VBE_DISPI_IOPORT_DATA);
+        VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_XRES);
+        *pcWidth = VBVO_PORT_READ_U16(VBE_DISPI_IOPORT_DATA);
     }
     if (pcHeight)
     {
-        VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                    VBE_DISPI_INDEX_YRES);
-        *pcHeight = VBoxVideoCmnPortReadUshort(VBE_DISPI_IOPORT_DATA);
+        VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_YRES);
+        *pcHeight = VBVO_PORT_READ_U16(VBE_DISPI_IOPORT_DATA);
     }
     if (pcVirtWidth)
     {
-        VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                    VBE_DISPI_INDEX_VIRT_WIDTH);
-        *pcVirtWidth = VBoxVideoCmnPortReadUshort(VBE_DISPI_IOPORT_DATA);
+        VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_VIRT_WIDTH);
+        *pcVirtWidth = VBVO_PORT_READ_U16(VBE_DISPI_IOPORT_DATA);
     }
     if (pcBPP)
     {
-        VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                    VBE_DISPI_INDEX_BPP);
-        *pcBPP = VBoxVideoCmnPortReadUshort(VBE_DISPI_IOPORT_DATA);
+        VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_BPP);
+        *pcBPP = VBVO_PORT_READ_U16(VBE_DISPI_IOPORT_DATA);
     }
     if (pfFlags)
         *pfFlags = fFlags;
@@ -216,11 +214,10 @@ RTDECL(bool) VBoxVideoGetModeRegisters(uint16_t *pcWidth, uint16_t *pcHeight,
 /**
  * Disable our extended graphics mode and go back to VGA mode.
  */
-RTDECL(void) VBoxVideoDisableVBE(void)
+DECLHIDDEN(void) VBoxVideoDisableVBE(void)
 {
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_INDEX,
-                                VBE_DISPI_INDEX_ENABLE);
-    VBoxVideoCmnPortWriteUshort(VBE_DISPI_IOPORT_DATA, 0);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ENABLE);
+    VBVO_PORT_WRITE_U16(VBE_DISPI_IOPORT_DATA, 0);
 }
 
 
@@ -228,6 +225,7 @@ RTDECL(void) VBoxVideoDisableVBE(void)
  * Set a video mode via an HGSMI request.  The views must have been
  * initialised first using @a VBoxHGSMISendViewInfo and if the mode is being
  * set on the first display then it must be set first using registers.
+ * @param  pCtx      The context containing the heap to use.
  * @param  cDisplay  the screen number
  * @param  cOriginX  the horizontal displacement relative to the first screen
  * @param  cOriginY  the vertical displacement relative to the first screen
@@ -238,31 +236,25 @@ RTDECL(void) VBoxVideoDisableVBE(void)
  * @param  cWidth    the mode width
  * @param  cHeight   the mode height
  * @param  cBPP      the colour depth of the mode
+ * @param  fFlags    flags
  */
-RTDECL(void) VBoxHGSMIProcessDisplayInfo(PHGSMIGUESTCOMMANDCONTEXT pCtx,
-                                         uint32_t cDisplay,
-                                         int32_t  cOriginX,
-                                         int32_t  cOriginY,
-                                         uint32_t offStart,
-                                         uint32_t cbPitch,
-                                         uint32_t cWidth,
-                                         uint32_t cHeight,
-                                         uint16_t cBPP,
-                                         uint16_t fFlags)
+DECLHIDDEN(void) VBoxHGSMIProcessDisplayInfo(PHGSMIGUESTCOMMANDCONTEXT pCtx,
+                                             uint32_t cDisplay,
+                                             int32_t  cOriginX,
+                                             int32_t  cOriginY,
+                                             uint32_t offStart,
+                                             uint32_t cbPitch,
+                                             uint32_t cWidth,
+                                             uint32_t cHeight,
+                                             uint16_t cBPP,
+                                             uint16_t fFlags)
 {
     /* Issue the screen info command. */
-    void *p = VBoxHGSMIBufferAlloc(pCtx,
-                                   sizeof (VBVAINFOSCREEN),
-                                   HGSMI_CH_VBVA,
-                                   VBVA_INFO_SCREEN);
-    if (!p)
+    VBVAINFOSCREEN RT_UNTRUSTED_VOLATILE_HOST *pScreen =
+        (VBVAINFOSCREEN RT_UNTRUSTED_VOLATILE_HOST *)VBoxHGSMIBufferAlloc(pCtx, sizeof(VBVAINFOSCREEN),
+                                                                          HGSMI_CH_VBVA, VBVA_INFO_SCREEN);
+    if (pScreen != NULL)
     {
-        LogFunc(("HGSMIHeapAlloc failed\n"));
-    }
-    else
-    {
-        VBVAINFOSCREEN *pScreen = (VBVAINFOSCREEN *)p;
-
         pScreen->u32ViewIndex    = cDisplay;
         pScreen->i32OriginX      = cOriginX;
         pScreen->i32OriginY      = cOriginY;
@@ -273,9 +265,13 @@ RTDECL(void) VBoxHGSMIProcessDisplayInfo(PHGSMIGUESTCOMMANDCONTEXT pCtx,
         pScreen->u16BitsPerPixel = cBPP;
         pScreen->u16Flags        = fFlags;
 
-        VBoxHGSMIBufferSubmit(pCtx, p);
+        VBoxHGSMIBufferSubmit(pCtx, pScreen);
 
-        VBoxHGSMIBufferFree(pCtx, p);
+        VBoxHGSMIBufferFree(pCtx, pScreen);
+    }
+    else
+    {
+        // LogFunc(("HGSMIHeapAlloc failed\n"));
     }
 }
 
@@ -283,7 +279,7 @@ RTDECL(void) VBoxHGSMIProcessDisplayInfo(PHGSMIGUESTCOMMANDCONTEXT pCtx,
 /** Report the rectangle relative to which absolute pointer events should be
  *  expressed.  This information remains valid until the next VBVA resize event
  *  for any screen, at which time it is reset to the bounding rectangle of all
- *  virtual screens. 
+ *  virtual screens.
  * @param  pCtx      The context containing the heap to use.
  * @param  cOriginX  Upper left X co-ordinate relative to the first screen.
  * @param  cOriginY  Upper left Y co-ordinate relative to the first screen.
@@ -292,13 +288,13 @@ RTDECL(void) VBoxHGSMIProcessDisplayInfo(PHGSMIGUESTCOMMANDCONTEXT pCtx,
  * @returns  iprt status code.
  * @returns  VERR_NO_MEMORY      HGSMI heap allocation failed.
  */
-RTDECL(int)      VBoxHGSMIUpdateInputMapping(PHGSMIGUESTCOMMANDCONTEXT pCtx, int32_t  cOriginX, int32_t  cOriginY,
-                                             uint32_t cWidth, uint32_t cHeight)
+DECLHIDDEN(int)      VBoxHGSMIUpdateInputMapping(PHGSMIGUESTCOMMANDCONTEXT pCtx, int32_t  cOriginX, int32_t  cOriginY,
+                                                 uint32_t cWidth, uint32_t cHeight)
 {
-    int rc = VINF_SUCCESS;
+    int rc;
     VBVAREPORTINPUTMAPPING *p;
-    Log(("%s: cOriginX=%u, cOriginY=%u, cWidth=%u, cHeight=%u\n", __PRETTY_FUNCTION__, (unsigned)cOriginX, (unsigned)cOriginX,
-         (unsigned)cWidth, (unsigned)cHeight));
+    // Log(("%s: cOriginX=%d, cOriginY=%d, cWidth=%u, cHeight=%u\n", __PRETTY_FUNCTION__, (int)cOriginX, (int)cOriginX,
+    //      (unsigned)cWidth, (unsigned)cHeight));
 
     /* Allocate the IO buffer. */
     p = (VBVAREPORTINPUTMAPPING *)VBoxHGSMIBufferAlloc(pCtx, sizeof(VBVAREPORTINPUTMAPPING), HGSMI_CH_VBVA,
@@ -316,7 +312,7 @@ RTDECL(int)      VBoxHGSMIUpdateInputMapping(PHGSMIGUESTCOMMANDCONTEXT pCtx, int
     }
     else
         rc = VERR_NO_MEMORY;
-    LogFunc(("rc = %d\n", rc));
+    // LogFunc(("rc = %d\n", rc));
     return rc;
 }
 
@@ -325,39 +321,56 @@ RTDECL(int)      VBoxHGSMIUpdateInputMapping(PHGSMIGUESTCOMMANDCONTEXT pCtx, int
  * Get most recent video mode hints.
  * @param  pCtx      the context containing the heap to use
  * @param  cScreens  the number of screens to query hints for, starting at 0.
- * @param  pHints    array of VBVAMODEHINT structures for receiving the hints.
+ * @param  paHints   array of VBVAMODEHINT structures for receiving the hints.
  * @returns  iprt status code
  * @returns  VERR_NO_MEMORY      HGSMI heap allocation failed.
  * @returns  VERR_NOT_SUPPORTED  Host does not support this command.
  */
-RTDECL(int) VBoxHGSMIGetModeHints(PHGSMIGUESTCOMMANDCONTEXT pCtx,
-                                  unsigned cScreens, VBVAMODEHINT *paHints)
+DECLHIDDEN(int) VBoxHGSMIGetModeHints(PHGSMIGUESTCOMMANDCONTEXT pCtx,
+                                      unsigned cScreens, VBVAMODEHINT *paHints)
 {
     int rc;
-    AssertPtrReturn(paHints, VERR_INVALID_POINTER);
-    void *p = VBoxHGSMIBufferAlloc(pCtx,   sizeof(VBVAQUERYMODEHINTS)
-                                         + cScreens * sizeof(VBVAMODEHINT),
-                                   HGSMI_CH_VBVA, VBVA_QUERY_MODE_HINTS);
-    if (!p)
-    {
-        LogFunc(("HGSMIHeapAlloc failed\n"));
-        return VERR_NO_MEMORY;
-    }
-    else
-    {
-        VBVAQUERYMODEHINTS *pQuery   = (VBVAQUERYMODEHINTS *)p;
+    VBVAQUERYMODEHINTS RT_UNTRUSTED_VOLATILE_HOST *pQuery;
 
+    AssertPtrReturn(paHints, VERR_INVALID_POINTER);
+    pQuery = (VBVAQUERYMODEHINTS RT_UNTRUSTED_VOLATILE_HOST *)VBoxHGSMIBufferAlloc(pCtx,
+                                                                                      sizeof(VBVAQUERYMODEHINTS)
+                                                                                   +  cScreens * sizeof(VBVAMODEHINT),
+                                                                                   HGSMI_CH_VBVA, VBVA_QUERY_MODE_HINTS);
+    if (pQuery != NULL)
+    {
         pQuery->cHintsQueried        = cScreens;
         pQuery->cbHintStructureGuest = sizeof(VBVAMODEHINT);
         pQuery->rc                   = VERR_NOT_SUPPORTED;
 
-        VBoxHGSMIBufferSubmit(pCtx, p);
+        VBoxHGSMIBufferSubmit(pCtx, pQuery);
         rc = pQuery->rc;
         if (RT_SUCCESS(rc))
-            memcpy(paHints, ((uint8_t *)p) + sizeof(VBVAQUERYMODEHINTS),
-                   cScreens * sizeof(VBVAMODEHINT));
+            memcpy(paHints, (void *)(pQuery + 1), cScreens * sizeof(VBVAMODEHINT));
 
-        VBoxHGSMIBufferFree(pCtx, p);
+        VBoxHGSMIBufferFree(pCtx, pQuery);
+    }
+    else
+    {
+        // LogFunc(("HGSMIHeapAlloc failed\n"));
+        rc = VERR_NO_MEMORY;
     }
     return rc;
+}
+
+
+/**
+ * Query the supported flags in VBVAINFOSCREEN::u16Flags.
+ *
+ * @returns The mask of VBVA_SCREEN_F_* flags or 0 if host does not support the request.
+ * @param  pCtx  the context containing the heap to use
+ */
+DECLHIDDEN(uint16_t) VBoxHGSMIGetScreenFlags(PHGSMIGUESTCOMMANDCONTEXT pCtx)
+{
+    uint32_t u32Flags = 0;
+    int rc = VBoxQueryConfHGSMI(pCtx, VBOX_VBVA_CONF32_SCREEN_FLAGS, &u32Flags);
+    // LogFunc(("u32Flags = 0x%x rc %Rrc\n", u32Flags, rc));
+    if (RT_FAILURE(rc) || u32Flags > UINT16_MAX)
+        u32Flags = 0;
+    return (uint16_t)u32Flags;
 }

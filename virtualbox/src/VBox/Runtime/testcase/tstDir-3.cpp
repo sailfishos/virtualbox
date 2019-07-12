@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,14 +35,14 @@ static int tstDirOpenFiltered(const char *pszFilter, unsigned *pcFilesMatch, int
 {
     int rcRet = 0;
     unsigned cFilesMatch = 0;
-    PRTDIR pDir;
-    int rc = RTDirOpenFiltered(&pDir, pszFilter, RTDIRFILTER_WINNT, 0);
+    RTDIR hDir;
+    int rc = RTDirOpenFiltered(&hDir, pszFilter, RTDIRFILTER_WINNT, 0 /*fFlags*/);
     if (RT_SUCCESS(rc))
     {
         for (;;)
         {
             RTDIRENTRY DirEntry;
-            rc = RTDirRead(pDir, &DirEntry, NULL);
+            rc = RTDirRead(hDir, &DirEntry, NULL);
             if (RT_FAILURE(rc))
                 break;
             cFilesMatch++;
@@ -55,7 +55,7 @@ static int tstDirOpenFiltered(const char *pszFilter, unsigned *pcFilesMatch, int
         }
 
         /* close up */
-        rc = RTDirClose(pDir);
+        rc = RTDirClose(hDir);
         if (RT_FAILURE(rc))
         {
             RTPrintf("tstDir-3: Failed to close dir '%s'! rc=%Rrc\n", pszFilter, rc);
@@ -94,6 +94,7 @@ int main(int argc, char **argv)
     if (!pszFilter2)
     {
         RTPrintf("tstDir-3: cannot create match filter!\n");
+        RTStrFree(pszFilter1);
         return 1;
     }
 
@@ -113,7 +114,10 @@ int main(int argc, char **argv)
     if (!cMatch)
         RTPrintf("tstDir-3: filter '%s' gave wrong result count! cMatch=%u\n", pszFilter2, cMatch);
 
+    RTStrFree(pszFilter2);
+    RTStrFree(pszFilter1);
+
     if (!rcRet)
-    RTPrintf("tstDir-3: OK\n");
+        RTPrintf("tstDir-3: OK\n");
     return rcRet;
 }

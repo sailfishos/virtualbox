@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
-  "http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+  "http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd">
 <appendix id="ThirdParty">
   <title>Third-party materials and licenses</title>
 
@@ -267,7 +267,7 @@
           the license in <xref linkend="licNetBsd" xrefstyle="template: %n" />.
         </para>
       </listitem>
-      
+
       <listitem>
         <para>VirtualBox contains portions of liblightdm-gobject which is governed by the
         license in <xref linkend="licLGPL" xrefstyle="template: %n" /> and</para>
@@ -343,6 +343,18 @@
           and </para>
         <para>
           Copyright (c) 2010, The WebM Project authors. All rights reserved.
+        </para>
+      </listitem>
+
+      <listitem>
+        <para>VirtualBox may contain code from libopus ("Opus") which
+          is governed by the license in <xref linkend="licOpus" xrefstyle="template: %n" />
+          and </para>
+        <para>
+          Copyright 2001-2011 Xiph.Org, Skype Limited, Octasic,
+                              Jean-Marc Valin, Timothy B. Terriberry,
+                              CSIRO, Gregory Maxwell, Mark Borgerding,
+                              Erik de Castro Lopo
         </para>
       </listitem>
 
@@ -3035,11 +3047,8 @@ jloup@gzip.org          madler@alumni.caltech.edu</screen>
       <para>
         Copyright 1996-2002, 2006 by David Turner, Robert Wilhelm, and Werner Lemberg
       </para>
-      <sect4>
+      <sect3>
         <title>Introduction</title>
-      </sect4>
-      <sect4>
-        <title></title>
         <para>
           The FreeType  Project is distributed in  several archive packages;
           some of them may contain, in addition to the FreeType font engine,
@@ -3099,8 +3108,8 @@ jloup@gzip.org          madler@alumni.caltech.edu</screen>
           Please replace &lt;year&gt; with the value from the FreeType version you
           actually use.
         </para>
-      </sect4>
-      <sect4>
+      </sect3>
+      <sect3>
         <title>Legal Terms</title>
         <sect4>
           <title>0. Definitions</title>
@@ -3156,19 +3165,23 @@ jloup@gzip.org          madler@alumni.caltech.edu</screen>
           </para>
           <itemizedlist>
             <listitem>
+              <para>
               Redistribution of  source code  must retain this  license file
               (`FTL.TXT') unaltered; any  additions, deletions or changes to
               the original  files must be clearly  indicated in accompanying
               documentation.   The  copyright   notices  of  the  unaltered,
               original  files must  be  preserved in  all  copies of  source
               files.
+              </para>
             </listitem>
             <listitem>
+              <para>
               Redistribution in binary form must provide a  disclaimer  that
               states  that  the software is based in part of the work of the
               FreeType Team,  in  the  distribution  documentation.  We also
               encourage you to put an URL to the FreeType web page  in  your
               documentation, though this isn't mandatory.
+              </para>
             </listitem>
           </itemizedlist>
           <para>
@@ -3235,7 +3248,7 @@ jloup@gzip.org          madler@alumni.caltech.edu</screen>
             http://www.freetype.org
           </para>
         </sect4>
-      </sect4>
+      </sect3>
     </sect2>
     <sect2 id="licVPX">
       <title>VPX License</title>
@@ -3283,6 +3296,68 @@ jloup@gzip.org          madler@alumni.caltech.edu</screen>
         THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
         (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
         OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+      </para>
+    </sect2>
+    <sect2 id="licOpus">
+      <title>Opus License</title>
+      <para>
+        Copyright 2001-2011 Xiph.Org, Skype Limited, Octasic,
+                            Jean-Marc Valin, Timothy B. Terriberry,
+                            CSIRO, Gregory Maxwell, Mark Borgerding,
+                            Erik de Castro Lopo
+      </para>
+      <para>
+        Redistribution and use in source and binary forms, with or without
+        modification, are permitted provided that the following conditions are
+        met:
+      </para>
+      <itemizedlist>
+        <listitem>
+          <para>
+            Redistributions of source code must retain the above copyright
+            notice, this list of conditions and the following disclaimer.
+          </para>
+        </listitem>
+        <listitem>
+          <para>
+            Redistributions in binary form must reproduce the above copyright
+            notice, this list of conditions and the following disclaimer in the
+            documentation and/or other materials provided with the distribution.
+          </para>
+        </listitem>
+        <listitem>
+          <para>
+            Neither the name of Internet Society, IETF or IETF Trust, nor the
+            names of specific contributors, may be used to endorse or promote
+            products derived from this software without specific prior written
+            permission.
+          </para>
+        </listitem>
+      </itemizedlist>
+      <para>
+        THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+        ''AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+        LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+        A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
+        OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+        EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+        PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+        PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+        LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+        NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+        SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+        Opus is subject to the royalty-free patent licenses which are
+        specified at:
+
+        Xiph.Org Foundation:
+        https://datatracker.ietf.org/ipr/1524/
+
+        Microsoft Corporation:
+        https://datatracker.ietf.org/ipr/1914/
+
+        Broadcom Corporation:
+        https://datatracker.ietf.org/ipr/1526/
       </para>
     </sect2>
   </sect1>

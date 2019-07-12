@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,13 +25,15 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/zip.h>
 
 #include <iprt/buildconfig.h>
+#include <iprt/dbg.h>
 #include <iprt/file.h>
+#include <iprt/formats/mach-o.h>
 #include <iprt/getopt.h>
 #include <iprt/initterm.h>
 #include <iprt/ldr.h>
@@ -40,15 +42,14 @@
 #include <iprt/path.h>
 #include <iprt/stream.h>
 #include <iprt/string.h>
+#include <iprt/uuid.h>
 #include <iprt/vfs.h>
 #include <iprt/zip.h>
-#include <iprt/uuid.h>
-#include <iprt/formats/mach-o.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Cache file type.
  */
@@ -71,6 +72,7 @@ typedef enum RTDBGSYMCACHEFILETYPE
 typedef struct RTDBGSYMCACHEADDCFG
 {
     bool        fRecursive;
+    bool        fOverwriteOnConflict;
     const char *pszFilter;
     const char *pszCache;
 } RTDBGSYMCACHEADDCFG;
@@ -78,9 +80,9 @@ typedef struct RTDBGSYMCACHEADDCFG
 typedef RTDBGSYMCACHEADDCFG const *PCRTDBGSYMCACHEADDCFG;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Bundle suffixes. */
 static const char * const g_apszBundleSuffixes[] =
 {
@@ -141,6 +143,12 @@ static const char * const g_apszDSymBundleSuffixes[] =
 };
 
 
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
+static int rtDbgSymCacheAddDirWorker(char *pszPath, size_t cchPath, PRTDIRENTRYEX pDirEntry, PCRTDBGSYMCACHEADDCFG pCfg);
+
+
 
 /**
  * Display the version of the cache program.
@@ -164,7 +172,7 @@ static RTEXITCODE rtDbgSymCacheVersion(void)
 static RTEXITCODE rtDbgSymCacheUsage(const char *pszArg0, const char *pszCommand)
 {
     if (!pszCommand || !strcmp(pszCommand, "add"))
-        RTPrintf("Usage: %s add [-rn] <cache-root-dir> <file1> [fileN..]\n", pszArg0);
+        RTPrintf("Usage: %s add [-Rno] <cache-root-dir> <file1> [fileN..]\n", pszArg0);
     return RTEXITCODE_SUCCESS;
 }
 
@@ -211,14 +219,13 @@ static int rtDbgSymCacheAddCreateUuidMapping(const char *pszCacheFile, PRTUUID p
     /*
      * Create the directories in the path.
      */
-    char chSaved = RTPATH_SLASH;
     for (unsigned i = 0; i < 6; i++, cch += 5)
     {
         Assert(szMapPath[cch] == '-');
         szMapPath[cch] = '\0';
         if (!RTDirExists(szMapPath))
         {
-            rc = RTDirCreate(szMapPath, 0755, 0/*fFlags*/);
+            rc = RTDirCreate(szMapPath, 0755, RTDIRCREATE_FLAGS_NOT_CONTENT_INDEXED_NOT_CRITICAL);
             if (RT_FAILURE(rc))
                 return RTMsgErrorRc(rc, "RTDirCreate failed on '%s' (UUID map path): %Rrc", szMapPath, rc);
         }
@@ -321,7 +328,7 @@ static int rtDbgSymCacheAddOneFile(const char *pszSrcPath, const char *pszDstNam
 
     if (!RTDirExists(szDstPath))
     {
-        rc = RTDirCreate(szDstPath, 0755, 0 /*fFlags*/);
+        rc = RTDirCreate(szDstPath, 0755, RTDIRCREATE_FLAGS_NOT_CONTENT_INDEXED_NOT_CRITICAL);
         if (RT_FAILURE(rc))
             return RTMsgErrorRc(rc, "Error creating '%s': %Rrc", szDstPath, rc);
     }
@@ -332,7 +339,7 @@ static int rtDbgSymCacheAddOneFile(const char *pszSrcPath, const char *pszDstNam
 
     if (!RTDirExists(szDstPath))
     {
-        rc = RTDirCreate(szDstPath, 0755, 0 /*fFlags*/);
+        rc = RTDirCreate(szDstPath, 0755, RTDIRCREATE_FLAGS_NOT_CONTENT_INDEXED_NOT_CRITICAL);
         if (RT_FAILURE(rc))
             return RTMsgErrorRc(rc, "Error creating '%s': %Rrc", szDstPath, rc);
     }
@@ -364,7 +371,8 @@ static int rtDbgSymCacheAddOneFile(const char *pszSrcPath, const char *pszDstNam
             RTMsgInfo("Cache conflict with existing entry '%s' when inserting '%s'.", szDstPath, pszSrcPath);
         else
             RTMsgInfo("Error comparing '%s' with '%s': %Rrc", pszSrcPath, szDstPath, rc);
-        return rc;
+        if (!pCfg->fOverwriteOnConflict)
+            return rc;
     }
 
     /*
@@ -566,6 +574,7 @@ static int rtDbgSymCacheAddImageFile(const char *pszPath, const char *pszExtraSu
 static int rtDbgSymCacheAddDebugMachO(const char *pszPath, PCRTDBGSYMCACHEADDCFG pCfg)
 {
     /* This shouldn't happen, figure out what to do if it does. */
+    RT_NOREF_PV(pCfg);
     return RTMsgErrorRc(VERR_NOT_IMPLEMENTED,
                         "'%s' is an OS X image file, did you point me to a file inside a .dSYM or .sym file?",
                         pszPath);
@@ -582,7 +591,8 @@ static int rtDbgSymCacheAddDebugMachO(const char *pszPath, PCRTDBGSYMCACHEADDCFG
  */
 static int rtDbgSymCacheAddDebugPdb(const char *pszPath, PCRTDBGSYMCACHEADDCFG pCfg, RTFILE hFile)
 {
-    return RTMsgErrorRc(VERR_NOT_IMPLEMENTED, "PDB support not implemented: '%s'");
+    RT_NOREF2(pCfg, hFile);
+    return RTMsgErrorRc(VERR_NOT_IMPLEMENTED, "PDB support not implemented: '%s'", pszPath);
 }
 
 
@@ -663,31 +673,44 @@ static int rtDbgSymCacheAddDebugFile(const char *pszPath, PCRTDBGSYMCACHEADDCFG 
 static int rtDbgSymCacheConstructBundlePath(char *pszPath, size_t cchPath, size_t cchName, const char *pszSubDir,
                                             const char * const *papszSuffixes)
 {
-    int rc = RTPathAppend(pszPath, RTPATH_MAX, pszSubDir);
-    if (RT_SUCCESS(rc))
+    /*
+     * Calc the name without the bundle extension.
+     */
+    size_t const cchOrgName = cchName;
+    const char  *pszEnd     = &pszPath[cchPath + cchName];
+    for (unsigned i = 0; papszSuffixes[i]; i++)
     {
-        /* Strip off the bundle suffix. */
-        const char *pszEnd = &pszPath[cchPath + cchName];
-        for (unsigned i = 0; papszSuffixes[i]; i++)
+        Assert(papszSuffixes[i][0] == '.');
+        size_t cchSuff = strlen(papszSuffixes[i]);
+        if (   cchSuff < cchName
+            && !memcmp(&pszEnd[-(ssize_t)cchSuff], papszSuffixes[i], cchSuff))
         {
-            Assert(papszSuffixes[i][0] == '.');
-            size_t cchSuff = strlen(papszSuffixes[i]);
-            if (   cchSuff < cchName
-                && !memcmp(&pszEnd[-(ssize_t)cchSuff], papszSuffixes[i], cchSuff))
-            {
-                cchName -= cchSuff;
-                break;
-            }
+            cchName -= cchSuff;
+            break;
         }
+    }
 
-        /* Add the name. */
-        rc = RTPathAppendEx(pszPath, RTPATH_MAX, &pszPath[cchPath], cchName);
-    }
-    if (RT_FAILURE(rc))
+    /*
+     * Check the immediate directory first, in case it's layed out like
+     * IOPCIFamily.kext.
+     */
+    int rc = RTPathAppendEx(pszPath, RTPATH_MAX, &pszPath[cchPath], cchName);
+    if (RT_FAILURE(rc) || !RTFileExists(pszPath))
     {
-        pszPath[cchPath + cchName] = '\0';
-        return RTMsgErrorRc(rc, "Error constructing image bundle path for '%s': %Rrc", pszPath, rc);
+        /*
+         * Not there, ok then try the given subdirectory + name.
+         */
+        pszPath[cchPath + cchOrgName] = '\0';
+        rc = RTPathAppend(pszPath, RTPATH_MAX, pszSubDir);
+        if (RT_SUCCESS(rc))
+            rc = RTPathAppendEx(pszPath, RTPATH_MAX, &pszPath[cchPath], cchName);
+        if (RT_FAILURE(rc))
+        {
+            pszPath[cchPath + cchOrgName] = '\0';
+            return RTMsgErrorRc(rc, "Error constructing image bundle path for '%s': %Rrc", pszPath, rc);
+        }
     }
+
     return VINF_SUCCESS;
 }
 
@@ -702,16 +725,59 @@ static int rtDbgSymCacheConstructBundlePath(char *pszPath, size_t cchPath, size_
  *                              interested in.
  * @param   cchPath             The length of the path up to the bundle name.
  * @param   cchName             The length of the bundle name.
+ * @param   pDirEntry           The directory entry buffer, for handling bundle
+ *                              within bundle recursion.
  * @param   pCfg                The configuration.
  */
-static int rtDbgSymCacheAddImageBundle(char *pszPath, size_t cchPath, size_t cchName, PCRTDBGSYMCACHEADDCFG pCfg)
+static int rtDbgSymCacheAddImageBundle(char *pszPath, size_t cchPath, size_t cchName,
+                                       PRTDIRENTRYEX pDirEntry, PCRTDBGSYMCACHEADDCFG pCfg)
 {
-    /* Assuming these are kexts or simple applications, we only add the image
-       file itself to the cache. No Info.plist or other files. */
+    /*
+     * Assuming these are kexts or simple applications, we only add the image
+     * file itself to the cache.  No Info.plist or other files.
+     */
     /** @todo consider looking for Frameworks and handling framework bundles. */
     int rc = rtDbgSymCacheConstructBundlePath(pszPath, cchPath, cchName, "Contents/MacOS/", g_apszBundleSuffixes);
     if (RT_SUCCESS(rc))
-        rc = rtDbgSymCacheAddImageFile(pszPath, NULL, "image-uuids", pCfg);
+        rc = rtDbgSymCacheAddImageFile(pszPath, NULL, RTDBG_CACHE_UUID_MAP_DIR_IMAGES, pCfg);
+
+    /*
+     * Look for plugins and other sub-bundles.
+     */
+    if (pCfg->fRecursive)
+    {
+        static char const * const s_apszSubBundleDirs[] =
+        {
+            "Contents/Plugins/",
+            /** @todo Frameworks ++ */
+        };
+        for (uint32_t i = 0; i < RT_ELEMENTS(s_apszSubBundleDirs); i++)
+        {
+            pszPath[cchPath + cchName] = '\0';
+            int rc2 = RTPathAppend(pszPath, RTPATH_MAX - 1, s_apszSubBundleDirs[i]);
+            if (RT_SUCCESS(rc2))
+            {
+                if (RTDirExists(pszPath))
+                {
+                    size_t cchPath2 = strlen(pszPath);
+                    if (!RTPATH_IS_SLASH(pszPath[cchPath2 - 1]))
+                    {
+                        pszPath[cchPath2++] = RTPATH_SLASH;
+                        pszPath[cchPath2]   = '\0';
+                    }
+                    rc2 = rtDbgSymCacheAddDirWorker(pszPath, cchPath2, pDirEntry, pCfg);
+                }
+            }
+            else
+            {
+                pszPath[cchPath + cchName] = '\0';
+                RTMsgError("Error constructing bundle subdir path for '%s' + '%s': %Rrc", pszPath, s_apszSubBundleDirs[i], rc);
+            }
+            if (RT_FAILURE(rc2) && RT_SUCCESS(rc))
+                rc = rc2;
+        }
+    }
+
     return rc;
 }
 
@@ -747,7 +813,7 @@ static int rtDbgSymCacheAddDebugBundle(char *pszPath, size_t cchPath, size_t cch
      */
     int rc = rtDbgSymCacheConstructBundlePath(pszPath, cchPath, cchName, "Contents/Resources/DWARF/", g_apszDSymBundleSuffixes);
     if (RT_SUCCESS(rc))
-        rc = rtDbgSymCacheAddImageFile(pszPath, ".dwarf", "dsym-uuids", pCfg);
+        rc = rtDbgSymCacheAddImageFile(pszPath, RTDBG_CACHE_DSYM_FILE_SUFFIX, RTDBG_CACHE_UUID_MAP_DIR_DSYMS, pCfg);
     return rc;
 }
 
@@ -881,7 +947,7 @@ static int rtDbgSymCacheAddDirWorker(char *pszPath, size_t cchPath, PRTDIRENTRYE
     /*
      * Open the directory.
      */
-    PRTDIR pDir;
+    RTDIR hDir;
     int rc, rc2;
     if (pCfg->pszFilter)
     {
@@ -891,10 +957,10 @@ static int rtDbgSymCacheAddDirWorker(char *pszPath, size_t cchPath, PRTDIRENTRYE
             pszPath[cchPath] = '\0';
             return RTMsgErrorRc(rc, "Filename too long (%Rrc): '%s" RTPATH_SLASH_STR "%s'", rc, pszPath, pCfg->pszFilter);
         }
-        rc = RTDirOpenFiltered(&pDir, pszPath, RTDIRFILTER_WINNT, 0 /*fFlags*/);
+        rc = RTDirOpenFiltered(&hDir, pszPath, RTDIRFILTER_WINNT, 0 /*fFlags*/);
     }
     else
-        rc = RTDirOpen(&pDir, pszPath);
+        rc = RTDirOpen(&hDir, pszPath);
     if (RT_FAILURE(rc))
         return RTMsgErrorRc(rc, "RTDirOpen%s failed on '%s': %Rrc", pCfg->pszFilter ? "Filtered" : "", pszPath, rc);
 
@@ -903,7 +969,7 @@ static int rtDbgSymCacheAddDirWorker(char *pszPath, size_t cchPath, PRTDIRENTRYE
      */
     for (;;)
     {
-        rc2 = RTDirReadEx(pDir, pDirEntry, NULL, RTFSOBJATTRADD_NOTHING, RTPATH_F_FOLLOW_LINK);
+        rc2 = RTDirReadEx(hDir, pDirEntry, NULL, RTFSOBJATTRADD_NOTHING, RTPATH_F_FOLLOW_LINK);
         if (RT_FAILURE(rc2))
         {
             pszPath[cchPath] = '\0';
@@ -954,7 +1020,7 @@ static int rtDbgSymCacheAddDirWorker(char *pszPath, size_t cchPath, PRTDIRENTRYE
                 break;
 
             case RTDBGSYMCACHEFILETYPE_IMAGE_FILE:
-                rc2 = rtDbgSymCacheAddImageFile(pszPath, NULL /*pszExtraSuff*/, "image-uuids", pCfg);
+                rc2 = rtDbgSymCacheAddImageFile(pszPath, NULL /*pszExtraSuff*/, RTDBG_CACHE_UUID_MAP_DIR_IMAGES, pCfg);
                 break;
 
             case RTDBGSYMCACHEFILETYPE_DEBUG_BUNDLE:
@@ -962,7 +1028,7 @@ static int rtDbgSymCacheAddDirWorker(char *pszPath, size_t cchPath, PRTDIRENTRYE
                 break;
 
             case RTDBGSYMCACHEFILETYPE_IMAGE_BUNDLE:
-                rc2 = rtDbgSymCacheAddImageBundle(pszPath, cchPath, pDirEntry->cbName, pCfg);
+                rc2 = rtDbgSymCacheAddImageBundle(pszPath, cchPath, pDirEntry->cbName, pDirEntry, pCfg);
                 break;
 
             case RTDBGSYMCACHEFILETYPE_DIR_FILTER:
@@ -982,7 +1048,7 @@ static int rtDbgSymCacheAddDirWorker(char *pszPath, size_t cchPath, PRTDIRENTRYE
     /*
      * Clean up.
      */
-    rc2 = RTDirClose(pDir);
+    rc2 = RTDirClose(hDir);
     if (RT_FAILURE(rc2))
     {
         RTMsgError("RTDirClose failed in '%s': %Rrc", pszPath, rc);
@@ -1034,12 +1100,16 @@ static int rtDbgSymCacheAddDir(const char *pszPath, PCRTDBGSYMCACHEADDCFG pCfg)
  * Adds a file or directory.
  *
  * @returns Program exit code.
- * @param   pszPath         The user supplied path to the file or directory.
- * @param   pszCache        The path to the cache.
- * @param   fRecursive      Whether to process directories recursively.
+ * @param   pszPath                 The user supplied path to the file or directory.
+ * @param   pszCache                The path to the cache.
+ * @param   fRecursive              Whether to process directories recursively.
+ * @param   fOverwriteOnConflict    Whether to overwrite existing cache entry on
+ *                                  conflict, or just leave it.
  */
-static RTEXITCODE rtDbgSymCacheAddFileOrDir(const char *pszPath, const char *pszCache, bool fRecursive)
+static RTEXITCODE rtDbgSymCacheAddFileOrDir(const char *pszPath, const char *pszCache, bool fRecursive,
+                                            bool fOverwriteOnConflict)
 {
+    RT_NOREF1(fOverwriteOnConflict);
     RTDBGSYMCACHEADDCFG Cfg;
     Cfg.fRecursive      = fRecursive;
     Cfg.pszCache        = pszCache;
@@ -1055,7 +1125,7 @@ static RTEXITCODE rtDbgSymCacheAddFileOrDir(const char *pszPath, const char *psz
 
         case RTDBGSYMCACHEFILETYPE_DIR_FILTER:
             Cfg.pszFilter = RTPathFilename(pszPath);
-            /* fall thru */
+            RT_FALL_THRU();
         case RTDBGSYMCACHEFILETYPE_DIR:
             rc = rtDbgSymCacheAddDir(pszPath, &Cfg);
             break;
@@ -1065,7 +1135,7 @@ static RTEXITCODE rtDbgSymCacheAddFileOrDir(const char *pszPath, const char *psz
             break;
 
         case RTDBGSYMCACHEFILETYPE_IMAGE_FILE:
-            rc = rtDbgSymCacheAddImageFile(pszPath, NULL /*pszExtraSuff*/, "image-uuids", &Cfg);
+            rc = rtDbgSymCacheAddImageFile(pszPath, NULL /*pszExtraSuff*/, RTDBG_CACHE_UUID_MAP_DIR_IMAGES, &Cfg);
             break;
 
         case RTDBGSYMCACHEFILETYPE_DEBUG_BUNDLE:
@@ -1080,7 +1150,10 @@ static RTEXITCODE rtDbgSymCacheAddFileOrDir(const char *pszPath, const char *psz
                 if (enmType == RTDBGSYMCACHEFILETYPE_DEBUG_BUNDLE)
                     rc = rtDbgSymCacheAddDebugBundle(szPathBuf, cchPath - cchFilename, cchFilename, &Cfg);
                 else
-                    rc = rtDbgSymCacheAddImageBundle(szPathBuf, cchPath - cchFilename, cchFilename, &Cfg);
+                {
+                    RTDIRENTRYEX DirEntry;
+                    rc = rtDbgSymCacheAddImageBundle(szPathBuf, cchPath - cchFilename, cchFilename, &DirEntry, &Cfg);
+                }
             }
             else
                 rc = RTMsgErrorRc(VERR_FILENAME_TOO_LONG, "Filename too long: '%s'", pszPath);
@@ -1088,7 +1161,7 @@ static RTEXITCODE rtDbgSymCacheAddFileOrDir(const char *pszPath, const char *psz
         }
 
         case RTDBGSYMCACHEFILETYPE_IGNORE:
-            rc = RTMsgErrorRc(VERR_INVALID_PARAMETER, "Invalid file: '%s'");
+            rc = RTMsgErrorRc(VERR_INVALID_PARAMETER, "Invalid file: '%s'", pszPath);
             break;
     }
     return RT_SUCCESS(rc) ? RTEXITCODE_SUCCESS : RTEXITCODE_FAILURE;
@@ -1110,19 +1183,21 @@ static RTEXITCODE rtDbgSymCacheCmdAdd(const char *pszArg0, int cArgs, char **pap
      */
     static RTGETOPTDEF const s_aOptions[] =
     {
-        { "--recursive",        'R', RTGETOPT_REQ_NOTHING },
-        { "--no-recursive",     'n', RTGETOPT_REQ_NOTHING },
+        { "--recursive",                'R', RTGETOPT_REQ_NOTHING },
+        { "--no-recursive",             'n', RTGETOPT_REQ_NOTHING },
+        { "--overwrite-on-conflict",    'o', RTGETOPT_REQ_NOTHING },
     };
 
-    const char *pszCache        = NULL;
-    bool        fRecursive      = false;
+    const char *pszCache                = NULL;
+    bool        fRecursive              = false;
+    bool        fOverwriteOnConflict    = false;
 
     RTGETOPTSTATE State;
     int rc = RTGetOptInit(&State, cArgs, papszArgs, &s_aOptions[0], RT_ELEMENTS(s_aOptions), 0,  RTGETOPTINIT_FLAGS_OPTS_FIRST);
     if (RT_FAILURE(rc))
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "RTGetOptInit failed: %Rrc", rc);
 
-    uint32_t        cAdded = 0;
+    //uint32_t        cAdded = 0;
     RTGETOPTUNION   ValueUnion;
     int             chOpt;
     while ((chOpt = RTGetOpt(&State, &ValueUnion)) != 0)
@@ -1137,6 +1212,10 @@ static RTEXITCODE rtDbgSymCacheCmdAdd(const char *pszArg0, int cArgs, char **pap
                 fRecursive = false;
                 break;
 
+            case 'o':
+                fOverwriteOnConflict = true;
+                break;
+
             case VINF_GETOPT_NOT_OPTION:
                 /* The first non-option is a cache directory. */
                 if (!pszCache)
@@ -1144,7 +1223,7 @@ static RTEXITCODE rtDbgSymCacheCmdAdd(const char *pszArg0, int cArgs, char **pap
                     pszCache = ValueUnion.psz;
                     if (!RTPathExists(pszCache))
                     {
-                        rc = RTDirCreate(pszCache, 0755, 0 /*fFlags*/);
+                        rc = RTDirCreate(pszCache, 0755, RTDIRCREATE_FLAGS_NOT_CONTENT_INDEXED_NOT_CRITICAL);
                         if (RT_FAILURE(rc))
                             return RTMsgErrorExit(RTEXITCODE_SYNTAX, "Error creating cache directory '%s': %Rrc", pszCache, rc);
                     }
@@ -1154,7 +1233,7 @@ static RTEXITCODE rtDbgSymCacheCmdAdd(const char *pszArg0, int cArgs, char **pap
                 /* Subsequent non-options are files to be added to the cache. */
                 else
                 {
-                    RTEXITCODE rcExit = rtDbgSymCacheAddFileOrDir(ValueUnion.psz, pszCache, fRecursive);
+                    RTEXITCODE rcExit = rtDbgSymCacheAddFileOrDir(ValueUnion.psz, pszCache, fRecursive, fOverwriteOnConflict);
                     if (rcExit != RTEXITCODE_FAILURE)
                         return rcExit;
                 }

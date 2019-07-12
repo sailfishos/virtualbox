@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -52,7 +52,7 @@ extern DECLEXPORT(GLXPixmap) VBOXGLXTAG(glXCreateGLXPixmapMESA)(Display *dpy, XV
 #endif
 
 /*Common glX functions*/
-extern DECLEXPORT(void) VBOXGLXTAG(glXCopyContext)( Display *dpy, GLXContext src, GLXContext dst, 
+extern DECLEXPORT(void) VBOXGLXTAG(glXCopyContext)( Display *dpy, GLXContext src, GLXContext dst,
 #if defined(SunOS)
 unsigned long mask);
 #else
@@ -134,7 +134,7 @@ extern DECLEXPORT(int) VBOXGLXTAG(glXGetFBConfigAttribSGIX)(Display *dpy, GLXFBC
  */
 extern DECLEXPORT(GLXFBConfig *) VBOXGLXTAG(glXChooseFBConfig)(Display *dpy, int screen, ATTRIB_TYPE *attrib_list, int *nelements);
 extern DECLEXPORT(GLXPbuffer) VBOXGLXTAG(glXCreatePbuffer)(Display *dpy, GLXFBConfig config, ATTRIB_TYPE *attrib_list);
-extern DECLEXPORT(GLXPixmap) VBOXGLXTAG(glXCreatePixmap)(Display *dpy, GLXFBConfig config, Pixmap pixmap, const ATTRIB_TYPE *attrib_list);
+extern DECLEXPORT(GLXPixmap) VBOXGLXTAG(glXCreatePixmap)(Display *dpy, GLXFBConfig config, Pixmap pixmap, ATTRIB_TYPE *attrib_list);
 extern DECLEXPORT(GLXWindow) VBOXGLXTAG(glXCreateWindow)(Display *dpy, GLXFBConfig config, Window win, ATTRIB_TYPE *attrib_list);
 extern DECLEXPORT(GLXContext) VBOXGLXTAG(glXCreateNewContext)
 (Display *dpy, GLXFBConfig config, int render_type, GLXContext share_list, Bool direct);

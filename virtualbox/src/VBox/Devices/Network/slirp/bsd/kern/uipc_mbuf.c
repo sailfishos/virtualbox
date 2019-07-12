@@ -268,7 +268,7 @@ mb_free_ext(PNATState pData, struct mbuf *m)
 
 	/* Free attached storage if this mbuf is the only reference to it. */
 	if (*(m->m_ext.ref_cnt) == 1 ||
-	    atomic_fetchadd_int(m->m_ext.ref_cnt, -1) == 1) {
+	    atomic_fetchadd_int(m->m_ext.ref_cnt, (uint32_t)-1) == 1) {
 		switch (m->m_ext.ext_type) {
 		case EXT_PACKET:	/* The packet zone is special. */
 			if (*(m->m_ext.ref_cnt) == 0)
@@ -301,7 +301,7 @@ mb_free_ext(PNATState pData, struct mbuf *m)
 #else
             AssertMsgFailed(("unimplemented"));
 #endif
-			/* FALLTHROUGH */
+			RT_FALL_THRU();
 		case EXT_EXTREF:
 			KASSERT(m->m_ext.ext_free != NULL,
 				("%s: ext_free not set", __func__));
@@ -433,7 +433,7 @@ m_sanity(PNATState pData, struct mbuf *m0, int sanitize)
 #else
 				m_freem(pData, m->m_nextpkt);
 #endif
-				m->m_nextpkt = (struct mbuf *)0xDEADC0DE;
+				m->m_nextpkt = (struct mbuf *)(uintptr_t)UINT32_C(0xDEADC0DE);
 			} else
 				M_SANITY_ACTION("m->m_nextpkt on in-chain mbuf");
 		}
@@ -1231,7 +1231,7 @@ m_copyup(PNATState pData, struct mbuf *n, int len, int dstoff)
 	struct mbuf *m;
 	int count, space;
 
-	if (len > (MHLEN - dstoff))
+	if (len > (int)(MHLEN - dstoff))
 		goto bad;
 	MGET(m, M_DONTWAIT, n->m_type);
 	if (m == NULL)

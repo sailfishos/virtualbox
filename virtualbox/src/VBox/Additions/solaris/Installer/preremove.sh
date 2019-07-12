@@ -5,7 +5,7 @@
 #
 
 #
-# Copyright (C) 2008-2013 Oracle Corporation
+# Copyright (C) 2008-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -64,16 +64,9 @@ fi
 echo "Restoring X.Org..."
 /opt/VirtualBoxAdditions/x11restore.pl
 
-# Restore crogl symlink mess
-# 32-bit crogl opengl library replacement
-if test -f "/usr/lib/VBoxOGL.so" && test -f "/usr/X11/lib/mesa/libGL_original_.so.1"; then
-    mv -f /usr/X11/lib/mesa/libGL_original_.so.1 /usr/X11/lib/mesa/libGL.so.1
-fi
-
-# 64-bit crogl opengl library replacement
-if test -f "/usr/lib/amd64/VBoxOGL.so" && test -f "/usr/X11/lib/mesa/amd64/libGL_original_.so.1"; then
-    mv -f /usr/X11/lib/mesa/amd64/libGL_original_.so.1 /usr/X11/lib/mesa/amd64/libGL.so.1
-fi
+# Revert set-up of our OpenGL library.
+rm -f /lib/opengl/ogl_select/vbox_vendor_select
+/lib/svc/method/ogl-select start
 
 
 echo "Done."

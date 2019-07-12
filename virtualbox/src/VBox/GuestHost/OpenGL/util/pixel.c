@@ -15,6 +15,7 @@
 
 #if defined(WINDOWS)
 # include <float.h>
+# undef isnan /* _MSC_VER 12.0+ defines this is a complicated macro */
 # define isnan(x) _isnan(x)
 #endif
 
@@ -381,7 +382,7 @@ get_row(const char *src, GLenum srcFormat, GLenum srcType,
                 crError("unexpected type in get_row in pixel.c");
         }
     }
-    else if (srcFormat == GL_LUMINANCE 
+    else if (srcFormat == GL_LUMINANCE
 #ifdef CR_EXT_texture_sRGB
              || srcFormat == GL_SLUMINANCE_EXT
              || srcFormat == GL_SLUMINANCE8_EXT
@@ -982,56 +983,56 @@ static void put_row(char *dst, GLenum dstFormat, GLenum dstType,
              || dstFormat == GL_SLUMINANCE8_EXT
 #endif
              ) {
-        int index;
+        int idx;
         if (dstFormat == GL_RED)
-            index = 0;
-        else if (dstFormat == GL_LUMINANCE 
+            idx = 0;
+        else if (dstFormat == GL_LUMINANCE
 #ifdef CR_EXT_texture_sRGB
                  || dstFormat == GL_SLUMINANCE_EXT
                  || dstFormat == GL_SLUMINANCE8_EXT
 #endif
                 )
-            index = 0;
+            idx = 0;
         else if (dstFormat == GL_INTENSITY)
-            index = 0;
+            idx = 0;
         else if (dstFormat == GL_GREEN)
-            index = 1;
+            idx = 1;
         else if (dstFormat == GL_BLUE)
-            index = 2;
+            idx = 2;
         else
-            index = 3;
+            idx = 3;
         switch (dstType) {
             case GL_BYTE:
                 for (i = 0; i < width; i++)
-                    bDst[i] = FLOAT_TO_BYTE(tmpRow[i*4+index]);
+                    bDst[i] = FLOAT_TO_BYTE(tmpRow[i*4+idx]);
                 break;
             case GL_UNSIGNED_BYTE:
                 for (i = 0; i < width; i++)
-                    ubDst[i] = FLOAT_TO_UBYTE(tmpRow[i*4+index]);
+                    ubDst[i] = FLOAT_TO_UBYTE(tmpRow[i*4+idx]);
                 break;
             case GL_SHORT:
                 for (i = 0; i < width; i++)
-                    sDst[i] = FLOAT_TO_SHORT(tmpRow[i*4+index]);
+                    sDst[i] = FLOAT_TO_SHORT(tmpRow[i*4+idx]);
                 break;
             case GL_UNSIGNED_SHORT:
                 for (i = 0; i < width; i++)
-                    usDst[i] = FLOAT_TO_USHORT(tmpRow[i*4+index]);
+                    usDst[i] = FLOAT_TO_USHORT(tmpRow[i*4+idx]);
                 break;
             case GL_INT:
                 for (i = 0; i < width; i++)
-                    iDst[i] = FLOAT_TO_INT(tmpRow[i*4+index]);
+                    iDst[i] = FLOAT_TO_INT(tmpRow[i*4+idx]);
                 break;
             case GL_UNSIGNED_INT:
                 for (i = 0; i < width; i++)
-                    uiDst[i] = FLOAT_TO_UINT(tmpRow[i*4+index]);
+                    uiDst[i] = FLOAT_TO_UINT(tmpRow[i*4+idx]);
                 break;
             case GL_FLOAT:
                 for (i = 0; i < width; i++)
-                    fDst[i] = tmpRow[i*4+index];
+                    fDst[i] = tmpRow[i*4+idx];
                 break;
             case GL_DOUBLE:
                 for (i = 0; i < width; i++)
-                    dDst[i] = tmpRow[i*4+index];
+                    dDst[i] = tmpRow[i*4+idx];
                 break;
             default:
                 crError("unexpected type in put_row in pixel.c");
@@ -1554,7 +1555,7 @@ void crPixelCopy2D( GLsizei width, GLsizei height,
 
         /* handle the alignment */
         if (srcPacking->alignment != 1) {
-            i = ((long) src) % srcPacking->alignment;
+            i = ((intptr_t) src) % srcPacking->alignment;
             if (i)
                 src += srcPacking->alignment - i;
             i = (long) srcRowStrideBytes % srcPacking->alignment;
@@ -1563,7 +1564,7 @@ void crPixelCopy2D( GLsizei width, GLsizei height,
         }
 
         if (dstPacking->alignment != 1) {
-            i = ((long) dst) % dstPacking->alignment;
+            i = ((intptr_t) dst) % dstPacking->alignment;
             if (i)
                 dst += dstPacking->alignment - i;
             i = (long) dstRowStrideBytes % dstPacking->alignment;
@@ -1588,14 +1589,14 @@ void crPixelCopy2D( GLsizei width, GLsizei height,
         if (srcFormat == dstFormat && srcType == dstType)
         {
             CRASSERT(srcBytesPerRow == dstBytesPerRow);
-            
-            if (srcBytesPerRow==srcRowStrideBytes 
+
+            if (srcBytesPerRow==srcRowStrideBytes
                 && srcRowStrideBytes==dstRowStrideBytes)
             {
                 crMemcpy( (void *) dst, (const void *) src, height * srcBytesPerRow );
             }
             else
-                //crDebug("Sending texture, BytesPerRow!=RowStrideBytes");
+                /*crDebug("Sending texture, BytesPerRow!=RowStrideBytes");*/
                 for (i = 0; i < height; i++)
                 {
                     crMemcpy( (void *) dst, (const void *) src, srcBytesPerRow );
@@ -1691,7 +1692,7 @@ void crPixelCopy3D( GLsizei width, GLsizei height, GLsizei depth,
     (void)srcFormat;
     (void)dstPacking;
 
-    /*@todo this should be implemented properly*/
+    /** @todo this should be implemented properly*/
 
 #ifndef DEBUG_misha
     crWarning( "crPixelCopy3D:  simply crMemcpy'ing from srcPtr to dstPtr" );
@@ -1805,7 +1806,7 @@ typedef struct tgaheader_tag
     short x, y, w, h;
     char  depth;
     char  imagedesc;
-    
+
 } tgaheader_t;
 #pragma pack()
 
@@ -1856,7 +1857,6 @@ void crDumpNamedTGAV(GLint w, GLint h, GLvoid *data, const char* fname, va_list 
 void crDumpNamedTGAF(GLint w, GLint h, GLvoid *data, const char* fname, ...)
 {
     va_list va;
-    int rc;
     va_start(va, fname);
     crDumpNamedTGAV(w, h, data, fname, va);
     va_end(va);

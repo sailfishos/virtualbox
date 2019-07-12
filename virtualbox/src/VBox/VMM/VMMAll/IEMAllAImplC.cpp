@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,17 +15,20 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "IEMInternal.h"
 #include <VBox/vmm/vm.h>
 #include <iprt/x86.h>
+#include <iprt/uint128.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+#ifdef RT_ARCH_X86
 /**
  * Parity calculation table.
  *
@@ -321,6 +324,7 @@ static uint8_t const g_afParity[256] =
     /* 0xfe = 11111110b */ 0,
     /* 0xff = 11111111b */ X86_EFL_PF,
 };
+#endif /* RT_ARCH_X86 */
 
 
 /**
@@ -334,7 +338,7 @@ static uint8_t const g_afParity[256] =
  * @param   a_cBitsWidth    The width of the result (8, 16, 32, 64).
  */
 #define X86_EFL_CALC_SF(a_uResult, a_cBitsWidth) \
-    ( (uint32_t)((a_uResult) >> ((a_cBitsWidth) - X86_EFL_SF_BIT)) & X86_EFL_SF )
+    ( (uint32_t)((a_uResult) >> ((a_cBitsWidth) - X86_EFL_SF_BIT - 1)) & X86_EFL_SF )
 
 /**
  * Calculates the zero flag value given a result.
@@ -514,14 +518,14 @@ IEM_DECL_IMPL_DEF(void, iemAImpl_test_u64,(uint64_t *puDst, uint64_t uSrc, uint3
             uTmp = uOld; \
             fEflTmp = *pfEFlags; \
             iemAImpl_ ## a_Mnemonic ## _u64(&uTmp, uSrc, &fEflTmp); \
-        } while (ASMAtomicCmpXchgExU64(puDst, uTmp, uOld, &uOld)); \
+        } while (!ASMAtomicCmpXchgExU64(puDst, uTmp, uOld, &uOld)); \
         *pfEFlags = fEflTmp; \
     } while (0)
 
 
 IEM_DECL_IMPL_DEF(void, iemAImpl_add_u64_locked,(uint64_t *puDst, uint64_t uSrc, uint32_t *pfEFlags))
 {
-    DO_LOCKED_BIN_OP_U64(adc);
+    DO_LOCKED_BIN_OP_U64(add);
 }
 
 
@@ -581,7 +585,7 @@ IEM_DECL_IMPL_DEF(void, iemAImpl_xadd_u64_locked,(uint64_t *puDst, uint64_t *puR
         uTmpDst = uOld;
         fEflTmp = *pfEFlags;
         iemAImpl_add_u64(&uTmpDst, *puReg, pfEFlags);
-    } while (ASMAtomicCmpXchgExU64(puDst, uTmpDst, uOld, &uOld));
+    } while (!ASMAtomicCmpXchgExU64(puDst, uTmpDst, uOld, &uOld));
     *puReg    = uOld;
     *pfEFlags = fEflTmp;
 }
@@ -678,7 +682,7 @@ IEM_DECL_IMPL_DEF(void, iemAImpl_bts_u64_locked,(uint64_t *puDst, uint64_t uSrc,
 IEM_DECL_IMPL_DEF(void, iemAImpl_bsf_u64,(uint64_t *puDst, uint64_t uSrc, uint32_t *pfEFlags))
 {
     /* Note! "undefined" flags: OF, SF, AF, PF, CF. */
-    /** @todo check what real CPUs does. */
+    /** @todo check what real CPUs do. */
     if (uSrc)
     {
         uint8_t  iBit;
@@ -729,19 +733,19 @@ IEM_DECL_IMPL_DEF(void, iemAImpl_bsf_u64,(uint64_t *puDst, uint64_t uSrc, uint32
 IEM_DECL_IMPL_DEF(void, iemAImpl_bsr_u64,(uint64_t *puDst, uint64_t uSrc, uint32_t *pfEFlags))
 {
     /* Note! "undefined" flags: OF, SF, AF, PF, CF. */
-    /** @todo check what real CPUs does. */
+    /** @todo check what real CPUs do. */
     if (uSrc)
     {
         uint8_t  iBit;
         uint32_t u32Src;
         if (uSrc & UINT64_C(0xffffffff00000000))
         {
-            iBit = 64;
+            iBit = 63;
             u32Src = uSrc >> 32;
         }
         else
         {
-            iBit = 32;
+            iBit = 31;
             u32Src = uSrc;
         }
         if (!(u32Src & UINT32_C(0xffff0000)))
@@ -764,11 +768,10 @@ IEM_DECL_IMPL_DEF(void, iemAImpl_bsr_u64,(uint64_t *puDst, uint64_t uSrc, uint32
             iBit -= 2;
             u32Src <<= 2;
         }
-        if (!(u32Src & UINT32_C(0x10000000)))
+        if (!(u32Src & UINT32_C(0x80000000)))
         {
             iBit -= 1;
-            u32Src <<= 1;
-            Assert(u32Src & RT_BIT_64(63));
+            Assert(u32Src & RT_BIT(30));
         }
 
         *puDst     = iBit;
@@ -829,6 +832,7 @@ IEM_DECL_IMPL_DEF(void, iemAImpl_not_u64,(uint64_t  *puDst,  uint32_t *pfEFlags)
     uint64_t uResult = ~uDst;
     *puDst = uResult;
     /* EFLAGS are not modified. */
+    RT_NOREF_PV(pfEFlags);
 }
 
 
@@ -862,7 +866,7 @@ IEM_DECL_IMPL_DEF(void, iemAImpl_neg_u64,(uint64_t  *puDst,  uint32_t *pfEFlags)
             uTmp = uOld; \
             fEflTmp = *pfEFlags; \
             iemAImpl_ ## a_Mnemonic ## _u64(&uTmp, &fEflTmp); \
-        } while (ASMAtomicCmpXchgExU64(puDst, uTmp, uOld, &uOld)); \
+        } while (!ASMAtomicCmpXchgExU64(puDst, uTmp, uOld, &uOld)); \
         *pfEFlags = fEflTmp; \
     } while (0)
 
@@ -1126,40 +1130,208 @@ IEM_DECL_IMPL_DEF(void, iemAImpl_xchg_u64,(uint64_t *puMem, uint64_t *puReg))
 }
 
 
+#endif /* RT_ARCH_X86 */
+#ifdef RT_ARCH_X86
+
 /* multiplication and division */
+
 
 IEM_DECL_IMPL_DEF(int, iemAImpl_mul_u64,(uint64_t *pu64RAX, uint64_t *pu64RDX, uint64_t u64Factor, uint32_t *pfEFlags))
 {
-    AssertFailed();
-    return -1;
+    RTUINT128U Result;
+    RTUInt128MulU64ByU64(&Result, *pu64RAX, u64Factor);
+    *pu64RAX = Result.s.Lo;
+    *pu64RDX = Result.s.Hi;
+
+    /* MUL EFLAGS according to Skylake (similar to IMUL). */
+    *pfEFlags &= ~(X86_EFL_SF | X86_EFL_CF | X86_EFL_OF | X86_EFL_AF | X86_EFL_ZF | X86_EFL_PF);
+    if (Result.s.Lo & RT_BIT_64(63))
+        *pfEFlags |= X86_EFL_SF;
+    *pfEFlags |= g_afParity[Result.s.Lo & 0xff]; /* (Skylake behaviour) */
+    if (Result.s.Hi != 0)
+        *pfEFlags |= X86_EFL_CF | X86_EFL_OF;
+    return 0;
 }
 
 
 IEM_DECL_IMPL_DEF(int, iemAImpl_imul_u64,(uint64_t *pu64RAX, uint64_t *pu64RDX, uint64_t u64Factor, uint32_t *pfEFlags))
 {
-    AssertFailed();
-    return -1;
+    RTUINT128U Result;
+    *pfEFlags &= ~( X86_EFL_SF | X86_EFL_CF | X86_EFL_OF
+                   /* Skylake always clears: */ | X86_EFL_AF | X86_EFL_ZF
+                   /* Skylake may set: */       | X86_EFL_PF);
+
+    if ((int64_t)*pu64RAX >= 0)
+    {
+        if ((int64_t)u64Factor >= 0)
+        {
+            RTUInt128MulU64ByU64(&Result, *pu64RAX, u64Factor);
+            if (Result.s.Hi != 0 || Result.s.Lo >= UINT64_C(0x8000000000000000))
+                *pfEFlags |= X86_EFL_CF | X86_EFL_OF;
+        }
+        else
+        {
+            RTUInt128MulU64ByU64(&Result, *pu64RAX, UINT64_C(0) - u64Factor);
+            if (Result.s.Hi != 0 || Result.s.Lo > UINT64_C(0x8000000000000000))
+                *pfEFlags |= X86_EFL_CF | X86_EFL_OF;
+            RTUInt128AssignNeg(&Result);
+        }
+    }
+    else
+    {
+        if ((int64_t)u64Factor >= 0)
+        {
+            RTUInt128MulU64ByU64(&Result, UINT64_C(0) - *pu64RAX, u64Factor);
+            if (Result.s.Hi != 0 || Result.s.Lo > UINT64_C(0x8000000000000000))
+                *pfEFlags |= X86_EFL_CF | X86_EFL_OF;
+            RTUInt128AssignNeg(&Result);
+        }
+        else
+        {
+            RTUInt128MulU64ByU64(&Result, UINT64_C(0) - *pu64RAX, UINT64_C(0) - u64Factor);
+            if (Result.s.Hi != 0 || Result.s.Lo >= UINT64_C(0x8000000000000000))
+                *pfEFlags |= X86_EFL_CF | X86_EFL_OF;
+        }
+    }
+    *pu64RAX = Result.s.Lo;
+    if (Result.s.Lo & RT_BIT_64(63))
+        *pfEFlags |= X86_EFL_SF;
+    *pfEFlags |= g_afParity[Result.s.Lo & 0xff]; /* (Skylake behaviour) */
+    *pu64RDX = Result.s.Hi;
+
+    return 0;
 }
 
 
 IEM_DECL_IMPL_DEF(void, iemAImpl_imul_two_u64,(uint64_t *puDst, uint64_t uSrc, uint32_t *pfEFlags))
 {
-    AssertFailed();
+/** @todo Testcase: IMUL 2 and 3 operands. */
+    uint64_t u64Ign;
+    iemAImpl_imul_u64(puDst, &u64Ign, uSrc, pfEFlags);
 }
 
 
 
 IEM_DECL_IMPL_DEF(int, iemAImpl_div_u64,(uint64_t *pu64RAX, uint64_t *pu64RDX, uint64_t u64Divisor, uint32_t *pfEFlags))
 {
-    AssertFailed();
-    return -1;
+    /* Note! Skylake leaves all flags alone. */
+    RT_NOREF_PV(pfEFlags);
+
+    if (   u64Divisor != 0
+        && *pu64RDX < u64Divisor)
+    {
+        RTUINT128U Dividend;
+        Dividend.s.Lo = *pu64RAX;
+        Dividend.s.Hi = *pu64RDX;
+
+        RTUINT128U Divisor;
+        Divisor.s.Lo = u64Divisor;
+        Divisor.s.Hi = 0;
+
+        RTUINT128U Remainder;
+        RTUINT128U Quotient;
+# ifdef __GNUC__ /* GCC maybe really annoying in function. */
+        Quotient.s.Lo = 0;
+        Quotient.s.Hi = 0;
+# endif
+        RTUInt128DivRem(&Quotient, &Remainder, &Dividend, &Divisor);
+        Assert(Quotient.s.Hi == 0);
+        Assert(Remainder.s.Hi == 0);
+
+        *pu64RAX = Quotient.s.Lo;
+        *pu64RDX = Remainder.s.Lo;
+        /** @todo research the undefined DIV flags. */
+        return 0;
+
+    }
+    /* #DE */
+    return VERR_IEM_ASPECT_NOT_IMPLEMENTED;
 }
 
 
 IEM_DECL_IMPL_DEF(int, iemAImpl_idiv_u64,(uint64_t *pu64RAX, uint64_t *pu64RDX, uint64_t u64Divisor, uint32_t *pfEFlags))
 {
-    AssertFailed();
-    return -1;
+    /* Note! Skylake leaves all flags alone. */
+    RT_NOREF_PV(pfEFlags);
+
+    if (u64Divisor != 0)
+    {
+        /*
+         * Convert to unsigned division.
+         */
+        RTUINT128U Dividend;
+        Dividend.s.Lo = *pu64RAX;
+        Dividend.s.Hi = *pu64RDX;
+        if ((int64_t)*pu64RDX < 0)
+            RTUInt128AssignNeg(&Dividend);
+
+        RTUINT128U Divisor;
+        Divisor.s.Hi = 0;
+        if ((int64_t)u64Divisor >= 0)
+            Divisor.s.Lo = u64Divisor;
+        else
+            Divisor.s.Lo = UINT64_C(0) - u64Divisor;
+
+        RTUINT128U Remainder;
+        RTUINT128U Quotient;
+# ifdef __GNUC__ /* GCC maybe really annoying in function. */
+        Quotient.s.Lo = 0;
+        Quotient.s.Hi = 0;
+# endif
+        RTUInt128DivRem(&Quotient, &Remainder, &Dividend, &Divisor);
+
+        /*
+         * Setup the result, checking for overflows.
+         */
+        if ((int64_t)u64Divisor >= 0)
+        {
+            if ((int64_t)*pu64RDX >= 0)
+            {
+                /* Positive divisor, positive dividend => result positive. */
+                if (Quotient.s.Hi == 0 && Quotient.s.Lo <= (uint64_t)INT64_MAX)
+                {
+                    *pu64RAX = Quotient.s.Lo;
+                    *pu64RDX = Remainder.s.Lo;
+                    return 0;
+                }
+            }
+            else
+            {
+                /* Positive divisor, positive dividend => result negative. */
+                if (Quotient.s.Hi == 0 && Quotient.s.Lo <= UINT64_C(0x8000000000000000))
+                {
+                    *pu64RAX = UINT64_C(0) - Quotient.s.Lo;
+                    *pu64RDX = UINT64_C(0) - Remainder.s.Lo;
+                    return 0;
+                }
+            }
+        }
+        else
+        {
+            if ((int64_t)*pu64RDX >= 0)
+            {
+                /* Negative divisor, positive dividend => negative quotient, positive remainder. */
+                if (Quotient.s.Hi == 0 && Quotient.s.Lo <= UINT64_C(0x8000000000000000))
+                {
+                    *pu64RAX = UINT64_C(0) - Quotient.s.Lo;
+                    *pu64RDX = Remainder.s.Lo;
+                    return 0;
+                }
+            }
+            else
+            {
+                /* Negative divisor, negative dividend => positive quotient, negative remainder. */
+                if (Quotient.s.Hi == 0 && Quotient.s.Lo <= (uint64_t)INT64_MAX)
+                {
+                    *pu64RAX = Quotient.s.Lo;
+                    *pu64RDX = UINT64_C(0) - Remainder.s.Lo;
+                    return 0;
+                }
+            }
+        }
+    }
+    /* #DE */
+    return VERR_IEM_ASPECT_NOT_IMPLEMENTED;
 }
 
 
@@ -1178,4 +1350,100 @@ IEM_DECL_IMPL_DEF(void, iemAImpl_arpl,(uint16_t *pu16Dst, uint16_t u16Src, uint3
     else
         *pfEFlags &= ~X86_EFL_ZF;
 }
+
+
+
+IEM_DECL_IMPL_DEF(void, iemAImpl_cmpxchg16b_fallback,(PRTUINT128U pu128Dst, PRTUINT128U pu128RaxRdx,
+                                                      PRTUINT128U pu128RbxRcx, uint32_t *pEFlags))
+{
+    RTUINT128U u128Tmp = *pu128Dst;
+    if (   u128Tmp.s.Lo == pu128RaxRdx->s.Lo
+        && u128Tmp.s.Hi == pu128RaxRdx->s.Hi)
+    {
+        *pu128Dst = *pu128RbxRcx;
+        *pEFlags |= X86_EFL_ZF;
+    }
+    else
+    {
+        *pu128RaxRdx = u128Tmp;
+        *pEFlags &= ~X86_EFL_ZF;
+    }
+}
+
+
+IEM_DECL_IMPL_DEF(void, iemAImpl_movsldup,(PCX86FXSTATE pFpuState, PRTUINT128U puDst, PCRTUINT128U puSrc))
+{
+    RT_NOREF(pFpuState);
+    puDst->au32[0] = puSrc->au32[0];
+    puDst->au32[1] = puSrc->au32[0];
+    puDst->au32[2] = puSrc->au32[2];
+    puDst->au32[3] = puSrc->au32[2];
+}
+
+#ifdef IEM_WITH_VEX
+
+IEM_DECL_IMPL_DEF(void, iemAImpl_vmovsldup_256_rr,(PX86XSAVEAREA pXState, uint8_t iYRegDst, uint8_t iYRegSrc))
+{
+    pXState->x87.aXMM[iYRegDst].au32[0] = pXState->x87.aXMM[iYRegSrc].au32[0];
+    pXState->x87.aXMM[iYRegDst].au32[1] = pXState->x87.aXMM[iYRegSrc].au32[0];
+    pXState->x87.aXMM[iYRegDst].au32[2] = pXState->x87.aXMM[iYRegSrc].au32[2];
+    pXState->x87.aXMM[iYRegDst].au32[3] = pXState->x87.aXMM[iYRegSrc].au32[2];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au32[0] = pXState->u.YmmHi.aYmmHi[iYRegSrc].au32[0];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au32[1] = pXState->u.YmmHi.aYmmHi[iYRegSrc].au32[0];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au32[2] = pXState->u.YmmHi.aYmmHi[iYRegSrc].au32[2];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au32[3] = pXState->u.YmmHi.aYmmHi[iYRegSrc].au32[2];
+}
+
+
+IEM_DECL_IMPL_DEF(void, iemAImpl_vmovsldup_256_rm,(PX86XSAVEAREA pXState, uint8_t iYRegDst, PCRTUINT256U pSrc))
+{
+    pXState->x87.aXMM[iYRegDst].au32[0]       = pSrc->au32[0];
+    pXState->x87.aXMM[iYRegDst].au32[1]       = pSrc->au32[0];
+    pXState->x87.aXMM[iYRegDst].au32[2]       = pSrc->au32[2];
+    pXState->x87.aXMM[iYRegDst].au32[3]       = pSrc->au32[2];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au32[0] = pSrc->au32[4];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au32[1] = pSrc->au32[4];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au32[2] = pSrc->au32[6];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au32[3] = pSrc->au32[6];
+}
+
+#endif /* IEM_WITH_VEX */
+
+
+IEM_DECL_IMPL_DEF(void, iemAImpl_movshdup,(PCX86FXSTATE pFpuState, PRTUINT128U puDst, PCRTUINT128U puSrc))
+{
+    RT_NOREF(pFpuState);
+    puDst->au32[0] = puSrc->au32[1];
+    puDst->au32[1] = puSrc->au32[1];
+    puDst->au32[2] = puSrc->au32[3];
+    puDst->au32[3] = puSrc->au32[3];
+}
+
+
+IEM_DECL_IMPL_DEF(void, iemAImpl_movddup,(PCX86FXSTATE pFpuState, PRTUINT128U puDst, uint64_t uSrc))
+{
+    RT_NOREF(pFpuState);
+    puDst->au64[0] = uSrc;
+    puDst->au64[1] = uSrc;
+}
+
+#ifdef IEM_WITH_VEX
+
+IEM_DECL_IMPL_DEF(void, iemAImpl_vmovddup_256_rr,(PX86XSAVEAREA pXState, uint8_t iYRegDst, uint8_t iYRegSrc))
+{
+    pXState->x87.aXMM[iYRegDst].au64[0] = pXState->x87.aXMM[iYRegSrc].au64[0];
+    pXState->x87.aXMM[iYRegDst].au64[1] = pXState->x87.aXMM[iYRegSrc].au64[0];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au64[0] = pXState->u.YmmHi.aYmmHi[iYRegSrc].au64[0];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au64[1] = pXState->u.YmmHi.aYmmHi[iYRegSrc].au64[0];
+}
+
+IEM_DECL_IMPL_DEF(void, iemAImpl_vmovddup_256_rm,(PX86XSAVEAREA pXState, uint8_t iYRegDst, PCRTUINT256U pSrc))
+{
+    pXState->x87.aXMM[iYRegDst].au64[0]       = pSrc->au64[0];
+    pXState->x87.aXMM[iYRegDst].au64[1]       = pSrc->au64[0];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au64[0] = pSrc->au64[2];
+    pXState->u.YmmHi.aYmmHi[iYRegDst].au64[1] = pSrc->au64[2];
+}
+
+#endif /* IEM_WITH_VEX */
 

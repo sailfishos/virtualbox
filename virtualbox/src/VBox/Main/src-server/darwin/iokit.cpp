@@ -8,7 +8,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,9 +20,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_MAIN
 #ifdef STANDALONE_TESTCASE
 # define VBOX_WITH_USB
@@ -43,10 +43,12 @@
 
 #include <VBox/log.h>
 #include <VBox/err.h>
+#include <VBox/usblib.h>
 #include <iprt/mem.h>
 #include <iprt/string.h>
 #include <iprt/process.h>
 #include <iprt/assert.h>
+#include <iprt/system.h>
 #include <iprt/thread.h>
 #include <iprt/uuid.h>
 #ifdef STANDALONE_TESTCASE
@@ -62,9 +64,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** An attempt at catching reference leaks. */
 #define MY_CHECK_CREFS(cRefs)   do { AssertMsg(cRefs < 25, ("%ld\n", cRefs)); NOREF(cRefs); } while (0)
 
@@ -75,12 +77,22 @@
 /** The VBoxUSBDevice class name. */
 #define VBOXUSBDEVICE_CLASS_NAME "org_virtualbox_VBoxUSBDevice"
 
+/** Define the constant for the IOUSBHostDevice class name added in El Capitan. */
+#ifndef kIOUSBHostDeviceClassName
+# define kIOUSBHostDeviceClassName "IOUSBHostDevice"
+#endif
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/** The major darwin version indicating OS X El Captian, used to take care of the USB changes. */
+#define VBOX_OSX_EL_CAPTIAN_VER 15
+
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The IO Master Port. */
-static mach_port_t g_MasterPort = NULL;
+static mach_port_t g_MasterPort = MACH_PORT_NULL;
+/** Major darwin version as returned by uname -r. */
+static uint32_t g_uMajorDarwin = 0;
 
 
 /**
@@ -94,6 +106,19 @@ static bool darwinOpenMasterPort(void)
     {
         kern_return_t krc = IOMasterPort(MACH_PORT_NULL, &g_MasterPort);
         AssertReturn(krc == KERN_SUCCESS, false);
+
+        /* Get the darwin version we are running on. */
+        char szVersion[64];
+        int rc = RTSystemQueryOSInfo(RTSYSOSINFO_RELEASE, &szVersion[0], sizeof(szVersion));
+        if (RT_SUCCESS(rc))
+        {
+            rc = RTStrToUInt32Ex(&szVersion[0], NULL, 10, &g_uMajorDarwin);
+            AssertLogRelMsg(rc == VINF_SUCCESS || rc == VWRN_TRAILING_CHARS,
+                            ("Failed to convert the major part of the version string '%s' into an integer: %Rrc\n",
+                             szVersion, rc));
+        }
+        else
+            AssertLogRelMsgFailed(("Failed to query the OS release version with %Rrc\n", rc));
     }
     return true;
 }
@@ -275,6 +300,7 @@ static bool darwinDictDupString(CFDictionaryRef DictRef, CFStringRef KeyStrRef, 
     char szBuf[512];
     if (darwinDictGetString(DictRef, KeyStrRef, szBuf, sizeof(szBuf)))
     {
+        USBLibPurgeEncoding(szBuf);
         *ppsz = RTStrDup(szBuf);
         if (*ppsz)
             return true;
@@ -472,7 +498,7 @@ static void darwinDumpObjInt(io_object_t Object, unsigned cIndents)
     if (krc == KERN_SUCCESS)
     {
         io_object_t Child;
-        while ((Child = IOIteratorNext(Children)))
+        while ((Child = IOIteratorNext(Children)) != IO_OBJECT_NULL)
         {
             darwinDumpObjInt(Child, cIndents + 4);
             IOObjectRelease(Child);
@@ -529,7 +555,7 @@ typedef struct DARWINUSBNOTIFY
 static void darwinDrainIterator(io_iterator_t pIterator)
 {
     io_object_t Object;
-    while ((Object = IOIteratorNext(pIterator)))
+    while ((Object = IOIteratorNext(pIterator)) != IO_OBJECT_NULL)
     {
         DARWIN_IOKIT_DUMP_OBJ(Object);
         IOObjectRelease(Object);
@@ -671,11 +697,11 @@ void DarwinUnsubscribeUSBNotifications(void *pvOpaque)
         return;
 
     IOObjectRelease(pNotify->AttachIterator);
-    pNotify->AttachIterator = NULL;
+    pNotify->AttachIterator = IO_OBJECT_NULL;
     IOObjectRelease(pNotify->AttachIterator2);
-    pNotify->AttachIterator2 = NULL;
+    pNotify->AttachIterator2 = IO_OBJECT_NULL;
     IOObjectRelease(pNotify->DetachIterator);
-    pNotify->DetachIterator = NULL;
+    pNotify->DetachIterator = IO_OBJECT_NULL;
 
     CFRunLoopRemoveSource(CFRunLoopGetCurrent(), pNotify->NotifyRLSrc, CFSTR(VBOX_IOKIT_MODE_STRING));
     IONotificationPortDestroy(pNotify->NotifyPort);
@@ -702,9 +728,9 @@ static io_object_t darwinFindObjectByClass(io_object_t Object, const char *pszCl
     io_iterator_t Children;
     kern_return_t krc = IORegistryEntryGetChildIterator(Object, kIOServicePlane, &Children);
     if (krc != KERN_SUCCESS)
-        return NULL;
+        return IO_OBJECT_NULL;
     io_object_t Child;
-    while ((Child = IOIteratorNext(Children)))
+    while ((Child = IOIteratorNext(Children)) != IO_OBJECT_NULL)
     {
         krc = IOObjectGetClass(Child, pszNameBuf);
         if (    krc == KERN_SUCCESS
@@ -764,17 +790,70 @@ static bool darwinIsMassStorageInterfaceInUse(io_object_t MSDObj, io_name_t pszN
 
 
 /**
- * Worker function for DarwinGetUSBDevices() that tries to figure out
- * what state the device is in and set enmState.
+ * Finds the matching IOUSBHostDevice registry entry for the given legacy USB device interface (IOUSBDevice).
  *
- * This is mostly a matter of distinguishing between devices that nobody
- * uses, devices that can be seized and devices that cannot be grabbed.
- *
- * @param   pCur        The USB device data.
- * @param   USBDevice   The USB device object.
- * @param   PropsRef    The USB device properties.
+ * @returns kern_return_t error code.
+ * @param   USBDeviceLegacy    The legacy device I/O Kit object.
+ * @param   pUSBDevice         Where to store the IOUSBHostDevice object on success.
  */
-static void darwinDeterminUSBDeviceState(PUSBDEVICE pCur, io_object_t USBDevice, CFMutableDictionaryRef /* PropsRef */)
+static kern_return_t darwinGetUSBHostDeviceFromLegacyDevice(io_object_t USBDeviceLegacy, io_object_t *pUSBDevice)
+{
+    kern_return_t krc = KERN_SUCCESS;
+    uint64_t uIoRegEntryId = 0;
+
+    *pUSBDevice = 0;
+
+    /* Get the registry entry ID to match against. */
+    krc = IORegistryEntryGetRegistryEntryID(USBDeviceLegacy, &uIoRegEntryId);
+    if (krc != KERN_SUCCESS)
+        return krc;
+
+    /*
+     * Create a matching dictionary for searching for USB Devices in the IOKit.
+     */
+    CFMutableDictionaryRef RefMatchingDict = IOServiceMatching(kIOUSBHostDeviceClassName);
+    AssertReturn(RefMatchingDict, KERN_FAILURE);
+
+    /*
+     * Perform the search and get a collection of USB Device back.
+     */
+    io_iterator_t USBDevices = IO_OBJECT_NULL;
+    IOReturn rc = IOServiceGetMatchingServices(g_MasterPort, RefMatchingDict, &USBDevices);
+    AssertMsgReturn(rc == kIOReturnSuccess, ("rc=%d\n", rc), KERN_FAILURE);
+    RefMatchingDict = NULL; /* the reference is consumed by IOServiceGetMatchingServices. */
+
+    /*
+     * Walk the devices and check for the matching alternate registry entry ID.
+     */
+    io_object_t USBDevice;
+    while ((USBDevice = IOIteratorNext(USBDevices)) != IO_OBJECT_NULL)
+    {
+        DARWIN_IOKIT_DUMP_OBJ(USBDevice);
+
+        CFMutableDictionaryRef PropsRef = 0;
+        krc = IORegistryEntryCreateCFProperties(USBDevice, &PropsRef, kCFAllocatorDefault, kNilOptions);
+        if (krc == KERN_SUCCESS)
+        {
+            uint64_t uAltRegId = 0;
+            if (   darwinDictGetU64(PropsRef,  CFSTR("AppleUSBAlternateServiceRegistryID"), &uAltRegId)
+                && uAltRegId == uIoRegEntryId)
+            {
+                *pUSBDevice = USBDevice;
+                CFRelease(PropsRef);
+                break;
+            }
+
+            CFRelease(PropsRef);
+        }
+        IOObjectRelease(USBDevice);
+    }
+    IOObjectRelease(USBDevices);
+
+    return krc;
+}
+
+
+static bool darwinUSBDeviceIsGrabbedDetermineState(PUSBDEVICE pCur, io_object_t USBDevice)
 {
     /*
      * Iterate the interfaces (among the children of the IOUSBDevice object).
@@ -782,74 +861,19 @@ static void darwinDeterminUSBDeviceState(PUSBDEVICE pCur, io_object_t USBDevice,
     io_iterator_t Interfaces;
     kern_return_t krc = IORegistryEntryGetChildIterator(USBDevice, kIOServicePlane, &Interfaces);
     if (krc != KERN_SUCCESS)
-        return;
+        return false;
 
     bool fHaveOwner = false;
     RTPROCESS Owner = NIL_RTPROCESS;
     bool fHaveClient = false;
     RTPROCESS Client = NIL_RTPROCESS;
-    bool fUserClientOnly = true;
-    bool fConfigured = false;
-    bool fInUse = false;
-    bool fSeizable = true;
     io_object_t Interface;
-    while ((Interface = IOIteratorNext(Interfaces)))
+    while ((Interface = IOIteratorNext(Interfaces)) != IO_OBJECT_NULL)
     {
         io_name_t szName;
         krc = IOObjectGetClass(Interface, szName);
         if (    krc == KERN_SUCCESS
-            &&  !strcmp(szName, "IOUSBInterface"))
-        {
-            fConfigured = true;
-
-            /*
-             * Iterate the interface children looking for stuff other than
-             * IOUSBUserClientInit objects.
-             */
-            io_iterator_t Children1;
-            krc = IORegistryEntryGetChildIterator(Interface, kIOServicePlane, &Children1);
-            if (krc == KERN_SUCCESS)
-            {
-                io_object_t Child1;
-                while ((Child1 = IOIteratorNext(Children1)))
-                {
-                    krc = IOObjectGetClass(Child1, szName);
-                    if (    krc == KERN_SUCCESS
-                        &&  strcmp(szName, "IOUSBUserClientInit"))
-                    {
-                        fUserClientOnly = false;
-
-                        if (!strcmp(szName, "IOUSBMassStorageClass"))
-                        {
-                            /* Only permit capturing MSDs that aren't mounted, at least
-                               until the GUI starts poping up warnings about data loss
-                               and such when capturing a busy device. */
-                            fSeizable = false;
-                            fInUse |= darwinIsMassStorageInterfaceInUse(Child1, szName);
-                        }
-                        else if (!strcmp(szName, "IOUSBHIDDriver")
-                              || !strcmp(szName, "AppleHIDMouse")
-                              /** @todo more? */)
-                        {
-                            /* For now, just assume that all HID devices are inaccessible
-                               because of the greedy HID service. */
-                            fSeizable = false;
-                            fInUse = true;
-                        }
-                        else
-                            fInUse = true;
-                    }
-                    IOObjectRelease(Child1);
-                }
-                IOObjectRelease(Children1);
-            }
-        }
-        /*
-         * Not an interface, could it be VBoxUSBDevice?
-         * If it is, get the owner and client properties.
-         */
-        else if (    krc == KERN_SUCCESS
-                 &&  !strcmp(szName, VBOXUSBDEVICE_CLASS_NAME))
+            &&  !strcmp(szName, VBOXUSBDEVICE_CLASS_NAME))
         {
             CFMutableDictionaryRef PropsRef = 0;
             krc = IORegistryEntryCreateCFProperties(Interface, &PropsRef, kCFAllocatorDefault, kNilOptions);
@@ -877,17 +901,150 @@ static void darwinDeterminUSBDeviceState(PUSBDEVICE pCur, io_object_t USBDevice,
         else
             pCur->enmState = USBDEVICESTATE_USED_BY_HOST;
     }
-    else if (fUserClientOnly)
-        /** @todo how to detect other user client?!? - Look for IOUSBUserClient! */
-        pCur->enmState = !fConfigured
-                       ? USBDEVICESTATE_UNUSED
-                       : USBDEVICESTATE_USED_BY_HOST_CAPTURABLE;
-    else if (!fInUse)
+
+    return fHaveOwner;
+}
+
+
+/**
+ * Worker for determining the USB device state for devices which are not captured by the VBoxUSB driver
+ * Works for both, IOUSBDevice (legacy on release >= El Capitan) and IOUSBHostDevice (available on >= El Capitan).
+ *
+ * @returns nothing.
+ * @param   pCur      The USB device data.
+ * @param   USBDevice I/O Kit USB device object (either IOUSBDevice or IOUSBHostDevice).
+ */
+static void darwinDetermineUSBDeviceStateWorker(PUSBDEVICE pCur, io_object_t USBDevice)
+{
+    /*
+     * Iterate the interfaces (among the children of the IOUSBDevice object).
+     */
+    io_iterator_t Interfaces;
+    kern_return_t krc = IORegistryEntryGetChildIterator(USBDevice, kIOServicePlane, &Interfaces);
+    if (krc != KERN_SUCCESS)
+        return;
+
+    bool fUserClientOnly = true;
+    bool fConfigured = false;
+    bool fInUse = false;
+    bool fSeizable = true;
+    io_object_t Interface;
+    while ((Interface = IOIteratorNext(Interfaces)) != IO_OBJECT_NULL)
+    {
+        io_name_t szName;
+        krc = IOObjectGetClass(Interface, szName);
+        if (    krc == KERN_SUCCESS
+            &&  (   !strcmp(szName, "IOUSBInterface")
+                 || !strcmp(szName, "IOUSBHostInterface")))
+        {
+            fConfigured = true;
+
+            /*
+             * Iterate the interface children looking for stuff other than
+             * IOUSBUserClientInit objects.
+             */
+            io_iterator_t Children1;
+            krc = IORegistryEntryGetChildIterator(Interface, kIOServicePlane, &Children1);
+            if (krc == KERN_SUCCESS)
+            {
+                io_object_t Child1;
+                while ((Child1 = IOIteratorNext(Children1)) != IO_OBJECT_NULL)
+                {
+                    krc = IOObjectGetClass(Child1, szName);
+                    if (    krc == KERN_SUCCESS
+                        &&  strcmp(szName, "IOUSBUserClientInit"))
+                    {
+                        fUserClientOnly = false;
+
+                        if (   !strcmp(szName, "IOUSBMassStorageClass")
+                            || !strcmp(szName, "IOUSBMassStorageInterfaceNub"))
+                        {
+                            /* Only permit capturing MSDs that aren't mounted, at least
+                               until the GUI starts poping up warnings about data loss
+                               and such when capturing a busy device. */
+                            fSeizable = false;
+                            fInUse |= darwinIsMassStorageInterfaceInUse(Child1, szName);
+                        }
+                        else if (!strcmp(szName, "IOUSBHIDDriver")
+                              || !strcmp(szName, "AppleHIDMouse")
+                              /** @todo more? */)
+                        {
+                            /* For now, just assume that all HID devices are inaccessible
+                               because of the greedy HID service. */
+                            fSeizable = false;
+                            fInUse = true;
+                        }
+                        else
+                            fInUse = true;
+                    }
+                    IOObjectRelease(Child1);
+                }
+                IOObjectRelease(Children1);
+            }
+        }
+
+        IOObjectRelease(Interface);
+    }
+    IOObjectRelease(Interfaces);
+
+    /*
+     * Calc the status.
+     */
+    if (!fInUse)
         pCur->enmState = USBDEVICESTATE_UNUSED;
     else
         pCur->enmState = fSeizable
                        ? USBDEVICESTATE_USED_BY_HOST_CAPTURABLE
                        : USBDEVICESTATE_USED_BY_HOST;
+}
+
+
+/**
+ * Worker function for DarwinGetUSBDevices() that tries to figure out
+ * what state the device is in and set enmState.
+ *
+ * This is mostly a matter of distinguishing between devices that nobody
+ * uses, devices that can be seized and devices that cannot be grabbed.
+ *
+ * @param   pCur        The USB device data.
+ * @param   USBDevice   The USB device object.
+ * @param   PropsRef    The USB device properties.
+ */
+static void darwinDeterminUSBDeviceState(PUSBDEVICE pCur, io_object_t USBDevice, CFMutableDictionaryRef /* PropsRef */)
+{
+
+    if (!darwinUSBDeviceIsGrabbedDetermineState(pCur, USBDevice))
+    {
+        /*
+         * The USB stack was completely reworked on El Capitan and the IOUSBDevice and IOUSBInterface
+         * are deprecated and don't return the information required for the additional checks below.
+         * We also can't directly make use of the new classes (IOUSBHostDevice and IOUSBHostInterface)
+         * because VBoxUSB only exposes the legacy interfaces. Trying to use the new classes results in errors
+         * because the I/O Kit USB library wants to use the new interfaces. The result is us losing the device
+         * form the list when VBoxUSB has attached to the USB device.
+         *
+         * To make the checks below work we have to get hold of the IOUSBHostDevice and IOUSBHostInterface
+         * instances for the current device. Fortunately the IOUSBHostDevice instance contains a
+         * "AppleUSBAlternateServiceRegistryID" which points to the legacy class instance for the same device.
+         * So just iterate over the list of IOUSBHostDevice instances and check whether the
+         * AppleUSBAlternateServiceRegistryID property matches with the legacy instance.
+         *
+         * The upside is that we can keep VBoxUSB untouched and still compatible with older OS X releases.
+         */
+        if (g_uMajorDarwin >= VBOX_OSX_EL_CAPTIAN_VER)
+        {
+            io_object_t IOUSBDeviceNew = IO_OBJECT_NULL;
+            io_object_t krc = darwinGetUSBHostDeviceFromLegacyDevice(USBDevice, &IOUSBDeviceNew);
+            if (   krc == KERN_SUCCESS
+                && IOUSBDeviceNew != IO_OBJECT_NULL)
+            {
+                darwinDetermineUSBDeviceStateWorker(pCur, IOUSBDeviceNew);
+                IOObjectRelease(IOUSBDeviceNew);
+            }
+        }
+        else
+            darwinDetermineUSBDeviceStateWorker(pCur, USBDevice);
+    }
 }
 
 
@@ -911,7 +1068,7 @@ PUSBDEVICE DarwinGetUSBDevices(void)
     /*
      * Perform the search and get a collection of USB Device back.
      */
-    io_iterator_t USBDevices = NULL;
+    io_iterator_t USBDevices = IO_OBJECT_NULL;
     IOReturn rc = IOServiceGetMatchingServices(g_MasterPort, RefMatchingDict, &USBDevices);
     AssertMsgReturn(rc == kIOReturnSuccess, ("rc=%d\n", rc), NULL);
     RefMatchingDict = NULL; /* the reference is consumed by IOServiceGetMatchingServices. */
@@ -923,7 +1080,7 @@ PUSBDEVICE DarwinGetUSBDevices(void)
     PUSBDEVICE pTail = NULL;
     unsigned i = 0;
     io_object_t USBDevice;
-    while ((USBDevice = IOIteratorNext(USBDevices)) != 0)
+    while ((USBDevice = IOIteratorNext(USBDevices)) != IO_OBJECT_NULL)
     {
         DARWIN_IOKIT_DUMP_OBJ(USBDevice);
 
@@ -950,8 +1107,17 @@ PUSBDEVICE DarwinGetUSBDevices(void)
                 pCur->bcdUSB = 0;                                           /* we've no idea. */
                 pCur->enmState = USBDEVICESTATE_USED_BY_HOST_CAPTURABLE;    /* just a default, we'll try harder in a bit. */
 
-                AssertBreak(darwinDictGetU8(PropsRef,  CFSTR(kUSBDeviceClass),           &pCur->bDeviceClass));
-                /* skip hubs */
+                /* Skip hubs. On 10.11 beta 3, the root hub simulations does not have a USBDeviceClass property, so
+                   simply ignore failures to retrieve it. */
+                if (!darwinDictGetU8(PropsRef,         CFSTR(kUSBDeviceClass),          &pCur->bDeviceClass))
+                {
+#ifdef VBOX_STRICT
+                    char szTmp[80];
+                    Assert(   darwinDictGetString(PropsRef, CFSTR("IOClassNameOverride"), szTmp, sizeof(szTmp))
+                           && strcmp(szTmp, "IOUSBRootHubDevice") == 0);
+#endif
+                    break;
+                }
                 if (pCur->bDeviceClass == 0x09 /* hub, find a define! */)
                     break;
                 AssertBreak(darwinDictGetU8(PropsRef,  CFSTR(kUSBDeviceSubClass),       &pCur->bDeviceSubClass));
@@ -969,11 +1135,12 @@ PUSBDEVICE DarwinGetUSBDevices(void)
                 pCur->pszAddress = RTStrDup(szAddress);
                 AssertBreak(pCur->pszAddress);
                 pCur->bBus = u32LocationId >> 24;
-                AssertBreak(darwinDictGetU8(PropsRef,  CFSTR("PortNum"),                &pCur->bPort));
+                darwinDictGetU8(PropsRef, CFSTR("PortNum"), &pCur->bPort); /* Not present in 10.11 beta 3, so ignore failure. (Is set to zero.) */
                 uint8_t bSpeed;
-                AssertBreak(darwinDictGetU8(PropsRef,  CFSTR(kUSBDevicePropertySpeed),  &bSpeed));
-                Assert(bSpeed <= 2);
-                pCur->enmSpeed = bSpeed == 2 ? USBDEVICESPEED_HIGH
+                AssertBreak(darwinDictGetU8(PropsRef, CFSTR(kUSBDevicePropertySpeed), &bSpeed));
+                Assert(bSpeed <= 3);
+                pCur->enmSpeed = bSpeed == 3 ? USBDEVICESPEED_SUPER
+                               : bSpeed == 2 ? USBDEVICESPEED_HIGH
                                : bSpeed == 1 ? USBDEVICESPEED_FULL
                                : bSpeed == 0 ? USBDEVICESPEED_LOW
                                              : USBDEVICESPEED_UNKNOWN;
@@ -993,6 +1160,9 @@ PUSBDEVICE DarwinGetUSBDevices(void)
                     &&  pCur->bDeviceProtocol == 1 /* Bluetooth */)
                     pCur->pszProduct = RTStrDup("Bluetooth");
                 darwinDictDupString(PropsRef, CFSTR("USB Serial Number"),   (char **)&pCur->pszSerialNumber);
+
+                pCur->pszBackend = RTStrDup("host");
+                AssertBreak(pCur->pszBackend);
 
 #if 0           /* leave the remainder as zero for now. */
                 /*
@@ -1121,7 +1291,7 @@ int DarwinReEnumerateUSBDevice(PCUSBDEVICE pCur)
      */
 
     CFMutableDictionaryRef RefMatchingDict = IOServiceMatching(kIOUSBDeviceClassName);
-    AssertReturn(RefMatchingDict, NULL);
+    AssertReturn(RefMatchingDict, VERR_INTERNAL_ERROR_4);
 
     uint64_t u64SessionId = 0;
     uint32_t u32LocationId = 0;
@@ -1161,14 +1331,14 @@ int DarwinReEnumerateUSBDevice(PCUSBDEVICE pCur)
             psz++;
     } while (*psz);
 
-    io_iterator_t USBDevices = NULL;
+    io_iterator_t USBDevices = IO_OBJECT_NULL;
     IOReturn irc = IOServiceGetMatchingServices(g_MasterPort, RefMatchingDict, &USBDevices);
-    AssertMsgReturn(irc == kIOReturnSuccess, ("irc=%#x\n", irc), NULL);
+    AssertMsgReturn(irc == kIOReturnSuccess, ("irc=%#x\n", irc), VERR_INTERNAL_ERROR_5);
     RefMatchingDict = NULL; /* the reference is consumed by IOServiceGetMatchingServices. */
 
     unsigned cMatches = 0;
     io_object_t USBDevice;
-    while ((USBDevice = IOIteratorNext(USBDevices)))
+    while ((USBDevice = IOIteratorNext(USBDevices)) != IO_OBJECT_NULL)
     {
         cMatches++;
         CFMutableDictionaryRef PropsRef = 0;
@@ -1193,7 +1363,7 @@ int DarwinReEnumerateUSBDevice(PCUSBDEVICE pCur)
         IOObjectRelease(USBDevice);
     }
     IOObjectRelease(USBDevices);
-    USBDevices = NULL;
+    USBDevices = IO_OBJECT_NULL;
     if (!USBDevice)
     {
         LogRel(("USB: Device '%s' not found (%d pid+vid matches)\n", pszAddress, cMatches));
@@ -1297,7 +1467,7 @@ PDARWINDVD DarwinGetDVDDrives(void)
     /*
      * Perform the search and get a collection of DVD services.
      */
-    io_iterator_t DVDServices = NULL;
+    io_iterator_t DVDServices = IO_OBJECT_NULL;
     IOReturn rc = IOServiceGetMatchingServices(g_MasterPort, RefMatchingDict, &DVDServices);
     AssertMsgReturn(rc == kIOReturnSuccess, ("rc=%d\n", rc), NULL);
     RefMatchingDict = NULL; /* the reference is consumed by IOServiceGetMatchingServices. */
@@ -1310,7 +1480,7 @@ PDARWINDVD DarwinGetDVDDrives(void)
     PDARWINDVD pTail = NULL;
     unsigned i = 0;
     io_object_t DVDService;
-    while ((DVDService = IOIteratorNext(DVDServices)) != 0)
+    while ((DVDService = IOIteratorNext(DVDServices)) != IO_OBJECT_NULL)
     {
         DARWIN_IOKIT_DUMP_OBJ(DVDService);
 
@@ -1378,7 +1548,7 @@ PDARWINDVD DarwinGetDVDDrives(void)
 
                 /* Create the device. */
                 size_t cbName = strlen(szName) + 1;
-                PDARWINDVD pNew = (PDARWINDVD)RTMemAlloc(RT_OFFSETOF(DARWINDVD, szName[cbName]));
+                PDARWINDVD pNew = (PDARWINDVD)RTMemAlloc(RT_UOFFSETOF_DYN(DARWINDVD, szName[cbName]));
                 if (pNew)
                 {
                     pNew->pNext = NULL;
@@ -1429,7 +1599,7 @@ PDARWINETHERNIC DarwinGetEthernetControllers(void)
     /*
      * Perform the search and get a collection of ethernet controller services.
      */
-    io_iterator_t EtherIfServices = NULL;
+    io_iterator_t EtherIfServices = IO_OBJECT_NULL;
     IOReturn rc = IOServiceGetMatchingServices(g_MasterPort, RefMatchingDict, &EtherIfServices);
     AssertMsgReturn(rc == kIOReturnSuccess, ("rc=%d\n", rc), NULL);
     RefMatchingDict = NULL; /* the reference is consumed by IOServiceGetMatchingServices. */
@@ -1466,7 +1636,7 @@ PDARWINETHERNIC DarwinGetEthernetControllers(void)
     PDARWINETHERNIC pHead = NULL;
     PDARWINETHERNIC pTail = NULL;
     io_object_t EtherIfService;
-    while ((EtherIfService = IOIteratorNext(EtherIfServices)) != 0)
+    while ((EtherIfService = IOIteratorNext(EtherIfServices)) != IO_OBJECT_NULL)
     {
         /*
          * Dig up the parent, meaning the IOEthernetController.
@@ -1606,7 +1776,7 @@ PDARWINETHERNIC DarwinGetEthernetControllers(void)
                                           szBSDName, &Mac, fWireless, fAirPort, fBuiltin, fPrimaryIf, fUSB));
 
                         size_t cchName = strlen(szTmp);
-                        PDARWINETHERNIC pNew = (PDARWINETHERNIC)RTMemAlloc(RT_OFFSETOF(DARWINETHERNIC, szName[cchName + 1]));
+                        PDARWINETHERNIC pNew = (PDARWINETHERNIC)RTMemAlloc(RT_UOFFSETOF_DYN(DARWINETHERNIC, szName[cchName + 1]));
                         if (pNew)
                         {
                             strncpy(pNew->szBSDName, szBSDName, sizeof(pNew->szBSDName)); /* the '\0' padding is intentional! */

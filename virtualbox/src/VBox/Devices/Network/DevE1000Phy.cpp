@@ -10,7 +10,7 @@
  */
 
 /*
- * Copyright (C) 2007-2013 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -48,10 +48,16 @@
 #define REG(x) pPhy->au16Regs[x##_IDX]
 
 
+/* External callback declaration */
+void e1kPhyLinkResetCallback(PPHY pPhy);
+
+
 /* Internals */
 namespace Phy {
+#if defined(LOG_ENABLED) && !defined(PHY_UNIT_TEST)
     /** Retrieves state name by id */
     static const char * getStateName(uint16_t u16State);
+#endif
     /** Look up register index by address. */
     static int lookupRegister(uint32_t u32Address);
     /** Software-triggered reset. */
@@ -158,6 +164,7 @@ static void Phy::regWriteDefault(PPHY pPhy, uint32_t index, uint16_t u16Value)
  */
 static uint16_t Phy::regReadForbidden(PPHY pPhy, uint32_t index)
 {
+    RT_NOREF2(pPhy, index);
     PhyLog(("PHY#%d At %02d read attempted from write-only '%s'\n",
             pPhy->iInstance, s_regMap[index].u32Address, s_regMap[index].pszName));
     return 0;
@@ -173,6 +180,7 @@ static uint16_t Phy::regReadForbidden(PPHY pPhy, uint32_t index)
  */
 static void Phy::regWriteForbidden(PPHY pPhy, uint32_t index, uint16_t u16Value)
 {
+    RT_NOREF_PV(pPhy); RT_NOREF_PV(index); RT_NOREF_PV(u16Value);
     PhyLog(("PHY#%d At %02d write attempted to read-only '%s'\n",
             pPhy->iInstance, s_regMap[index].u32Address, s_regMap[index].pszName));
 }
@@ -188,6 +196,7 @@ static void Phy::regWriteForbidden(PPHY pPhy, uint32_t index, uint16_t u16Value)
  */
 static uint16_t Phy::regReadUnimplemented(PPHY pPhy, uint32_t index)
 {
+    RT_NOREF_PV(pPhy); RT_NOREF_PV(index);
     PhyLog(("PHY#%d At %02d read attempted from unimplemented '%s'\n",
             pPhy->iInstance, s_regMap[index].u32Address, s_regMap[index].pszName));
     return 0;
@@ -203,6 +212,7 @@ static uint16_t Phy::regReadUnimplemented(PPHY pPhy, uint32_t index)
  */
 static void Phy::regWriteUnimplemented(PPHY pPhy, uint32_t index, uint16_t u16Value)
 {
+    RT_NOREF_PV(pPhy); RT_NOREF_PV(index); RT_NOREF_PV(u16Value);
     PhyLog(("PHY#%d At %02d write attempted to unimplemented '%s'\n",
             pPhy->iInstance, s_regMap[index].u32Address, s_regMap[index].pszName));
 }
@@ -293,8 +303,6 @@ void Phy::writeRegister(PPHY pPhy, uint32_t u32Address, uint16_t u16Value)
 void Phy::init(PPHY pPhy, int iNICInstance, uint16_t u16EPid)
 {
     pPhy->iInstance = iNICInstance;
-    /* Make sure the link is down */
-    REG(PSTATUS)  = 0;
     /* The PHY identifier composed of bits 3 through 18 of the OUI */
     /* (Organizationally Unique Identifier). OUI is 0x05043.       */
     REG(PID)      = 0x0141;
@@ -313,10 +321,10 @@ void Phy::hardReset(PPHY pPhy)
     PhyLog(("PHY#%d Hard reset\n", pPhy->iInstance));
     REG(PCTRL) = PCTRL_SPDSELM | PCTRL_DUPMOD | PCTRL_ANEG;
     /*
-     * 100 and 10 FD/HD, MF Preamble Suppression, Auto-Negotiation Complete,
+     * 100 and 10 FD/HD, Extended Status, MF Preamble Suppression,
      * AUTO NEG AB, EXT CAP
      */
-    REG(PSTATUS)  = (REG(PSTATUS) & ~PSTATUS_LNKSTAT) | 0x7969;
+    REG(PSTATUS)  = 0x7949;
     REG(ANA)      = 0x01E1;
     /* No flow control by our link partner, all speeds */
     REG(LPA)      = 0x01E0;
@@ -344,7 +352,18 @@ void Phy::hardReset(PPHY pPhy)
  */
 static void Phy::softReset(PPHY pPhy)
 {
-    PhyLog(("PHY#%d Soft reset is not yet implemented!\n", pPhy->iInstance));
+    PhyLog(("PHY#%d Soft reset\n", pPhy->iInstance));
+
+    REG(PCTRL)    = REG(PCTRL) & (PCTRL_SPDSELM | PCTRL_DUPMOD | PCTRL_ANEG | PCTRL_SPDSELL);
+    /*
+     * 100 and 10 FD/HD, Extended Status, MF Preamble Suppression,
+     * AUTO NEG AB, EXT CAP
+     */
+    REG(PSTATUS)  = 0x7949;
+    REG(PSSTAT)  &= 0xe001;
+    PhyLog(("PHY#%d PSTATUS=%04x PSSTAT=%04x\n", pPhy->iInstance, REG(PSTATUS), REG(PSSTAT)));
+
+    e1kPhyLinkResetCallback(pPhy);
 }
 
 /**
@@ -368,12 +387,16 @@ bool Phy::isLinkUp(PPHY pPhy)
 void Phy::setLinkStatus(PPHY pPhy, bool fLinkIsUp)
 {
     if (fLinkIsUp)
-        REG(PSSTAT)  |= PSSTAT_LINK;
+    {
+        REG(PSSTAT)  |= PSSTAT_LINK_ALL;
+        REG(PSTATUS) |= PSTATUS_NEGCOMP; /* PSTATUS_LNKSTAT is latched low */
+    }
     else
     {
-        REG(PSSTAT)  &= ~PSSTAT_LINK;
-        REG(PSTATUS) &= ~PSTATUS_LNKSTAT;
+        REG(PSSTAT)  &= ~PSSTAT_LINK_ALL;
+        REG(PSTATUS) &= ~(PSTATUS_LNKSTAT | PSTATUS_NEGCOMP);
     }
+    PhyLog(("PHY#%d setLinkStatus: PSTATUS=%04x PSSTAT=%04x\n", pPhy->iInstance, REG(PSTATUS), REG(PSSTAT)));
 }
 
 #ifdef IN_RING3
@@ -440,6 +463,8 @@ static void Phy::regWritePCTRL(PPHY pPhy, uint32_t index, uint16_t u16Value)
  */
 static uint16_t Phy::regReadPSTATUS(PPHY pPhy, uint32_t index)
 {
+    RT_NOREF_PV(pPhy); RT_NOREF_PV(index);
+
     /* Read latched value */
     uint16_t u16 = REG(PSTATUS);
     if (REG(PSSTAT) & PSSTAT_LINK)
@@ -458,6 +483,8 @@ static uint16_t Phy::regReadPSTATUS(PPHY pPhy, uint32_t index)
  */
 static uint16_t Phy::regReadGSTATUS(PPHY pPhy, uint32_t index)
 {
+    RT_NOREF_PV(pPhy); RT_NOREF_PV(index);
+
     /*
      * - Link partner is capable of 1000BASE-T half duplex
      * - Link partner is capable of 1000BASE-T full duplex
@@ -468,6 +495,7 @@ static uint16_t Phy::regReadGSTATUS(PPHY pPhy, uint32_t index)
     return 0x3C00;
 }
 
+#if defined(LOG_ENABLED) && !defined(PHY_UNIT_TEST)
 static const char * Phy::getStateName(uint16_t u16State)
 {
     static const char *pcszState[] =
@@ -483,6 +511,7 @@ static const char * Phy::getStateName(uint16_t u16State)
 
     return (u16State < RT_ELEMENTS(pcszState)) ? pcszState[u16State] : "<invalid>";
 }
+#endif
 
 bool Phy::readMDIO(PPHY pPhy)
 {

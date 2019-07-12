@@ -1,12 +1,10 @@
 /* $Id: UIGChooserItem.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGChooserItem class definition
+ * VBox Qt GUI - UIGChooserItem class definition.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,22 +15,183 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QApplication>
-#include <QStyle>
-#include <QPainter>
-#include <QGraphicsScene>
-#include <QStyleOptionFocusRect>
-#include <QGraphicsSceneMouseEvent>
-#include <QStateMachine>
-#include <QPropertyAnimation>
-#include <QSignalTransition>
+# include <QAccessibleObject>
+# include <QApplication>
+# include <QStyle>
+# include <QPainter>
+# include <QGraphicsScene>
+# include <QStyleOptionFocusRect>
+# include <QGraphicsSceneMouseEvent>
+# include <QStateMachine>
+# include <QPropertyAnimation>
+# include <QSignalTransition>
+# include <QDrag>
 
 /* GUI includes: */
-#include "UIGChooserItem.h"
-#include "UIGChooserModel.h"
-#include "UIGChooserItemGroup.h"
-#include "UIGChooserItemMachine.h"
+# include "UIGChooser.h"
+# include "UIGChooserItem.h"
+# include "UIGChooserView.h"
+# include "UIGChooserModel.h"
+# include "UIGChooserItemGroup.h"
+# include "UIGChooserItemMachine.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+
+/** QAccessibleObject extension used as an accessibility interface for Chooser-view items. */
+class UIAccessibilityInterfaceForUIGChooserItem : public QAccessibleObject
+{
+public:
+
+    /** Returns an accessibility interface for passed @a strClassname and @a pObject. */
+    static QAccessibleInterface *pFactory(const QString &strClassname, QObject *pObject)
+    {
+        /* Creating Chooser-view accessibility interface: */
+        if (pObject && strClassname == QLatin1String("UIGChooserItem"))
+            return new UIAccessibilityInterfaceForUIGChooserItem(pObject);
+
+        /* Null by default: */
+        return 0;
+    }
+
+    /** Constructs an accessibility interface passing @a pObject to the base-class. */
+    UIAccessibilityInterfaceForUIGChooserItem(QObject *pObject)
+        : QAccessibleObject(pObject)
+    {}
+
+    /** Returns the parent. */
+    virtual QAccessibleInterface *parent() const /* override */
+    {
+        /* Make sure item still alive: */
+        AssertPtrReturn(item(), 0);
+
+        /* Return the parent: */
+        return QAccessible::queryAccessibleInterface(item()->model()->chooser()->view());
+    }
+
+    /** Returns the number of children. */
+    virtual int childCount() const /* override */
+    {
+        /* Make sure item still alive: */
+        AssertPtrReturn(item(), 0);
+
+        /* Return the number of group children: */
+        if (item()->type() == UIGChooserItemType_Group)
+            return item()->items().size();
+
+        /* Zero by default: */
+        return 0;
+    }
+
+    /** Returns the child with the passed @a iIndex. */
+    virtual QAccessibleInterface *child(int iIndex) const /* override */
+    {
+        /* Make sure item still alive: */
+        AssertPtrReturn(item(), 0);
+        /* Make sure index is valid: */
+        AssertReturn(iIndex >= 0 && iIndex < childCount(), 0);
+
+        /* Return the child with the passed iIndex: */
+        return QAccessible::queryAccessibleInterface(item()->items().at(iIndex));
+    }
+
+    /** Returns the index of the passed @a pChild. */
+    virtual int indexOfChild(const QAccessibleInterface *pChild) const /* override */
+    {
+        /* Search for corresponding child: */
+        for (int i = 0; i < childCount(); ++i)
+            if (child(i) == pChild)
+                return i;
+
+        /* -1 by default: */
+        return -1;
+    }
+
+    /** Returns the rect. */
+    virtual QRect rect() const /* override */
+    {
+        /* Now goes the mapping: */
+        const QSize   itemSize         = item()->size().toSize();
+        const QPointF itemPosInScene   = item()->mapToScene(QPointF(0, 0));
+        const QPoint  itemPosInView    = item()->model()->chooser()->view()->mapFromScene(itemPosInScene);
+        const QPoint  itemPosInScreen  = item()->model()->chooser()->view()->mapToGlobal(itemPosInView);
+        const QRect   itemRectInScreen = QRect(itemPosInScreen, itemSize);
+        return itemRectInScreen;
+    }
+
+    /** Returns a text for the passed @a enmTextRole. */
+    virtual QString text(QAccessible::Text enmTextRole) const /* override */
+    {
+        /* Make sure item still alive: */
+        AssertPtrReturn(item(), QString());
+
+        switch (enmTextRole)
+        {
+            case QAccessible::Name:        return item()->name();
+            case QAccessible::Description: return item()->description();
+            default: break;
+        }
+
+        /* Null-string by default: */
+        return QString();
+    }
+
+    /** Returns the role. */
+    virtual QAccessible::Role role() const /* override */
+    {
+        /* Make sure item still alive: */
+        AssertPtrReturn(item(), QAccessible::NoRole);
+
+        /* Return the role of group: */
+        if (item()->type() == UIGChooserItemType_Group)
+            return QAccessible::List;
+
+        /* ListItem by default: */
+        return QAccessible::ListItem;
+    }
+
+    /** Returns the state. */
+    virtual QAccessible::State state() const /* override */
+    {
+        /* Make sure item still alive: */
+        AssertPtrReturn(item(), QAccessible::State());
+
+        /* Compose the state: */
+        QAccessible::State state;
+        state.focusable = true;
+        state.selectable = true;
+
+        /* Compose the state of current item: */
+        if (item() && item() == item()->model()->currentItem())
+        {
+            state.active = true;
+            state.focused = true;
+            state.selected = true;
+        }
+
+        /* Compose the state of group: */
+        if (item()->type() == UIGChooserItemType_Group)
+        {
+            state.expandable = true;
+            if (!item()->toGroupItem()->isClosed())
+                state.expanded = true;
+        }
+
+        /* Return the state: */
+        return state;
+    }
+
+private:
+
+    /** Returns corresponding Chooser-view item. */
+    UIGChooserItem *item() const { return qobject_cast<UIGChooserItem*>(object()); }
+};
+
 
 UIGChooserItem::UIGChooserItem(UIGChooserItem *pParent, bool fTemporary)
     : m_fRoot(!pParent)
@@ -51,6 +210,9 @@ UIGChooserItem::UIGChooserItem(UIGChooserItem *pParent, bool fTemporary)
     , m_iAnimationDarkness(m_iDefaultDarkness)
     , m_iDragTokenDarkness(110)
 {
+    /* Install Chooser-view item accessibility interface factory: */
+    QAccessible::installFactory(UIAccessibilityInterfaceForUIGChooserItem::pFactory);
+
     /* Basic item setup: */
     setOwnedByLayout(false);
     setAcceptDrops(true);
@@ -65,8 +227,10 @@ UIGChooserItem::UIGChooserItem(UIGChooserItem *pParent, bool fTemporary)
         m_pHighlightMachine = new QStateMachine(this);
         /* Create 'default' state: */
         QState *pStateDefault = new QState(m_pHighlightMachine);
+        pStateDefault->assignProperty(this, "animationDarkness", m_iDefaultDarkness);
         /* Create 'highlighted' state: */
         QState *pStateHighlighted = new QState(m_pHighlightMachine);
+        pStateHighlighted->assignProperty(this, "animationDarkness", m_iHighlightDarkness);
 
         /* Forward animation: */
         m_pForwardAnimation = new QPropertyAnimation(this, "animationDarkness", this);
@@ -112,6 +276,11 @@ UIGChooserModel* UIGChooserItem::model() const
     UIGChooserModel *pModel = qobject_cast<UIGChooserModel*>(QIGraphicsWidget::scene()->parent());
     AssertMsg(pModel, ("Incorrect graphics scene parent set!"));
     return pModel;
+}
+
+UIActionPool* UIGChooserItem::actionPool() const
+{
+    return model()->actionPool();
 }
 
 UIGChooserItem* UIGChooserItem::parentItem() const
@@ -231,6 +400,7 @@ void UIGChooserItem::hoverMoveEvent(QGraphicsSceneHoverEvent*)
     {
         m_fHovered = true;
         emit sigHoverEnter();
+        update();
     }
 }
 
@@ -240,6 +410,7 @@ void UIGChooserItem::hoverLeaveEvent(QGraphicsSceneHoverEvent*)
     {
         m_fHovered = false;
         emit sigHoverLeave();
+        update();
     }
 }
 
@@ -323,6 +494,16 @@ void UIGChooserItem::dropEvent(QGraphicsSceneDragDropEvent *pEvent)
     }
 }
 
+void UIGChooserItem::handleRootStatusChange()
+{
+    /* Reset minimum size hints for non-root items: */
+    if (!isRoot())
+    {
+        m_iPreviousMinimumWidthHint = 0;
+        m_iPreviousMinimumHeightHint = 0;
+    }
+}
+
 /* static */
 void UIGChooserItem::configurePainterShape(QPainter *pPainter,
                                            const QStyleOptionGraphicsItem *pOption,
@@ -353,9 +534,9 @@ void UIGChooserItem::paintFrameRect(QPainter *pPainter, const QRect &rect, bool 
 }
 
 /* static */
-void UIGChooserItem::paintPixmap(QPainter *pPainter, const QRect &rect, const QPixmap &pixmap)
+void UIGChooserItem::paintPixmap(QPainter *pPainter, const QPoint &point, const QPixmap &pixmap)
 {
-    pPainter->drawPixmap(rect, pixmap);
+    pPainter->drawPixmap(point, pixmap);
 }
 
 /* static */

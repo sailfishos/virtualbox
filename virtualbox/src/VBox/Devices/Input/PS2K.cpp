@@ -1,9 +1,10 @@
+/* $Id: PS2K.cpp $ */
 /** @file
  * PS2K - PS/2 keyboard emulation.
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,12 +29,15 @@
  *  - Caps Lock and Scroll Lock are normal keys from the keyboard's point of view.
  *    However, Num Lock is not and the keyboard internally tracks its state.
  *  - The way Print Screen works in scan set 1/2 is totally insane.
+ *  - A PS/2 keyboard can send at most 1,000 to 1,500 bytes per second. There is
+ *    software which relies on that fact and assumes that a scan code can be
+ *    read twice before the next scan code comes in.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP   LOG_GROUP_DEV_KBD
 #include <VBox/vmm/pdmdev.h>
 #include <VBox/err.h>
@@ -43,9 +47,10 @@
 #define IN_PS2K
 #include "PS2Dev.h"
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @name Keyboard commands sent by the system.
  * @{ */
 #define KCMD_LEDS           0xED
@@ -109,6 +114,9 @@
 /* Default typematic value. */
 #define KBD_DFL_RATE_DELAY  0x2B
 
+/* Input throttling delay in milliseconds. */
+#define KBD_THROTTLE_DELAY  1
+
 /** Define a simple PS/2 input device queue. */
 #define DEF_PS2Q_TYPE(name, size)   \
      typedef struct {               \
@@ -125,16 +133,10 @@
 #define KBD_KEY_QUEUE_SIZE         64
 #define KBD_CMD_QUEUE_SIZE          4
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
 
-/** Scancode translator state.  */
-typedef enum {
-    SS_IDLE,    /**< Starting state. */
-    SS_EXT,     /**< E0 byte was received. */
-    SS_EXT1     /**< E1 byte was received. */
-} scan_state_t;
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /** Typematic state. */
 typedef enum {
@@ -169,7 +171,7 @@ typedef struct PS2K
     /** Status indicator (LED) state. */
     uint8_t             u8LEDs;
     /** Selected typematic delay/rate. */
-    uint8_t             u8Typematic;
+    uint8_t             u8TypematicCfg;
     /** Usage code of current typematic key, if any. */
     uint8_t             u8TypematicKey;
     /** Current typematic repeat state. */
@@ -184,30 +186,36 @@ typedef struct PS2K
     unsigned            uTypematicDelay;
     /** Typematic repeat period in milliseconds. */
     unsigned            uTypematicRepeat;
-#if HC_ARCH_BITS == 32
-    uint32_t            Alignment0;
-#endif
+    /** Set if the throttle delay is currently active. */
+    bool                fThrottleActive;
+    /** Set if the input rate should be throttled. */
+    bool                fThrottleEnabled;
+
+    uint8_t             Alignment0[2];
 
     /** Command delay timer - RC Ptr. */
     PTMTIMERRC          pKbdDelayTimerRC;
     /** Typematic timer - RC Ptr. */
     PTMTIMERRC          pKbdTypematicTimerRC;
+    /** Input throttle timer - RC Ptr. */
+    PTMTIMERRC          pThrottleTimerRC;
 
     /** The device critical section protecting everything - R3 Ptr */
     R3PTRTYPE(PPDMCRITSECT) pCritSectR3;
+
     /** Command delay timer - R3 Ptr. */
     PTMTIMERR3          pKbdDelayTimerR3;
     /** Typematic timer - R3 Ptr. */
     PTMTIMERR3          pKbdTypematicTimerR3;
-    RTR3PTR             Alignment2;
+    /** Input throttle timer - R3 Ptr. */
+    PTMTIMERR3          pThrottleTimerR3;
 
     /** Command delay timer - R0 Ptr. */
     PTMTIMERR0          pKbdDelayTimerR0;
     /** Typematic timer - R0 Ptr. */
     PTMTIMERR0          pKbdTypematicTimerR0;
-
-    scan_state_t        XlatState;      ///@todo: temporary
-    uint32_t            Alignment1;
+    /** Input throttle timer - R0 Ptr. */
+    PTMTIMERR0          pThrottleTimerR0;
 
     /**
      * Keyboard port - LUN#0.
@@ -263,6 +271,11 @@ typedef struct {
     uint8_t keyMatic;    /* Set 3 typematic default. */
 } key_def;
 
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+#ifdef IN_RING3
 /* USB to PS/2 conversion table for regular keys. */
 static const   key_def   aPS2Keys[] = {
     /* 00 */ {NONE, NONE, NONE, KF_NB, T_U }, /* Key N/A: No Event */
@@ -457,119 +470,8 @@ static const   key_def   aPS2ModKeys[] = {
     /* E7 */ {0x5C, 0x27, UNKN, KF_E0, T_U }, /* Key 128: Right GUI */
 };
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+#endif /* IN_RING3 */
 
-/*
- * Because of historical reasons and poor design, VirtualBox internally uses BIOS
- * PC/XT style scan codes to represent keyboard events. Each key press and release is
- * represented as a stream of bytes, typically only one byte but up to four-byte
- * sequences are possible. In the typical case, the GUI front end generates the stream
- * of scan codes which we need to translate back to a single up/down event.
- *
- * This function could possibly live somewhere else.
- */
-
-/** Lookup table for converting PC/XT scan codes to USB HID usage codes. */
-static uint8_t aScancode2Hid[] =
-{
-    0x00, 0x29, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, /* 00-07 */
-    0x24, 0x25, 0x26, 0x27, 0x2d, 0x2e, 0x2a, 0x2b, /* 08-1F */
-    0x14, 0x1a, 0x08, 0x15, 0x17, 0x1c, 0x18, 0x0c, /* 10-17 */
-    0x12, 0x13, 0x2f, 0x30, 0x28, 0xe0, 0x04, 0x16, /* 18-1F */
-    0x07, 0x09, 0x0a, 0x0b, 0x0d, 0x0e, 0x0f, 0x33, /* 20-27 */
-    0x34, 0x35, 0xe1, 0x31, 0x1d, 0x1b, 0x06, 0x19, /* 28-2F */
-    0x05, 0x11, 0x10, 0x36, 0x37, 0x38, 0xe5, 0x55, /* 30-37 */
-    0xe2, 0x2c, 0x39, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, /* 38-3F */
-    0x3f, 0x40, 0x41, 0x42, 0x43, 0x53, 0x47, 0x5f, /* 40-47 */
-    0x60, 0x61, 0x56, 0x5c, 0x5d, 0x5e, 0x57, 0x59, /* 48-4F */
-    0x5a, 0x5b, 0x62, 0x63, 0x46, 0x00, 0x64, 0x44, /* 50-57 */
-    0x45, 0x67, 0x00, 0x00, 0x8c, 0x00, 0x00, 0x00, /* 58-5F */
-    0x00, 0x00, 0x00, 0x00, 0x68, 0x69, 0x6a, 0x6b, /* 60-67 */
-    0x6c, 0x6d, 0x6e, 0x6f, 0x70, 0x71, 0x72, 0x00, /* 68-6F */
-    0x88, 0x91, 0x90, 0x87, 0x00, 0x00, 0x00, 0x00, /* 70-77 */
-    0x00, 0x8a, 0x00, 0x8b, 0x00, 0x89, 0x85, 0x00  /* 78-7F */
-};
-
-/** Lookup table for extended scancodes (arrow keys etc.). */
-static uint8_t aExtScan2Hid[] =
-{
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 00-07 */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 08-1F */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 10-17 */
-    0x00, 0x00, 0x00, 0x00, 0x58, 0xe4, 0x00, 0x00, /* 18-1F */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 20-27 */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 28-2F */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x54, 0x00, 0x46, /* 30-37 */
-    /* Sun-specific keys.  Most of the XT codes are made up  */
-    0xe6, 0x00, 0x00, 0x75, 0x76, 0x77, 0xA3, 0x78, /* 38-3F */
-    0x80, 0x81, 0x82, 0x79, 0x00, 0x00, 0x48, 0x4a, /* 40-47 */
-    0x52, 0x4b, 0x00, 0x50, 0x00, 0x4f, 0x00, 0x4d, /* 48-4F */
-    0x51, 0x4e, 0x49, 0x4c, 0x00, 0x00, 0x00, 0x00, /* 50-57 */
-    0x00, 0x00, 0x00, 0xe3, 0xe7, 0x65, 0x66, 0x00, /* 58-5F */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 60-67 */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 68-6F */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* 70-77 */
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  /* 78-7F */
-};
-
-/**
- * Convert a PC scan code to a USB HID usage byte.
- *
- * @param state         Current state of the translator (scan_state_t).
- * @param scanCode      Incoming scan code.
- * @param pUsage        Pointer to usage; high bit set for key up events. The
- *                      contents are only valid if returned state is SS_IDLE.
- *
- * @return scan_state_t New state of the translator.
- */
-static scan_state_t ScancodeToHidUsage(scan_state_t state, uint8_t scanCode, uint32_t *pUsage)
-{
-    uint32_t    keyUp;
-    uint8_t     usage;
-
-    Assert(pUsage);
-
-    /* Isolate the scan code and key break flag. */
-    keyUp = (scanCode & 0x80) << 24;
-
-    switch (state) {
-    case SS_IDLE:
-        if (scanCode == 0xE0) {
-            state = SS_EXT;
-        } else if (scanCode == 0xE1) {
-            state = SS_EXT1;
-        } else {
-            usage = aScancode2Hid[scanCode & 0x7F];
-            *pUsage = usage | keyUp;
-            /* Remain in SS_IDLE state. */
-        }
-        break;
-    case SS_EXT:
-        usage = aExtScan2Hid[scanCode & 0x7F];
-        *pUsage = usage | keyUp;
-        state = SS_IDLE;
-        break;
-    case SS_EXT1:
-        /* The sequence is E1 1D 45 E1 9D C5. We take the easy way out and remain
-         * in the SS_EXT1 state until 45 or C5 is received.
-         */
-        if ((scanCode & 0x7F) == 0x45) {
-            *pUsage = 0x48;
-            if (scanCode == 0xC5)
-                *pUsage |= keyUp;
-            state = SS_IDLE;
-        }
-        /* Else remain in SS_EXT1 state. */
-        break;
-    }
-    return state;
-}
-
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
 
 
 /**
@@ -596,7 +498,7 @@ static void ps2kInsertQueue(GeneriQ *pQ, uint8_t val)
     /* Check if queue is full. */
     if (pQ->cUsed >= pQ->cSize)
     {
-        LogFlowFunc(("queue %p full (%d entries)\n", pQ, pQ->cUsed));
+        LogRelFlowFunc(("queue %p full (%d entries)\n", pQ, pQ->cUsed));
         return;
     }
     /* Insert data and update circular buffer write position. */
@@ -604,10 +506,45 @@ static void ps2kInsertQueue(GeneriQ *pQ, uint8_t val)
     if (++pQ->wpos == pQ->cSize)
         pQ->wpos = 0;   /* Roll over. */
     ++pQ->cUsed;
-    LogFlowFunc(("inserted 0x%02X into queue %p\n", val, pQ));
+    LogRelFlowFunc(("inserted 0x%02X into queue %p\n", val, pQ));
 }
 
 #ifdef IN_RING3
+
+/**
+ * Add a null-terminated byte sequence to a queue if there is enough room.
+ *
+ * @param   pQ                  Pointer to the queue.
+ * @param   pStr                Pointer to the bytes to store.
+ * @param   uReserve            Number of bytes that must still remain
+ *                              available in queue.
+ * @return  int                 VBox status/error code.
+ */
+static int ps2kInsertStrQueue(GeneriQ *pQ, const uint8_t *pStr, uint32_t uReserve)
+{
+    uint32_t    cbStr;
+    unsigned    i;
+
+    cbStr = (uint32_t)strlen((const char *)pStr);
+
+    /* Check if queue has enough room. */
+    if (pQ->cUsed + uReserve + cbStr >= pQ->cSize)
+    {
+        LogRelFlowFunc(("queue %p full (%u entries, want room for %u), cannot insert %u entries\n",
+                        pQ, pQ->cUsed, uReserve, cbStr));
+        return VERR_BUFFER_OVERFLOW;
+    }
+
+    /* Insert byte sequence and update circular buffer write position. */
+    for (i = 0; i < cbStr; ++i) {
+        pQ->abQueue[pQ->wpos] = pStr[i];
+        if (++pQ->wpos == pQ->cSize)
+            pQ->wpos = 0;   /* Roll over. */
+    }
+    pQ->cUsed += cbStr;
+    LogRelFlowFunc(("inserted %u bytes into queue %p\n", cbStr, pQ));
+    return VINF_SUCCESS;
+}
 
 /**
  * Save a queue state.
@@ -642,18 +579,12 @@ static void ps2kSaveQueue(PSSMHANDLE pSSM, GeneriQ *pQ)
  */
 static int ps2kLoadQueue(PSSMHANDLE pSSM, GeneriQ *pQ)
 {
-    int         rc;
-
     /* On load, always put the read pointer at zero. */
-    SSMR3GetU32(pSSM, &pQ->cUsed);
-
-    LogFlow(("Loading %d items to queue %p\n", pQ->cUsed, pQ));
-
-    if (pQ->cUsed > pQ->cSize)
-    {
-        AssertMsgFailed(("Saved size=%u, actual=%u\n", pQ->cUsed, pQ->cSize));
-        return VERR_SSM_DATA_UNIT_FORMAT_CHANGED;
-    }
+    int rc = SSMR3GetU32(pSSM, &pQ->cUsed);
+    AssertRCReturn(rc, rc);
+    LogFlow(("Loading %u items to queue %p\n", pQ->cUsed, pQ));
+    AssertMsgReturn(pQ->cUsed <= pQ->cSize, ("Saved size=%u, actual=%u\n", pQ->cUsed, pQ->cSize),
+                    VERR_SSM_DATA_UNIT_FORMAT_CHANGED);
 
     /* Recalculate queue positions and load data in one go. */
     pQ->rpos = 0;
@@ -661,6 +592,40 @@ static int ps2kLoadQueue(PSSMHANDLE pSSM, GeneriQ *pQ)
     rc = SSMR3GetMem(pSSM, pQ->abQueue, pQ->cUsed);
 
     return rc;
+}
+
+/**
+ * Notify listener about LEDs state change.
+ *
+ * @param   pThis           The PS/2 keyboard instance data.
+ * @param   u8State         Bitfield which reflects LEDs state.
+ */
+static void ps2kNotifyLedsState(PPS2K pThis, uint8_t u8State)
+{
+
+    PDMKEYBLEDS enmLeds = PDMKEYBLEDS_NONE;
+
+    if (u8State & 0x01)
+        enmLeds = (PDMKEYBLEDS)(enmLeds | PDMKEYBLEDS_SCROLLLOCK);
+    if (u8State & 0x02)
+        enmLeds = (PDMKEYBLEDS)(enmLeds | PDMKEYBLEDS_NUMLOCK);
+    if (u8State & 0x04)
+        enmLeds = (PDMKEYBLEDS)(enmLeds | PDMKEYBLEDS_CAPSLOCK);
+
+    pThis->Keyboard.pDrv->pfnLedStatusChange(pThis->Keyboard.pDrv, enmLeds);
+
+}
+
+/**
+ * Query the number of items currently in a queue.
+ *
+ * @param   pQ                  Pointer to the queue.
+ *
+ * @return  uint32_t            Number of items in queue.
+ */
+static uint32_t ps2kInQueue(GeneriQ *pQ)
+{
+    return pQ->cUsed;
 }
 
 #endif /* IN_RING3 */
@@ -692,6 +657,18 @@ static int ps2kRemoveQueue(GeneriQ *pQ, uint8_t *pVal)
     return rc;
 }
 
+/* Clears the currently active typematic key, if any. */
+static void ps2kStopTypematicRepeat(PPS2K pThis)
+{
+    if (pThis->u8TypematicKey)
+    {
+        LogFunc(("Typematic key %02X\n", pThis->u8TypematicKey));
+        pThis->enmTypematicState = KBD_TMS_IDLE;
+        pThis->u8TypematicKey = 0;
+        TMTimerStop(pThis->CTX_SUFF(pKbdTypematicTimer));
+    }
+}
+
 /* Convert encoded typematic value to milliseconds. Note that the values are rated
  * with +/- 20% accuracy, so there's no need for high precision.
  */
@@ -700,7 +677,7 @@ static void ps2kSetupTypematic(PPS2K pThis, uint8_t val)
     int         A, B;
     unsigned    period;
 
-    pThis->u8Typematic = val;
+    pThis->u8TypematicCfg = val;
     /* The delay is easy: (1 + value) * 250 ms */
     pThis->uTypematicDelay = (1 + ((val >> 5) & 3)) * 250;
     /* The rate is more complicated: (8 + A) * 2^B * 4.17 ms */
@@ -720,6 +697,7 @@ static void ps2kSetDefaults(PPS2K pThis)
     /* Set default typematic rate/delay. */
     ps2kSetupTypematic(pThis, KBD_DFL_RATE_DELAY);
     /* Clear last typematic key?? */
+    ps2kStopTypematicRepeat(pThis);
 }
 
 /**
@@ -733,6 +711,10 @@ int PS2KByteToKbd(PPS2K pThis, uint8_t cmd)
     bool    fHandled = true;
 
     LogFlowFunc(("new cmd=0x%02X, active cmd=0x%02X\n", cmd, pThis->u8CurrCmd));
+
+    if (pThis->u8CurrCmd == KCMD_RESET)
+        /* In reset mode, do not respond at all. */
+        return VINF_SUCCESS;
 
     switch (cmd)
     {
@@ -749,13 +731,13 @@ int PS2KByteToKbd(PPS2K pThis, uint8_t cmd)
         case KCMD_ENABLE:
             pThis->fScanning = true;
             ps2kClearQueue((GeneriQ *)&pThis->keyQ);
-            /* Clear last typematic key?? */
+            ps2kStopTypematicRepeat(pThis);
             ps2kInsertQueue((GeneriQ *)&pThis->cmdQ, KRSP_ACK);
             pThis->u8CurrCmd = 0;
             break;
         case KCMD_DFLT_DISABLE:
             pThis->fScanning = false;
-            ps2kSetDefaults(pThis);
+            ps2kSetDefaults(pThis); /* Also clears buffer/typematic state. */
             ps2kInsertQueue((GeneriQ *)&pThis->cmdQ, KRSP_ACK);
             pThis->u8CurrCmd = 0;
             break;
@@ -768,7 +750,7 @@ int PS2KByteToKbd(PPS2K pThis, uint8_t cmd)
         case KCMD_ALL_MK_BRK:
         case KCMD_ALL_MAKE:
         case KCMD_ALL_TMB:
-            ///@todo Set the key types here.
+            /// @todo Set the key types here.
             ps2kInsertQueue((GeneriQ *)&pThis->cmdQ, KRSP_ACK);
             pThis->u8CurrCmd = 0;
             break;
@@ -778,7 +760,7 @@ int PS2KByteToKbd(PPS2K pThis, uint8_t cmd)
         case KCMD_RESET:
             pThis->u8ScanSet = 2;
             ps2kSetDefaults(pThis);
-            ///@todo reset more?
+            /// @todo reset more?
             ps2kInsertQueue((GeneriQ *)&pThis->cmdQ, KRSP_ACK);
             pThis->u8CurrCmd = cmd;
             /* Delay BAT completion; the test may take hundreds of ms. */
@@ -803,15 +785,7 @@ int PS2KByteToKbd(PPS2K pThis, uint8_t cmd)
                     return VINF_IOM_R3_IOPORT_WRITE;
 #else
                     {
-                        PDMKEYBLEDS enmLeds = PDMKEYBLEDS_NONE;
-
-                        if (cmd & 0x01)
-                            enmLeds = (PDMKEYBLEDS)(enmLeds | PDMKEYBLEDS_SCROLLLOCK);
-                        if (cmd & 0x02)
-                            enmLeds = (PDMKEYBLEDS)(enmLeds | PDMKEYBLEDS_NUMLOCK);
-                        if (cmd & 0x04)
-                            enmLeds = (PDMKEYBLEDS)(enmLeds | PDMKEYBLEDS_CAPSLOCK);
-                        pThis->Keyboard.pDrv->pfnLedStatusChange(pThis->Keyboard.pDrv, enmLeds);
+                        ps2kNotifyLedsState(pThis, cmd);
                         pThis->fNumLockOn = !!(cmd & 0x02); /* Sync internal Num Lock state. */
                         ps2kInsertQueue((GeneriQ *)&pThis->cmdQ, KRSP_ACK);
                         pThis->u8LEDs = cmd;
@@ -826,7 +800,7 @@ int PS2KByteToKbd(PPS2K pThis, uint8_t cmd)
                     else if (cmd < 4)
                     {
                         pThis->u8ScanSet = cmd;
-                        LogRel(("PS2K: Selected scan set %d.\n", cmd));
+                        LogRel(("PS2K: Selected scan set %d\n", cmd));
                     }
                     /* Other values are simply ignored. */
                     pThis->u8CurrCmd = 0;
@@ -842,6 +816,7 @@ int PS2KByteToKbd(PPS2K pThis, uint8_t cmd)
             /* Fall through only to handle unrecognized commands. */
             if (fHandled)
                 break;
+            RT_FALL_THRU();
 
         case KCMD_INVALID_1:
         case KCMD_INVALID_2:
@@ -875,7 +850,14 @@ int PS2KByteFromKbd(PPS2K pThis, uint8_t *pb)
      */
     rc = ps2kRemoveQueue((GeneriQ *)&pThis->cmdQ, pb);
     if (rc != VINF_SUCCESS && !pThis->u8CurrCmd && pThis->fScanning)
-        rc = ps2kRemoveQueue((GeneriQ *)&pThis->keyQ, pb);
+        if (!pThis->fThrottleActive)
+        {
+            rc = ps2kRemoveQueue((GeneriQ *)&pThis->keyQ, pb);
+            if (pThis->fThrottleEnabled) {
+                pThis->fThrottleActive = true;
+                TMTimerSetMillies(pThis->CTX_SUFF(pThrottleTimer), KBD_THROTTLE_DELAY);
+            }
+        }
 
     LogFlowFunc(("keyboard sends 0x%02x (%svalid data)\n", *pb, rc == VINF_SUCCESS ? "" : "not "));
     return rc;
@@ -883,12 +865,13 @@ int PS2KByteFromKbd(PPS2K pThis, uint8_t *pb)
 
 #ifdef IN_RING3
 
-static int psk2ProcessKeyEvent(PPS2K pThis, uint8_t u8HidCode, bool fKeyDown)
+static int ps2kProcessKeyEvent(PPS2K pThis, uint8_t u8HidCode, bool fKeyDown)
 {
-    unsigned int    i = 0;
     key_def const   *pKeyDef;
     uint8_t         abCodes[16];
-    uint8_t         u8MakeCode;
+    char            *pCodes;
+    size_t          cbLeft;
+    uint8_t         abScan[2];
 
     LogFlowFunc(("key %s: 0x%02x (set %d)\n", fKeyDown ? "down" : "up", u8HidCode, pThis->u8ScanSet));
 
@@ -920,12 +903,15 @@ static int psk2ProcessKeyEvent(PPS2K pThis, uint8_t u8HidCode, bool fKeyDown)
     if ((pKeyDef->keyFlags & KF_NL) && fKeyDown)
         pThis->fNumLockOn ^= true;
 
+    abCodes[0] = 0;
+    pCodes = (char *)abCodes;
+    cbLeft = sizeof(abCodes);
+
     if (pThis->u8ScanSet == 1 || pThis->u8ScanSet == 2)
     {
         /* The basic scan set 1 and 2 logic is the same, only the scan codes differ.
          * Since scan set 2 is used almost all the time, that case is handled first.
          */
-        abCodes[0] = 0;
         if (fKeyDown)
         {
             /* Process key down event. */
@@ -933,24 +919,24 @@ static int psk2ProcessKeyEvent(PPS2K pThis, uint8_t u8HidCode, bool fKeyDown)
             {
                 /* Pause/Break sends different data if either Ctrl is held. */
                 if (pThis->u8Modifiers & (MOD_LCTRL | MOD_RCTRL))
-                    strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                           "\xE0\x7E\xE0\xF0\x7E" : "\xE0\x46\xE0\xC6");
+                    RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                              "\xE0\x7E\xE0\xF0\x7E" : "\xE0\x46\xE0\xC6");
                 else
-                    strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                           "\xE1\x14\x77\xE1\xF0\x14\xF0\x77" : "\xE1\x1D\x45\xE1\x9D\xC5");
+                    RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                              "\xE1\x14\x77\xE1\xF0\x14\xF0\x77" : "\xE1\x1D\x45\xE1\x9D\xC5");
             }
             else if (pKeyDef->keyFlags & KF_PS)
             {
                 /* Print Screen depends on all of Ctrl, Shift, *and* Alt! */
                 if (pThis->u8Modifiers & (MOD_LALT | MOD_RALT))
-                    strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                           "\x84" : "\x54");
+                    RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                              "\x84" : "\x54");
                 else if (pThis->u8Modifiers & (MOD_LSHIFT | MOD_RSHIFT))
-                    strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                           "\xE0\x7C" : "\xE0\x37");
+                    RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                              "\xE0\x7C" : "\xE0\x37");
                 else
-                    strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                           "\xE0\x12\xE0\x7C" : "\xE0\x2A\xE0\x37");
+                    RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                              "\xE0\x12\xE0\x7C" : "\xE0\x2A\xE0\x37");
             }
             else if (pKeyDef->keyFlags & (KF_GK | KF_NS))
             {
@@ -962,35 +948,35 @@ static int psk2ProcessKeyEvent(PPS2K pThis, uint8_t u8HidCode, bool fKeyDown)
                 if (!pThis->fNumLockOn || (pKeyDef->keyFlags & KF_NS))
                 {
                     if (pThis->u8Modifiers & MOD_LSHIFT)
-                        strcat((char *)abCodes, pThis->u8ScanSet == 2 ?
-                               "\xE0\xF0\x12" : "\xE0\xAA");
+                        RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                                  "\xE0\xF0\x12" : "\xE0\xAA");
                     if (pThis->u8Modifiers & MOD_RSHIFT)
-                        strcat((char *)abCodes, pThis->u8ScanSet == 2 ?
-                               "\xE0\xF0\x59" : "\xE0\xB6");
+                        RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                                  "\xE0\xF0\x59" : "\xE0\xB6");
                 }
                 else
                 {
                     Assert(pThis->fNumLockOn);  /* Not for KF_NS! */
                     if ((pThis->u8Modifiers & (MOD_LSHIFT | MOD_RSHIFT)) == 0)
-                        strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                               "\xE0\x12" : "\xE0\x2A");
+                        RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                                  "\xE0\x12" : "\xE0\x2A");
                     /* Else Shift cancels NumLock, so no prefix! */
                 }
             }
-            /* Feed the bytes to the queue if there is room. */
-            ///@todo check empty space!
-            while (abCodes[i])
-                ps2kInsertQueue((GeneriQ *)&pThis->keyQ, abCodes[i++]);
-            Assert(i < sizeof(abCodes));
 
             /* Standard processing for regular keys only. */
-            u8MakeCode = pThis->u8ScanSet == 2 ? pKeyDef->makeS2 : pKeyDef->makeS1;
+            abScan[0] = pThis->u8ScanSet == 2 ? pKeyDef->makeS2 : pKeyDef->makeS1;
+            abScan[1] = '\0';
             if (!(pKeyDef->keyFlags & (KF_PB | KF_PS)))
             {
                 if (pKeyDef->keyFlags & (KF_E0 | KF_GK | KF_NS))
-                    ps2kInsertQueue((GeneriQ *)&pThis->keyQ, 0xE0);
-                ps2kInsertQueue((GeneriQ *)&pThis->keyQ, u8MakeCode);
+                    RTStrCatP(&pCodes, &cbLeft, "\xE0");
+                RTStrCatP(&pCodes, &cbLeft, (const char *)abScan);
             }
+
+            /* Feed the bytes to the queue if there is room. */
+            /// @todo Send overrun code if sequence won't fit?
+            ps2kInsertStrQueue((GeneriQ *)&pThis->keyQ, abCodes, 0);
         }
         else if (!(pKeyDef->keyFlags & (KF_NB | KF_PB)))
         {
@@ -1001,27 +987,25 @@ static int psk2ProcessKeyEvent(PPS2K pThis, uint8_t u8HidCode, bool fKeyDown)
             {
                 /* Undo faked Print Screen state as needed. */
                 if (pThis->u8Modifiers & (MOD_LALT | MOD_RALT))
-                    strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                           "\xF0\x84" : "\xD4");
+                    RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                              "\xF0\x84" : "\xD4");
                 else if (pThis->u8Modifiers & (MOD_LSHIFT | MOD_RSHIFT))
-                    strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                           "\xE0\xF0\x7C" : "\xE0\xB7");
+                    RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                              "\xE0\xF0\x7C" : "\xE0\xB7");
                 else
-                    strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                           "\xE0\xF0\x7C\xE0\xF0\x12" : "\xE0\xB7\xE0\xAA");
+                    RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                              "\xE0\xF0\x7C\xE0\xF0\x12" : "\xE0\xB7\xE0\xAA");
             }
             else
             {
                 /* Process base scan code for less unusual keys. */
+                abScan[0] = pThis->u8ScanSet == 2 ? pKeyDef->makeS2 : pKeyDef->makeS1 | 0x80;
+                abScan[1] = '\0';
                 if (pKeyDef->keyFlags & (KF_E0 | KF_GK | KF_NS))
-                    ps2kInsertQueue((GeneriQ *)&pThis->keyQ, 0xE0);
-                if (pThis->u8ScanSet == 2) {
-                    ps2kInsertQueue((GeneriQ *)&pThis->keyQ, 0xF0);
-                    ps2kInsertQueue((GeneriQ *)&pThis->keyQ, pKeyDef->makeS2);
-                } else {
-                    Assert(pThis->u8ScanSet == 1);
-                    ps2kInsertQueue((GeneriQ *)&pThis->keyQ, pKeyDef->makeS1 | 0x80);
-                }
+                    RTStrCatP(&pCodes, &cbLeft, "\xE0");
+                if (pThis->u8ScanSet == 2)
+                    RTStrCatP(&pCodes, &cbLeft, "\xF0");
+                RTStrCatP(&pCodes, &cbLeft, (const char *)abScan);
 
                 /* Restore shift state for gray keys. */
                 if (pKeyDef->keyFlags & (KF_GK | KF_NS))
@@ -1029,47 +1013,50 @@ static int psk2ProcessKeyEvent(PPS2K pThis, uint8_t u8HidCode, bool fKeyDown)
                     if (!pThis->fNumLockOn || (pKeyDef->keyFlags & KF_NS))
                     {
                         if (pThis->u8Modifiers & MOD_LSHIFT)
-                            strcat((char *)abCodes, pThis->u8ScanSet == 2 ?
-                                   "\xE0\x12" : "\xE0\x2A");
+                            RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                                      "\xE0\x12" : "\xE0\x2A");
                         if (pThis->u8Modifiers & MOD_RSHIFT)
-                            strcat((char *)abCodes, pThis->u8ScanSet == 2 ?
-                                   "\xE0\x59" : "\xE0\x36");
+                            RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                                      "\xE0\x59" : "\xE0\x36");
                     }
                     else
                     {
                         Assert(pThis->fNumLockOn);  /* Not for KF_NS! */
                         if ((pThis->u8Modifiers & (MOD_LSHIFT | MOD_RSHIFT)) == 0)
-                            strcpy((char *)abCodes, pThis->u8ScanSet == 2 ?
-                                   "\xE0\xF0\x12" : "\xE0\xAA");
+                            RTStrCatP(&pCodes, &cbLeft, pThis->u8ScanSet == 2 ?
+                                      "\xE0\xF0\x12" : "\xE0\xAA");
                     }
                 }
             }
 
-            /* Feed any additional bytes to the queue if there is room. */
-            ///@todo check empty space!
-            while (abCodes[i])
-                ps2kInsertQueue((GeneriQ *)&pThis->keyQ, abCodes[i++]);
-            Assert(i < sizeof(abCodes));
+            /* Feed the bytes to the queue if there is room. */
+            /// @todo Send overrun code if sequence won't fit?
+            ps2kInsertStrQueue((GeneriQ *)&pThis->keyQ, abCodes, 0);
         }
     }
     else
     {
         /* Handle Scan Set 3 - very straightforward. */
         Assert(pThis->u8ScanSet == 3);
+        abScan[0] = pKeyDef->makeS3;
+        abScan[1] = '\0';
         if (fKeyDown)
         {
-            ps2kInsertQueue((GeneriQ *)&pThis->keyQ, pKeyDef->makeS3);
+            RTStrCatP(&pCodes, &cbLeft, (const char *)abScan);
         }
         else
         {
             /* Send a key release code unless it's a make only key. */
-            ///@todo Look up the current typematic setting, not the default!
+            /// @todo Look up the current typematic setting, not the default!
             if (pKeyDef->keyMatic != T_M)
             {
-                ps2kInsertQueue((GeneriQ *)&pThis->keyQ, 0xF0);
-                ps2kInsertQueue((GeneriQ *)&pThis->keyQ, pKeyDef->makeS3);
+                RTStrCatP(&pCodes, &cbLeft, "\xF0");
+                RTStrCatP(&pCodes, &cbLeft, (const char *)abScan);
             }
         }
+        /* Feed the bytes to the queue if there is room. */
+        /// @todo Send overrun code if sequence won't fit?
+        ps2kInsertStrQueue((GeneriQ *)&pThis->keyQ, abCodes, 0);
     }
 
     /* Set up or cancel typematic key repeat. */
@@ -1085,10 +1072,19 @@ static int psk2ProcessKeyEvent(PPS2K pThis, uint8_t u8HidCode, bool fKeyDown)
     }
     else
     {
-        pThis->u8TypematicKey    = 0;
-        pThis->enmTypematicState = KBD_TMS_IDLE;
-        ///@todo Cancel timer right away?
-        ///@todo Cancel timer before pushing key up code!?
+        /* "Typematic operation stops when the last key pressed is released, even
+         * if other keys are still held down." (IBM PS/2 Tech Ref). The last key pressed
+         * is the one that's being repeated.
+         */
+        if (pThis->u8TypematicKey == u8HidCode)
+        {
+            /* This disables the typematic repeat. */
+            pThis->u8TypematicKey    = 0;
+            pThis->enmTypematicState = KBD_TMS_IDLE;
+            /* For good measure, we cancel the timer, too. */
+            TMTimerStop(pThis->CTX_SUFF(pKbdTypematicTimer));
+            Log(("Typematic action cleared for key %02X\n", u8HidCode));
+        }
     }
 
     /* Poke the KBC to update its state. */
@@ -1097,12 +1093,46 @@ static int psk2ProcessKeyEvent(PPS2K pThis, uint8_t u8HidCode, bool fKeyDown)
     return VINF_SUCCESS;
 }
 
+/* Throttling timer to emulate the finite keyboard communication speed. A PS/2 keyboard is
+ * limited by the serial link speed and cannot send much more than 1,000 bytes per second.
+ * Some software (notably Borland Pascal and programs built with its run-time) relies on
+ * being able to read an incoming scan-code twice. Throttling the data rate enables such
+ * software to function, while human typists cannot tell any difference.
+ *
+ * Note: The throttling is currently only done for keyboard data, not command responses.
+ * The throttling could and perhaps should be done for any data (including command
+ * response) scoming from PS/2 devices, both keyboard and auxiliary. That is not currently
+ * done because it would needlessly slow things down.
+ */
+static DECLCALLBACK(void) ps2kThrottleTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
+{
+    RT_NOREF2(pDevIns, pTimer);
+    PPS2K       pThis = (PS2K *)pvUser;
+    unsigned    uHaveData;
+
+    /* Grab the lock to avoid races with event delivery or EMTs. */
+    int rc = PDMCritSectEnter(pThis->pCritSectR3, VERR_SEM_BUSY);
+    AssertReleaseRC(rc);
+
+    /* If data is available, poke the KBC. Once the data
+     * is actually read, the timer may be re-triggered.
+     */
+    pThis->fThrottleActive = false;
+    uHaveData = ps2kInQueue((GeneriQ *)&pThis->keyQ);
+    LogFlowFunc(("Have%s bytes\n", uHaveData ? "" : " no"));
+    if (uHaveData)
+        KBCUpdateInterrupts(pThis->pParent);
+
+    PDMCritSectLeave(pThis->pCritSectR3);
+}
+
 /* Timer handler for emulating typematic keys. Note that only the last key
  * held down repeats (if typematic).
  */
 static DECLCALLBACK(void) ps2kTypematicTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
 {
-    PPS2K pThis = (PS2K *)pvUser; NOREF(pDevIns);
+    RT_NOREF2(pDevIns, pTimer);
+    PPS2K pThis = (PS2K *)pvUser;
     LogFlowFunc(("Typematic state=%d, key %02X\n", pThis->enmTypematicState, pThis->u8TypematicKey));
 
     /* If the current typematic key is zero, the repeat was canceled just when
@@ -1115,7 +1145,7 @@ static DECLCALLBACK(void) ps2kTypematicTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer
 
         if (pThis->enmTypematicState == KBD_TMS_REPEAT)
         {
-            psk2ProcessKeyEvent(pThis, pThis->u8TypematicKey, true /* Key down */ );
+            ps2kProcessKeyEvent(pThis, pThis->u8TypematicKey, true /* Key down */ );
             TMTimerSetMillies(pThis->CTX_SUFF(pKbdTypematicTimer), pThis->uTypematicRepeat);
         }
     }
@@ -1126,16 +1156,17 @@ static DECLCALLBACK(void) ps2kTypematicTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer
  */
 static DECLCALLBACK(void) ps2kDelayTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
 {
-    PPS2K pThis = (PS2K *)pvUser; NOREF(pDevIns);
+    RT_NOREF2(pDevIns, pTimer);
+    PPS2K pThis = (PS2K *)pvUser;
 
     LogFlowFunc(("Delay timer: cmd %02X\n", pThis->u8CurrCmd));
 
-    Assert(pThis->u8CurrCmd == KCMD_RESET);
+    AssertMsg(pThis->u8CurrCmd == KCMD_RESET, ("u8CurrCmd=%02x\n", pThis->u8CurrCmd));
     ps2kInsertQueue((GeneriQ *)&pThis->cmdQ, KRSP_BAT_OK);
     pThis->fScanning = true;    /* BAT completion enables scanning! */
     pThis->u8CurrCmd = 0;
 
-    ///@todo Might want a PS2KCompleteCommand() to push last response, clear command, and kick the KBC...
+    /// @todo Might want a PS2KCompleteCommand() to push last response, clear command, and kick the KBC...
     /* Give the KBC a kick. */
     KBCUpdateInterrupts(pThis->pParent);
 }
@@ -1147,13 +1178,11 @@ static DECLCALLBACK(void) ps2kDelayTimer(PPDMDEVINS pDevIns, PTMTIMER pTimer, vo
 static void ps2kReleaseKeys(PPS2K pThis)
 {
     LogFlowFunc(("Releasing keys...\n"));
-    LogRel(("Releasing keys...\n"));
 
     for (unsigned uKey = 0; uKey < sizeof(pThis->abDepressedKeys); ++uKey)
         if (pThis->abDepressedKeys[uKey])
         {
-            LogRel(("Releasing key %02X\n", uKey));
-            psk2ProcessKeyEvent(pThis, uKey, false /* key up */);
+            ps2kProcessKeyEvent(pThis, uKey, false /* key up */);
             pThis->abDepressedKeys[uKey] = 0;
         }
     LogFlowFunc(("Done releasing keys\n"));
@@ -1184,7 +1213,7 @@ static DECLCALLBACK(void) ps2kInfoState(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, 
     pHlp->pfnPrintf(pHlp, "Input queue  : %d items (%d max)\n",
                     pThis->keyQ.cUsed, pThis->keyQ.cSize);
     if (pThis->enmTypematicState != KBD_TMS_IDLE)
-        pHlp->pfnPrintf(pHlp, "Active typematic key %02X (%s)\n", pThis->u8Typematic,
+        pHlp->pfnPrintf(pHlp, "Active typematic key %02X (%s)\n", pThis->u8TypematicKey,
                         pThis->enmTypematicState == KBD_TMS_DELAY ? "delay" : "repeat");
 }
 
@@ -1246,7 +1275,7 @@ static int ps2kPutEventWorker(PPS2K pThis, uint32_t u32Usage)
         rc = PDMCritSectEnter(pThis->pCritSectR3, VERR_SEM_BUSY);
         AssertReleaseRC(rc);
 
-        rc = psk2ProcessKeyEvent(pThis, u8HidCode, fKeyDown);
+        rc = ps2kProcessKeyEvent(pThis, u8HidCode, fKeyDown);
 
         PDMCritSectLeave(pThis->pCritSectR3);
     }
@@ -1254,39 +1283,29 @@ static int ps2kPutEventWorker(PPS2K pThis, uint32_t u32Usage)
     return rc;
 }
 
-static DECLCALLBACK(int) ps2kPutEventWrapper(PPDMIKEYBOARDPORT pInterface, uint8_t u8KeyCode)
+static DECLCALLBACK(int) ps2kPutEventWrapper(PPDMIKEYBOARDPORT pInterface, uint32_t u32UsageCode)
 {
     PPS2K       pThis = RT_FROM_MEMBER(pInterface, PS2K, Keyboard.IPort);
-    uint32_t    u32Usage = 0;
     int         rc;
 
-    LogFlowFunc(("key code %02X\n", u8KeyCode));
+    LogRelFlowFunc(("key code %08X\n", u32UsageCode));
+
+    rc = PDMCritSectEnter(pThis->pCritSectR3, VERR_SEM_BUSY);
+    AssertReleaseRC(rc);
 
     /* The 'BAT fail' scancode is reused as a signal to release keys. No actual
      * key is allowed to use this scancode.
      */
-    if (RT_UNLIKELY(u8KeyCode == KRSP_BAT_FAIL))
+    if (RT_UNLIKELY(u32UsageCode == KRSP_BAT_FAIL))
     {
-        rc = PDMCritSectEnter(pThis->pCritSectR3, VERR_SEM_BUSY);
-        AssertReleaseRC(rc);
-
         ps2kReleaseKeys(pThis);
-
-        PDMCritSectLeave(pThis->pCritSectR3);
     }
     else
     {
-        pThis->XlatState = ScancodeToHidUsage(pThis->XlatState, u8KeyCode, &u32Usage);
-
-        if (pThis->XlatState == SS_IDLE)
-        {
-            /* Stupid Korean key hack: convert a lone break key into a press/release sequence. */
-            if (u32Usage == 0x80000090 || u32Usage == 0x80000091)
-                ps2kPutEventWorker(pThis, u32Usage & ~0x80000000);
-
-            ps2kPutEventWorker(pThis, u32Usage);
-        }
+        ps2kPutEventWorker(pThis, u32UsageCode);
     }
+
+    PDMCritSectLeave(pThis->pCritSectR3);
 
     return VINF_SUCCESS;
 }
@@ -1350,7 +1369,7 @@ void PS2KSaveState(PPS2K pThis, PSSMHANDLE pSSM)
     /* Save the basic keyboard state. */
     SSMR3PutU8(pSSM, pThis->u8CurrCmd);
     SSMR3PutU8(pSSM, pThis->u8LEDs);
-    SSMR3PutU8(pSSM, pThis->u8Typematic);
+    SSMR3PutU8(pSSM, pThis->u8TypematicCfg);
     SSMR3PutU8(pSSM, pThis->u8TypematicKey);
     SSMR3PutU8(pSSM, pThis->u8Modifiers);
     SSMR3PutU8(pSSM, pThis->u8ScanSet);
@@ -1398,7 +1417,7 @@ int PS2KLoadState(PPS2K pThis, PSSMHANDLE pSSM, uint32_t uVersion)
     /* Load the basic keyboard state. */
     SSMR3GetU8(pSSM, &pThis->u8CurrCmd);
     SSMR3GetU8(pSSM, &pThis->u8LEDs);
-    SSMR3GetU8(pSSM, &pThis->u8Typematic);
+    SSMR3GetU8(pSSM, &pThis->u8TypematicCfg);
     SSMR3GetU8(pSSM, &pThis->u8TypematicKey);
     SSMR3GetU8(pSSM, &pThis->u8Modifiers);
     SSMR3GetU8(pSSM, &pThis->u8ScanSet);
@@ -1418,7 +1437,7 @@ int PS2KLoadState(PPS2K pThis, PSSMHANDLE pSSM, uint32_t uVersion)
     AssertRCReturn(rc, rc);
 
     /* Recalculate the typematic delay/rate. */
-    ps2kSetupTypematic(pThis, pThis->u8Typematic);
+    ps2kSetupTypematic(pThis, pThis->u8TypematicCfg);
 
     /* Fake key up events for keys that were held down at the time the state was saved. */
     rc = SSMR3GetU32(pSSM, &cPressed);
@@ -1450,10 +1469,13 @@ int PS2KLoadState(PPS2K pThis, PSSMHANDLE pSSM, uint32_t uVersion)
 
 int PS2KLoadDone(PPS2K pThis, PSSMHANDLE pSSM)
 {
+    RT_NOREF1(pSSM);
+
     /* This *must* be done after the inital load because it may trigger
      * interrupts and change the interrupt controller state.
      */
     ps2kReleaseKeys(pThis);
+    ps2kNotifyLedsState(pThis, pThis->u8LEDs);
     return VINF_SUCCESS;
 }
 
@@ -1462,6 +1484,7 @@ void PS2KReset(PPS2K pThis)
     LogFlowFunc(("Resetting PS2K\n"));
 
     pThis->fScanning         = true;
+    pThis->fThrottleActive   = false;
     pThis->u8ScanSet         = 2;
     pThis->u8CurrCmd         = 0;
     pThis->u8Modifiers       = 0;
@@ -1480,26 +1503,34 @@ void PS2KReset(PPS2K pThis)
 
 void PS2KRelocate(PPS2K pThis, RTGCINTPTR offDelta, PPDMDEVINS pDevIns)
 {
+    RT_NOREF1(pDevIns);
     LogFlowFunc(("Relocating PS2K\n"));
     pThis->pKbdDelayTimerRC     = TMTimerRCPtr(pThis->pKbdDelayTimerR3);
     pThis->pKbdTypematicTimerRC = TMTimerRCPtr(pThis->pKbdTypematicTimerR3);
+    pThis->pThrottleTimerRC     = TMTimerRCPtr(pThis->pThrottleTimerR3);
     NOREF(offDelta);
 }
 
-int PS2KConstruct(PPS2K pThis, PPDMDEVINS pDevIns, void *pParent, int iInstance)
+int PS2KConstruct(PPS2K pThis, PPDMDEVINS pDevIns, void *pParent, int iInstance, PCFGMNODE pCfg)
 {
-    int     rc;
-
+    RT_NOREF2(pDevIns, iInstance);
     LogFlowFunc(("iInstance=%d\n", iInstance));
 
     pThis->pParent = pParent;
+
+    bool fThrottleEnabled;
+    int rc = CFGMR3QueryBoolDef(pCfg, "KbdThrottleEnabled", &fThrottleEnabled, true);
+    if (RT_FAILURE(rc))
+        return PDMDEV_SET_ERROR(pDevIns, rc, N_("Failed to query \"KbdThrottleEnabled\" from the config"));
+    Log(("KbdThrottleEnabled=%u\n", fThrottleEnabled));
+    pThis->fThrottleEnabled = fThrottleEnabled;
 
     /* Initialize the queues. */
     pThis->keyQ.cSize = KBD_KEY_QUEUE_SIZE;
     pThis->cmdQ.cSize = KBD_CMD_QUEUE_SIZE;
 
     pThis->Keyboard.IBase.pfnQueryInterface = ps2kQueryInterface;
-    pThis->Keyboard.IPort.pfnPutEvent       = ps2kPutEventWrapper;
+    pThis->Keyboard.IPort.pfnPutEventHid    = ps2kPutEventWrapper;
 
     /*
      * Initialize the critical section pointer(s).
@@ -1507,10 +1538,22 @@ int PS2KConstruct(PPS2K pThis, PPDMDEVINS pDevIns, void *pParent, int iInstance)
     pThis->pCritSectR3 = pDevIns->pCritSectRoR3;
 
     /*
-     * Create the typematic delay/repeat timer. Does not use virtual time!
+     * Create the input rate throttling timer.
      */
     PTMTIMER pTimer;
-    rc = PDMDevHlpTMTimerCreate(pDevIns, TMCLOCK_REAL, ps2kTypematicTimer, pThis,
+    rc = PDMDevHlpTMTimerCreate(pDevIns, TMCLOCK_VIRTUAL, ps2kThrottleTimer, pThis,
+                                TMTIMER_FLAGS_DEFAULT_CRIT_SECT, "PS2K Throttle Timer", &pTimer);
+    if (RT_FAILURE(rc))
+        return rc;
+
+    pThis->pThrottleTimerR3 = pTimer;
+    pThis->pThrottleTimerR0 = TMTimerR0Ptr(pTimer);
+    pThis->pThrottleTimerRC = TMTimerRCPtr(pTimer);
+
+    /*
+     * Create the typematic delay/repeat timer.
+     */
+    rc = PDMDevHlpTMTimerCreate(pDevIns, TMCLOCK_VIRTUAL, ps2kTypematicTimer, pThis,
                                 TMTIMER_FLAGS_DEFAULT_CRIT_SECT, "PS2K Typematic Timer", &pTimer);
     if (RT_FAILURE(rc))
         return rc;
@@ -1541,7 +1584,7 @@ int PS2KConstruct(PPS2K pThis, PPDMDEVINS pDevIns, void *pParent, int iInstance)
 
 #endif
 
-///@todo The following should live with the KBC implementation.
+/// @todo The following should live with the KBC implementation.
 
 /* Table used by the keyboard controller to optionally translate the incoming
  * keyboard data. Note that the translation is designed for essentially taking

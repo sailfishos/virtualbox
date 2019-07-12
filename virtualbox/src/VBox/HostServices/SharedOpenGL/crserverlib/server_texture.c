@@ -1,11 +1,10 @@
 /* $Id: server_texture.c $ */
-
 /** @file
- * VBox crOpenGL: teximage functions.
+ * VBox crOpenGL - teximage functions.
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +16,10 @@
  */
 
 #include "chromium.h"
-#include "cr_error.h" 
+#include "cr_error.h"
 #include "server_dispatch.h"
 #include "server.h"
+#include "cr_mem.h"
 
 #define CR_NOTHING()
 
@@ -59,7 +59,7 @@
             crWarning("UnmapBufferARB failed");                                             \
         }                                                                                   \
     }
-#else 
+#else
 #define CR_FINISHBUFFER()
 #endif
 
@@ -168,24 +168,160 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchTexEnviv( GLenum target, GLenum pn
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetTexEnvfv( GLenum target, GLenum pname, GLfloat * params )
 {
-    GLfloat local_params[4];
+    unsigned int cComponents = 0;
+    GLfloat local_params[4] = {0};
     (void) params;
     if (GL_POINT_SPRITE != target && pname != GL_COORD_REPLACE)
         cr_server.head_spu->dispatch_table.GetTexEnvfv( target, pname, local_params );
     else
         crStateGetTexEnvfv( target, pname, local_params );
 
-    crServerReturnValue( &(local_params[0]), crStateHlpComponentsCount(pname)*sizeof (GLfloat) );
+    cComponents = RT_MIN(crStateHlpComponentsCount(pname), RT_ELEMENTS(local_params));
+    crServerReturnValue( &(local_params[0]), cComponents*sizeof (GLfloat) );
 }
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetTexEnviv( GLenum target, GLenum pname, GLint * params )
 {
-    GLint local_params[4];
+    unsigned int cComponents = 0;
+    GLint local_params[4] = {0};
     (void) params;
     if (GL_POINT_SPRITE != target && pname != GL_COORD_REPLACE)
         cr_server.head_spu->dispatch_table.GetTexEnviv( target, pname, local_params );
     else
         crStateGetTexEnviv( target, pname, local_params );
 
-    crServerReturnValue( &(local_params[0]), crStateHlpComponentsCount(pname)*sizeof (GLint) );
+    cComponents = RT_MIN(crStateHlpComponentsCount(pname), RT_ELEMENTS(local_params));
+    crServerReturnValue( &(local_params[0]), cComponents*sizeof (GLint) );
 }
+
+void SERVER_DISPATCH_APIENTRY crServerDispatchBindTexture( GLenum target, GLuint texture )
+{
+    crStateBindTexture( target, texture );
+    cr_server.head_spu->dispatch_table.BindTexture(target, crStateGetTextureHWID(texture));
+}
+
+
+void SERVER_DISPATCH_APIENTRY crServerDispatchDeleteTextures( GLsizei n, const GLuint *textures)
+{
+    GLuint *newTextures;
+    GLint i;
+
+    if (n <= 0 || n >= INT32_MAX / sizeof(GLuint))
+    {
+        crError("crServerDispatchDeleteTextures: parameter 'n' is out of range");
+        return;
+    }
+
+    newTextures = (GLuint *)crAlloc(n * sizeof(GLuint));
+
+    if (!newTextures)
+    {
+        crError("crServerDispatchDeleteTextures: out of memory");
+        return;
+    }
+
+    for (i = 0; i < n; i++)
+    {
+        newTextures[i] = crStateGetTextureHWID(textures[i]);
+    }
+
+//    for (i = 0; i < n; ++i)
+//    {
+//        crDebug("DeleteTexture: %d, pid %d, ctx %d", textures[i], (uint32_t)cr_server.curClient->pid, cr_server.currentCtxInfo->pContext->id);
+//    }
+
+
+    crStateDeleteTextures(n, textures);
+    cr_server.head_spu->dispatch_table.DeleteTextures(n, newTextures);
+    crFree(newTextures);
+}
+
+
+void SERVER_DISPATCH_APIENTRY crServerDispatchPrioritizeTextures( GLsizei n, const GLuint * textures, const GLclampf * priorities )
+{
+    GLuint *newTextures;
+    GLint i;
+
+    if (n <= 0 || n >= INT32_MAX / sizeof(GLuint))
+    {
+        crError("crServerDispatchPrioritizeTextures: parameter 'n' is out of range");
+        return;
+    }
+
+    newTextures = (GLuint *)crAlloc(n * sizeof(GLuint));
+
+    if (!newTextures)
+    {
+        crError("crServerDispatchPrioritizeTextures: out of memory");
+        return;
+    }
+
+    crStatePrioritizeTextures(n, textures, priorities);
+
+    for (i = 0; i < n; i++)
+    {
+        newTextures[i] = crStateGetTextureHWID(textures[i]);
+    }
+
+    cr_server.head_spu->dispatch_table.PrioritizeTextures(n, newTextures, priorities);
+    crFree(newTextures);
+}
+
+
+/** @todo will fail for textures loaded from snapshot */
+GLboolean SERVER_DISPATCH_APIENTRY crServerDispatchIsTexture( GLuint texture )
+{
+    GLboolean retval;
+    retval = cr_server.head_spu->dispatch_table.IsTexture(crStateGetTextureHWID(texture));
+    crServerReturnValue( &retval, sizeof(retval) );
+    return retval; /* WILL PROBABLY BE IGNORED */
+}
+
+
+GLboolean SERVER_DISPATCH_APIENTRY
+crServerDispatchAreTexturesResident(GLsizei n, const GLuint *textures,
+                                    GLboolean *residences)
+{
+    GLboolean retval = GL_FALSE;
+    GLsizei i;
+    GLboolean *res;
+    GLuint *textures2;
+    (void) residences;
+
+    if (n <= 0 || n >= INT32_MAX / sizeof(GLuint))
+    {
+        crError("crServerDispatchAreTexturesResident: parameter 'n' is out of range");
+        return GL_FALSE;
+    }
+
+    res = (GLboolean *)crCalloc(n * sizeof(GLboolean));
+    if (!res)
+    {
+        crError("crServerDispatchAreTexturesResident: out of memory");
+        return GL_FALSE;
+    }
+
+    textures2 = (GLuint *)crAlloc(n * sizeof(GLuint));
+
+    if (!textures2)
+    {
+        crError("crServerDispatchAreTexturesResident: out of memory");
+        crFree(res);
+        return GL_FALSE;
+    }
+
+    for (i = 0; i < n; i++)
+    {
+        textures2[i] = crStateGetTextureHWID(textures[i]);
+    }
+    retval = cr_server.head_spu->dispatch_table.AreTexturesResident(n, textures2, res);
+
+    crFree(textures2);
+
+    crServerReturnValue(res, n * sizeof(GLboolean));
+
+    crFree(res);
+
+    return retval; /* WILL PROBABLY BE IGNORED */
+}
+

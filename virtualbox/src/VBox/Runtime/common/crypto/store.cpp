@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/crypto/store.h>
 
@@ -45,9 +45,9 @@
 #include "store-internal.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Internal representation of a (certificate,++) store.
  */
@@ -173,8 +173,9 @@ RTDECL(int) RTCrStoreCertAddEncoded(RTCRSTORE hStore, uint32_t fFlags, void cons
     AssertReturn(pThis->u32Magic == RTCRSTOREINT_MAGIC, VERR_INVALID_HANDLE);
     AssertPtrReturn(pvSrc, VERR_INVALID_POINTER);
     AssertReturn(cbSrc > 16 && cbSrc < _1M, VERR_OUT_OF_RANGE);
-    AssertMsgReturn(   fFlags == RTCRCERTCTX_F_ENC_X509_DER
-                    || fFlags == RTCRCERTCTX_F_ENC_TAF_DER
+    AssertReturn(!(fFlags & ~(RTCRCERTCTX_F_ADD_IF_NOT_FOUND | RTCRCERTCTX_F_ENC_MASK)), VERR_INVALID_FLAGS);
+    AssertMsgReturn(   (fFlags & RTCRCERTCTX_F_ENC_MASK) == RTCRCERTCTX_F_ENC_X509_DER
+                    || (fFlags & RTCRCERTCTX_F_ENC_MASK) == RTCRCERTCTX_F_ENC_TAF_DER
                     , ("Only X.509 and TAF DER supported: %#x\n", fFlags), VERR_INVALID_FLAGS);
 
     int rc;
@@ -286,6 +287,29 @@ RTDECL(int) RTCrStoreCertSearchDestroy(RTCRSTORE hStore, PRTCRSTORECERTSEARCH pS
 
 
 
+RTDECL(uint32_t) RTCrStoreCertCount(RTCRSTORE hStore)
+{
+    PRTCRSTOREINT pThis = (PRTCRSTOREINT)hStore;
+    AssertPtrReturn(pThis, UINT32_MAX);
+    AssertReturn(pThis->u32Magic == RTCRSTOREINT_MAGIC, UINT32_MAX);
+
+    RTCRSTORECERTSEARCH Search;
+    int rc = pThis->pProvider->pfnCertFindAll(pThis->pvProvider, &Search);
+    AssertRCReturn(rc, UINT32_MAX);
+
+
+    uint32_t cCerts = 0;
+    PCRTCRCERTCTX pCur;
+    while ((pCur = pThis->pProvider->pfnCertSearchNext(pThis->pvProvider, &Search)) != NULL)
+    {
+        RTCrCertCtxRelease(pCur);
+        cCerts++;
+    }
+
+    return cCerts;
+}
+
+
 #ifdef IPRT_WITH_OPENSSL
 /*
  * OpenSSL helper.
@@ -298,6 +322,7 @@ RTDECL(int) RTCrStoreConvertToOpenSslCertStore(RTCRSTORE hStore, uint32_t fFlags
     PRTCRSTOREINT pThis = (PRTCRSTOREINT)hStore;
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertReturn(pThis->u32Magic == RTCRSTOREINT_MAGIC, VERR_INVALID_HANDLE);
+    RT_NOREF_PV(fFlags);
 
     /*
      * Use the pfnCertFindAll method to add all certificates to the store we're returning.
@@ -351,6 +376,7 @@ RTDECL(int) RTCrStoreConvertToOpenSslCertStack(RTCRSTORE hStore, uint32_t fFlags
     PRTCRSTOREINT pThis = (PRTCRSTOREINT)hStore;
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertReturn(pThis->u32Magic == RTCRSTOREINT_MAGIC, VERR_INVALID_HANDLE);
+    RT_NOREF_PV(fFlags);
 
     /*
      * Use the pfnCertFindAll method to add all certificates to the store we're returning.

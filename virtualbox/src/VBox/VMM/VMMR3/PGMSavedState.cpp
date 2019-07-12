@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PGM
 #include <VBox/vmm/pgm.h>
 #include <VBox/vmm/stam.h>
@@ -42,9 +42,9 @@
 #include <iprt/thread.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Saved state data unit version.  */
 #define PGM_SAVED_STATE_VERSION                 14
 /** Saved state data unit version before the PAE PDPE registers. */
@@ -125,9 +125,9 @@
 /** @}  */
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** For loading old saved states. (pre-smp) */
 typedef struct
 {
@@ -149,9 +149,9 @@ typedef struct
 } PGMOLD;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** PGM fields to save/load. */
 
 static const SSMFIELD s_aPGMFields[] =
@@ -208,7 +208,7 @@ static const SSMFIELD s_aPGMFields_Old[] =
  *
  * @returns Pointer to the ROM page structure. NULL if the caller didn't check
  *          that it's a ROM page.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPhys      The address of the ROM page.
  */
 static PPGMROMPAGE pgmR3GetRomPage(PVM pVM, RTGCPHYS GCPhys) /** @todo change this to take a hint. */
@@ -229,7 +229,7 @@ static PPGMROMPAGE pgmR3GetRomPage(PVM pVM, RTGCPHYS GCPhys) /** @todo change th
  * Prepares the ROM pages for a live save.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 static int pgmR3PrepRomPages(PVM pVM)
 {
@@ -280,7 +280,7 @@ static int pgmR3PrepRomPages(PVM pVM)
  * Assigns IDs to the ROM ranges and saves them.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                Saved state handle.
  */
 static int pgmR3SaveRomRanges(PVM pVM, PSSMHANDLE pSSM)
@@ -310,7 +310,7 @@ static int pgmR3SaveRomRanges(PVM pVM, PSSMHANDLE pSSM)
  *
  * @returns VBox status code.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int pgmR3LoadRomRanges(PVM pVM, PSSMHANDLE pSSM)
@@ -388,7 +388,7 @@ static int pgmR3LoadRomRanges(PVM pVM, PSSMHANDLE pSSM)
 /**
  * Scan ROM pages.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 static void pgmR3ScanRomPages(PVM pVM)
 {
@@ -431,7 +431,7 @@ static void pgmR3ScanRomPages(PVM pVM)
  * This ASSUMES that no new ROM ranges will be added and that they won't be
  * relinked in any way.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The SSM handle.
  * @param   fLiveSave           Whether we're in a live save or not.
  */
@@ -508,7 +508,7 @@ static int pgmR3SaveRomVirginPages(PVM pVM, PSSMHANDLE pSSM, bool fLiveSave)
  * Used by pgmR3LiveExecPart2 and pgmR3SaveExecMemory.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The SSM handle.
  * @param   fLiveSave           Whether it's a live save or not.
  * @param   fFinalPass          Whether this is the final pass or not.
@@ -620,7 +620,7 @@ static int pgmR3SaveShadowedRomPages(PVM pVM, PSSMHANDLE pSSM, bool fLiveSave, b
 /**
  * Cleans up ROM pages after a live save.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 static void pgmR3DoneRomPages(PVM pVM)
 {
@@ -632,7 +632,7 @@ static void pgmR3DoneRomPages(PVM pVM)
  * Prepares the MMIO2 pages for a live save.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 static int pgmR3PrepMmio2Pages(PVM pVM)
 {
@@ -641,27 +641,30 @@ static int pgmR3PrepMmio2Pages(PVM pVM)
      * ASSUME nothing changes here.
      */
     pgmLock(pVM);
-    for (PPGMMMIO2RANGE pMmio2 = pVM->pgm.s.pMmio2RangesR3; pMmio2; pMmio2 = pMmio2->pNextR3)
+    for (PPGMREGMMIORANGE pRegMmio = pVM->pgm.s.pRegMmioRangesR3; pRegMmio; pRegMmio = pRegMmio->pNextR3)
     {
-        uint32_t const  cPages = pMmio2->RamRange.cb >> PAGE_SHIFT;
-        pgmUnlock(pVM);
-
-        PPGMLIVESAVEMMIO2PAGE paLSPages = (PPGMLIVESAVEMMIO2PAGE)MMR3HeapAllocZ(pVM, MM_TAG_PGM, sizeof(PGMLIVESAVEMMIO2PAGE) * cPages);
-        if (!paLSPages)
-            return VERR_NO_MEMORY;
-        for (uint32_t iPage = 0; iPage < cPages; iPage++)
+        if (pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2)
         {
-            /* Initialize it as a dirty zero page. */
-            paLSPages[iPage].fDirty          = true;
-            paLSPages[iPage].cUnchangedScans = 0;
-            paLSPages[iPage].fZero           = true;
-            paLSPages[iPage].u32CrcH1        = PGM_STATE_CRC32_ZERO_HALF_PAGE;
-            paLSPages[iPage].u32CrcH2        = PGM_STATE_CRC32_ZERO_HALF_PAGE;
-        }
+            uint32_t const  cPages = pRegMmio->RamRange.cb >> PAGE_SHIFT;
+            pgmUnlock(pVM);
 
-        pgmLock(pVM);
-        pMmio2->paLSPages = paLSPages;
-        pVM->pgm.s.LiveSave.Mmio2.cDirtyPages += cPages;
+            PPGMLIVESAVEMMIO2PAGE paLSPages = (PPGMLIVESAVEMMIO2PAGE)MMR3HeapAllocZ(pVM, MM_TAG_PGM, sizeof(PGMLIVESAVEMMIO2PAGE) * cPages);
+            if (!paLSPages)
+                return VERR_NO_MEMORY;
+            for (uint32_t iPage = 0; iPage < cPages; iPage++)
+            {
+                /* Initialize it as a dirty zero page. */
+                paLSPages[iPage].fDirty          = true;
+                paLSPages[iPage].cUnchangedScans = 0;
+                paLSPages[iPage].fZero           = true;
+                paLSPages[iPage].u32CrcH1        = PGM_STATE_CRC32_ZERO_HALF_PAGE;
+                paLSPages[iPage].u32CrcH2        = PGM_STATE_CRC32_ZERO_HALF_PAGE;
+            }
+
+            pgmLock(pVM);
+            pRegMmio->paLSPages = paLSPages;
+            pVM->pgm.s.LiveSave.Mmio2.cDirtyPages += cPages;
+        }
     }
     pgmUnlock(pVM);
     return VINF_SUCCESS;
@@ -672,24 +675,28 @@ static int pgmR3PrepMmio2Pages(PVM pVM)
  * Assigns IDs to the MMIO2 ranges and saves them.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                Saved state handle.
  */
 static int pgmR3SaveMmio2Ranges(PVM pVM, PSSMHANDLE pSSM)
 {
     pgmLock(pVM);
     uint8_t id = 1;
-    for (PPGMMMIO2RANGE pMmio2 = pVM->pgm.s.pMmio2RangesR3; pMmio2; pMmio2 = pMmio2->pNextR3, id++)
+    for (PPGMREGMMIORANGE pRegMmio = pVM->pgm.s.pRegMmioRangesR3; pRegMmio; pRegMmio = pRegMmio->pNextR3)
     {
-        pMmio2->idSavedState = id;
-        SSMR3PutU8(pSSM, id);
-        SSMR3PutStrZ(pSSM, pMmio2->pDevInsR3->pReg->szName);
-        SSMR3PutU32(pSSM, pMmio2->pDevInsR3->iInstance);
-        SSMR3PutU8(pSSM, pMmio2->iRegion);
-        SSMR3PutStrZ(pSSM, pMmio2->RamRange.pszDesc);
-        int rc = SSMR3PutGCPhys(pSSM, pMmio2->RamRange.cb);
-        if (RT_FAILURE(rc))
-            break;
+        if (pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2)
+        {
+            pRegMmio->idSavedState = id;
+            SSMR3PutU8(pSSM, id);
+            SSMR3PutStrZ(pSSM, pRegMmio->pDevInsR3->pReg->szName);
+            SSMR3PutU32(pSSM, pRegMmio->pDevInsR3->iInstance);
+            SSMR3PutU8(pSSM, pRegMmio->iRegion);
+            SSMR3PutStrZ(pSSM, pRegMmio->RamRange.pszDesc);
+            int rc = SSMR3PutGCPhys(pSSM, pRegMmio->RamRange.cb);
+            if (RT_FAILURE(rc))
+                break;
+            id++;
+        }
     }
     pgmUnlock(pVM);
     return SSMR3PutU8(pSSM, UINT8_MAX);
@@ -701,15 +708,16 @@ static int pgmR3SaveMmio2Ranges(PVM pVM, PSSMHANDLE pSSM)
  *
  * @returns VBox status code.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int pgmR3LoadMmio2Ranges(PVM pVM, PSSMHANDLE pSSM)
 {
     PGM_LOCK_ASSERT_OWNER(pVM);
 
-    for (PPGMMMIO2RANGE pMmio2 = pVM->pgm.s.pMmio2RangesR3; pMmio2; pMmio2 = pMmio2->pNextR3)
-        pMmio2->idSavedState = UINT8_MAX;
+    for (PPGMREGMMIORANGE pRegMmio = pVM->pgm.s.pRegMmioRangesR3; pRegMmio; pRegMmio = pRegMmio->pNextR3)
+        if (pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2)
+            pRegMmio->idSavedState = UINT8_MAX;
 
     for (;;)
     {
@@ -722,8 +730,10 @@ static int pgmR3LoadMmio2Ranges(PVM pVM, PSSMHANDLE pSSM)
             return rc;
         if (id == UINT8_MAX)
         {
-            for (PPGMMMIO2RANGE pMmio2 = pVM->pgm.s.pMmio2RangesR3; pMmio2; pMmio2 = pMmio2->pNextR3)
-                AssertLogRelMsg(pMmio2->idSavedState != UINT8_MAX, ("%s\n", pMmio2->RamRange.pszDesc));
+            for (PPGMREGMMIORANGE pRegMmio = pVM->pgm.s.pRegMmioRangesR3; pRegMmio; pRegMmio = pRegMmio->pNextR3)
+                AssertLogRelMsg(   pRegMmio->idSavedState != UINT8_MAX
+                                || !(pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2),
+                                ("%s\n", pRegMmio->RamRange.pszDesc));
             return VINF_SUCCESS;        /* the end */
         }
         AssertLogRelReturn(id != 0, VERR_SSM_DATA_UNIT_FORMAT_CHANGED);
@@ -748,19 +758,20 @@ static int pgmR3LoadMmio2Ranges(PVM pVM, PSSMHANDLE pSSM)
         /*
          * Locate a matching MMIO2 range.
          */
-        PPGMMMIO2RANGE pMmio2;
-        for (pMmio2 = pVM->pgm.s.pMmio2RangesR3; pMmio2; pMmio2 = pMmio2->pNextR3)
+        PPGMREGMMIORANGE pRegMmio;
+        for (pRegMmio = pVM->pgm.s.pRegMmioRangesR3; pRegMmio; pRegMmio = pRegMmio->pNextR3)
         {
-            if (    pMmio2->idSavedState == UINT8_MAX
-                &&  pMmio2->iRegion == iRegion
-                &&  pMmio2->pDevInsR3->iInstance == uInstance
-                &&  !strcmp(pMmio2->pDevInsR3->pReg->szName, szDevName))
+            if (    pRegMmio->idSavedState == UINT8_MAX
+                &&  pRegMmio->iRegion == iRegion
+                &&  pRegMmio->pDevInsR3->iInstance == uInstance
+                &&  (pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2)
+                &&  !strcmp(pRegMmio->pDevInsR3->pReg->szName, szDevName))
             {
-                pMmio2->idSavedState = id;
+                pRegMmio->idSavedState = id;
                 break;
             }
         }
-        if (!pMmio2)
+        if (!pRegMmio)
             return SSMR3SetCfgError(pSSM, RT_SRC_POS, N_("Failed to locate a MMIO2 range called '%s' owned by %s/%u, region %d"),
                                     szDesc, szDevName, uInstance, iRegion);
 
@@ -768,13 +779,13 @@ static int pgmR3LoadMmio2Ranges(PVM pVM, PSSMHANDLE pSSM)
          * Validate the configuration, the size of the MMIO2 region should be
          * the same.
          */
-        if (cb != pMmio2->RamRange.cb)
+        if (cb != pRegMmio->RamRange.cb)
         {
             LogRel(("PGM: MMIO2 region \"%s\" size mismatch: saved=%RGp config=%RGp\n",
-                    pMmio2->RamRange.pszDesc, cb, pMmio2->RamRange.cb));
-            if (cb > pMmio2->RamRange.cb) /* bad idea? */
+                    pRegMmio->RamRange.pszDesc, cb, pRegMmio->RamRange.cb));
+            if (cb > pRegMmio->RamRange.cb) /* bad idea? */
                 return SSMR3SetCfgError(pSSM, RT_SRC_POS, N_("MMIO2 region \"%s\" size mismatch: saved=%RGp config=%RGp"),
-                                        pMmio2->RamRange.pszDesc, cb, pMmio2->RamRange.cb);
+                                        pRegMmio->RamRange.pszDesc, cb, pRegMmio->RamRange.cb);
         }
     } /* forever */
 }
@@ -785,7 +796,7 @@ static int pgmR3LoadMmio2Ranges(PVM pVM, PSSMHANDLE pSSM)
  *
  * @returns True if changed, false if unchanged.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pbPage              The page bits.
  * @param   pLSPage             The live save tracking structure for the page.
  *
@@ -858,7 +869,7 @@ DECLINLINE(bool) pgmR3ScanMmio2Page(PVM pVM, uint8_t const *pbPage, PPGMLIVESAVE
 /**
  * Scan for MMIO2 page modifications.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   uPass               The pass number.
  */
 static void pgmR3ScanMmio2Pages(PVM pVM, uint32_t uPass)
@@ -872,20 +883,21 @@ static void pgmR3ScanMmio2Pages(PVM pVM, uint32_t uPass)
         return;
 
     pgmLock(pVM);                       /* paranoia */
-    for (PPGMMMIO2RANGE pMmio2 = pVM->pgm.s.pMmio2RangesR3; pMmio2; pMmio2 = pMmio2->pNextR3)
-    {
-        PPGMLIVESAVEMMIO2PAGE paLSPages = pMmio2->paLSPages;
-        uint32_t              cPages    = pMmio2->RamRange.cb >> PAGE_SHIFT;
-        pgmUnlock(pVM);
-
-        for (uint32_t iPage = 0; iPage < cPages; iPage++)
+    for (PPGMREGMMIORANGE pRegMmio = pVM->pgm.s.pRegMmioRangesR3; pRegMmio; pRegMmio = pRegMmio->pNextR3)
+        if (pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2)
         {
-            uint8_t const *pbPage = (uint8_t const *)pMmio2->pvR3 + iPage * PAGE_SIZE;
-            pgmR3ScanMmio2Page(pVM, pbPage, &paLSPages[iPage]);
-        }
+            PPGMLIVESAVEMMIO2PAGE paLSPages = pRegMmio->paLSPages;
+            uint32_t              cPages    = pRegMmio->RamRange.cb >> PAGE_SHIFT;
+            pgmUnlock(pVM);
 
-        pgmLock(pVM);
-    }
+            for (uint32_t iPage = 0; iPage < cPages; iPage++)
+            {
+                uint8_t const *pbPage = (uint8_t const *)pRegMmio->pvR3 + iPage * PAGE_SIZE;
+                pgmR3ScanMmio2Page(pVM, pbPage, &paLSPages[iPage]);
+            }
+
+            pgmLock(pVM);
+        }
     pgmUnlock(pVM);
 
 }
@@ -895,7 +907,7 @@ static void pgmR3ScanMmio2Pages(PVM pVM, uint32_t uPass)
  * Save quiescent MMIO2 pages.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The SSM handle.
  * @param   fLiveSave           Whether it's a live save or not.
  * @param   uPass               The pass number.
@@ -912,52 +924,53 @@ static int pgmR3SaveMmio2Pages(PVM pVM, PSSMHANDLE pSSM, bool fLiveSave, uint32_
          * The mop up round.
          */
         pgmLock(pVM);
-        for (PPGMMMIO2RANGE pMmio2 = pVM->pgm.s.pMmio2RangesR3;
-             pMmio2 && RT_SUCCESS(rc);
-             pMmio2 = pMmio2->pNextR3)
-        {
-            PPGMLIVESAVEMMIO2PAGE paLSPages = pMmio2->paLSPages;
-            uint8_t const        *pbPage    = (uint8_t const *)pMmio2->RamRange.pvR3;
-            uint32_t              cPages    = pMmio2->RamRange.cb >> PAGE_SHIFT;
-            uint32_t              iPageLast = cPages;
-            for (uint32_t iPage = 0; iPage < cPages; iPage++, pbPage += PAGE_SIZE)
+        for (PPGMREGMMIORANGE pRegMmio = pVM->pgm.s.pRegMmioRangesR3;
+             pRegMmio && RT_SUCCESS(rc);
+             pRegMmio = pRegMmio->pNextR3)
+            if (pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2)
             {
-                uint8_t u8Type;
-                if (!fLiveSave)
-                    u8Type = ASMMemIsZeroPage(pbPage) ? PGM_STATE_REC_MMIO2_ZERO : PGM_STATE_REC_MMIO2_RAW;
-                else
+                PPGMLIVESAVEMMIO2PAGE paLSPages = pRegMmio->paLSPages;
+                uint8_t const        *pbPage    = (uint8_t const *)pRegMmio->RamRange.pvR3;
+                uint32_t              cPages    = pRegMmio->RamRange.cb >> PAGE_SHIFT;
+                uint32_t              iPageLast = cPages;
+                for (uint32_t iPage = 0; iPage < cPages; iPage++, pbPage += PAGE_SIZE)
                 {
-                    /* Try figure if it's a clean page, compare the SHA-1 to be really sure. */
-                    if (   !paLSPages[iPage].fDirty
-                        && !pgmR3ScanMmio2Page(pVM, pbPage, &paLSPages[iPage]))
+                    uint8_t u8Type;
+                    if (!fLiveSave)
+                        u8Type = ASMMemIsZeroPage(pbPage) ? PGM_STATE_REC_MMIO2_ZERO : PGM_STATE_REC_MMIO2_RAW;
+                    else
                     {
-                        if (paLSPages[iPage].fZero)
-                            continue;
+                        /* Try figure if it's a clean page, compare the SHA-1 to be really sure. */
+                        if (   !paLSPages[iPage].fDirty
+                            && !pgmR3ScanMmio2Page(pVM, pbPage, &paLSPages[iPage]))
+                        {
+                            if (paLSPages[iPage].fZero)
+                                continue;
 
-                        uint8_t abSha1Hash[RTSHA1_HASH_SIZE];
-                        RTSha1(pbPage, PAGE_SIZE, abSha1Hash);
-                        if (!memcmp(abSha1Hash, paLSPages[iPage].abSha1Saved, sizeof(abSha1Hash)))
-                            continue;
+                            uint8_t abSha1Hash[RTSHA1_HASH_SIZE];
+                            RTSha1(pbPage, PAGE_SIZE, abSha1Hash);
+                            if (!memcmp(abSha1Hash, paLSPages[iPage].abSha1Saved, sizeof(abSha1Hash)))
+                                continue;
+                        }
+                        u8Type = paLSPages[iPage].fZero ? PGM_STATE_REC_MMIO2_ZERO : PGM_STATE_REC_MMIO2_RAW;
+                        pVM->pgm.s.LiveSave.cSavedPages++;
                     }
-                    u8Type = paLSPages[iPage].fZero ? PGM_STATE_REC_MMIO2_ZERO : PGM_STATE_REC_MMIO2_RAW;
-                    pVM->pgm.s.LiveSave.cSavedPages++;
-                }
 
-                if (iPage != 0 && iPage == iPageLast + 1)
-                    rc = SSMR3PutU8(pSSM, u8Type);
-                else
-                {
-                    SSMR3PutU8(pSSM, u8Type | PGM_STATE_REC_FLAG_ADDR);
-                    SSMR3PutU8(pSSM, pMmio2->idSavedState);
-                    rc = SSMR3PutU32(pSSM, iPage);
+                    if (iPage != 0 && iPage == iPageLast + 1)
+                        rc = SSMR3PutU8(pSSM, u8Type);
+                    else
+                    {
+                        SSMR3PutU8(pSSM, u8Type | PGM_STATE_REC_FLAG_ADDR);
+                        SSMR3PutU8(pSSM, pRegMmio->idSavedState);
+                        rc = SSMR3PutU32(pSSM, iPage);
+                    }
+                    if (u8Type == PGM_STATE_REC_MMIO2_RAW)
+                        rc = SSMR3PutMem(pSSM, pbPage, PAGE_SIZE);
+                    if (RT_FAILURE(rc))
+                        break;
+                    iPageLast = iPage;
                 }
-                if (u8Type == PGM_STATE_REC_MMIO2_RAW)
-                    rc = SSMR3PutMem(pSSM, pbPage, PAGE_SIZE);
-                if (RT_FAILURE(rc))
-                    break;
-                iPageLast = iPage;
             }
-        }
         pgmUnlock(pVM);
     }
     /*
@@ -969,61 +982,62 @@ static int pgmR3SaveMmio2Pages(PVM pVM, PSSMHANDLE pSSM, bool fLiveSave, uint32_
              || (uPass & 3) == 2)
     {
         pgmLock(pVM);
-        for (PPGMMMIO2RANGE pMmio2 = pVM->pgm.s.pMmio2RangesR3;
-             pMmio2 && RT_SUCCESS(rc);
-             pMmio2 = pMmio2->pNextR3)
-        {
-            PPGMLIVESAVEMMIO2PAGE paLSPages = pMmio2->paLSPages;
-            uint8_t const        *pbPage    = (uint8_t const *)pMmio2->RamRange.pvR3;
-            uint32_t              cPages    = pMmio2->RamRange.cb >> PAGE_SHIFT;
-            uint32_t              iPageLast = cPages;
-            pgmUnlock(pVM);
-
-            for (uint32_t iPage = 0; iPage < cPages; iPage++, pbPage += PAGE_SIZE)
+        for (PPGMREGMMIORANGE pRegMmio = pVM->pgm.s.pRegMmioRangesR3;
+             pRegMmio && RT_SUCCESS(rc);
+             pRegMmio = pRegMmio->pNextR3)
+            if (pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2)
             {
-                /* Skip clean pages and pages which hasn't quiesced. */
-                if (!paLSPages[iPage].fDirty)
-                    continue;
-                if (paLSPages[iPage].cUnchangedScans < 3)
-                    continue;
-                if (pgmR3ScanMmio2Page(pVM, pbPage, &paLSPages[iPage]))
-                    continue;
+                PPGMLIVESAVEMMIO2PAGE paLSPages = pRegMmio->paLSPages;
+                uint8_t const        *pbPage    = (uint8_t const *)pRegMmio->RamRange.pvR3;
+                uint32_t              cPages    = pRegMmio->RamRange.cb >> PAGE_SHIFT;
+                uint32_t              iPageLast = cPages;
+                pgmUnlock(pVM);
 
-                /* Save it. */
-                bool const fZero = paLSPages[iPage].fZero;
-                uint8_t abPage[PAGE_SIZE];
-                if (!fZero)
+                for (uint32_t iPage = 0; iPage < cPages; iPage++, pbPage += PAGE_SIZE)
                 {
-                    memcpy(abPage, pbPage, PAGE_SIZE);
-                    RTSha1(abPage, PAGE_SIZE, paLSPages[iPage].abSha1Saved);
+                    /* Skip clean pages and pages which hasn't quiesced. */
+                    if (!paLSPages[iPage].fDirty)
+                        continue;
+                    if (paLSPages[iPage].cUnchangedScans < 3)
+                        continue;
+                    if (pgmR3ScanMmio2Page(pVM, pbPage, &paLSPages[iPage]))
+                        continue;
+
+                    /* Save it. */
+                    bool const fZero = paLSPages[iPage].fZero;
+                    uint8_t abPage[PAGE_SIZE];
+                    if (!fZero)
+                    {
+                        memcpy(abPage, pbPage, PAGE_SIZE);
+                        RTSha1(abPage, PAGE_SIZE, paLSPages[iPage].abSha1Saved);
+                    }
+
+                    uint8_t u8Type = paLSPages[iPage].fZero ? PGM_STATE_REC_MMIO2_ZERO : PGM_STATE_REC_MMIO2_RAW;
+                    if (iPage != 0 && iPage == iPageLast + 1)
+                        rc = SSMR3PutU8(pSSM, u8Type);
+                    else
+                    {
+                        SSMR3PutU8(pSSM, u8Type | PGM_STATE_REC_FLAG_ADDR);
+                        SSMR3PutU8(pSSM, pRegMmio->idSavedState);
+                        rc = SSMR3PutU32(pSSM, iPage);
+                    }
+                    if (u8Type == PGM_STATE_REC_MMIO2_RAW)
+                        rc = SSMR3PutMem(pSSM, abPage, PAGE_SIZE);
+                    if (RT_FAILURE(rc))
+                        break;
+
+                    /* Housekeeping. */
+                    paLSPages[iPage].fDirty = false;
+                    pVM->pgm.s.LiveSave.Mmio2.cDirtyPages--;
+                    pVM->pgm.s.LiveSave.Mmio2.cReadyPages++;
+                    if (u8Type == PGM_STATE_REC_MMIO2_ZERO)
+                        pVM->pgm.s.LiveSave.Mmio2.cZeroPages++;
+                    pVM->pgm.s.LiveSave.cSavedPages++;
+                    iPageLast = iPage;
                 }
 
-                uint8_t u8Type = paLSPages[iPage].fZero ? PGM_STATE_REC_MMIO2_ZERO : PGM_STATE_REC_MMIO2_RAW;
-                if (iPage != 0 && iPage == iPageLast + 1)
-                    rc = SSMR3PutU8(pSSM, u8Type);
-                else
-                {
-                    SSMR3PutU8(pSSM, u8Type | PGM_STATE_REC_FLAG_ADDR);
-                    SSMR3PutU8(pSSM, pMmio2->idSavedState);
-                    rc = SSMR3PutU32(pSSM, iPage);
-                }
-                if (u8Type == PGM_STATE_REC_MMIO2_RAW)
-                    rc = SSMR3PutMem(pSSM, abPage, PAGE_SIZE);
-                if (RT_FAILURE(rc))
-                    break;
-
-                /* Housekeeping. */
-                paLSPages[iPage].fDirty = false;
-                pVM->pgm.s.LiveSave.Mmio2.cDirtyPages--;
-                pVM->pgm.s.LiveSave.Mmio2.cReadyPages++;
-                if (u8Type == PGM_STATE_REC_MMIO2_ZERO)
-                    pVM->pgm.s.LiveSave.Mmio2.cZeroPages++;
-                pVM->pgm.s.LiveSave.cSavedPages++;
-                iPageLast = iPage;
+                pgmLock(pVM);
             }
-
-            pgmLock(pVM);
-        }
         pgmUnlock(pVM);
     }
 
@@ -1034,7 +1048,7 @@ static int pgmR3SaveMmio2Pages(PVM pVM, PSSMHANDLE pSSM, bool fLiveSave, uint32_
 /**
  * Cleans up MMIO2 pages after a live save.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 static void pgmR3DoneMmio2Pages(PVM pVM)
 {
@@ -1043,17 +1057,18 @@ static void pgmR3DoneMmio2Pages(PVM pVM)
      * We do the freeing outside the lock in case the VM is running.
      */
     pgmLock(pVM);
-    for (PPGMMMIO2RANGE pMmio2 = pVM->pgm.s.pMmio2RangesR3; pMmio2; pMmio2 = pMmio2->pNextR3)
-    {
-        void *pvMmio2ToFree = pMmio2->paLSPages;
-        if (pvMmio2ToFree)
+    for (PPGMREGMMIORANGE pRegMmio = pVM->pgm.s.pRegMmioRangesR3; pRegMmio; pRegMmio = pRegMmio->pNextR3)
+        if (pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2)
         {
-            pMmio2->paLSPages = NULL;
-            pgmUnlock(pVM);
-            MMR3HeapFree(pvMmio2ToFree);
-            pgmLock(pVM);
+            void *pvMmio2ToFree = pRegMmio->paLSPages;
+            if (pvMmio2ToFree)
+            {
+                pRegMmio->paLSPages = NULL;
+                pgmUnlock(pVM);
+                MMR3HeapFree(pvMmio2ToFree);
+                pgmLock(pVM);
+            }
         }
-    }
     pgmUnlock(pVM);
 }
 
@@ -1062,7 +1077,7 @@ static void pgmR3DoneMmio2Pages(PVM pVM)
  * Prepares the RAM pages for a live save.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 static int pgmR3PrepRamPages(PVM pVM)
 {
@@ -1163,6 +1178,7 @@ static int pgmR3PrepRamPages(PVM pVM)
 
                         default:
                             AssertMsgFailed(("%R[pgmpage]", pPage));
+                            RT_FALL_THRU();
                         case PGMPAGETYPE_MMIO2:
                         case PGMPAGETYPE_MMIO2_ALIAS_MMIO:
                             paLSPages[iPage].fZero   = 0;
@@ -1201,7 +1217,7 @@ static int pgmR3PrepRamPages(PVM pVM)
  * Saves the RAM configuration.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int pgmR3SaveRamConfig(PVM pVM, PSSMHANDLE pSSM)
@@ -1223,7 +1239,7 @@ static int pgmR3SaveRamConfig(PVM pVM, PSSMHANDLE pSSM)
  * Loads and verifies the RAM configuration.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int pgmR3LoadRamConfig(PVM pVM, PSSMHANDLE pSSM)
@@ -1256,7 +1272,7 @@ static int pgmR3LoadRamConfig(PVM pVM, PSSMHANDLE pSSM)
  * Calculates the CRC-32 for a RAM page and updates the live save page tracking
  * info with it.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pCur                The current RAM range.
  * @param   paLSPages           The current array of live save page tracking
  *                              structures.
@@ -1305,7 +1321,7 @@ static void pgmR3StateVerifyCrc32ForPage(void const *pvPage, PPGMRAMRANGE pCur, 
 /**
  * Verifies the CRC-32 for a RAM page.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pCur                The current RAM range.
  * @param   paLSPages           The current array of live save page tracking
  *                              structures.
@@ -1332,7 +1348,7 @@ static void pgmR3StateVerifyCrc32ForRamPage(PVM pVM, PPGMRAMRANGE pCur, PPGMLIVE
 /**
  * Scan for RAM page modifications and reprotect them.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   fFinalPass          Whether this is the final pass or not.
  */
 static void pgmR3ScanRamPages(PVM pVM, bool fFinalPass)
@@ -1540,7 +1556,7 @@ static void pgmR3ScanRamPages(PVM pVM, bool fFinalPass)
  * Save quiescent RAM pages.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The SSM handle.
  * @param   fLiveSave           Whether it's a live save or not.
  * @param   uPass               The pass number.
@@ -1760,7 +1776,7 @@ static int pgmR3SaveRamPages(PVM pVM, PSSMHANDLE pSSM, bool fLiveSave, uint32_t 
 /**
  * Cleans up RAM pages after a live save.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 static void pgmR3DoneRamPages(PVM pVM)
 {
@@ -1825,12 +1841,7 @@ static void pgmR3DoneRamPages(PVM pVM)
 
 
 /**
- * Execute a live save pass.
- *
- * @returns VBox status code.
- *
- * @param   pVM         Pointer to the VM.
- * @param   pSSM        The SSM handle.
+ * @callback_method_impl{FNSSMINTLIVEEXEC}
  */
 static DECLCALLBACK(int) pgmR3LiveExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass)
 {
@@ -1889,13 +1900,7 @@ static DECLCALLBACK(int) pgmR3LiveExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass)
 
 
 /**
- * Votes on whether the live save phase is done or not.
- *
- * @returns VBox status code.
- *
- * @param   pVM         Pointer to the VM.
- * @param   pSSM        The SSM handle.
- * @param   uPass       The data pass.
+ * @callback_method_impl{FNSSMINTLIVEVOTE}
  */
 static DECLCALLBACK(int)  pgmR3LiveVote(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass)
 {
@@ -1998,16 +2003,11 @@ static DECLCALLBACK(int)  pgmR3LiveVote(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass
 
 
 /**
- * Prepare for a live save operation.
+ * @callback_method_impl{FNSSMINTLIVEPREP}
  *
  * This will attempt to allocate and initialize the tracking structures.  It
  * will also prepare for write monitoring of pages and initialize PGM::LiveSave.
  * pgmR3SaveDone will do the cleanups.
- *
- * @returns VBox status code.
- *
- * @param   pVM         Pointer to the VM.
- * @param   pSSM        The SSM handle.
  */
 static DECLCALLBACK(int) pgmR3LivePrep(PVM pVM, PSSMHANDLE pSSM)
 {
@@ -2057,11 +2057,7 @@ static DECLCALLBACK(int) pgmR3LivePrep(PVM pVM, PSSMHANDLE pSSM)
 
 
 /**
- * Execute state save operation.
- *
- * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
- * @param   pSSM            SSM operation handle.
+ * @callback_method_impl{FNSSMINTSAVEEXEC}
  */
 static DECLCALLBACK(int) pgmR3SaveExec(PVM pVM, PSSMHANDLE pSSM)
 {
@@ -2127,11 +2123,7 @@ static DECLCALLBACK(int) pgmR3SaveExec(PVM pVM, PSSMHANDLE pSSM)
 
 
 /**
- * Cleans up after an save state operation.
- *
- * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
- * @param   pSSM            SSM operation handle.
+ * @callback_method_impl{FNSSMINTSAVEDONE}
  */
 static DECLCALLBACK(int) pgmR3SaveDone(PVM pVM, PSSMHANDLE pSSM)
 {
@@ -2161,11 +2153,7 @@ static DECLCALLBACK(int) pgmR3SaveDone(PVM pVM, PSSMHANDLE pSSM)
 
 
 /**
- * Prepare state load operation.
- *
- * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
- * @param   pSSM            SSM operation handle.
+ * @callback_method_impl{FNSSMINTLOADPREP}
  */
 static DECLCALLBACK(int) pgmR3LoadPrep(PVM pVM, PSSMHANDLE pSSM)
 {
@@ -2210,7 +2198,7 @@ DECLINLINE(bool) pgmR3CompareNewAndOldPageTypes(PPGMPAGE pPage, uint8_t uOldType
         case PGMPAGETYPE_MMIO2_ALIAS_MMIO:      uOldPageType = PGMPAGETYPE_OLD_MMIO2_ALIAS_MMIO; break;
         case PGMPAGETYPE_ROM_SHADOW:            uOldPageType = PGMPAGETYPE_OLD_ROM_SHADOW; break;
         case PGMPAGETYPE_ROM:                   uOldPageType = PGMPAGETYPE_OLD_ROM; break;
-        case PGMPAGETYPE_SPECIAL_ALIAS_MMIO:    /* fall thru */
+        case PGMPAGETYPE_SPECIAL_ALIAS_MMIO:    RT_FALL_THRU();
         case PGMPAGETYPE_MMIO:                  uOldPageType = PGMPAGETYPE_OLD_MMIO; break;
         default:
             AssertFailed();
@@ -2226,7 +2214,7 @@ DECLINLINE(bool) pgmR3CompareNewAndOldPageTypes(PPGMPAGE pPage, uint8_t uOldType
  * really zero.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   uOldType        The page type or PGMPAGETYPE_OLD_INVALID (old saved
  *                          state).
  * @param   pPage           The guest page tracking structure.
@@ -2255,7 +2243,7 @@ static int pgmR3LoadPageZeroOld(PVM pVM, uint8_t uOldType, PPGMPAGE pPage, RTGCP
  * Loads a page from the saved state.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The SSM handle.
  * @param   uOldType        The page type or PGMPAGETYPE_OLD_INVALID (old saved
  *                          state).
@@ -2299,7 +2287,7 @@ static int pgmR3LoadPageBitsOld(PVM pVM, PSSMHANDLE pSSM, uint8_t uOldType, PPGM
  * Loads a page (counter part to pgmR3SavePage).
  *
  * @returns VBox status code, fully bitched errors.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The SSM handle.
  * @param   uOldType        The page type.
  * @param   pPage           The page.
@@ -2328,7 +2316,7 @@ static int pgmR3LoadPageOld(PVM pVM, PSSMHANDLE pSSM, uint8_t uOldType, PPGMPAGE
  * Loads a shadowed ROM page.
  *
  * @returns VBox status code, errors are fully bitched.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The saved state handle.
  * @param   pPage           The page.
  * @param   GCPhys          The page address.
@@ -2382,7 +2370,7 @@ static int pgmR3LoadShadowedRomPageOld(PVM pVM, PSSMHANDLE pSSM, PPGMPAGE pPage,
  *
  * @returns VBox status code.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pSSM        The SSM handle.
  * @param   uVersion    The saved state version.
  */
@@ -2526,7 +2514,7 @@ static int pgmR3LoadMemoryOld(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion)
                  */
                 const uint32_t cPagesInChunk = (1*1024*1024) >> PAGE_SHIFT;
                 AssertLogRelMsgReturn(cPages % cPagesInChunk == 0,
-                                      ("cPages=%#x cPagesInChunk=%#x\n", cPages, cPagesInChunk, pRam->GCPhys, pRam->pszDesc),
+                                      ("cPages=%#x cPagesInChunk=%#x GCPhys=%RGp %s\n", cPages, cPagesInChunk, pRam->GCPhys, pRam->pszDesc),
                                       VERR_SSM_DATA_UNIT_FORMAT_CHANGED);
 
                 for (uint32_t iPage = 0; iPage < cPages; /* incremented by inner loop */ )
@@ -2625,7 +2613,7 @@ static int pgmR3LoadMemoryOld(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion)
  *
  * @returns VBox status code.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The SSM handle.
  * @param   uVersion            The PGM saved state unit version.
  * @param   uPass               The pass number.
@@ -2640,12 +2628,12 @@ static int pgmR3LoadMemory(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t
     /*
      * Process page records until we hit the terminator.
      */
-    RTGCPHYS        GCPhys   = NIL_RTGCPHYS;
-    PPGMRAMRANGE    pRamHint = NULL;
-    uint8_t         id       = UINT8_MAX;
-    uint32_t        iPage    = UINT32_MAX - 10;
-    PPGMROMRANGE    pRom     = NULL;
-    PPGMMMIO2RANGE  pMmio2   = NULL;
+    RTGCPHYS            GCPhys   = NIL_RTGCPHYS;
+    PPGMRAMRANGE        pRamHint = NULL;
+    uint8_t             id       = UINT8_MAX;
+    uint32_t            iPage    = UINT32_MAX - 10;
+    PPGMROMRANGE        pRom     = NULL;
+    PPGMREGMMIORANGE    pRegMmio = NULL;
 
     /*
      * We batch up pages that should be freed instead of calling GMM for
@@ -2819,16 +2807,17 @@ static int pgmR3LoadMemory(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t
                     if (RT_FAILURE(rc))
                         return rc;
                 }
-                if (    !pMmio2
-                    ||  pMmio2->idSavedState != id)
+                if (   !pRegMmio
+                    || pRegMmio->idSavedState != id)
                 {
-                    for (pMmio2 = pVM->pgm.s.pMmio2RangesR3; pMmio2; pMmio2 = pMmio2->pNextR3)
-                        if (pMmio2->idSavedState == id)
+                    for (pRegMmio = pVM->pgm.s.pRegMmioRangesR3; pRegMmio; pRegMmio = pRegMmio->pNextR3)
+                        if (   pRegMmio->idSavedState == id
+                            && (pRegMmio->fFlags & PGMREGMMIORANGE_F_MMIO2))
                             break;
-                    AssertLogRelMsgReturn(pMmio2, ("id=%#u iPage=%#x\n", id, iPage), VERR_PGM_SAVED_MMIO2_RANGE_NOT_FOUND);
+                    AssertLogRelMsgReturn(pRegMmio, ("id=%#u iPage=%#x\n", id, iPage), VERR_PGM_SAVED_MMIO2_RANGE_NOT_FOUND);
                 }
-                AssertLogRelMsgReturn(iPage < (pMmio2->RamRange.cb >> PAGE_SHIFT), ("iPage=%#x cb=%RGp %s\n", iPage, pMmio2->RamRange.cb, pMmio2->RamRange.pszDesc), VERR_PGM_SAVED_MMIO2_PAGE_NOT_FOUND);
-                void *pvDstPage = (uint8_t *)pMmio2->RamRange.pvR3 + ((size_t)iPage << PAGE_SHIFT);
+                AssertLogRelMsgReturn(iPage < (pRegMmio->RamRange.cb >> PAGE_SHIFT), ("iPage=%#x cb=%RGp %s\n", iPage, pRegMmio->RamRange.cb, pRegMmio->RamRange.pszDesc), VERR_PGM_SAVED_MMIO2_PAGE_NOT_FOUND);
+                void *pvDstPage = (uint8_t *)pRegMmio->RamRange.pvR3 + ((size_t)iPage << PAGE_SHIFT);
 
                 /*
                  * Load the page bits.
@@ -2944,7 +2933,7 @@ static int pgmR3LoadMemory(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t
                             ||  PGM_PAGE_IS_BALLOONED(pRealPage))
                             break;
                         /** @todo implement zero page replacing. */
-                        /* fall thru */
+                        RT_FALL_THRU();
                     case PGM_STATE_REC_ROM_VIRGIN:
                     case PGM_STATE_REC_ROM_SHW_RAW:
                     {
@@ -2990,7 +2979,7 @@ static int pgmR3LoadMemory(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t
  *
  * @returns VBox status code.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The SSM handle.
  * @param   uVersion            The saved state version.
  */
@@ -3144,13 +3133,7 @@ static int pgmR3LoadFinalLocked(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion)
 
 
 /**
- * Execute state load operation.
- *
- * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
- * @param   pSSM            SSM operation handle.
- * @param   uVersion        Data layout version.
- * @param   uPass           The data pass.
+ * @callback_method_impl{FNSSMINTLOADEXEC}
  */
 static DECLCALLBACK(int) pgmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass)
 {
@@ -3232,8 +3215,8 @@ static DECLCALLBACK(int) pgmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, 
             pgmR3HandlerPhysicalUpdateAll(pVM);
 
             /*
-             * Change the paging mode and restore PGMCPU::GCPhysCR3.
-             * (The latter requires the CPUM state to be restored already.)
+             * Change the paging mode (indirectly restores PGMCPU::GCPhysCR3).
+             * (Requires the CPUM state to be restored already!)
              */
             if (CPUMR3IsStateRestorePending(pVM))
                 return SSMR3SetLoadError(pSSM, VERR_WRONG_ORDER, RT_SRC_POS,
@@ -3245,18 +3228,6 @@ static DECLCALLBACK(int) pgmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, 
 
                 rc = PGMR3ChangeMode(pVM, pVCpu, pVCpu->pgm.s.enmGuestMode);
                 AssertLogRelRCReturn(rc, rc);
-
-                /* Update pVM->pgm.s.GCPhysCR3. */
-                Assert(pVCpu->pgm.s.GCPhysCR3 == NIL_RTGCPHYS || FTMIsDeltaLoadSaveActive(pVM));
-                RTGCPHYS GCPhysCR3 = CPUMGetGuestCR3(pVCpu);
-                if (    pVCpu->pgm.s.enmGuestMode == PGMMODE_PAE
-                    ||  pVCpu->pgm.s.enmGuestMode == PGMMODE_PAE_NX
-                    ||  pVCpu->pgm.s.enmGuestMode == PGMMODE_AMD64
-                    ||  pVCpu->pgm.s.enmGuestMode == PGMMODE_AMD64_NX)
-                    GCPhysCR3 = (GCPhysCR3 & X86_CR3_PAE_PAGE_MASK);
-                else
-                    GCPhysCR3 = (GCPhysCR3 & X86_CR3_PAGE_MASK);
-                pVCpu->pgm.s.GCPhysCR3 = GCPhysCR3;
 
                 /* Update the PSE, NX flags and validity masks. */
                 pVCpu->pgm.s.fGst32BitPageSizeExtension = CPUMIsGuestPageSizeExtEnabled(pVCpu);
@@ -3330,10 +3301,21 @@ static DECLCALLBACK(int) pgmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, 
 
 
 /**
+ * @callback_method_impl{FNSSMINTLOADDONE}
+ */
+static DECLCALLBACK(int) pgmR3LoadDone(PVM pVM, PSSMHANDLE pSSM)
+{
+    pVM->pgm.s.fRestoreRomPagesOnReset = true;
+    NOREF(pSSM);
+    return VINF_SUCCESS;
+}
+
+
+/**
  * Registers the saved state callbacks with SSM.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to VM.
+ * @param   pVM     The cross context VM structure.
  * @param   cbRam   The RAM size.
  */
 int pgmR3InitSavedState(PVM pVM, uint64_t cbRam)
@@ -3341,6 +3323,6 @@ int pgmR3InitSavedState(PVM pVM, uint64_t cbRam)
     return SSMR3RegisterInternal(pVM, "pgm", 1, PGM_SAVED_STATE_VERSION, (size_t)cbRam + sizeof(PGM),
                                  pgmR3LivePrep, pgmR3LiveExec, pgmR3LiveVote,
                                  NULL,          pgmR3SaveExec, pgmR3SaveDone,
-                                 pgmR3LoadPrep, pgmR3Load,     NULL);
+                                 pgmR3LoadPrep, pgmR3Load,     pgmR3LoadDone);
 }
 

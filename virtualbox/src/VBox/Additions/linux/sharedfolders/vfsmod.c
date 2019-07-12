@@ -10,7 +10,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -29,18 +29,29 @@
  */
 
 #include "vfsmod.h"
+#include "version-generated.h"
+#include "revision-generated.h"
+#include "product-generated.h"
+#include "VBoxGuestR0LibInternal.h"
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
+# include <uapi/linux/mount.h> /* for MS_REMOUNT */
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 3, 0)
+# include <linux/mount.h>
+#endif
+#include <linux/seq_file.h>
 
 MODULE_DESCRIPTION(VBOX_PRODUCT " VFS Module for Host File System Access");
 MODULE_AUTHOR(VBOX_VENDOR);
 MODULE_LICENSE("GPL");
+#ifdef MODULE_ALIAS_FS
+MODULE_ALIAS_FS("vboxsf");
+#endif
 #ifdef MODULE_VERSION
-MODULE_VERSION(VBOX_VERSION_STRING " (interface " RT_XSTR(VMMDEV_VERSION) ")");
+MODULE_VERSION(VBOX_VERSION_STRING " r" RT_XSTR(VBOX_SVN_REV));
 #endif
 
 /* globals */
-VBSFCLIENT client_handle;
-/* superblock waits for this so no-one else has to */
-static DECLARE_COMPLETION(client_handle_valid);
+VBGLSFCLIENT client_handle;
 
 /* forward declarations */
 static struct super_operations sf_super_ops;
@@ -69,32 +80,14 @@ static int sf_glob_alloc(struct vbsf_mount_info_new *info, struct sf_glob_info *
         || info->signature[1] != VBSF_MOUNT_SIGNATURE_BYTE_1
         || info->signature[2] != VBSF_MOUNT_SIGNATURE_BYTE_2)
     {
-        /* An old version of mount.vboxsf made the syscall. Translate the
-         * old parameters to the new structure. */
-        struct vbsf_mount_info_old *info_old = (struct vbsf_mount_info_old *)info;
-        static struct vbsf_mount_info_new info_compat;
-
-        info = &info_compat;
-        memset(info, 0, sizeof(*info));
-        memcpy(&info->name, &info_old->name, MAX_HOST_NAME);
-        memcpy(&info->nls_name, &info_old->nls_name, MAX_NLS_NAME);
-        info->length = offsetof(struct vbsf_mount_info_new, dmode);
-        info->uid    = info_old->uid;
-        info->gid    = info_old->gid;
-        info->ttl    = info_old->ttl;
+        err = -EINVAL;
+        goto fail1;
     }
 
     info->name[sizeof(info->name) - 1] = 0;
     info->nls_name[sizeof(info->nls_name) - 1] = 0;
 
     name_len = strlen(info->name);
-    if (name_len > 0xfffe)
-    {
-        err = -ENAMETOOLONG;
-        LogFunc(("map name too big\n"));
-        goto fail1;
-    }
-
     str_len = offsetof(SHFLSTRING, String.utf8) + name_len + 1;
     str_name = kmalloc(str_len, GFP_KERNEL);
     if (!str_name)
@@ -125,6 +118,7 @@ static int sf_glob_alloc(struct vbsf_mount_info_new *info, struct sf_glob_info *
             {
                 err = -EINVAL;
                 LogFunc(("failed to load nls %s\n", info->nls_name));
+                kfree(str_name);
                 goto fail1;
             }
         }
@@ -146,14 +140,13 @@ static int sf_glob_alloc(struct vbsf_mount_info_new *info, struct sf_glob_info *
 #undef _IS_EMPTY
     }
 
-    wait_for_completion(&client_handle_valid);
-    rc = vboxCallMapFolder(&client_handle, str_name, &sf_g->map);
+    rc = VbglR0SfMapFolder(&client_handle, str_name, &sf_g->map);
     kfree(str_name);
 
     if (RT_FAILURE(rc))
     {
         err = -EPROTO;
-        LogFunc(("vboxCallMapFolder failed rc=%d\n", rc));
+        LogFunc(("VbglR0SfMapFolder failed rc=%d\n", rc));
         goto fail2;
     }
 
@@ -196,9 +189,9 @@ sf_glob_free(struct sf_glob_info *sf_g)
     int rc;
 
     TRACE();
-    rc = vboxCallUnmapFolder(&client_handle, &sf_g->map);
+    rc = VbglR0SfUnmapFolder(&client_handle, &sf_g->map);
     if (RT_FAILURE(rc))
-        LogFunc(("vboxCallUnmapFolder failed rc=%d\n", rc));
+        LogFunc(("VbglR0SfUnmapFolder failed rc=%d\n", rc));
 
     if (sf_g->nls)
         unload_nls(sf_g->nls);
@@ -255,7 +248,6 @@ static int sf_read_super_aux(struct super_block *sb, void *data, int flags)
         goto fail1;
     }
 
-    INIT_LIST_HEAD(&sf_i->handles);
     sf_i->handle = SHFL_HANDLE_NIL;
     sf_i->path = kmalloc(sizeof(SHFLSTRING) + 1, GFP_KERNEL);
     if (!sf_i->path)
@@ -318,8 +310,8 @@ static int sf_read_super_aux(struct super_block *sb, void *data, int flags)
         goto fail4;
     }
 
-    SET_INODE_INFO(iroot, sf_i);
     sf_init_inode(sf_g, iroot, &fsinfo);
+    SET_INODE_INFO(iroot, sf_i);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 4, 25)
     unlock_new_inode(iroot);
@@ -391,7 +383,6 @@ static void sf_clear_inode(struct inode *inode)
     if (!sf_i)
         return;
 
-    WARN_ON(!list_empty(&sf_i->handles));
     BUG_ON(!sf_i->path);
     kfree(sf_i->path);
     kfree(sf_i);
@@ -414,7 +405,6 @@ static void sf_evict_inode(struct inode *inode)
     if (!sf_i)
         return;
 
-    WARN_ON(!list_empty(&sf_i->handles));
     BUG_ON(!sf_i->path);
     kfree(sf_i->path);
     kfree(sf_i);
@@ -600,26 +590,26 @@ static int __init init(void)
         return err;
     }
 
-    rcVBox = vboxInit();
+    rcVBox = VbglR0HGCMInit();
     if (RT_FAILURE(rcVBox))
     {
-        LogRelFunc(("vboxInit failed, rc=%d\n", rcVBox));
+        LogRelFunc(("VbglR0HGCMInit failed, rc=%d\n", rcVBox));
         rcRet = -EPROTO;
         goto fail0;
     }
 
-    rcVBox = vboxConnect(&client_handle);
+    rcVBox = VbglR0SfConnect(&client_handle);
     if (RT_FAILURE(rcVBox))
     {
-        LogRelFunc(("vboxConnect failed, rc=%d\n", rcVBox));
+        LogRelFunc(("VbglR0SfConnect failed, rc=%d\n", rcVBox));
         rcRet = -EPROTO;
         goto fail1;
     }
 
-    rcVBox = vboxCallSetUtf8(&client_handle);
+    rcVBox = VbglR0SfSetUtf8(&client_handle);
     if (RT_FAILURE(rcVBox))
     {
-        LogRelFunc(("vboxCallSetUtf8 failed, rc=%d\n", rcVBox));
+        LogRelFunc(("VbglR0SfSetUtf8 failed, rc=%d\n", rcVBox));
         rcRet = -EPROTO;
         goto fail2;
     }
@@ -627,7 +617,7 @@ static int __init init(void)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
     if (!follow_symlinks)
     {
-        rcVBox = vboxCallSetSymlinks(&client_handle);
+        rcVBox = VbglR0SfSetSymlinks(&client_handle);
         if (RT_FAILURE(rcVBox))
         {
             printk(KERN_WARNING
@@ -641,14 +631,13 @@ static int __init init(void)
             "vboxsf: Successfully loaded version " VBOX_VERSION_STRING
             " (interface " RT_XSTR(VMMDEV_VERSION) ")\n");
 
-    complete_all(&client_handle_valid);
     return 0;
 
 fail2:
-    vboxDisconnect(&client_handle);
+    VbglR0SfDisconnect(&client_handle);
 
 fail1:
-    vboxUninit();
+    VbglR0HGCMTerminate();
 
 fail0:
     unregister_filesystem(&vboxsf_fs_type);
@@ -659,8 +648,8 @@ static void __exit fini(void)
 {
     TRACE();
 
-    vboxDisconnect(&client_handle);
-    vboxUninit();
+    VbglR0SfDisconnect(&client_handle);
+    VbglR0HGCMTerminate();
     unregister_filesystem(&vboxsf_fs_type);
 }
 

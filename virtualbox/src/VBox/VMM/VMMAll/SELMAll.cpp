@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SELM
 #include <VBox/vmm/selm.h>
 #include <VBox/vmm/stam.h>
@@ -34,18 +34,117 @@
 #include <iprt/assert.h>
 #include <VBox/vmm/vmm.h>
 #include <iprt/x86.h>
+#include <iprt/string.h>
 
 #include "SELMInline.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #if defined(LOG_ENABLED) && defined(VBOX_WITH_RAW_MODE_NOT_R0)
 /** Segment register names. */
 static char const g_aszSRegNms[X86_SREG_COUNT][4] = { "ES", "CS", "SS", "DS", "FS", "GS" };
 #endif
 
+
+#ifndef IN_RING0
+
+# ifdef SELM_TRACK_GUEST_GDT_CHANGES
+/**
+ * @callback_method_impl{FNPGMVIRTHANDLER}
+ */
+PGM_ALL_CB2_DECL(VBOXSTRICTRC)
+selmGuestGDTWriteHandler(PVM pVM, PVMCPU pVCpu, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf,
+                         PGMACCESSTYPE enmAccessType, PGMACCESSORIGIN enmOrigin, void *pvUser)
+{
+    Assert(enmAccessType == PGMACCESSTYPE_WRITE); NOREF(enmAccessType);
+    Log(("selmGuestGDTWriteHandler: write to %RGv size %d\n", GCPtr, cbBuf)); NOREF(GCPtr); NOREF(cbBuf);
+    NOREF(pvPtr); NOREF(pvBuf); NOREF(enmOrigin); NOREF(pvUser);
+
+#  ifdef IN_RING3
+    RT_NOREF_PV(pVM);
+
+    VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_GDT);
+    return VINF_PGM_HANDLER_DO_DEFAULT;
+
+#  else  /* IN_RC: */
+    /*
+     * Execute the write, doing necessary pre and post shadow GDT checks.
+     */
+    PCPUMCTX pCtx        = CPUMQueryGuestCtxPtr(pVCpu);
+    uint32_t offGuestGdt = pCtx->gdtr.pGdt - GCPtr;
+    selmRCGuestGdtPreWriteCheck(pVM, pVCpu, offGuestGdt, cbBuf, pCtx);
+    memcpy(pvBuf, pvPtr, cbBuf);
+    VBOXSTRICTRC rcStrict = selmRCGuestGdtPostWriteCheck(pVM, pVCpu, offGuestGdt, cbBuf, pCtx);
+    if (!VMCPU_FF_IS_PENDING(pVCpu, VMCPU_FF_SELM_SYNC_GDT))
+        STAM_COUNTER_INC(&pVM->selm.s.StatRCWriteGuestGDTHandled);
+    else
+        STAM_COUNTER_INC(&pVM->selm.s.StatRCWriteGuestGDTUnhandled);
+    return rcStrict;
+#  endif
+}
+# endif
+
+
+# ifdef SELM_TRACK_GUEST_LDT_CHANGES
+/**
+ * @callback_method_impl{FNPGMVIRTHANDLER}
+ */
+PGM_ALL_CB2_DECL(VBOXSTRICTRC)
+selmGuestLDTWriteHandler(PVM pVM, PVMCPU pVCpu, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf,
+                         PGMACCESSTYPE enmAccessType, PGMACCESSORIGIN enmOrigin, void *pvUser)
+{
+    Assert(enmAccessType == PGMACCESSTYPE_WRITE); NOREF(enmAccessType);
+    Log(("selmGuestLDTWriteHandler: write to %RGv size %d\n", GCPtr, cbBuf)); NOREF(GCPtr); NOREF(cbBuf);
+    NOREF(pvPtr); NOREF(pvBuf); NOREF(enmOrigin); NOREF(pvUser); RT_NOREF_PV(pVM);
+
+    VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_LDT);
+#  ifdef IN_RING3
+    return VINF_PGM_HANDLER_DO_DEFAULT;
+#  else
+    STAM_COUNTER_INC(&pVM->selm.s.StatRCWriteGuestLDT);
+    return VINF_EM_RAW_EMULATE_INSTR_LDT_FAULT;
+#  endif
+}
+# endif
+
+
+# ifdef SELM_TRACK_GUEST_TSS_CHANGES
+/**
+ * @callback_method_impl{FNPGMVIRTHANDLER}
+ */
+PGM_ALL_CB2_DECL(VBOXSTRICTRC)
+selmGuestTSSWriteHandler(PVM pVM, PVMCPU pVCpu, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf,
+                         PGMACCESSTYPE enmAccessType, PGMACCESSORIGIN enmOrigin, void *pvUser)
+{
+    Assert(enmAccessType == PGMACCESSTYPE_WRITE); NOREF(enmAccessType);
+    Log(("selmGuestTSSWriteHandler: write %.*Rhxs to %RGv size %d\n", RT_MIN(8, cbBuf), pvBuf, GCPtr, cbBuf));
+    NOREF(pvBuf); NOREF(GCPtr); NOREF(cbBuf); NOREF(enmOrigin); NOREF(pvUser); NOREF(pvPtr);
+
+#  ifdef IN_RING3
+    RT_NOREF_PV(pVM);
+
+    /** @todo This can be optimized by checking for the ESP0 offset and tracking TR
+     *        reloads in REM (setting VM_FF_SELM_SYNC_TSS if TR is reloaded). We
+     *        should probably also deregister the virtual handler if TR.base/size
+     *        changes while we're in REM.  May also share
+     *        selmRCGuestTssPostWriteCheck code. */
+    VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_TSS);
+    return VINF_PGM_HANDLER_DO_DEFAULT;
+
+#  else  /* IN_RC */
+    /*
+     * Do the write and check if anything relevant changed.
+     */
+    Assert(pVM->selm.s.GCPtrGuestTss != (uintptr_t)RTRCPTR_MAX);
+    memcpy(pvPtr, pvBuf, cbBuf);
+    return selmRCGuestTssPostWriteCheck(pVM, pVCpu, GCPtr - pVM->selm.s.GCPtrGuestTss, cbBuf);
+#  endif
+}
+# endif
+
+#endif /* IN_RING0 */
 
 
 #ifdef VBOX_WITH_RAW_MODE_NOT_R0
@@ -56,7 +155,7 @@ static char const g_aszSRegNms[X86_SREG_COUNT][4] = { "ES", "CS", "SS", "DS", "F
  * for that.
  *
  * @returns Flat address.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   Sel     Selector part.
  * @param   Addr    Address part.
  * @remarks Don't use when in long mode.
@@ -89,7 +188,7 @@ VMMDECL(RTGCPTR) SELMToFlatBySel(PVM pVM, RTSEL Sel, RTGCPTR Addr)
  * for that.
  *
  * @returns Flat address.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   SelReg      Selector register
  * @param   pCtxCore    CPU context
  * @param   Addr        Address part.
@@ -107,11 +206,11 @@ VMMDECL(RTGCPTR) SELMToFlat(PVM pVM, DISSELREG SelReg, PCPUMCTXCORE pCtxCore, RT
     if (    pCtxCore->eflags.Bits.u1VM
         ||  CPUMIsGuestInRealMode(pVCpu))
     {
-        RTGCUINTPTR uFlat = (RTGCUINTPTR)Addr & 0xffff;
+        uint32_t uFlat = (uint32_t)Addr & 0xffff;
         if (CPUMSELREG_ARE_HIDDEN_PARTS_VALID(pVCpu, pSReg))
-            uFlat += pSReg->u64Base;
+            uFlat += (uint32_t)pSReg->u64Base;
         else
-            uFlat += (RTGCUINTPTR)pSReg->Sel << 4;
+            uFlat += (uint32_t)pSReg->Sel << 4;
         return (RTGCPTR)uFlat;
     }
 
@@ -144,7 +243,7 @@ VMMDECL(RTGCPTR) SELMToFlat(PVM pVM, DISSELREG SelReg, PCPUMCTXCORE pCtxCore, RT
 
     /* AMD64 manual: compatibility mode ignores the high 32 bits when calculating an effective address. */
     Assert(pSReg->u64Base <= 0xffffffff);
-    return ((pSReg->u64Base + (RTGCUINTPTR)Addr) & 0xffffffff);
+    return (uint32_t)pSReg->u64Base + (uint32_t)Addr;
 }
 
 
@@ -154,7 +253,7 @@ VMMDECL(RTGCPTR) SELMToFlat(PVM pVM, DISSELREG SelReg, PCPUMCTXCORE pCtxCore, RT
  * Some basic checking is done, but not all kinds yet.
  *
  * @returns VBox status
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   SelReg      Selector register.
  * @param   pCtxCore    CPU context.
  * @param   Addr        Address part.
@@ -177,13 +276,13 @@ VMMDECL(int) SELMToFlatEx(PVMCPU pVCpu, DISSELREG SelReg, PCPUMCTXCORE pCtxCore,
     if (    pCtxCore->eflags.Bits.u1VM
         ||  CPUMIsGuestInRealMode(pVCpu))
     {
-        RTGCUINTPTR uFlat = (RTGCUINTPTR)Addr & 0xffff;
         if (ppvGC)
         {
+            uint32_t uFlat = (uint32_t)Addr & 0xffff;
             if (CPUMSELREG_ARE_HIDDEN_PARTS_VALID(pVCpu, pSReg))
-                *ppvGC = pSReg->u64Base + uFlat;
+                *ppvGC = (uint32_t)pSReg->u64Base + uFlat;
             else
-                *ppvGC = ((RTGCUINTPTR)pSReg->Sel << 4) + uFlat;
+                *ppvGC = ((uint32_t)pSReg->Sel << 4) + uFlat;
         }
         return VINF_SUCCESS;
     }
@@ -222,8 +321,8 @@ VMMDECL(int) SELMToFlatEx(PVMCPU pVCpu, DISSELREG SelReg, PCPUMCTXCORE pCtxCore,
     {
         /* AMD64 manual: compatibility mode ignores the high 32 bits when calculating an effective address. */
         Assert(pSReg->u64Base <= UINT32_C(0xffffffff));
-        pvFlat  = pSReg->u64Base + Addr;
-        pvFlat &= UINT32_C(0xffffffff);
+        pvFlat  = (uint32_t)pSReg->u64Base + (uint32_t)Addr;
+        Assert(pvFlat <= UINT32_MAX);
     }
 
     /*
@@ -307,7 +406,7 @@ VMMDECL(int) SELMToFlatEx(PVMCPU pVCpu, DISSELREG SelReg, PCPUMCTXCORE pCtxCore,
  * Some basic checking is done, but not all kinds yet.
  *
  * @returns VBox status
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   eflags      Current eflags
  * @param   Sel         Selector part.
  * @param   Addr        Address part.
@@ -490,33 +589,38 @@ static void selLoadHiddenSelectorRegFromGuestTable(PVMCPU pVCpu, PCCPUMCTX pCtx,
                                                    RTGCPTR GCPtrDesc, RTSEL const Sel, uint32_t const iSReg)
 {
     Assert(!HMIsEnabled(pVCpu->CTX_SUFF(pVM)));
+    RT_NOREF_PV(pCtx); RT_NOREF_PV(Sel);
 
     /*
      * Try read the entry.
      */
     X86DESC GstDesc;
-    int rc = PGMPhysReadGCPtr(pVCpu, &GstDesc, GCPtrDesc, sizeof(GstDesc));
-    if (RT_FAILURE(rc))
+    VBOXSTRICTRC rcStrict = PGMPhysReadGCPtr(pVCpu, &GstDesc, GCPtrDesc, sizeof(GstDesc), PGMACCESSORIGIN_SELM);
+    if (rcStrict == VINF_SUCCESS)
     {
-        Log(("SELMLoadHiddenSelectorReg: Error reading descriptor %s=%#x: %Rrc\n", g_aszSRegNms[iSReg], Sel, rc));
+        /*
+         * Validate it and load it.
+         */
+        if (selmIsGstDescGoodForSReg(pVCpu, pSReg, &GstDesc, iSReg, CPUMGetGuestCPL(pVCpu)))
+        {
+            selmLoadHiddenSRegFromGuestDesc(pVCpu, pSReg, &GstDesc);
+            Log(("SELMLoadHiddenSelectorReg: loaded %s=%#x:{b=%llx, l=%x, a=%x, vs=%x} (gst)\n",
+                 g_aszSRegNms[iSReg], Sel, pSReg->u64Base, pSReg->u32Limit, pSReg->Attr.u, pSReg->ValidSel));
+            STAM_COUNTER_INC(&pVCpu->CTX_SUFF(pVM)->selm.s.StatLoadHidSelGst);
+        }
+        else
+        {
+            Log(("SELMLoadHiddenSelectorReg: Guest table entry is no good (%s=%#x): %.8Rhxs\n", g_aszSRegNms[iSReg], Sel, &GstDesc));
+            STAM_REL_COUNTER_INC(&pVCpu->CTX_SUFF(pVM)->selm.s.StatLoadHidSelGstNoGood);
+        }
+    }
+    else
+    {
+        AssertMsg(RT_FAILURE_NP(rcStrict), ("%Rrc\n", VBOXSTRICTRC_VAL(rcStrict)));
+        Log(("SELMLoadHiddenSelectorReg: Error reading descriptor %s=%#x: %Rrc\n",
+             g_aszSRegNms[iSReg], Sel, VBOXSTRICTRC_VAL(rcStrict) ));
         STAM_REL_COUNTER_INC(&pVCpu->CTX_SUFF(pVM)->selm.s.StatLoadHidSelReadErrors);
-        return;
     }
-
-    /*
-     * Validate it and load it.
-     */
-    if (!selmIsGstDescGoodForSReg(pVCpu, pSReg, &GstDesc, iSReg, CPUMGetGuestCPL(pVCpu)))
-    {
-        Log(("SELMLoadHiddenSelectorReg: Guest table entry is no good (%s=%#x): %.8Rhxs\n", g_aszSRegNms[iSReg], Sel, &GstDesc));
-        STAM_REL_COUNTER_INC(&pVCpu->CTX_SUFF(pVM)->selm.s.StatLoadHidSelGstNoGood);
-        return;
-    }
-
-    selmLoadHiddenSRegFromGuestDesc(pVCpu, pSReg, &GstDesc);
-    Log(("SELMLoadHiddenSelectorReg: loaded %s=%#x:{b=%llx, l=%x, a=%x, vs=%x} (gst)\n",
-         g_aszSRegNms[iSReg], Sel, pSReg->u64Base, pSReg->u32Limit, pSReg->Attr.u, pSReg->ValidSel));
-    STAM_COUNTER_INC(&pVCpu->CTX_SUFF(pVM)->selm.s.StatLoadHidSelGst);
 }
 
 
@@ -526,7 +630,7 @@ static void selLoadHiddenSelectorRegFromGuestTable(PVMCPU pVCpu, PCCPUMCTX pCtx,
  *
  * @remarks This is only used when in legacy protected mode!
  *
- * @param   pVCpu       Pointer to the current virtual CPU.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  * @param   pCtx        The guest CPU context.
  * @param   pSReg       The selector register.
  *
@@ -599,20 +703,21 @@ VMM_INT_DECL(void) SELMLoadHiddenSelectorReg(PVMCPU pVCpu, PCCPUMCTX pCtx, PCPUM
  * address when in real or v8086 mode.
  *
  * @returns VINF_SUCCESS.
- * @param   pVCpu   Pointer to the VMCPU.
+ * @param   pVCpu   The cross context virtual CPU structure.
  * @param   SelCS   Selector part.
- * @param   pHidCS  The hidden CS register part. Optional.
+ * @param   pSReg   The hidden CS register part. Optional.
  * @param   Addr    Address part.
  * @param   ppvFlat Where to store the flat address.
  */
 DECLINLINE(int) selmValidateAndConvertCSAddrRealMode(PVMCPU pVCpu, RTSEL SelCS, PCCPUMSELREGHID pSReg, RTGCPTR Addr,
                                                      PRTGCPTR ppvFlat)
 {
-    RTGCUINTPTR uFlat = Addr & 0xffff;
+    NOREF(pVCpu);
+    uint32_t uFlat = Addr & 0xffff;
     if (!pSReg || !CPUMSELREG_ARE_HIDDEN_PARTS_VALID(pVCpu, pSReg))
-        uFlat += (RTGCUINTPTR)SelCS << 4;
+        uFlat += (uint32_t)SelCS << 4;
     else
-        uFlat += pSReg->u64Base;
+        uFlat += (uint32_t)pSReg->u64Base;
     *ppvFlat = uFlat;
     return VINF_SUCCESS;
 }
@@ -624,8 +729,8 @@ DECLINLINE(int) selmValidateAndConvertCSAddrRealMode(PVMCPU pVCpu, RTSEL SelCS, 
  * when in protected/long mode using the raw-mode algorithm.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   SelCPL      Current privilege level. Get this from SS - CS might be
  *                      conforming! A full selector can be passed, we'll only
  *                      use the RPL part.
@@ -701,7 +806,7 @@ DECLINLINE(int) selmValidateAndConvertCSAddrRawMode(PVM pVM, PVMCPU pVCpu, RTSEL
  * when in protected/long mode using the standard hidden selector registers
  *
  * @returns VBox status code.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   SelCPL      Current privilege level.  Get this from SS - CS might be
  *                      conforming!  A full selector can be passed, we'll only
  *                      use the RPL part.
@@ -713,6 +818,8 @@ DECLINLINE(int) selmValidateAndConvertCSAddrRawMode(PVM pVM, PVMCPU pVCpu, RTSEL
 DECLINLINE(int) selmValidateAndConvertCSAddrHidden(PVMCPU pVCpu, RTSEL SelCPL, RTSEL SelCS, PCCPUMSELREGHID pSRegCS,
                                                    RTGCPTR Addr, PRTGCPTR ppvFlat)
 {
+    NOREF(SelCPL); NOREF(SelCS);
+
     /*
      * Check if present.
      */
@@ -738,9 +845,9 @@ DECLINLINE(int) selmValidateAndConvertCSAddrHidden(PVMCPU pVCpu, RTSEL SelCPL, R
              * final value. The granularity bit was included in its calculation.
              */
             uint32_t u32Limit = pSRegCS->u32Limit;
-            if ((RTGCUINTPTR)Addr <= u32Limit)
+            if ((uint32_t)Addr <= u32Limit)
             {
-                *ppvFlat = Addr + pSRegCS->u64Base;
+                *ppvFlat = (uint32_t)Addr + (uint32_t)pSRegCS->u64Base;
                 return VINF_SUCCESS;
             }
 
@@ -756,7 +863,7 @@ DECLINLINE(int) selmValidateAndConvertCSAddrHidden(PVMCPU pVCpu, RTSEL SelCPL, R
  * Validates and converts a GC selector based code address to a flat address.
  *
  * @returns VBox status code.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   Efl         Current EFLAGS.
  * @param   SelCPL      Current privilege level.  Get this from SS - CS might be
  *                      conforming!  A full selector can be passed, we'll only
@@ -800,7 +907,7 @@ VMMDECL(int) SELMValidateAndConvertCSAddr(PVMCPU pVCpu, X86EFLAGS Efl, RTSEL Sel
  * Returns Hypervisor's Trap 08 (\#DF) selector.
  *
  * @returns Hypervisor's Trap 08 (\#DF) selector.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMDECL(RTSEL) SELMGetTrap8Selector(PVM pVM)
 {
@@ -811,7 +918,7 @@ VMMDECL(RTSEL) SELMGetTrap8Selector(PVM pVM)
 /**
  * Sets EIP of Hypervisor's Trap 08 (\#DF) TSS.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   u32EIP  EIP of Trap 08 handler.
  */
 VMMDECL(void) SELMSetTrap8EIP(PVM pVM, uint32_t u32EIP)
@@ -823,7 +930,7 @@ VMMDECL(void) SELMSetTrap8EIP(PVM pVM, uint32_t u32EIP)
 /**
  * Sets ss:esp for ring1 in main Hypervisor's TSS.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   ss      Ring1 SS register value. Pass 0 if invalid.
  * @param   esp     Ring1 ESP register value.
  */
@@ -840,7 +947,7 @@ void selmSetRing1Stack(PVM pVM, uint32_t ss, RTGCPTR32 esp)
 /**
  * Sets ss:esp for ring1 in main Hypervisor's TSS.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   ss      Ring2 SS register value. Pass 0 if invalid.
  * @param   esp     Ring2 ESP register value.
  */
@@ -861,7 +968,7 @@ void selmSetRing2Stack(PVM pVM, uint32_t ss, RTGCPTR32 esp)
  * Returns SS=0 if the ring-1 stack isn't valid.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   pSS     Ring1 SS register value.
  * @param   pEsp    Ring1 ESP register value.
  */
@@ -943,12 +1050,12 @@ l_tryagain:
 #endif /* VBOX_WITH_RAW_MODE_NOT_R0 */
 
 
-#if defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64 && !defined(VBOX_WITH_HYBRID_32BIT_KERNEL))
+#if defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64 && defined(VBOX_WITH_64_BITS_GUESTS))
 
 /**
  * Gets the hypervisor code selector (CS).
  * @returns CS selector.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMDECL(RTSEL) SELMGetHyperCS(PVM pVM)
 {
@@ -959,7 +1066,7 @@ VMMDECL(RTSEL) SELMGetHyperCS(PVM pVM)
 /**
  * Gets the 64-mode hypervisor code selector (CS64).
  * @returns CS selector.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMDECL(RTSEL) SELMGetHyperCS64(PVM pVM)
 {
@@ -970,7 +1077,7 @@ VMMDECL(RTSEL) SELMGetHyperCS64(PVM pVM)
 /**
  * Gets the hypervisor data selector (DS).
  * @returns DS selector.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMDECL(RTSEL) SELMGetHyperDS(PVM pVM)
 {
@@ -981,7 +1088,7 @@ VMMDECL(RTSEL) SELMGetHyperDS(PVM pVM)
 /**
  * Gets the hypervisor TSS selector.
  * @returns TSS selector.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMDECL(RTSEL) SELMGetHyperTSS(PVM pVM)
 {
@@ -992,7 +1099,7 @@ VMMDECL(RTSEL) SELMGetHyperTSS(PVM pVM)
 /**
  * Gets the hypervisor TSS Trap 8 selector.
  * @returns TSS Trap 8 selector.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMDECL(RTSEL) SELMGetHyperTSSTrap08(PVM pVM)
 {
@@ -1003,7 +1110,7 @@ VMMDECL(RTSEL) SELMGetHyperTSSTrap08(PVM pVM)
  * Gets the address for the hypervisor GDT.
  *
  * @returns The GDT address.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @remark  This is intended only for very special use, like in the world
  *          switchers. Don't exploit this API!
  */
@@ -1017,7 +1124,7 @@ VMMDECL(RTRCPTR) SELMGetHyperGDT(PVM pVM)
     return (RTRCPTR)MMHyperR3ToRC(pVM, pVM->selm.s.paGdtR3);
 }
 
-#endif /* defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64 && !defined(VBOX_WITH_HYBRID_32BIT_KERNEL)) */
+#endif /* defined(VBOX_WITH_RAW_MODE) || (HC_ARCH_BITS != 64 && defined(VBOX_WITH_64_BITS_GUESTS)) */
 
 /**
  * Gets info about the current TSS.
@@ -1026,8 +1133,8 @@ VMMDECL(RTRCPTR) SELMGetHyperGDT(PVM pVM)
  * @retval  VINF_SUCCESS if we've got a TSS loaded.
  * @retval  VERR_SELM_NO_TSS if we haven't got a TSS (rather unlikely).
  *
- * @param   pVM                 Pointer to the VM.
- * @param   pVCpu               Pointer to the VMCPU.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pVCpu               The cross context virtual CPU structure.
  * @param   pGCPtrTss           Where to store the TSS address.
  * @param   pcbTss              Where to store the TSS size limit.
  * @param   pfCanHaveIOBitmap   Where to store the can-have-I/O-bitmap indicator. (optional)
@@ -1059,8 +1166,8 @@ VMMDECL(int) SELMGetTSSInfo(PVM pVM, PVMCPU pVCpu, PRTGCUINTPTR pGCPtrTss, PRTGC
  * value might have changed.
  * This is called by PGM.
  *
- * @param   pVM       Pointer to the VM.
- * @param   pVCpu     Pointer to the VMCPU.
+ * @param   pVM       The cross context VM structure.
+ * @param   pVCpu     The cross context virtual CPU structure.
  */
 VMMDECL(void) SELMShadowCR3Changed(PVM pVM, PVMCPU pVCpu)
 {

@@ -1,12 +1,10 @@
 /* $Id: UIGlobalSettingsPortForwardingDlg.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIGlobalSettingsPortForwardingDlg class implementation
+ * VBox Qt GUI - UIGlobalSettingsPortForwardingDlg class implementation.
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,15 +15,23 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QVBoxLayout>
-#include <QPushButton>
-#include <QTabWidget>
+# include <QVBoxLayout>
+# include <QPushButton>
+# include <QTabWidget>
 
 /* GUI includes: */
-#include "UIGlobalSettingsPortForwardingDlg.h"
-#include "UIIconPool.h"
-#include "QIDialogButtonBox.h"
+# include "UIGlobalSettingsPortForwardingDlg.h"
+# include "UIIconPool.h"
+# include "UIMessageCenter.h"
+# include "QIDialogButtonBox.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIGlobalSettingsPortForwardingDlg::UIGlobalSettingsPortForwardingDlg(QWidget *pParent,
                                                                      const UIPortForwardingDataList &ipv4rules,
@@ -36,7 +42,7 @@ UIGlobalSettingsPortForwardingDlg::UIGlobalSettingsPortForwardingDlg(QWidget *pP
     , m_pButtonBox(0)
 {
     /* Set dialog icon: */
-    setWindowIcon(UIIconPool::iconSetFull(QSize(32, 32), QSize(16, 16), ":/nw_32px.png", ":/nw_16px.png"));
+    setWindowIcon(UIIconPool::iconSetFull(":/nw_32px.png", ":/nw_16px.png"));
 
     /* Create layout: */
     QVBoxLayout *pMainLayout = new QVBoxLayout(this);
@@ -45,8 +51,8 @@ UIGlobalSettingsPortForwardingDlg::UIGlobalSettingsPortForwardingDlg(QWidget *pP
         m_pTabWidget = new QTabWidget;
         {
             /* Create table tabs: */
-            m_pIPv4Table = new UIPortForwardingTable(ipv4rules, false);
-            m_pIPv6Table = new UIPortForwardingTable(ipv6rules, true);
+            m_pIPv4Table = new UIPortForwardingTable(ipv4rules, false, false);
+            m_pIPv6Table = new UIPortForwardingTable(ipv6rules, true, false);
             /* Add widgets into tab-widget: */
             m_pTabWidget->addTab(m_pIPv4Table, QString());
             m_pTabWidget->addTab(m_pIPv6Table, QString());
@@ -67,18 +73,21 @@ UIGlobalSettingsPortForwardingDlg::UIGlobalSettingsPortForwardingDlg(QWidget *pP
     retranslateUi();
 }
 
-const UIPortForwardingDataList& UIGlobalSettingsPortForwardingDlg::ipv4rules() const
+const UIPortForwardingDataList UIGlobalSettingsPortForwardingDlg::ipv4rules() const
 {
     return m_pIPv4Table->rules();
 }
 
-const UIPortForwardingDataList& UIGlobalSettingsPortForwardingDlg::ipv6rules() const
+const UIPortForwardingDataList UIGlobalSettingsPortForwardingDlg::ipv6rules() const
 {
     return m_pIPv6Table->rules();
 }
 
 void UIGlobalSettingsPortForwardingDlg::accept()
 {
+    /* Make sure both tables have their data committed: */
+    m_pIPv4Table->makeSureEditorDataCommitted();
+    m_pIPv6Table->makeSureEditorDataCommitted();
     /* Validate table: */
     bool fPassed = m_pIPv4Table->validate() && m_pIPv6Table->validate();
     if (!fPassed)
@@ -89,9 +98,9 @@ void UIGlobalSettingsPortForwardingDlg::accept()
 
 void UIGlobalSettingsPortForwardingDlg::reject()
 {
-    /* Discard table: */
-    bool fPassed = m_pIPv4Table->discard() && m_pIPv6Table->discard();
-    if (!fPassed)
+    /* Ask user to discard table changes if necessary: */
+    if (   (m_pIPv4Table->isChanged() || m_pIPv6Table->isChanged())
+        && !msgCenter().confirmCancelingPortForwardingDialog(window()))
         return;
     /* Call to base-class: */
     QIWithRetranslateUI<QIDialog>::reject();

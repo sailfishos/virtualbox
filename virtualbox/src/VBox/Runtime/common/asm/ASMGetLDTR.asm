@@ -4,7 +4,7 @@
 ;
 
 ;
-; Copyright (C) 2006-2013 Oracle Corporation
+; Copyright (C) 2006-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -34,7 +34,7 @@ BEGINCODE
 ;;
 ; Get the LDTR register.
 ; @returns LDTR.
-; 
+;
 BEGINPROC_EXPORTED ASMGetLDTR
         sldt    ax
         movzx   eax, ax

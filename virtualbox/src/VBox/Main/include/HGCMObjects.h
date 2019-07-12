@@ -1,10 +1,10 @@
+/* $Id: HGCMObjects.h $ */
 /** @file
- *
  * HGCMObjects - Host-Guest Communication Manager objects header.
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,11 +15,8 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#ifndef __HGCMOBJECTS__H
-#define __HGCMOBJECTS__H
-
-#define LOG_GROUP_MAIN_OVERRIDE LOG_GROUP_HGCM
-#include "Logging.h"
+#ifndef ___HGCMOBJECTS__H
+#define ___HGCMOBJECTS__H
 
 #include <iprt/assert.h>
 #include <iprt/avl.h>
@@ -88,7 +85,7 @@ class HGCMObject
 
         uint32_t Handle()
         {
-            return m_core.AvlCore.Key;
+            return (uint32_t)m_core.AvlCore.Key;
         };
 
         HGCMOBJ_TYPE Type()
@@ -113,4 +110,4 @@ void hgcmObjDereference(HGCMObject *pObject);
 uint32_t hgcmObjQueryHandleCount();
 void     hgcmObjSetHandleCount(uint32_t u32HandleCount);
 
-#endif /* __HGCMOBJECTS__H */
+#endif /* !___HGCMOBJECTS__H */

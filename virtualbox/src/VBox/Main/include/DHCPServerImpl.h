@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,17 +20,20 @@
 #ifndef ____H_H_DHCPSERVERIMPL
 #define ____H_H_DHCPSERVERIMPL
 
-#include "VirtualBoxBase.h"
+#include "DHCPServerWrap.h"
+
+namespace settings
+{
+    struct DHCPServer;
+    struct DhcpOptValue;
+    typedef std::map<DhcpOpt_T, DhcpOptValue> DhcpOptionMap;
+}
+
 
 #ifdef VBOX_WITH_HOSTNETIF_API
 struct NETIFINFO;
 #endif
 
-namespace settings
-{
-    struct DHCPServer;
-    struct VmNameSlotKey;
-}
 #ifdef RT_OS_WINDOWS
 # define DHCP_EXECUTABLE_NAME "VBoxNetDHCP.exe"
 #else
@@ -61,77 +64,72 @@ public:
  *  the middle.
  */
 
-typedef std::map<DhcpOpt_T, com::Utf8Str> DhcpOptionMap;
-typedef DhcpOptionMap::value_type DhcpOptValuePair;
-typedef DhcpOptionMap::const_iterator DhcpOptConstIterator;
-typedef DhcpOptionMap::iterator DhcpOptIterator;
-
-typedef std::map<settings::VmNameSlotKey, DhcpOptionMap> VmSlot2OptionsMap;
-typedef VmSlot2OptionsMap::value_type VmSlot2OptionsPair;
-typedef VmSlot2OptionsMap::iterator VmSlot2OptionsIterator;
-
-
 class ATL_NO_VTABLE DHCPServer :
-    public VirtualBoxBase,
-    VBOX_SCRIPTABLE_IMPL(IDHCPServer)
+    public DHCPServerWrap
 {
 public:
 
-    VIRTUALBOXBASE_ADD_ERRORINFO_SUPPORT(DHCPServer, IDHCPServer)
-
-    DECLARE_NOT_AGGREGATABLE (DHCPServer)
-
-    DECLARE_PROTECT_FINAL_CONSTRUCT()
-
-    BEGIN_COM_MAP (DHCPServer)
-        VBOX_DEFAULT_INTERFACE_ENTRIES(IDHCPServer)
-    END_COM_MAP()
-
-    DECLARE_EMPTY_CTOR_DTOR (DHCPServer)
+    DECLARE_EMPTY_CTOR_DTOR(DHCPServer)
 
     HRESULT FinalConstruct();
     void FinalRelease();
 
     HRESULT init(VirtualBox *aVirtualBox,
-                 IN_BSTR aName);
+                 const com::Utf8Str &aName);
     HRESULT init(VirtualBox *aVirtualBox,
                  const settings::DHCPServer &data);
-    HRESULT saveSettings(settings::DHCPServer &data);
-
     void uninit();
 
-    // IDHCPServer properties
-    STDMETHOD(COMGETTER(NetworkName))(BSTR *aName);
-    STDMETHOD(COMGETTER(Enabled))(BOOL *aEnabled);
-    STDMETHOD(COMSETTER(Enabled))(BOOL aEnabled);
-    STDMETHOD(COMGETTER(IPAddress))(BSTR *aIPAddress);
-    STDMETHOD(COMGETTER(NetworkMask))(BSTR *aNetworkMask);
-    STDMETHOD(COMGETTER(LowerIP))(BSTR *aIPAddress);
-    STDMETHOD(COMGETTER(UpperIP))(BSTR *aIPAddress);
-
-    STDMETHOD(AddGlobalOption)(DhcpOpt_T aOption, IN_BSTR aValue);
-    STDMETHOD(COMGETTER(GlobalOptions))(ComSafeArrayOut(BSTR, aValue));
-    STDMETHOD(COMGETTER(VmConfigs))(ComSafeArrayOut(BSTR, aValue));
-    STDMETHOD(AddVmSlotOption)(IN_BSTR aVmName, LONG aSlot, DhcpOpt_T aOption, IN_BSTR aValue);
-    STDMETHOD(RemoveVmSlotOptions)(IN_BSTR aVmName, LONG aSlot);
-    STDMETHOD(GetVmSlotOptions)(IN_BSTR aVmName, LONG aSlot, ComSafeArrayOut(BSTR, aValues));
-    STDMETHOD(GetMacOptions)(IN_BSTR aMAC, ComSafeArrayOut(BSTR, aValues));
-    STDMETHOD(COMGETTER(EventSource))(IEventSource **aEventSource);
-
-    STDMETHOD(SetConfiguration)(IN_BSTR aIPAddress, IN_BSTR aNetworkMask, IN_BSTR aFromIPAddress, IN_BSTR aToIPAddress);
-
-    STDMETHOD(Start)(IN_BSTR aNetworkName, IN_BSTR aTrunkName, IN_BSTR aTrunkType);
-    STDMETHOD(Stop)();
+    // Public internal methids.
+    HRESULT i_saveSettings(settings::DHCPServer &data);
+    settings::DhcpOptionMap &i_findOptMapByVmNameSlot(const com::Utf8Str &aVmName,
+                                                      LONG Slot);
 
 private:
+    HRESULT encodeOption(com::Utf8Str &aEncoded,
+                         uint32_t aOptCode, const settings::DhcpOptValue &aOptValue);
+    int addOption(settings::DhcpOptionMap &aMap,
+                  DhcpOpt_T aOption, const com::Utf8Str &aValue);
+
+    // wrapped IDHCPServer properties
+    HRESULT getEventSource(ComPtr<IEventSource> &aEventSource);
+    HRESULT getEnabled(BOOL *aEnabled);
+    HRESULT setEnabled(BOOL aEnabled);
+    HRESULT getIPAddress(com::Utf8Str &aIPAddress);
+    HRESULT getNetworkMask(com::Utf8Str &aNetworkMask);
+    HRESULT getNetworkName(com::Utf8Str &aName);
+    HRESULT getLowerIP(com::Utf8Str &aIPAddress);
+    HRESULT getUpperIP(com::Utf8Str &aIPAddress);
+    HRESULT getGlobalOptions(std::vector<com::Utf8Str> &aGlobalOptions);
+    HRESULT getVmConfigs(std::vector<com::Utf8Str> &aVmConfigs);
+    HRESULT getMacOptions(const com::Utf8Str &aMAC, std::vector<com::Utf8Str> &aValues);
+    HRESULT setConfiguration(const com::Utf8Str &aIPAddress,
+                             const com::Utf8Str &aNetworkMask,
+                             const com::Utf8Str &aFromIPAddress,
+                             const com::Utf8Str &aToIPAddress);
+    HRESULT getVmSlotOptions(const com::Utf8Str &aVmName,
+                             LONG aSlot,
+                             std::vector<com::Utf8Str> &aValues);
+
+    // Wrapped IDHCPServer Methods
+    HRESULT addGlobalOption(DhcpOpt_T aOption,
+                            const com::Utf8Str &aValue);
+    HRESULT addVmSlotOption(const com::Utf8Str &aVmName,
+                            LONG aSlot,
+                            DhcpOpt_T aOption,
+                            const com::Utf8Str &aValue);
+    HRESULT removeVmSlotOptions(const com::Utf8Str &aVmName,
+                                LONG aSlot);
+    HRESULT start(const com::Utf8Str &aNetworkName,
+                  const com::Utf8Str &aTrunkName,
+                  const com::Utf8Str &aTrunkType);
+    HRESULT stop();
+
     struct Data;
     Data *m;
     /** weak VirtualBox parent */
-    VirtualBox * const      mVirtualBox;
-    const Bstr mName;
-
-    DhcpOptionMap& findOptMapByVmNameSlot(const com::Utf8Str& aVmName,
-                                          LONG Slot);
+    VirtualBox *const mVirtualBox;
+    const Utf8Str mName;
 };
 
 #endif // ____H_H_DHCPSERVERIMPL

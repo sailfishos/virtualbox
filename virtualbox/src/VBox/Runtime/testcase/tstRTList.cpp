@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/list.h>
 
 #include <iprt/err.h>
@@ -36,9 +36,9 @@
 #include <iprt/test.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct LISTELEM
 {
     /** Test data */
@@ -100,7 +100,7 @@ static void tstRTListOrder(RTTEST hTest, PRTLISTNODE pList, unsigned cElements,
         idx -= idxStep;
     }
     RTTEST_CHECK_MSG_RETV(hTest, idx == idxFirst - idxStep || (idx == idxLast && idxFirst == idxLast),
-                          (hTest, "idx=%u idxFirst=%u idxLast idxStep=%u\n", idx, idxFirst, idxLast, idxStep));
+                          (hTest, "idx=%u idxFirst=%u idxLast=%u idxStep=%u\n", idx, idxFirst, idxLast, idxStep));
 }
 
 static void tstRTListCreate(RTTEST hTest, unsigned cElements)

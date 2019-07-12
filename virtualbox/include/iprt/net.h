@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -46,8 +46,8 @@ RT_C_DECLS_BEGIN
  * @returns VINF_SUCCESS on success, VERR_GETOPT_INVALID_ARGUMENT_FORMAT on
  *          failure.
  *
- * @param   pszValue        The value to convert.
- * @param   pAddr           Where to store the result.
+ * @param   pszAddr         The address string to convert.
+ * @param   pMacAddr        Where to store the result.
  */
 RTDECL(int) RTNetStrToMacAddr(const char *pszAddr, PRTMAC pMacAddr);
 
@@ -65,20 +65,65 @@ typedef RTNETADDRIPV4 const *PCRTNETADDRIPV4;
  * Tests if the given string is an IPv4 address.
  *
  * @returns boolean.
- * @param   pszAddress          String which may be an IPv4 address.
+ * @param   pcszAddr        String which may be an IPv4 address.
  */
-RTDECL(bool) RTNetIsIPv4AddrStr(const char *pszAddress);
+RTDECL(bool) RTNetIsIPv4AddrStr(const char *pcszAddr);
 
 /**
- * Converts an stringified IPv4 address into the RTNETADDRIPV4 representation.
+ * Tests if the given string is a wildcard IPv4 address.
+ *
+ * @returns boolean.
+ * @param   pcszAddr        String which may be an IPv4 address.
+ */
+RTDECL(bool) RTNetStrIsIPv4AddrAny(const char *pcszAddr);
+
+/**
+ * Parses dotted-decimal IPv4 address into RTNETADDRIPV4 representation.
  *
  * @returns VINF_SUCCESS on success, VERR_INVALID_PARAMETER on
  *          failure.
  *
- * @param   pszAddr         The value to convert.
+ * @param   pcszAddr        The value to convert.
+ * @param   ppszNext        Where to store the pointer to the first char
+ *                            following the address. (Optional)
  * @param   pAddr           Where to store the result.
  */
-RTDECL(int) RTNetStrToIPv4Addr(const char *pszAddr, PRTNETADDRIPV4 pAddr);
+RTDECL(int) RTNetStrToIPv4AddrEx(const char *pcszAddr, PRTNETADDRIPV4 pAddr, char **ppszNext);
+
+/**
+ * Parses dotted-decimal IPv4 address into RTNETADDRIPV4 representation.
+ * Leading and trailing whitespace is ignored.
+ *
+ * @returns VINF_SUCCESS on success, VERR_INVALID_PARAMETER on
+ *          failure.
+ *
+ * @param   pcszAddr        The value to convert.
+ * @param   pAddr           Where to store the result.
+ */
+RTDECL(int) RTNetStrToIPv4Addr(const char *pcszAddr, PRTNETADDRIPV4 pAddr);
+
+/**
+ * Verifies that RTNETADDRIPV4 is a valid contiguous netmask and
+ * computes its prefix length.
+ *
+ * @returns VINF_SUCCESS on success, VERR_INVALID_PARAMETER on
+ *          failure.
+ *
+ * @param   pMask           The netmask to verify and convert.
+ * @param   piPrefix        Where to store the prefix length. (Optional)
+ */
+RTDECL(int) RTNetMaskToPrefixIPv4(PCRTNETADDRIPV4 pMask, int *piPrefix);
+
+/**
+ * Computes netmask corresponding to the prefix length.
+ *
+ * @returns VINF_SUCCESS on success, VERR_INVALID_PARAMETER on
+ *          failure.
+ *
+ * @param   iPrefix         The prefix to convert.
+ * @param   pMask           Where to store the netmask.
+ */
+RTDECL(int) RTNetPrefixToMaskIPv4(int iPrefix, PRTNETADDRIPV4 pMask);
 
 
 /**
@@ -98,6 +143,65 @@ typedef RTNETADDRIPV6 const *PCRTNETADDRIPV6;
  * @param   pszAddress          String which may be an IPv6 address.
  */
 RTDECL(bool) RTNetIsIPv6AddrStr(const char *pszAddress);
+
+/**
+ * Tests if the given string is a wildcard IPv6 address.
+ *
+ * @returns @c true if it is, @c false if not.
+ * @param   pszAddress          String which may be an IPv6 address.
+ */
+RTDECL(bool) RTNetStrIsIPv6AddrAny(const char *pszAddress);
+
+/**
+ * Parses IPv6 address into RTNETADDRIPV6 representation.
+ *
+ * @returns VINF_SUCCESS on success, VERR_INVALID_PARAMETER on
+ *          failure.
+ *
+ * @param   pcszAddr        The value to convert.
+ * @param   ppszNext        Where to store the pointer to the first char
+ *                            following the address. (Optional)
+ * @param   pAddr           Where to store the result.
+ */
+RTDECL(int) RTNetStrToIPv6AddrEx(const char *pcszAddr, PRTNETADDRIPV6 pAddr, char **ppszNext);
+
+/**
+ * Parses IPv6 address into RTNETADDRIPV6 representation.
+ * Leading and trailing whitespace is ignored.
+ *
+ * @returns VINF_SUCCESS on success, VERR_INVALID_PARAMETER on
+ *          failure.
+ *
+ * @param   pcszAddr        The value to convert.
+ * @param   ppszZone        Where to store the pointer to the first char
+ *                            of the zone id.  NULL is stored if there is
+ *                            no zone id.
+ * @param   pAddr           Where to store the result.
+ */
+RTDECL(int) RTNetStrToIPv6Addr(const char *pcszAddr, PRTNETADDRIPV6 pAddr, char **ppszZone);
+
+/**
+ * Verifies that RTNETADDRIPV6 is a valid contiguous netmask and
+ * computes its prefix length.
+ *
+ * @returns VINF_SUCCESS on success, VERR_INVALID_PARAMETER on
+ *          failure.
+ *
+ * @param   pMask           The netmask to verify and convert.
+ * @param   piPrefix        Where to store the prefix length. (Optional)
+ */
+RTDECL(int) RTNetMaskToPrefixIPv6(PCRTNETADDRIPV6 pMask, int *piPrefix);
+
+/**
+ * Computes netmask corresponding to the prefix length.
+ *
+ * @returns VINF_SUCCESS on success, VERR_INVALID_PARAMETER on
+ *          failure.
+ *
+ * @param   iPrefix         The prefix to convert.
+ * @param   pMask           Where to store the netmask.
+ */
+RTDECL(int) RTNetPrefixToMaskIPv6(int iPrefix, PRTNETADDRIPV6 pMask);
 
 
 /**
@@ -887,7 +991,7 @@ typedef struct RTNETARPIPV4
     RTNETADDRIPV4   ar_spa;
     /** The target hardware address. */
     RTMAC           ar_tha;
-    /** The arget protocol address. */
+    /** The target protocol address. */
     RTNETADDRIPV4   ar_tpa;
 } RTNETARPIPV4;
 #pragma pack()

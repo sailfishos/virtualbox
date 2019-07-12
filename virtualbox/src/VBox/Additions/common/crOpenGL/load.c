@@ -30,7 +30,10 @@
 #ifdef VBOX_WITH_WDDM
 #include <d3d9types.h>
 #include <D3dumddi.h>
-#include "../../WINNT/Graphics/Video/common/wddm/VBoxMPIf.h"
+#endif
+
+#if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
+# include <VBoxCrHgsmi.h>
 #endif
 
 /**
@@ -65,9 +68,10 @@ CRtsd g_stubCurrentContextTSD;
 #endif
 
 
+#ifndef VBOX_NO_NATIVEGL
 static void stubInitNativeDispatch( void )
 {
-#define MAX_FUNCS 1000
+# define MAX_FUNCS 1000
     SPUNamedFunctionTable gl_funcs[MAX_FUNCS];
     int numFuncs;
 
@@ -83,8 +87,9 @@ static void stubInitNativeDispatch( void )
     crSPUInitDispatchTable( &stub.nativeDispatch );
     crSPUInitDispatch( &stub.nativeDispatch, gl_funcs );
     crSPUInitDispatchNops( &stub.nativeDispatch );
-#undef MAX_FUNCS
+# undef MAX_FUNCS
 }
+#endif /* !VBOX_NO_NATIVEGL */
 
 
 /** Pointer to the SPU's real glClear and glViewport functions */
@@ -100,7 +105,7 @@ static void stubCheckWindowState(WindowInfo *window, GLboolean bFlushOnChange)
     bool bChanged = false;
 
 #ifdef WINDOWS
-    /* @todo install hook and track for WM_DISPLAYCHANGE */
+    /** @todo install hook and track for WM_DISPLAYCHANGE */
     {
         DEVMODE devMode;
 
@@ -173,6 +178,7 @@ static void stubCheckWindowsCB(unsigned long key, void *data1, void *data2)
 {
     WindowInfo *pWindow = (WindowInfo *) data1;
     ContextInfo *pCtx = (ContextInfo *) data2;
+    (void)key;
 
     if (pWindow == pCtx->currentDrawable
         || pWindow->type!=CHROMIUM
@@ -247,7 +253,7 @@ static void SPU_APIENTRY trapViewport(GLint x, GLint y, GLsizei w, GLsizei h)
     origViewport(x, y, w, h);
 }
 
-static void SPU_APIENTRY trapSwapBuffers(GLint window, GLint flags)
+/*static void SPU_APIENTRY trapSwapBuffers(GLint window, GLint flags)
 {
     stubCheckWindowsState();
     origSwapBuffers(window, flags);
@@ -257,21 +263,25 @@ static void SPU_APIENTRY trapDrawBuffer(GLenum buf)
 {
     stubCheckWindowsState();
     origDrawBuffer(buf);
-}
+}*/
 
+#if 0 /* unused */
 static void SPU_APIENTRY trapScissor(GLint x, GLint y, GLsizei w, GLsizei h)
 {
     int winX, winY;
     unsigned int winW, winH;
     WindowInfo *pWindow;
     ContextInfo *context = stubGetCurrentContext();
+    (void)x; (void)y; (void)w; (void)h;
+
     pWindow = context->currentDrawable;
     stubGetWindowGeometry(pWindow, &winX, &winY, &winW, &winH);
     origScissor(0, 0, winW, winH);
 }
+#endif /* unused */
 
 /**
- * Use the GL function pointers in <spu> to initialize the static glim
+ * Use the GL function pointers in \<spu\> to initialize the static glim
  * dispatch table.
  */
 static void stubInitSPUDispatch(SPU *spu)
@@ -296,9 +306,12 @@ static void stubInitSPUDispatch(SPU *spu)
     crSPUCopyDispatchTable( &glim, &stub.spuDispatch );
 }
 
+#if 0 /** @todo stubSPUTearDown & stubSPUTearDownLocked are not referenced */
+
 // Callback function, used to destroy all created contexts
 static void hsWalkStubDestroyContexts(unsigned long key, void *data1, void *data2)
 {
+    (void)data1; (void)data2;
     stubDestroyContext(key);
 }
 
@@ -373,6 +386,8 @@ static void stubSPUTearDown(void)
     }
     STUB_INIT_UNLOCK();
 }
+
+#endif /** @todo stubSPUTearDown & stubSPUTearDownLocked are not referenced */
 
 static void stubSPUSafeTearDown(void)
 {
@@ -493,13 +508,14 @@ static void stubExitHandler(void)
  */
 static void stubSignalHandler(int signo)
 {
+    (void)signo;
     stubSPUSafeTearDown();
     exit(0);  /* this causes stubExitHandler() to be called */
 }
 
 #ifndef RT_OS_WINDOWS
 # ifdef CHROMIUM_THREADSAFE
-static DECLCALLBACK(void) stubThreadTlsDtor(void *pvValue)
+static void stubThreadTlsDtor(void *pvValue)
 {
     ContextInfo *pCtx = (ContextInfo*)pvValue;
     VBoxTlsRefRelease(pCtx);
@@ -583,6 +599,8 @@ static void stubInitVars(void)
 #endif
 }
 
+
+#if 0 /* unused */
 
 /**
  * Return a free port number for the mothership to use, or -1 if we
@@ -712,7 +730,9 @@ MothershipPhoneHome(int signo)
     Mothership_Awake = 1;
 }
 
-void stubSetDefaultConfigurationOptions(void)
+#endif /* 0 */
+
+static void stubSetDefaultConfigurationOptions(void)
 {
     unsigned char key[16]= {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
@@ -746,7 +766,7 @@ void stubSetDefaultConfigurationOptions(void)
 
 #ifdef CR_NEWWINTRACK
 # ifdef VBOX_WITH_WDDM
-static stubDispatchVisibleRegions(WindowInfo *pWindow)
+static void stubDispatchVisibleRegions(WindowInfo *pWindow)
 {
     DWORD dwCount;
     LPRGNDATA lpRgnData;
@@ -764,32 +784,12 @@ static stubDispatchVisibleRegions(WindowInfo *pWindow)
     else crWarning("GetRegionData failed, VisibleRegions update failed");
 }
 
-static HRGN stubMakeRegionFromRects(PVBOXVIDEOCM_CMD_RECTS pRegions, uint32_t start)
-{
-    HRGN hRgn, hTmpRgn;
-    uint32_t i;
-
-    if (pRegions->RectsInfo.cRects<=start)
-    {
-        return INVALID_HANDLE_VALUE;
-    }
-
-    hRgn = CreateRectRgn(0, 0, 0, 0);
-    for (i=start; i<pRegions->RectsInfo.cRects; ++i)
-    {
-        hTmpRgn = CreateRectRgnIndirect(&pRegions->RectsInfo.aRects[i]);
-        CombineRgn(hRgn, hRgn, hTmpRgn, RGN_OR);
-        DeleteObject(hTmpRgn);
-    }
-    return hRgn;
-}
-
 # endif /* VBOX_WITH_WDDM */
 
 static void stubSyncTrCheckWindowsCB(unsigned long key, void *data1, void *data2)
 {
     WindowInfo *pWindow = (WindowInfo *) data1;
-    (void) data2;
+    (void)key; (void) data2;
 
     if (pWindow->type!=CHROMIUM || pWindow->spuWindow==0)
     {
@@ -933,7 +933,6 @@ stubInitLocked(void)
      * HOW can I pass the mothership address to this if I already know it?
      */
 
-    CRConnection *conn = NULL;
     char response[1024];
     char **spuchain;
     int num_spus;
@@ -952,7 +951,7 @@ stubInitLocked(void)
     crDebug("Stub launched for %s", response);
 
 #if defined(CR_NEWWINTRACK) && !defined(WINDOWS)
-    /*@todo when vm boots with compiz turned on, new code causes hang in xcb_wait_for_reply in the sync thread
+    /** @todo when vm boots with compiz turned on, new code causes hang in xcb_wait_for_reply in the sync thread
      * as at the start compiz runs our code under XGrabServer.
      */
     if (!crStrcmp(response, "compiz") || !crStrcmp(response, "compiz_real") || !crStrcmp(response, "compiz.real")
@@ -962,7 +961,7 @@ stubInitLocked(void)
     }
 #endif
 
-    /* @todo check if it'd be of any use on other than guests, no use for windows */
+    /** @todo check if it'd be of any use on other than guests, no use for windows */
     app_id = crGetenv( "CR_APPLICATION_ID_NUMBER" );
 
     crNetInit( NULL, NULL );
@@ -981,7 +980,11 @@ stubInitLocked(void)
         if (!ns.conn)
         {
             crWarning("Failed to connect to host. Make sure 3D acceleration is enabled for this VM.");
+# ifdef VBOXOGL_FAKEDRI
             return false;
+# else
+            exit(1);
+# endif
         }
         else
         {
@@ -1017,7 +1020,7 @@ stubInitLocked(void)
         disable_sync = 1;
         crDebug("running with %s", VBOX_MODNAME_DISPD3D);
         stub.trackWindowVisibleRgn = 0;
-        /* @todo: should we enable that? */
+        /** @todo should we enable that? */
         stub.trackWindowSize = 0;
         stub.trackWindowPos = 0;
         stub.trackWindowVisibility = 0;
@@ -1118,11 +1121,6 @@ stubInit(void)
 /* Sigh -- we can't do initialization at load time, since Windows forbids
  * the loading of other libraries from DLLMain. */
 
-#ifdef LINUX
-/* GCC crap
- *void (*stub_init_ptr)(void) __attribute__((section(".ctors"))) = __stubInit; */
-#endif
-
 #ifdef WINDOWS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -1192,6 +1190,7 @@ static MINIDUMP_TYPE g_enmVBoxMdDumpType = MiniDumpNormal
 
 static HMODULE loadSystemDll(const char *pszName)
 {
+#ifndef DEBUG
     char   szPath[MAX_PATH];
     UINT   cchPath = GetSystemDirectoryA(szPath, sizeof(szPath));
     size_t cbName  = strlen(pszName) + 1;
@@ -1203,6 +1202,9 @@ static HMODULE loadSystemDll(const char *pszName)
     szPath[cchPath] = '\\';
     memcpy(&szPath[cchPath + 1], pszName, cbName);
     return LoadLibraryA(szPath);
+#else
+    return LoadLibraryA(pszName);
+#endif
 }
 
 static DWORD vboxMdMinidumpCreate(struct _EXCEPTION_POINTERS *pExceptionInfo)
@@ -1459,6 +1461,9 @@ BOOL WINAPI DllMain(HINSTANCE hDLLInst, DWORD fdwReason, LPVOID lpvReserved)
             crNetFreeConnection(ns.conn);
         }
 
+#if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
+        VBoxCrHgsmiInit();
+#endif
         break;
     }
 
@@ -1472,6 +1477,11 @@ BOOL WINAPI DllMain(HINSTANCE hDLLInst, DWORD fdwReason, LPVOID lpvReserved)
             CRASSERT(stub.spu);
             stub.spu->dispatch_table.VBoxDetachThread();
         }
+
+
+#if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
+        VBoxCrHgsmiTerm();
+#endif
 
         stubSPUSafeTearDown();
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/semaphore.h>
 #include <iprt/string.h>
 #include <iprt/thread.h>
@@ -37,9 +38,9 @@
 #include <iprt/assert.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTSEMMUTEX           g_hMutex = NIL_RTSEMMUTEX;
 static bool volatile        g_fTerminate;
 static bool                 g_fYield;
@@ -62,7 +63,7 @@ int PrintError(const char *pszFormat, ...)
 }
 
 
-int ThreadTest1(RTTHREAD ThreadSelf, void *pvUser)
+static DECLCALLBACK(int) ThreadTest1(RTTHREAD ThreadSelf, void *pvUser)
 {
     uint64_t *pu64 = (uint64_t *)pvUser;
     for (;;)

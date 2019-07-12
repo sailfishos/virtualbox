@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,11 +24,12 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP   LOG_GROUP_SUP
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
 #include <VBox/log.h>
 #include <VBox/version.h>
@@ -45,18 +46,18 @@
 #include "../SUPSvcInternal.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The service name. */
 #define SUPSVC_SERVICE_NAME             "VBoxSupSvc"
 /** The service display name. */
 #define SUPSVC_SERVICE_DISPLAY_NAME     "VirtualBox Support Service"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The service control handler handle. */
 static SERVICE_STATUS_HANDLE g_hSupSvcWinCtrlHandler = NULL;
 /** The service status. */
@@ -65,9 +66,9 @@ static uint32_t volatile g_u32SupSvcWinStatus = SERVICE_STOPPED;
 static RTSEMEVENTMULTI g_hSupSvcWinEvent = NIL_RTSEMEVENTMULTI;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static SC_HANDLE supSvcWinOpenSCManager(const char *pszAction, DWORD dwAccess);
 
 

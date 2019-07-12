@@ -7,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 2010-2014 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,27 +18,29 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#define LOG_GROUP LOG_GROUP_DEV_VIRTUALKD
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define LOG_GROUP LOG_GROUP_DEV // LOG_GROUP_DEV_VIRTUALKD
 #include <VBox/vmm/pdmdev.h>
+#include <VBox/log.h>
 #include <iprt/assert.h>
 #include <iprt/path.h>
 
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 #define IKDClient_InterfaceVersion 3
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 typedef struct VKDREQUESTHDR
 {
@@ -71,16 +73,17 @@ typedef struct VIRTUALKD
     bool fChannelDetectSuccessful;
     RTLDRMOD hLib;
     IKDClient *pKDClient;
-    char abCmdBody[262144];
+    char abCmdBody[_256K];
 } VIRTUALKD;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 static DECLCALLBACK(int) vkdPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t *pu32, unsigned cb)
 {
+    RT_NOREF(pvUser, Port, cb);
     VIRTUALKD *pThis = PDMINS_2_DATA(pDevIns, VIRTUALKD *);
 
     if (pThis->fOpenChannelDetected)
@@ -90,30 +93,31 @@ static DECLCALLBACK(int) vkdPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT 
         pThis->fChannelDetectSuccessful = true;
     }
     else
-        *pu32 = -1;
+        *pu32 = UINT32_MAX;
 
     return VINF_SUCCESS;
 }
 
 static DECLCALLBACK(int) vkdPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t u32, unsigned cb)
 {
+    RT_NOREF(pvUser, cb);
     VIRTUALKD *pThis = PDMINS_2_DATA(pDevIns, VIRTUALKD *);
 
     if (Port == 0x5659)
     {
         VKDREQUESTHDR RequestHeader = {0, };
         int rc = PDMDevHlpPhysRead(pDevIns, (RTGCPHYS)u32, &RequestHeader, sizeof(RequestHeader));
-        if (!RT_SUCCESS(rc) || !RequestHeader.cbData)
+        if (   !RT_SUCCESS(rc)
+            || !RequestHeader.cbData)
             return VINF_SUCCESS;
-        rc = PDMDevHlpPhysRead(pDevIns, (RTGCPHYS)(u32 + sizeof(RequestHeader)), pThis->abCmdBody, RequestHeader.cbData);
+
+        unsigned cbData = RT_MIN(RequestHeader.cbData, sizeof(pThis->abCmdBody));
+        rc = PDMDevHlpPhysRead(pDevIns, (RTGCPHYS)(u32 + sizeof(RequestHeader)), pThis->abCmdBody, cbData);
         if (!RT_SUCCESS(rc))
             return VINF_SUCCESS;
 
         char *pReply = NULL;
-        unsigned cbReply;
-        cbReply = pThis->pKDClient->OnRequest(pThis->abCmdBody,
-                                              RequestHeader.cbData,
-                                              &pReply);
+        unsigned cbReply = pThis->pKDClient->OnRequest(pThis->abCmdBody, cbData, &pReply);
 
         if (!pReply)
             cbReply = 0;
@@ -145,10 +149,28 @@ static DECLCALLBACK(int) vkdPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT
 
 
 /**
+ * @interface_method_impl{PDMDEVREG,pfnDestruct}
+ */
+static DECLCALLBACK(int) vkdDestruct(PPDMDEVINS pDevIns)
+{
+    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
+    VIRTUALKD *pThis = PDMINS_2_DATA(pDevIns, VIRTUALKD *);
+
+    delete pThis->pKDClient;
+    if (pThis->hLib != NIL_RTLDRMOD)
+        RTLdrClose(pThis->hLib);
+
+    return VINF_SUCCESS;
+}
+
+
+/**
  * @interface_method_impl{PDMDEVREG,pfnConstruct}
  */
 static DECLCALLBACK(int) vkdConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
+    RT_NOREF(iInstance);
+    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
     VIRTUALKD *pThis = PDMINS_2_DATA(pDevIns, VIRTUALKD *);
 
     pThis->fOpenChannelDetected = false;
@@ -166,13 +188,7 @@ static DECLCALLBACK(int) vkdConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNO
     char szPath[RTPATH_MAX] = "";
     CFGMR3QueryString(pCfg, "Path", szPath, sizeof(szPath));
 
-    RTPathAppend(szPath, sizeof(szPath),
-#if HC_ARCH_BITS == 64
-        "kdclient64.dll"
-#else
-        "kdclient.dll"
-#endif
-        );
+    RTPathAppend(szPath, sizeof(szPath), HC_ARCH_BITS == 64 ?  "kdclient64.dll" : "kdclient.dll");
     int rc = RTLdrLoad(szPath, &pThis->hLib);
     if (RT_FAILURE(rc))
     {
@@ -202,24 +218,9 @@ static DECLCALLBACK(int) vkdConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNO
         return VINF_SUCCESS;
     }
 
-    PDMDevHlpIOPortRegister(pDevIns, 0x5658, 2, NULL, vkdPortWrite, vkdPortRead, NULL, NULL, "VirtualKD");
-
-    return VINF_SUCCESS;
+    return PDMDevHlpIOPortRegister(pDevIns, 0x5658, 2, NULL, vkdPortWrite, vkdPortRead, NULL, NULL, "VirtualKD");
 }
 
-/**
- * @interface_method_impl{PDMDEVREG,pfnDestruct}
- */
-static DECLCALLBACK(int) vkdDestruct(PPDMDEVINS pDevIns)
-{
-    VIRTUALKD *pThis = PDMINS_2_DATA(pDevIns, VIRTUALKD *);
-
-    delete pThis->pKDClient;
-    if (pThis->hLib != NIL_RTLDRMOD)
-        RTLdrClose(pThis->hLib);
-
-    return VINF_SUCCESS;
-}
 
 /**
  * The device registration structure.
@@ -275,3 +276,4 @@ const PDMDEVREG g_DeviceVirtualKD =
     /* u32VersionEnd */
     PDM_DEVREG_VERSION
 };
+

@@ -1,11 +1,10 @@
+/* $Id: UIGChooserItem.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGChooserItem class declaration
+ * VBox Qt GUI - UIGChooserItem class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,6 +29,7 @@
 #include <iprt/cdefs.h>
 
 /* Forward declaration: */
+class UIActionPool;
 class UIGChooserModel;
 class UIGChooserItemGroup;
 class UIGChooserItemMachine;
@@ -87,6 +87,9 @@ public:
     /* API: Model stuff: */
     UIGChooserModel* model() const;
 
+    /** Returns the action-pool reference. */
+    UIActionPool* actionPool() const;
+
     /* API: Parent stuff: */
     UIGChooserItem* parentItem() const;
 
@@ -96,6 +99,7 @@ public:
     virtual void startEditing() = 0;
     virtual void updateToolTip() = 0;
     virtual QString name() const = 0;
+    virtual QString description() const = 0;
     virtual QString fullName() const = 0;
     virtual QString definition() const = 0;
     void setRoot(bool fRoot);
@@ -154,14 +158,14 @@ protected:
     void dropEvent(QGraphicsSceneDragDropEvent *pEvent);
 
     /* Helper: Update stuff: */
-    virtual void handleRootStatusChange() {}
+    virtual void handleRootStatusChange();
     void setPreviousGeometry(const QRectF &previousGeometry) { m_previousGeometry = previousGeometry; }
     const QRectF& previousGeometry() const { return m_previousGeometry; }
 
     /* Static paint stuff: */
     static void configurePainterShape(QPainter *pPainter, const QStyleOptionGraphicsItem *pOption, int iRadius);
     static void paintFrameRect(QPainter *pPainter, const QRect &rect, bool fIsSelected, int iRadius);
-    static void paintPixmap(QPainter *pPainter, const QRect &rect, const QPixmap &pixmap);
+    static void paintPixmap(QPainter *pPainter, const QPoint &point, const QPixmap &pixmap);
     static void paintText(QPainter *pPainter, QPoint point,
                           const QFont &font, QPaintDevice *pPaintDevice,
                           const QString &strText);

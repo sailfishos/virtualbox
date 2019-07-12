@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,17 +26,18 @@
  *    Monitor.
  *      - @ref pg_cfgm
  *      - @ref pg_cpum
- *      - CSAM - Guest OS Code Scanning and Analyis Manager.
+ *      - @ref pg_csam
  *      - @ref pg_dbgf
  *          - @ref pg_dbgf_addr_space
  *          - @ref pg_dbgf_vmcore
  *          - @ref pg_dbgf_module
  *          - @ref pg_dbgc
  *          - VBoxDbg - Debugger GUI (Qt).
- *      - DIS - Disassembler.
+ *      - @ref grp_dis
  *      - @ref pg_em
- *      - HWACCM - Intel/AMD VM Hardware Support Manager.
- *      - REM - Recompiled Execution Monitor.
+ *      - @ref pg_gim
+ *      - @ref pg_hm
+ *      - @ref pg_rem
  *          - @ref pg_vboxrem_amd64
  *      - @ref pg_iem
  *      - @ref pg_gmm
@@ -46,7 +47,7 @@
  *              - @ref pg_pgm_pool
  *          - @ref pg_selm
  *      - @ref pg_iom
- *      - PATM - Dynamic Guest OS Patching Manager.
+ *      - @ref pg_patm
  *      - @ref pg_pdm
  *          - Devices / USB Devices, Drivers and their public interfaces.
  *          - Async I/O Completion API.
@@ -120,9 +121,16 @@
  *  - Guest Additions.
  *      - VBoxGuest.
  *          - @ref pg_guest_lib
- *      - VBoxService.
- *          - @ref pg_vboxervice_timesync
- *          - ...
+ *      - @ref pg_vgsvc
+ *          - @ref pg_vgsvc_timesync
+ *          - @ref pg_vgsvc_vminfo
+ *          - @ref pg_vgsvc_vmstats
+ *          - @ref pg_vgsvc_gstctrl
+ *          - @ref pg_vgsvc_pagesharing
+ *          - @ref pg_vgsvc_memballoon
+ *          - @ref pg_vgsvc_cpuhotplug
+ *          - @ref pg_vgsvc_automount
+ *          - @ref pg_vgsvc_clipboard
  *      - VBoxControl.
  *      - VBoxVideo.
  *      - crOpenGL.
@@ -131,12 +139,12 @@
  *      - ...
  *  - Network Services:
  *      - @ref pg_net_dhcp
- *      - @ref pg_net_nat
+ *      - NAT
  *  - @ref pg_main
  *      - @ref pg_main_events
  *      - @ref pg_vrdb_usb
  *  - Frontends:
- *      - VirtualBox - The default Qt4 based GUI.
+ *      - VirtualBox - The default Qt-based GUI.
  *      - VBoxHeadless - The headless frontend.
  *      - VBoxManage - The CLI.
  *      - VBoxShell - An interactive shell written in python.
@@ -144,8 +152,10 @@
  *      - VBoxBFE - A bare metal edition which does not use COM/XPCOM (barely
  *        maintained atm).
  *  - IPRT - Runtime Library for hiding host OS differences.
- *  - Testsuite:
- *      - @ref pg_testsuite_guideline
+ *  - Validation Kit:
+ *      - @ref pg_validationkit_guideline
+ *      - @ref pg_bs3kit
+ *  - @ref pg_vbox_guideline
  *
  * @todo Make links to the components.
  *

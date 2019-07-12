@@ -1,12 +1,10 @@
 /* $Id: UIWizardCloneVDPageBasic1.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardCloneVDPageBasic1 class implementation
+ * VBox Qt GUI - UIWizardCloneVDPageBasic1 class implementation.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,18 +15,25 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/* Global includes: */
-#include <QVBoxLayout>
-#include <QHBoxLayout>
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
-/* Local includes: */
-#include "UIWizardCloneVDPageBasic1.h"
-#include "UIWizardCloneVD.h"
-#include "UIIconPool.h"
-#include "QIRichTextLabel.h"
-#include "VBoxMediaComboBox.h"
-#include "QIToolButton.h"
-#include "UIMedium.h"
+/* Qt includes: */
+# include <QVBoxLayout>
+# include <QHBoxLayout>
+
+/* GUI includes: */
+# include "UIWizardCloneVDPageBasic1.h"
+# include "UIWizardCloneVD.h"
+# include "UIIconPool.h"
+# include "QIRichTextLabel.h"
+# include "VBoxMediaComboBox.h"
+# include "QIToolButton.h"
+# include "UIMedium.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardCloneVDPage1::UIWizardCloneVDPage1()
 {
@@ -36,8 +41,10 @@ UIWizardCloneVDPage1::UIWizardCloneVDPage1()
 
 void UIWizardCloneVDPage1::onHandleOpenSourceDiskClick()
 {
+    /* Get current virtual-disk medium type: */
+    const UIMediumType enmMediumType = UIMediumDefs::mediumTypeToLocal(sourceVirtualDisk().GetDeviceType());
     /* Get source virtual-disk using file-open dialog: */
-    QString strMediumId = vboxGlobal().openMediumWithFileOpenDialog(UIMediumType_HardDisk, thisImp());
+    QString strMediumId = vboxGlobal().openMediumWithFileOpenDialog(enmMediumType, thisImp());
     if (!strMediumId.isNull())
     {
         /* Update medium-combo if necessary: */
@@ -52,12 +59,12 @@ CMedium UIWizardCloneVDPage1::sourceVirtualDisk() const
     return vboxGlobal().medium(m_pSourceDiskSelector->id()).medium();
 }
 
-void UIWizardCloneVDPage1::setSourceVirtualDisk(const CMedium &sourceVirtualDisk)
+void UIWizardCloneVDPage1::setSourceVirtualDisk(const CMedium &comSourceVirtualDisk)
 {
-    m_pSourceDiskSelector->setCurrentItem(sourceVirtualDisk.GetId());
+    m_pSourceDiskSelector->setCurrentItem(comSourceVirtualDisk.GetId());
 }
 
-UIWizardCloneVDPageBasic1::UIWizardCloneVDPageBasic1(const CMedium &sourceVirtualDisk)
+UIWizardCloneVDPageBasic1::UIWizardCloneVDPageBasic1(const CMedium &comSourceVirtualDisk, KDeviceType enmDeviceType)
 {
     /* Create widgets: */
     QVBoxLayout *pMainLayout = new QVBoxLayout(this);
@@ -68,8 +75,8 @@ UIWizardCloneVDPageBasic1::UIWizardCloneVDPageBasic1(const CMedium &sourceVirtua
             m_pSourceDiskSelector = new VBoxMediaComboBox(this);
             {
                 m_pSourceDiskSelector->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
-                m_pSourceDiskSelector->setType(UIMediumType_HardDisk);
-                m_pSourceDiskSelector->setCurrentItem(sourceVirtualDisk.GetId());
+                m_pSourceDiskSelector->setType(UIMediumDefs::mediumTypeToLocal(enmDeviceType));
+                m_pSourceDiskSelector->setCurrentItem(comSourceVirtualDisk.GetId());
                 m_pSourceDiskSelector->repopulate();
             }
             m_pSourceDiskOpenButton = new QIToolButton(this);
@@ -107,13 +114,13 @@ void UIWizardCloneVDPageBasic1::sltHandleOpenSourceDiskClick()
 void UIWizardCloneVDPageBasic1::retranslateUi()
 {
     /* Translate page: */
-    setTitle(UIWizardCloneVD::tr("Hard drive to copy"));
+    setTitle(UIWizardCloneVD::tr("Disk image to copy"));
 
     /* Translate widgets: */
-    m_pLabel->setText(UIWizardCloneVD::tr("<p>Please select the virtual hard drive file that you would like to copy "
+    m_pLabel->setText(UIWizardCloneVD::tr("<p>Please select the virtual disk image file that you would like to copy "
                                           "if it is not already selected. You can either choose one from the list "
                                           "or use the folder icon beside the list to select one.</p>"));
-    m_pSourceDiskOpenButton->setToolTip(UIWizardCloneVD::tr("Choose a virtual hard drive file to copy..."));
+    m_pSourceDiskOpenButton->setToolTip(UIWizardCloneVD::tr("Choose a virtual disk image file to copy..."));
 }
 
 void UIWizardCloneVDPageBasic1::initializePage()

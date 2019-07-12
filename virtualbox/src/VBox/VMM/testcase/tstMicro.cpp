@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/vmm/vm.h>
 #include <VBox/vmm/vmm.h>
 #include <VBox/vmm/mm.h>
@@ -38,9 +39,9 @@
 #include "tstMicro.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define TESTCASE    "tstVMM"
 
 static const char *GetDescription(TSTMICROTEST enmTest)
@@ -289,7 +290,7 @@ static DECLCALLBACK(int) doit(PVM pVM)
     for (i = TSTMICROTEST_OVERHEAD; i < TSTMICROTEST_TRAP_FIRST; i++)
     {
         TSTMICROTEST enmTest = (TSTMICROTEST)i;
-        uint64_t    cMin = ~0;
+        uint64_t    cMin = UINT64_MAX;
         uint64_t    cMax = 0;
         uint64_t    cTotal = 0;
         unsigned    cSamples = 0;
@@ -344,6 +345,7 @@ static DECLCALLBACK(int) doit(PVM pVM)
  */
 extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
+    RT_NOREF1(envp);
     int     rcRet = 0;                  /* error count. */
 
     RTR3InitExe(argc, &argv, RTR3INIT_FLAGS_SUPLIB);

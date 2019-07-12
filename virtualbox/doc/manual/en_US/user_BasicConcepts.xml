@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
-"http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+"http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd">
 <chapter id="BasicConcepts">
   <title>Configuring virtual machines</title>
 
@@ -40,12 +40,13 @@
 
         <glossentry>
           <glossterm>Windows 2000 / XP / Server 2003 / Vista / Server 2008 /
-            Windows 7 / Windows 8 / Server 2012</glossterm>
+            7 / 8 / 8.1 / 10 RTM 10240 / Server 2012</glossterm>
 
           <glossdef>
             <para>All versions, editions and service packs are fully supported
             (including 64-bit versions, under the preconditions listed below).
-            Guest Additions are available.</para>
+            Guest Additions are available. Windows 8 and later requires hardware
+            virtualization to be enabled.</para>
           </glossdef>
         </glossentry>
 
@@ -84,7 +85,7 @@
         </glossentry>
 
         <glossentry>
-          <glossterm>Linux 3.x</glossterm>
+          <glossterm>Linux 3.x and later</glossterm>
 
           <glossdef>
             <para>All versions/editions are fully supported (32 bits and 64
@@ -97,8 +98,8 @@
           11 Express)</glossterm>
 
           <glossdef>
-            <para>Fully supported (32 bits and 64 bits). Guest Additions are
-            available.</para>
+            <para>Fully supported (64 bits, prior to Solaris 11 11/11 also 32 bits).
+            Guest Additions are available.</para>
           </glossdef>
         </glossentry>
 
@@ -170,7 +171,7 @@
 
             <para>These license restrictions are also enforced on a technical
             level. Mac OS X verifies whether it is running on Apple hardware,
-            and most DVDs that that come with Apple hardware even check for an
+            and most DVDs that come with Apple hardware even check for an
             exact model. These restrictions are <emphasis>not</emphasis>
             circumvented by VirtualBox and continue to apply.</para>
           </listitem>
@@ -252,6 +253,36 @@
     </sect2>
   </sect1>
 
+  <sect1 id="basic-unattended">
+    <title>Unattended guest installation</title>
+    <para>VirtualBox is able to automatically install a guest by providing
+    the installation medium as well as a few parameters like the name of
+    the default user.</para>
+    <para>To perform an unattended guest installation, a VM has to be
+    prepared. A VM can be created using the GUI as described in <xref
+    linkend="gui-createvm" /> or by using VBoxManage as described in
+    <xref linkend="vboxmanage-createvm" />. In general it's sufficient to
+    chose the type of the guest operating system and to use the proposed
+    defaults for that operating system. See the following sections on how
+    to change the VM settings for certain needs.</para>
+    <para>After the VM was created, the VM has to be prepared for unattended
+    guest execution use VBoxManage, see <xref
+    linkend="vboxmanage-unattended" />. During this step VirtualBox scans
+    the installation medium and changes certain parameters for a seamless
+    installation as a guest running on VirtualBox.</para>
+    <para>Once the preparation phase was successfully finished, the VM can
+    be started either from the GUI or from VBoxManage, see <xref
+    linkend="vboxmanage-startvm" />. The VM will now perform the automatic
+    installation. Please note that the boot order was changed during the
+    preparation phase by giving the virtual hard disk the highest priority.
+    As the disk is normally empty before an automatic installation is started,
+    the VM will boot from the virtual DVD drive as next available boot medium
+    and the installation will start. If, for some reason, the virtual hard
+    disk contains a bootable operating system then the installation will not
+    start unless the boot order was manually changed by pressing F12 during
+    the BIOS splash screen.</para>
+  </sect1>
+
   <sect1>
     <title>Emulated hardware</title>
 
@@ -297,11 +328,18 @@
         </listitem>
 
         <listitem>
-          <para><emphasis role="bold">USB.</emphasis> VirtualBox emulates two
-          USB host controllers, EHCI and OHCI. There is a need for two host
-          controllers because OHCI only handles USB low- and full-speed
+          <para><emphasis role="bold">USB.</emphasis> VirtualBox emulates three
+          USB host controllers: xHCI, EHCI, and OHCI. While xHCI handles all USB
+          transfer speeds, only guest operating systems released approximately
+          after 2011 support xHCI. Note that for Windows 7 guests, 3rd party
+          drivers must be installed for xHCI support.</para>
+          <para>
+          Older operating systems typically support OHCI and EHCI. The two
+          controllers are needed because OHCI only handles USB low- and full-speed
           devices (both USB 1.x and 2.0), while EHCI only handles high-speed
-          devices (USB 2.0 only). The emulated USB controllers do not
+          devices (USB 2.0 only).</para>
+          <para>
+          The emulated USB controllers do not
           communicate directly with devices on the host but rather with a
           virtual USB layer which abstracts the USB protocol and allows the
           use of remote USB devices.</para>
@@ -369,7 +407,7 @@
 
       <para><glosslist>
           <glossentry>
-            <glossterm>Snapshot folder</glossterm>
+            <glossterm>Snapshot Folder</glossterm>
 
             <glossdef>
               <para>By default, VirtualBox saves snapshot data together with
@@ -380,7 +418,7 @@
           </glossentry>
 
           <glossentry>
-            <glossterm>Shared clipboard</glossterm>
+            <glossterm>Shared Clipboard</glossterm>
 
             <glossdef>
               <para>You can select here whether the clipboard of the guest
@@ -395,7 +433,7 @@
               otherwise; see <xref linkend="guestadditions" /> for
               details.</para>
 
-            <para>The shared clipboard is disabled by default. See
+              <para>The shared clipboard is disabled by default. See
               <xref linkend="security_clipboard"/> for an explanation. This
               setting can be changed at any time using the "Shared Clipboard"
               menu item in the "Devices" menu of the virtual machine.</para>
@@ -403,44 +441,26 @@
           </glossentry>
 
           <glossentry>
-            <glossterm>Drag'n'Drop</glossterm>
+            <glossterm>Drag and Drop</glossterm>
             <glossdef>
-              <para>This setting allows to enable Drag and Drop: Select a file
-                on the desktop, click the left mouse button, move the mouse
-                to the VM window and release the mouse button. The file is
-                copied from the host to the guest. This feature is currently
-                only implemented for Linux guests and only for copying files
-                from the host to the guest.<footnote><para>Support
-                for Drag'n'Drop was added with VirtualBox 4.2</para></footnote></para>
+              <para>This setting allows to enable support for drag and drop: Select
+              an object (e.g. a file) from the host or guest and directly copy
+              or open it on the guest or host. Multiple per-VM drag and drop modes
+              allow restricting access in either direction.</para>
+
+              <para>For drag and drop to work the Guest Additions need to be
+              installed on the guest.</para>
+
+              <para><note><para>Drag and drop is disabled by default. This setting can be
+              changed at any time using the "Drag and Drop" menu item in the
+              "Devices" menu of the virtual machine.</para></note></para>
+
+              <para>See <xref linkend="guestadd-dnd"/> for more information.
+              <footnote><para>Experimental support for drag and drop was added
+              with VirtualBox 4.2.</para></footnote></para>
             </glossdef>
           </glossentry>
 
-          <glossentry>
-            <glossterm>Removable media: remember runtime changes</glossterm>
-
-            <glossdef>
-              <para>If this is checked, VirtualBox will save the state of what
-              media has been mounted between several runs of a virtual
-              machine.</para>
-            </glossdef>
-          </glossentry>
-
-          <glossentry>
-            <glossterm>Mini toolbar</glossterm>
-
-            <glossdef>
-              <para>In full screen or seamless mode, VirtualBox can display a
-              small toolbar that contains some of the items that are normally
-              available from the virtual machine's menu bar. This toolbar
-              reduces itself to a small gray line unless you move the mouse
-              over it. With the toolbar, you can return from full screen or
-              seamless mode, control machine execution or enable certain
-              devices. If you don't want to see the toolbar, disable this
-              setting.</para>
-              <para>The second setting allows to show the toolbar at the top
-              of the screen instead of showing it at the bottom.</para>
-            </glossdef>
-          </glossentry>
         </glosslist></para>
     </sect2>
 
@@ -524,9 +544,11 @@
               modern ICH9 chipset, which supports PCI express, three PCI
               buses, PCI-to-PCI bridges and Message Signaled Interrupts
               (MSI). This allows modern operating systems to address more PCI
-              devices and no longer requires IRQ sharing. Note that the ICH9
-              support is experimental and not recommended for guest operating
-              systems which do not require it.</para>
+              devices and no longer requires IRQ sharing. Using the ICH9 chipset
+              it is also possible to configure up to 36 network cards (up to 8
+              network adapters with PIIX3). Note that the ICH9 support is
+              experimental and not recommended for guest operating systems which
+              do not require it.</para>
             </glossdef>
           </glossentry>
 
@@ -642,7 +664,7 @@
 
       <para>On this tab you can also set the <emphasis role="bold">"CPU execution
       cap"</emphasis>. This setting
-      limits the amount of time a host CPU spents to emulate a virtual CPU.
+      limits the amount of time a host CPU spends to emulate a virtual CPU.
       The default setting is 100% meaning that there is no limitation. A setting
       of 50% implies a single virtual CPU can use up to 50% of a single host
       CPU. Note that limiting the execution time of the virtual CPUs may induce
@@ -692,8 +714,17 @@
       <para>If your host's CPU supports the <emphasis role="bold">nested
       paging</emphasis> (AMD-V) or <emphasis role="bold">EPT</emphasis> (Intel
       VT-x) features, then you can expect a significant performance increase
-      by enabling nested paging in addition to hardware virtualization. For
-      technical details, see <xref linkend="nestedpaging" />.</para>
+      by enabling nested paging in addition to hardware virtualization.  For
+      technical details, see <xref linkend="nestedpaging" />. For Intel EPT
+      security recommendations, see <xref linkend="sec-rec-cve-2018-3646" />.</para>
+
+      <para>Starting with version 5.0, VirtualBox provides paravirtualization
+      interfaces to improve time-keeping accuracy and performance of guest
+      operating systems. The options available are documented under the
+      <computeroutput>paravirtprovider</computeroutput> option
+      in <xref linkend="vboxmanage-modifyvm" />. For further details on
+      the paravirtualization providers, please refer to
+      <xref linkend="gimproviders" />.</para>
     </sect2>
   </sect1>
 
@@ -716,7 +747,7 @@
           screen resolution and the color depth of the host display as well
           as of the activation of <emphasis>3D acceleration</emphasis> and
           <emphasis>2D video acceleration</emphasis>. A rough estimate
-          is (<emphasis>color depth</emphasis> / 8) x 
+          is (<emphasis>color depth</emphasis> / 8) x
           <emphasis>vertical pixels</emphasis> x
           <emphasis>horizontal pixels</emphasis> x
           <emphasis>number of screens</emphasis> = <emphasis>number of bytes</emphasis>.
@@ -978,15 +1009,17 @@
     emulation of an Intel AC'97 controller, an Intel HD Audio
     controller<footnote>
         <para>Intel HD Audio support was added with VirtualBox 4.0 because
-        Windows 7 (32-bit and 64-bit versions) as well as 64-bit Windows Vista
-        do not support the Intel AC'97 controller.</para>
+        Windows 7 and later (as well as 64-bit Windows Vista) do not support
+        the Intel AC'97 controller out of the box.</para>
       </footnote> or a SoundBlaster 16 card. In any case, you can select what
     audio driver VirtualBox will use on the host.</para>
 
     <para>On a Linux host, depending on your host configuration, you can also
     select between the OSS, ALSA or the PulseAudio subsystem. On newer Linux
-    distributions (Fedora 8 and above, Ubuntu 8.04 and above), the PulseAudio
-    subsystem should be preferred.</para>
+    distributions, the PulseAudio subsystem should be preferred.</para>
+
+    <para>Since VirtualBox 5.0 only OSS is supported on Solaris hosts - the "Solaris Audio"
+    audio backend is no longer supported on Solaris hosts.</para>
   </sect1>
 
   <sect1 id="settings-network">
@@ -1026,8 +1059,8 @@
     <para>Ever since the original IBM PC, personal computers have been
     equipped with one or two serial ports (also called COM ports by DOS and
     Windows). Serial ports were commonly used with modems, and some
-    computer mice used to be connected to serial ports before USB became 
-    commonplace. 
+    computer mice used to be connected to serial ports before USB became
+    commonplace.
     </para>
 
     <para>While serial ports are no longer as ubiquitous as they used to be,
@@ -1041,7 +1074,7 @@
 
     <para>If a virtual serial port is enabled, the guest operating system sees
     a standard 16550A compatible UART device. Both receiving and transmitting
-    data is supported. How this virtual serial port is then connected to the 
+    data is supported. How this virtual serial port is then connected to the
     host is configurable, and the details depend on your host operating system.
     </para>
 
@@ -1052,7 +1085,7 @@
     <computeroutput>--uart</computeroutput> and
     <computeroutput>--uartmode</computeroutput> options.</para>
 
-    <para>In either case, you can configure up to two virtual serial ports per 
+    <para>In either case, you can configure up to four virtual serial ports per
     virtual machine. For each such device, you will need to
     determine<orderedlist>
         <listitem>
@@ -1112,31 +1145,21 @@
                     <listitem>
                       <para>On a Windows host, data will be sent and received
                       through a named pipe. The pipe name must be in the format
-                      <computeroutput>\\.\pipe\&lt;name&gt;</computeroutput> 
+                      <computeroutput>\\.\pipe\&lt;name&gt;</computeroutput>
                       where <computeroutput>&lt;name&gt;</computeroutput> should
-                      identify the virtual machine but may be freely 
-                      chosen.</para> 
-                      <para>For forwarding serial traffic, you can use a helper
-                      program called VMware Serial Line Gateway, available for
-                      download at
-                                  <literal> <ulink
-                      url="http://www.l4ka.org/91.php">http://www.l4ka.org/91.php</ulink>
-                      </literal>. This tool provides a fixed server mode named
-                      pipe at
-                      <computeroutput>\\.\pipe\vmwaredebug</computeroutput>
-                      and connects incoming TCP connections on port 567 with
-                      the named pipe.</para>
+                      identify the virtual machine but may be freely
+                      chosen.</para>
                     </listitem>
 
                     <listitem>
                       <para>On a Mac, Linux or Solaris host, a local
                       domain socket is used instead. The socket filename must be
-                      chosen such that the user running VirtualBox has 
-                      sufficient privileges to create and write to it. The 
-                      <computeroutput>/tmp</computeroutput> directory is often a 
+                      chosen such that the user running VirtualBox has
+                      sufficient privileges to create and write to it. The
+                      <computeroutput>/tmp</computeroutput> directory is often a
                       good candidate.</para>
-                      <para>On Linux there are various tools which can connect 
-                      to a local domain socket or create one in server mode. The 
+                      <para>On Linux there are various tools which can connect
+                      to a local domain socket or create one in server mode. The
                       most flexible tool is
                       <computeroutput>socat</computeroutput> and is available
                       as part of many distributions.</para>
@@ -1152,25 +1175,57 @@
                 respectively.</para>
 
                 <para>For a direct connection between two virtual machines
-                (corresponding to a null-modem cable), simply configure one VM 
+                (corresponding to a null-modem cable), simply configure one VM
                 to create a pipe/socket and another to attach to it.
                 </para>
               </listitem>
 
               <listitem>
-                <para>You can send the virtual serial port output to a file. 
-                This option is very useful for capturing diagnostic output from 
-                a guest. Any file may be used for this purpose, as long as the 
-                user running VirtualBox has sufficient privileges to create and 
+                <para>You can send the virtual serial port output to a file.
+                This option is very useful for capturing diagnostic output from
+                a guest. Any file may be used for this purpose, as long as the
+                user running VirtualBox has sufficient privileges to create and
                 write to the file.
                 </para>
               </listitem>
+
+              <listitem>
+                <para>TCP Socket: Useful for forwarding serial traffic over TCP/IP,
+                  acting as a server, or it can act as a TCP client connecting to other
+                  servers. It allows a remote machine to directly connect to the guest's
+                  serial port via TCP.
+                </para>
+                <itemizedlist>
+                  <listitem>
+                    <para>TCP Server: Uncheck the
+                      <emphasis>Connect to existing pipe/socket</emphasis> checkbox and specify
+                      the <emphasis role="bold"><computeroutput>port</computeroutput></emphasis>
+                      number. Typically 23 or 2023. Note that on UNIX-like systems you will
+                      have to use a port a number greater than 1024 for regular users.
+                    </para>
+                    <para>
+                      The client can use software such as <computeroutput>PuTTY</computeroutput>
+                      or the <computeroutput>telnet</computeroutput> command line
+                      tool to access the TCP Server.
+                    </para>
+                  </listitem>
+                  <listitem>
+                    <para>TCP Client: To create a virtual null-modem cable over the Internet or
+                      LAN, the other side can connect via TCP by specifying <emphasis role="bold">
+                      <computeroutput>hostname:port</computeroutput></emphasis>. The TCP socket
+                    will act in client mode if check the <emphasis>Connect to existing pipe/socket</emphasis>
+                    checkbox.
+                    </para>
+                  </listitem>
+                </itemizedlist>
+              </listitem>
+
             </itemizedlist></para>
         </listitem>
-      </orderedlist>Up to two serial ports can be configured per virtual 
+      </orderedlist>Up to four serial ports can be configured per virtual
       machine, but you can pick any port numbers out of the above. However,
-      serial ports cannot reliably share interrupts; if both ports are to be 
-      used at the same time, they must use different interrupt levels, for 
+      serial ports cannot reliably share interrupts; if both ports are to be
+      used at the same time, they must use different interrupt levels, for
       example COM1 and COM2, but not COM1 and COM3.
     </para>
   </sect1>
@@ -1211,14 +1266,21 @@
       this, see <xref linkend="usb-over-rdp" />.</para>
 
       <para>In the Settings dialog, you can first configure whether USB is
-      available in the guest at all, and in addition also optionally enable
-      the USB 2.0 (EHCI) controller for the guest. If so, you can determine in
-      detail which devices are available. For this, you must create so-called
-      "filters" by specifying certain properties of the USB device.<note>
-          <para>The EHCI controller is shipped as a VirtualBox extension
+      available in the guest at all, and then choose the level of USB support:
+      OHCI for USB 1.1, EHCI (which will also enable OHCI) for USB 2.0,
+      or xHCI for all USB speeds. <note>
+          <para>The xHCI and EHCI controllers are shipped as a VirtualBox extension
           package, which must be installed separately. See <xref
           linkend="intro-installing" /> for more information.</para>
         </note></para>
+
+      <para>When USB support is enabled for a VM, you can determine in detail
+      which devices will be automatically attached to the guest. For this, you
+      can create so-called "filters" by specifying certain properties of
+      the USB device. USB devices with a matching filter will be automatically
+      passed to the guest once they are attached to the host. USB devices
+      without a matching filter can be passed manually to the guest, for
+      example by using the Devices / USB devices menu.</para>
 
       <para>Clicking on the "+" button to the right of the "USB Device
       Filters" window creates a <emphasis role="bold">new filter.</emphasis>
@@ -1333,6 +1395,53 @@
     <xref linkend="sharedfolders" />.</para>
   </sect1>
 
+  <sect1>
+    <title>User Interface</title>
+
+    <para>The "User Interface" section allows you to change certain aspects of
+      the user interface of this VM.</para>
+
+    <para><glosslist>
+      <glossentry>
+        <glossterm>Menu Bar</glossterm>
+        <glossdef>
+          <para>This widget allows you to disable certain menus (click at
+            the menu to release it), certain menu entries (uncheck the
+            checkbox of the entry to disable it) and the complete menu bar
+            (uncheck the rightmost checkbox).
+          </para>
+        </glossdef>
+      </glossentry>
+
+      <glossentry>
+        <glossterm>Mini ToolBar</glossterm>
+        <glossdef>
+          <para>In full screen or seamless mode, VirtualBox can display a
+          small toolbar that contains some of the items that are normally
+          available from the virtual machine's menu bar. This toolbar
+          reduces itself to a small gray line unless you move the mouse
+          over it. With the toolbar, you can return from full screen or
+          seamless mode, control machine execution or enable certain
+          devices. If you don't want to see the toolbar, disable this
+          setting.</para>
+          <para>The second setting allows to show the toolbar at the top
+          of the screen instead of showing it at the bottom.</para>
+        </glossdef>
+      </glossentry>
+
+      <glossentry>
+        <glossterm>Status Bar</glossterm>
+        <glossdef>
+          <para>This widget allows you to disable certain icons of the
+          status bar (uncheck the checkbox of an icon to disable it),
+          to re-arrange icons (drag and drop the icon) and to disable the
+          complete status bar (uncheck the leftmost checkbox).</para>
+        </glossdef>
+      </glossentry>
+    </glosslist></para>
+
+  </sect1>
+
   <sect1 id="efi">
     <title>Alternative firmware (EFI)</title>
 
@@ -1348,36 +1457,262 @@
     Alternatively, use the <computeroutput>VBoxManage</computeroutput> command
     line interface like this: <screen>VBoxManage modifyvm "VM name" --firmware efi</screen>
     To switch back to using the BIOS, use: <screen>VBoxManage modifyvm "VM name" --firmware bios</screen>One
-    notable user of EFI is Apple's Mac OS X, but recent Linuxes (such as Fedora
-    11) and Windows (starting with Vista) offer special versions that can be
+    notable user of EFI is Apple's Mac OS X, but more recent Linuxes
+    and Windows (starting with Vista) offer special versions that can be
     booted using EFI as well.</para>
 
     <para>Another possible use of EFI in VirtualBox is development and testing
     of EFI applications, without booting any OS.</para>
 
     <para>Note that the VirtualBox EFI support is experimental and will be
-    enhanced as EFI matures and becomes more widespread. While Mac OS X and
-    Linux guests are known to work fine, Windows guests are currently unable
-    to boot with the VirtualBox EFI implementation.</para>
+      enhanced as EFI matures and becomes more widespread. Mac OS X, Linux
+      and newer Windows guests are known to work fine. Windows 7 guests are
+      unable to boot with the VirtualBox EFI implementation.</para>
 
     <sect2 id="efividmode">
       <title>Video modes in EFI</title>
 
       <para>EFI provides two distinct video interfaces: GOP (Graphics Output
-      Protocol) and UGA (Universal Graphics Adapter). Mac OS X uses GOP, while
-      Linux tends to use UGA. VirtualBox provides a configuration option to
-      control the framebuffer size for both interfaces.</para>
+      Protocol) and UGA (Universal Graphics Adapter). Modern operating systems
+      (such as Mac OS X) generally use GOP, while some older ones still use
+      UGA. VirtualBox provides a configuration option to control the
+      graphics resolution for both interfaces, making the difference mostly
+      irrelevant for users.</para>
 
-      <para>To control GOP, use the following
-      <computeroutput>VBoxManage</computeroutput> command: <screen>VBoxManage setextradata "VM name" VBoxInternal2/EfiGopMode N</screen>
-      Where N can be one of 0,1,2,3,4,5 referring to the 640x480, 800x600,
-      1024x768, 1280x1024, 1440x900, 1920x1200 screen resolution respectively.</para>
+      <para>The default resolution is 1024x768. To select a graphics resolution
+      for EFI, use the following <computeroutput>VBoxManage</computeroutput>
+      command:
+      <screen>VBoxManage setextradata "VM name" VBoxInternal2/EfiGraphicsResolution HxV</screen>
+      Determine the horizontal resolution H and the vertical resolution V from
+      the following list of default resolutions:</para>
 
-      <para>To change the UGA resolution: <screen>VBoxManage setextradata "VM name" VBoxInternal2/UgaHorizontalResolution 1440
-VBoxManage setextradata "VM name" VBoxInternal2/UgaVerticalResolution    900</screen></para>
+      <glosslist>
+        <glossentry>
+          <glossterm>VGA</glossterm>
+          <glossdef>
+            <para>640x480, 32bpp, 4:3</para>
+          </glossdef>
+        </glossentry>
 
-      <para>The video mode for both GOP and UGA can only be changed when the
-      VM is powered off and remains persistent until changed.</para>
+        <glossentry>
+          <glossterm>SVGA</glossterm>
+          <glossdef>
+            <para>800x600, 32bpp, 4:3</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>XGA</glossterm>
+          <glossdef>
+            <para>1024x768, 32bpp, 4:3</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>XGA+</glossterm>
+          <glossdef>
+            <para>1152x864, 32bpp, 4:3</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>HD</glossterm>
+          <glossdef>
+            <para>1280x720, 32bpp, 16:9</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>WXGA</glossterm>
+          <glossdef>
+            <para>1280x800, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>SXGA</glossterm>
+          <glossdef>
+            <para>1280x1024, 32bpp, 5:4</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>SXGA+</glossterm>
+          <glossdef>
+            <para>1400x1050, 32bpp, 4:3</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>WXGA+</glossterm>
+          <glossdef>
+            <para>1440x900, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>HD+</glossterm>
+          <glossdef>
+            <para>1600x900, 32bpp, 16:9</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>UXGA</glossterm>
+          <glossdef>
+            <para>1600x1200, 32bpp, 4:3</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>WSXGA+</glossterm>
+          <glossdef>
+            <para>1680x1050, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>Full HD</glossterm>
+          <glossdef>
+            <para>1920x1080, 32bpp, 16:9</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>WUXGA</glossterm>
+          <glossdef>
+            <para>1920x1200, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>DCI 2K</glossterm>
+          <glossdef>
+            <para>2048x1080, 32bpp, 19:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>Full HD+</glossterm>
+          <glossdef>
+            <para>2160x1440, 32bpp, 3:2</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>Unnamed</glossterm>
+          <glossdef>
+            <para>2304x1440, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>QHD</glossterm>
+          <glossdef>
+            <para>2560x1440, 32bpp, 16:9</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>WQXGA</glossterm>
+          <glossdef>
+            <para>2560x1600, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>QWXGA+</glossterm>
+          <glossdef>
+            <para>2880x1800, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>QHD+</glossterm>
+          <glossdef>
+            <para>3200x1800, 32bpp, 16:9</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>WQSXGA</glossterm>
+          <glossdef>
+            <para>3200x2048, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>4K UHD</glossterm>
+          <glossdef>
+            <para>3840x2160, 32bpp, 16:9</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>WQUXGA</glossterm>
+          <glossdef>
+            <para>3840x2400, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>DCI 4K</glossterm>
+          <glossdef>
+            <para>4096x2160, 32bpp, 19:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>HXGA</glossterm>
+          <glossdef>
+            <para>4096x3072, 32bpp, 4:3</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>UHD+</glossterm>
+          <glossdef>
+            <para>5120x2880, 32bpp, 16:9</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>WHXGA</glossterm>
+          <glossdef>
+            <para>5120x3200, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>WHSXGA</glossterm>
+          <glossdef>
+            <para>6400x4096, 32bpp, 16:10</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>HUXGA</glossterm>
+          <glossdef>
+            <para>6400x4800, 32bpp, 4:3</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>8K UHD2</glossterm>
+          <glossdef>
+            <para>7680x4320, 32bpp, 16:9</para>
+          </glossdef>
+        </glossentry>
+
+      </glosslist>
+
+      <para>If this list of default resolution does not cover your needs, see
+      <xref linkend="customvesa" />. Note that the color depth value specified
+      in a custom video mode must be specified (8, 16, 24 and 32 are accepted),
+      but it is silently assumed to be 32 by EFI.</para>
+
+      <para>The EFI default video resolution settings can only be changed when
+      the VM is powered off.</para>
     </sect2>
 
     <sect2 id="efibootargs">

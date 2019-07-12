@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define IPRT_NT_MAP_TO_ZW
 #define LOG_GROUP LOG_GROUP_SUP_DRV
 #include "../SUPDrvInternal.h"
@@ -44,6 +45,7 @@
 #include <iprt/semaphore.h>
 #include <iprt/spinlock.h>
 #include <iprt/string.h>
+#include <iprt/x86.h>
 #include <VBox/log.h>
 #include <VBox/err.h>
 
@@ -54,9 +56,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The support service name. */
 #define SERVICE_NAME    "VBoxDrv"
 /** The Pool tag (VBox). */
@@ -84,10 +86,15 @@
 /** Enables the fast I/O control code path. */
 #define VBOXDRV_WITH_FAST_IO
 
+/* Missing if we're compiling against older WDKs. */
+#ifndef NonPagedPoolNx
+# define NonPagedPoolNx     ((POOL_TYPE)512)
+#endif
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Device extension used by VBoxDrvU.
  */
@@ -155,7 +162,7 @@ typedef struct SUPDRVNTERRORINFO
     /** Number of bytes of valid info. */
     uint32_t        cchErrorInfo;
     /** The error info. */
-    char            szErrorInfo[2048];
+    char            szErrorInfo[16384 - sizeof(RTLISTNODE) - sizeof(HANDLE)*2 - sizeof(uint64_t) - sizeof(uint32_t) - 0x20];
 } SUPDRVNTERRORINFO;
 /** Pointer to error info. */
 typedef SUPDRVNTERRORINFO *PSUPDRVNTERRORINFO;
@@ -206,6 +213,8 @@ typedef struct SUPDRVNTPROTECT
     uint32_t volatile   cRefs;
     /** The kind of process we're protecting. */
     SUPDRVNTPROTECTKIND volatile enmProcessKind;
+    /** Whether this structure is in the tree. */
+    bool                fInTree : 1;
     /** 7,: Hack to allow the supid themes service duplicate handle privileges to
      *  our process. */
     bool                fThemesFirstProcessCreateHandle : 1;
@@ -270,9 +279,9 @@ typedef NTSTATUS (NTAPI *PFNZWALPCCREATEPORT)(PHANDLE, POBJECT_ATTRIBUTES, struc
 #endif /* VBOX_WITH_HARDENINIG */
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void     _stdcall   VBoxDrvNtUnload(PDRIVER_OBJECT pDrvObj);
 static NTSTATUS _stdcall   VBoxDrvNtCreate(PDEVICE_OBJECT pDevObj, PIRP pIrp);
 static NTSTATUS _stdcall   VBoxDrvNtCleanup(PDEVICE_OBJECT pDevObj, PIRP pIrp);
@@ -305,17 +314,19 @@ static void                 supdrvNtErrorInfoCleanupProcess(HANDLE hProcessId);
 #endif
 
 
-/*******************************************************************************
-*   Exported Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Exported Functions                                                                                                           *
+*********************************************************************************************************************************/
 RT_C_DECLS_BEGIN
-ULONG _stdcall DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING pRegPath);
+NTSTATUS _stdcall DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING pRegPath);
 RT_C_DECLS_END
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+/** The non-paged pool type to use, NonPagedPool or NonPagedPoolNx. */
+static POOL_TYPE      g_enmNonPagedPoolType = NonPagedPool;
 /** Pointer to the system device instance. */
 static PDEVICE_OBJECT g_pDevObjSys = NULL;
 /** Pointer to the user device instance. */
@@ -354,6 +365,40 @@ static FAST_IO_DISPATCH const g_VBoxDrvFastIoDispatch =
     /* .ReleaseForCcFlush               = */ NULL,
 };
 #endif /* VBOXDRV_WITH_FAST_IO */
+
+/** Default ZERO value. */
+static ULONG                        g_fOptDefaultZero = 0;
+/** Registry values.
+ * We wrap these in a struct to ensure they are followed by a little zero
+ * padding in order to limit the chance of trouble on unpatched systems.  */
+struct
+{
+    /** The ForceAsync registry value. */
+    ULONG                           fOptForceAsyncTsc;
+    /** Padding. */
+    uint64_t                        au64Padding[2];
+}                                   g_Options = { FALSE, 0, 0 };
+/** Registry query table for RtlQueryRegistryValues. */
+static RTL_QUERY_REGISTRY_TABLE     g_aRegValues[] =
+{
+    {
+        /* .QueryRoutine = */   NULL,
+        /* .Flags = */          RTL_QUERY_REGISTRY_DIRECT | RTL_QUERY_REGISTRY_TYPECHECK,
+        /* .Name = */           L"ForceAsyncTsc",
+        /* .EntryContext = */   &g_Options.fOptForceAsyncTsc,
+        /* .DefaultType = */    (REG_DWORD << RTL_QUERY_REGISTRY_TYPECHECK_SHIFT) | REG_DWORD,
+        /* .DefaultData = */    &g_fOptDefaultZero,
+        /* .DefaultLength = */  sizeof(g_fOptDefaultZero),
+    },
+    {   NULL, 0, NULL, NULL, 0, NULL, 0 } /* terminator entry. */
+};
+
+/** Pointer to KeQueryMaximumGroupCount. */
+static PFNKEQUERYMAXIMUMGROUPCOUNT      g_pfnKeQueryMaximumGroupCount = NULL;
+/** Pointer to KeGetProcessorIndexFromNumber. */
+static PFNKEGETPROCESSORINDEXFROMNUMBER g_pfnKeGetProcessorIndexFromNumber = NULL;
+/** Pointer to KeGetProcessorNumberFromIndex. */
+static PFNKEGETPROCESSORNUMBERFROMINDEX g_pfnKeGetProcessorNumberFromIndex = NULL;
 
 #ifdef VBOX_WITH_HARDENING
 /** Pointer to the stub device instance. */
@@ -480,9 +525,9 @@ static NTSTATUS vboxdrvNtCreateDevices(PDRIVER_OBJECT pDrvObj)
                 IoDeleteDevice(g_pDevObjStub);
                 g_pDevObjUsr = NULL;
             }
-#endif
             IoDeleteDevice(g_pDevObjUsr);
             g_pDevObjUsr = NULL;
+#endif
         }
         IoDeleteDevice(g_pDevObjSys);
         g_pDevObjSys = NULL;
@@ -533,8 +578,10 @@ static void vboxdrvNtDestroyDevices(void)
  * @param   pDrvObj     Pointer to driver object.
  * @param   pRegPath    Registry base path.
  */
-ULONG _stdcall DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING pRegPath)
+NTSTATUS _stdcall DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING pRegPath)
 {
+    RT_NOREF1(pRegPath);
+
     /*
      * Sanity checks.
      */
@@ -548,9 +595,51 @@ ULONG _stdcall DriverEntry(PDRIVER_OBJECT pDrvObj, PUNICODE_STRING pRegPath)
 #endif
 
     /*
-     * Initialize the runtime (IPRT).
+     * Figure out if we can use NonPagedPoolNx or not.
+     */
+    ULONG ulMajorVersion, ulMinorVersion, ulBuildNumber;
+    PsGetVersion(&ulMajorVersion, &ulMinorVersion, &ulBuildNumber, NULL);
+    if (ulMajorVersion > 6 || (ulMajorVersion == 6 && ulMinorVersion >= 2)) /* >= 6.2 (W8)*/
+        g_enmNonPagedPoolType = NonPagedPoolNx;
+
+    /*
+     * Query options first so any overflows on unpatched machines will do less
+     * harm (see MS11-011 / 2393802 / 2011-03-18).
+     *
+     * Unfortunately, pRegPath isn't documented as zero terminated, even if it
+     * quite likely always is, so we have to make a copy here.
      */
     NTSTATUS rcNt;
+    PWSTR pwszCopy = (PWSTR)ExAllocatePoolWithTag(g_enmNonPagedPoolType, pRegPath->Length + sizeof(WCHAR), 'VBox');
+    if (pwszCopy)
+    {
+        memcpy(pwszCopy, pRegPath->Buffer, pRegPath->Length);
+        pwszCopy[pRegPath->Length / sizeof(WCHAR)] = '\0';
+        rcNt = RtlQueryRegistryValues(RTL_REGISTRY_ABSOLUTE | RTL_REGISTRY_OPTIONAL, pwszCopy,
+                                      g_aRegValues, NULL /*pvContext*/, NULL /*pvEnv*/);
+        ExFreePoolWithTag(pwszCopy, 'VBox');
+        /* Probably safe to ignore rcNt here. */
+    }
+
+    /*
+     * Resolve methods we want but isn't available everywhere.
+     */
+    UNICODE_STRING RoutineName;
+    RtlInitUnicodeString(&RoutineName, L"KeQueryMaximumGroupCount");
+    g_pfnKeQueryMaximumGroupCount = (PFNKEQUERYMAXIMUMGROUPCOUNT)MmGetSystemRoutineAddress(&RoutineName);
+
+    RtlInitUnicodeString(&RoutineName, L"KeGetProcessorIndexFromNumber");
+    g_pfnKeGetProcessorIndexFromNumber = (PFNKEGETPROCESSORINDEXFROMNUMBER)MmGetSystemRoutineAddress(&RoutineName);
+
+    RtlInitUnicodeString(&RoutineName, L"KeGetProcessorNumberFromIndex");
+    g_pfnKeGetProcessorNumberFromIndex = (PFNKEGETPROCESSORNUMBERFROMINDEX)MmGetSystemRoutineAddress(&RoutineName);
+
+    Assert(   (g_pfnKeGetProcessorNumberFromIndex != NULL) == (g_pfnKeGetProcessorIndexFromNumber != NULL)
+           && (g_pfnKeGetProcessorNumberFromIndex != NULL) == (g_pfnKeQueryMaximumGroupCount != NULL)); /* all or nothing. */
+
+    /*
+     * Initialize the runtime (IPRT).
+     */
     int vrc = RTR0Init(0);
     if (RT_SUCCESS(vrc))
     {
@@ -845,14 +934,14 @@ NTSTATUS _stdcall VBoxDrvNtCreate(PDEVICE_OBJECT pDevObj, PIRP pIrp)
                     {
                         LogRel(("vboxdrv: %p is not a budding VM process (enmProcessKind=%d).\n",
                                 PsGetProcessId(PsGetCurrentProcess()), pNtProtect->enmProcessKind));
-                        rc = VERR_ACCESS_DENIED;
+                        rc = VERR_SUPDRV_NOT_BUDDING_VM_PROCESS_2;
                     }
                     supdrvNtProtectRelease(pNtProtect);
                 }
                 else
                 {
                     LogRel(("vboxdrv: %p is not a budding VM process.\n", PsGetProcessId(PsGetCurrentProcess())));
-                    rc = VERR_ACCESS_DENIED;
+                    rc = VERR_SUPDRV_NOT_BUDDING_VM_PROCESS_1;
                 }
             }
             /*
@@ -905,6 +994,10 @@ NTSTATUS _stdcall VBoxDrvNtCreate(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 
 /**
  * Clean up file handle entry point.
+ *
+ * This is called when the last handle reference is released, or something like
+ * that.  In the case of IoGetDeviceObjectPointer, this is called as it closes
+ * the handle, however it will go on using the file object afterwards...
  *
  * @param   pDevObj     Device object.
  * @param   pIrp        Request packet.
@@ -1001,7 +1094,7 @@ NTSTATUS _stdcall VBoxDrvNtClose(PDEVICE_OBJECT pDevObj, PIRP pIrp)
  * @param   cbInput             The size of the input buffer.
  * @param   pvOutput            The output buffer as specfied by the user.
  * @param   cbOutput            The size of the output buffer.
- * @param   uFunction           The function.
+ * @param   uCmd                The I/O command/function being invoked.
  * @param   pIoStatus           Where to return the status of the operation.
  * @param   pDevObj             The device object..
  */
@@ -1009,6 +1102,8 @@ static BOOLEAN _stdcall VBoxDrvNtFastIoDeviceControl(PFILE_OBJECT pFileObj, BOOL
                                                      PVOID pvOutput, ULONG cbOutput, ULONG uCmd,
                                                      PIO_STATUS_BLOCK pIoStatus, PDEVICE_OBJECT pDevObj)
 {
+    RT_NOREF1(fWait);
+
     /*
      * Only the normal devices, not the stub or error info ones.
      */
@@ -1093,10 +1188,14 @@ static BOOLEAN _stdcall VBoxDrvNtFastIoDeviceControl(PFILE_OBJECT pFileObj, BOOL
                 __except(EXCEPTION_EXECUTE_HANDLER)
                 {
                     rcNt = GetExceptionCode();
+                    Hdr.cbIn = Hdr.cbOut = 0; /* shut up MSC */
                 }
             }
             else
+            {
+                Hdr.cbIn = Hdr.cbOut = 0; /* shut up MSC */
                 rcNt = STATUS_INVALID_PARAMETER;
+            }
             if (NT_SUCCESS(rcNt))
             {
                 /* Verify that the sizes in the request header are correct. */
@@ -1106,7 +1205,7 @@ static BOOLEAN _stdcall VBoxDrvNtFastIoDeviceControl(PFILE_OBJECT pFileObj, BOOL
                     && cbBuf < _1M*16)
                 {
                     /* Allocate a buffer and copy all the input into it. */
-                    PSUPREQHDR pHdr = (PSUPREQHDR)ExAllocatePoolWithTag(NonPagedPool, cbBuf, 'VBox');
+                    PSUPREQHDR pHdr = (PSUPREQHDR)ExAllocatePoolWithTag(g_enmNonPagedPoolType, cbBuf, 'VBox');
                     if (pHdr)
                     {
                         __try
@@ -1114,55 +1213,61 @@ static BOOLEAN _stdcall VBoxDrvNtFastIoDeviceControl(PFILE_OBJECT pFileObj, BOOL
                             RtlCopyMemory(pHdr, pvInput, cbInput);
                             if (cbInput < cbBuf)
                                 RtlZeroMemory((uint8_t *)pHdr + cbInput, cbBuf - cbInput);
-                            rcNt = STATUS_SUCCESS;
+                            if (!memcmp(pHdr, &Hdr, sizeof(Hdr)))
+                                rcNt = STATUS_SUCCESS;
+                            else
+                                rcNt = STATUS_INVALID_PARAMETER;
                         }
                         __except(EXCEPTION_EXECUTE_HANDLER)
                         {
                             rcNt = GetExceptionCode();
                         }
+                        if (NT_SUCCESS(rcNt))
+                        {
+                            /*
+                             * Now call the common code to do the real work.
+                             */
+                            rc = supdrvIOCtl(uCmd, pDevExt, pSession, pHdr, cbBuf);
+                            if (RT_SUCCESS(rc))
+                            {
+                                /*
+                                 * Copy back the result.
+                                 */
+                                cbOut = pHdr->cbOut;
+                                if (cbOut > cbOutput)
+                                {
+                                    cbOut = cbOutput;
+                                    OSDBGPRINT(("VBoxDrvNtFastIoDeviceControl: too much output! %#x > %#x; uCmd=%#x!\n",
+                                                pHdr->cbOut, cbOut, uCmd));
+                                }
+                                if (cbOut)
+                                {
+                                    __try
+                                    {
+                                        RtlCopyMemory(pvOutput, pHdr, cbOut);
+                                        rcNt = STATUS_SUCCESS;
+                                    }
+                                    __except(EXCEPTION_EXECUTE_HANDLER)
+                                    {
+                                        rcNt = GetExceptionCode();
+                                    }
+                                }
+                                else
+                                    rcNt = STATUS_SUCCESS;
+                            }
+                            else if (rc == VERR_INVALID_PARAMETER)
+                                rcNt = STATUS_INVALID_PARAMETER;
+                            else
+                                rcNt = STATUS_NOT_SUPPORTED;
+                            Log2(("VBoxDrvNtFastIoDeviceControl: returns %#x cbOut=%d rc=%#x\n", rcNt, cbOut, rc));
+                        }
+                        else
+                            Log(("VBoxDrvNtFastIoDeviceControl: Error reading %u bytes of user memory at %p (uCmd=%#x)\n",
+                                 cbInput, pvInput, uCmd));
+                        ExFreePoolWithTag(pHdr, 'VBox');
                     }
                     else
                         rcNt = STATUS_NO_MEMORY;
-                    if (NT_SUCCESS(rcNt))
-                    {
-                        /*
-                         * Now call the common code to do the real work.
-                         */
-                        rc = supdrvIOCtl(uCmd, pDevExt, pSession, pHdr, cbBuf);
-                        if (RT_SUCCESS(rc))
-                        {
-                            /*
-                             * Copy back the result.
-                             */
-                            cbOut = pHdr->cbOut;
-                            if (cbOut > cbOutput)
-                            {
-                                cbOut = cbOutput;
-                                OSDBGPRINT(("VBoxDrvNtFastIoDeviceControl: too much output! %#x > %#x; uCmd=%#x!\n",
-                                            pHdr->cbOut, cbOut, uCmd));
-                            }
-                            if (cbOut)
-                            {
-                                __try
-                                {
-                                    RtlCopyMemory(pvOutput, pHdr, cbOut);
-                                    rcNt = STATUS_SUCCESS;
-                                }
-                                __except(EXCEPTION_EXECUTE_HANDLER)
-                                {
-                                    rcNt = GetExceptionCode();
-                                }
-                            }
-                            else
-                                rcNt = STATUS_SUCCESS;
-                        }
-                        else if (rc == VERR_INVALID_PARAMETER)
-                            rcNt = STATUS_INVALID_PARAMETER;
-                        else
-                            rcNt = STATUS_NOT_SUPPORTED;
-                        Log2(("VBoxDrvNtFastIoDeviceControl: returns %#x cbOut=%d rc=%#x\n", rcNt, cbOut, rc));
-                    }
-                    ExFreePoolWithTag(pHdr, 'VBox');
                 }
                 else
                 {
@@ -1249,7 +1354,7 @@ NTSTATUS _stdcall VBoxDrvNtDeviceControl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
  *
  * @returns NT status code.
  *
- * @param   pDevObj     Device object.
+ * @param   pDevExt     Device extension.
  * @param   pSession    The session.
  * @param   pIrp        Request packet.
  * @param   pStack      The stack location containing the DeviceControl parameters.
@@ -1257,7 +1362,7 @@ NTSTATUS _stdcall VBoxDrvNtDeviceControl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 static int VBoxDrvNtDeviceControlSlow(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PIRP pIrp, PIO_STACK_LOCATION pStack)
 {
     NTSTATUS    rcNt;
-    unsigned    cbOut = 0;
+    uint32_t    cbOut = 0;
     int         rc = 0;
     Log2(("VBoxDrvNtDeviceControlSlow(%p,%p): ioctl=%#x pBuf=%p cbIn=%#x cbOut=%#x pSession=%p\n",
           pDevExt, pIrp, pStack->Parameters.DeviceIoControl.IoControlCode,
@@ -1294,7 +1399,7 @@ static int VBoxDrvNtDeviceControlSlow(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSes
                     if (cbOut > pStack->Parameters.DeviceIoControl.OutputBufferLength)
                     {
                         cbOut = pStack->Parameters.DeviceIoControl.OutputBufferLength;
-                        OSDBGPRINT(("VBoxDrvLinuxIOCtl: too much output! %#x > %#x; uCmd=%#x!\n",
+                        OSDBGPRINT(("VBoxDrvNtDeviceControlSlow: too much output! %#x > %#x; uCmd=%#x!\n",
                                     pHdr->cbOut, cbOut, pStack->Parameters.DeviceIoControl.IoControlCode));
                     }
                 }
@@ -1440,6 +1545,7 @@ NTSTATUS _stdcall VBoxDrvNtInternalDeviceControl(PDEVICE_OBJECT pDevObj, PIRP pI
 NTSTATUS _stdcall VBoxDrvNtRead(PDEVICE_OBJECT pDevObj, PIRP pIrp)
 {
     Log(("VBoxDrvNtRead\n"));
+    RT_NOREF1(pDevObj);
 
     NTSTATUS rcNt;
     pIrp->IoStatus.Information = 0;
@@ -1462,33 +1568,36 @@ NTSTATUS _stdcall VBoxDrvNtRead(PDEVICE_OBJECT pDevObj, PIRP pIrp)
             int rc = RTSemMutexRequestNoResume(g_hErrorInfoLock, RT_INDEFINITE_WAIT);
             if (RT_SUCCESS(rc))
             {
-                PSUPDRVNTERRORINFO  pCur;
+                PSUPDRVNTERRORINFO pMatch = NULL;
+                PSUPDRVNTERRORINFO pCur;
                 RTListForEach(&g_ErrorInfoHead, pCur, SUPDRVNTERRORINFO, ListEntry)
                 {
                     if (   pCur->hProcessId == hCurProcessId
                         && pCur->hThreadId  == hCurThreadId)
+                    {
+                        pMatch = pCur;
                         break;
+                    }
                 }
 
                 /*
                  * Did we find error info and is the caller requesting data within it?
-                 * If so, cehck the destination buffer and copy the data into it.
+                 * If so, check the destination buffer and copy the data into it.
                  */
-                if (   pCur
-                    && pStack->Parameters.Read.ByteOffset.QuadPart < pCur->cchErrorInfo
+                if (   pMatch
+                    && pStack->Parameters.Read.ByteOffset.QuadPart < pMatch->cchErrorInfo
                     && pStack->Parameters.Read.ByteOffset.QuadPart >= 0)
                 {
                     PVOID pvDstBuf = pIrp->AssociatedIrp.SystemBuffer;
                     if (pvDstBuf)
                     {
                         uint32_t offRead  = (uint32_t)pStack->Parameters.Read.ByteOffset.QuadPart;
-                        uint32_t cbToRead = pCur->cchErrorInfo - (uint32_t)offRead;
-                        if (cbToRead > pStack->Parameters.Read.Length)
-                        {
-                            cbToRead = pStack->Parameters.Read.Length;
+                        uint32_t cbToRead = pMatch->cchErrorInfo - offRead;
+                        if (cbToRead < pStack->Parameters.Read.Length)
                             RT_BZERO((uint8_t *)pvDstBuf + cbToRead, pStack->Parameters.Read.Length - cbToRead);
-                        }
-                        memcpy(pvDstBuf, &pCur->szErrorInfo[offRead], cbToRead);
+                        else
+                            cbToRead = pStack->Parameters.Read.Length;
+                        memcpy(pvDstBuf, &pMatch->szErrorInfo[offRead], cbToRead);
                         pIrp->IoStatus.Information = cbToRead;
 
                         rcNt = STATUS_SUCCESS;
@@ -1499,10 +1608,10 @@ NTSTATUS _stdcall VBoxDrvNtRead(PDEVICE_OBJECT pDevObj, PIRP pIrp)
                 /*
                  * End of file. Free the info.
                  */
-                else if (pCur)
+                else if (pMatch)
                 {
-                    RTListNodeRemove(&pCur->ListEntry);
-                    RTMemFree(pCur);
+                    RTListNodeRemove(&pMatch->ListEntry);
+                    RTMemFree(pMatch);
                     rcNt = STATUS_END_OF_FILE;
                 }
                 /*
@@ -1515,6 +1624,15 @@ NTSTATUS _stdcall VBoxDrvNtRead(PDEVICE_OBJECT pDevObj, PIRP pIrp)
             }
             else
                 rcNt = STATUS_UNSUCCESSFUL;
+
+            /* Paranoia: Clear the buffer on failure. */
+            if (!NT_SUCCESS(rcNt))
+            {
+                PVOID pvDstBuf = pIrp->AssociatedIrp.SystemBuffer;
+                if (   pvDstBuf
+                    && pStack->Parameters.Read.Length)
+                    RT_BZERO(pvDstBuf, pStack->Parameters.Read.Length);
+            }
         }
         else
             rcNt = STATUS_INVALID_PARAMETER;
@@ -1561,25 +1679,24 @@ NTSTATUS _stdcall VBoxDrvNtNotSupportedStub(PDEVICE_OBJECT pDevObj, PIRP pIrp)
  * ExRegisterCallback handler for power events
  *
  * @param   pCallbackContext    User supplied parameter (pDevObj)
- * @param   pArgument1          First argument
- * @param   pArgument2          Second argument
+ * @param   pvArgument1         First argument
+ * @param   pvArgument2         Second argument
  */
-VOID _stdcall VBoxPowerDispatchCallback(PVOID pCallbackContext, PVOID pArgument1, PVOID pArgument2)
+VOID _stdcall VBoxPowerDispatchCallback(PVOID pCallbackContext, PVOID pvArgument1, PVOID pvArgument2)
 {
-    PDEVICE_OBJECT pDevObj = (PDEVICE_OBJECT)pCallbackContext;
-
-    Log(("VBoxPowerDispatchCallback: %x %x\n", pArgument1, pArgument2));
+    /*PDEVICE_OBJECT pDevObj = (PDEVICE_OBJECT)pCallbackContext;*/ RT_NOREF1(pCallbackContext);
+    Log(("VBoxPowerDispatchCallback: %x %x\n", pvArgument1, pvArgument2));
 
     /* Power change imminent? */
-    if ((unsigned)pArgument1 == PO_CB_SYSTEM_STATE_LOCK)
+    if ((uintptr_t)pvArgument1 == PO_CB_SYSTEM_STATE_LOCK)
     {
-        if ((unsigned)pArgument2 == 0)
+        if (pvArgument2 == NULL)
             Log(("VBoxPowerDispatchCallback: about to go into suspend mode!\n"));
         else
             Log(("VBoxPowerDispatchCallback: resumed!\n"));
 
         /* Inform any clients that have registered themselves with IPRT. */
-        RTPowerSignalEvent(((unsigned)pArgument2 == 0) ? RTPOWEREVENT_SUSPEND : RTPOWEREVENT_RESUME);
+        RTPowerSignalEvent(pvArgument2 == NULL ? RTPOWEREVENT_SUSPEND : RTPOWEREVENT_RESUME);
     }
 }
 
@@ -1598,6 +1715,9 @@ void VBOXCALL supdrvOSCleanupSession(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSess
         supdrvNtProtectRelease(pSession->pNtProtect);
         pSession->pNtProtect = NULL;
     }
+    RT_NOREF1(pDevExt);
+#else
+    RT_NOREF2(pDevExt, pSession);
 #endif
 }
 
@@ -1611,6 +1731,103 @@ void VBOXCALL supdrvOSSessionHashTabInserted(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSI
 void VBOXCALL supdrvOSSessionHashTabRemoved(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, void *pvUser)
 {
     NOREF(pDevExt); NOREF(pSession); NOREF(pvUser);
+}
+
+
+size_t VBOXCALL supdrvOSGipGetGroupTableSize(PSUPDRVDEVEXT pDevExt)
+{
+    NOREF(pDevExt);
+    uint32_t cMaxCpus = RTMpGetCount();
+    uint32_t cGroups  = RTMpGetMaxCpuGroupCount();
+
+    return cGroups * RT_UOFFSETOF(SUPGIPCPUGROUP, aiCpuSetIdxs)
+         + RT_SIZEOFMEMB(SUPGIPCPUGROUP, aiCpuSetIdxs[0]) * cMaxCpus;
+}
+
+
+int VBOXCALL supdrvOSInitGipGroupTable(PSUPDRVDEVEXT pDevExt, PSUPGLOBALINFOPAGE pGip, size_t cbGipCpuGroups)
+{
+    Assert(cbGipCpuGroups > 0); NOREF(cbGipCpuGroups); NOREF(pDevExt);
+
+    unsigned const  cGroups = RTMpGetMaxCpuGroupCount();
+    AssertReturn(cGroups > 0 && cGroups < RT_ELEMENTS(pGip->aoffCpuGroup), VERR_INTERNAL_ERROR_2);
+    pGip->cPossibleCpuGroups = cGroups;
+
+    PSUPGIPCPUGROUP pGroup = (PSUPGIPCPUGROUP)&pGip->aCPUs[pGip->cCpus];
+    for (uint32_t idxGroup = 0; idxGroup < cGroups; idxGroup++)
+    {
+        uint32_t cActive  = 0;
+        uint32_t cMax     = RTMpGetCpuGroupCounts(idxGroup, &cActive);
+        uint32_t cbNeeded = RT_UOFFSETOF_DYN(SUPGIPCPUGROUP, aiCpuSetIdxs[cMax]);
+        AssertReturn(cbNeeded <= cbGipCpuGroups, VERR_INTERNAL_ERROR_3);
+        AssertReturn(cActive <= cMax, VERR_INTERNAL_ERROR_4);
+
+        pGip->aoffCpuGroup[idxGroup] = (uint16_t)((uintptr_t)pGroup - (uintptr_t)pGip);
+        pGroup->cMembers    = cActive;
+        pGroup->cMaxMembers = cMax;
+        for (uint32_t idxMember = 0; idxMember < cMax; idxMember++)
+        {
+            pGroup->aiCpuSetIdxs[idxMember] = RTMpSetIndexFromCpuGroupMember(idxGroup, idxMember);
+            Assert((unsigned)pGroup->aiCpuSetIdxs[idxMember] < pGip->cPossibleCpus);
+        }
+
+        /* advance. */
+        cbGipCpuGroups -= cbNeeded;
+        pGroup = (PSUPGIPCPUGROUP)&pGroup->aiCpuSetIdxs[cMax];
+    }
+
+    return VINF_SUCCESS;
+}
+
+
+void VBOXCALL supdrvOSGipInitGroupBitsForCpu(PSUPDRVDEVEXT pDevExt, PSUPGLOBALINFOPAGE pGip, PSUPGIPCPU pGipCpu)
+{
+    NOREF(pDevExt);
+
+    /*
+     * Translate the CPU index into a group and member.
+     */
+    PROCESSOR_NUMBER ProcNum = { 0, pGipCpu->iCpuSet, 0 };
+    if (g_pfnKeGetProcessorNumberFromIndex)
+    {
+        NTSTATUS rcNt = g_pfnKeGetProcessorNumberFromIndex(pGipCpu->iCpuSet, &ProcNum);
+        if (NT_SUCCESS(rcNt))
+            Assert(ProcNum.Group < g_pfnKeQueryMaximumGroupCount());
+        else
+        {
+            AssertFailed();
+            ProcNum.Group  = 0;
+            ProcNum.Number = pGipCpu->iCpuSet;
+        }
+    }
+    pGipCpu->iCpuGroup       = ProcNum.Group;
+    pGipCpu->iCpuGroupMember = ProcNum.Number;
+
+    /*
+     * Update the group info.  Just do this wholesale for now (doesn't scale well).
+     */
+    for (uint32_t idxGroup = 0; idxGroup < pGip->cPossibleCpuGroups; idxGroup++)
+        if (pGip->aoffCpuGroup[idxGroup] != UINT16_MAX)
+        {
+            PSUPGIPCPUGROUP pGroup = (PSUPGIPCPUGROUP)((uintptr_t)pGip + pGip->aoffCpuGroup[idxGroup]);
+
+            uint32_t cActive  = 0;
+            uint32_t cMax     = RTMpGetCpuGroupCounts(idxGroup, &cActive);
+            AssertStmt(cMax == pGroup->cMaxMembers, cMax = pGroup->cMaxMembers);
+            AssertStmt(cActive <= cMax, cActive = cMax);
+            if (pGroup->cMembers != cActive)
+                pGroup->cMembers = cActive;
+
+            for (uint32_t idxMember = 0; idxMember < cMax; idxMember++)
+            {
+                int idxCpuSet = RTMpSetIndexFromCpuGroupMember(idxGroup, idxMember);
+                AssertMsg((unsigned)idxCpuSet < pGip->cPossibleCpus,
+                          ("%d vs %d for %u.%u\n", idxCpuSet, pGip->cPossibleCpus, idxGroup, idxMember));
+
+                if (pGroup->aiCpuSetIdxs[idxMember] != idxCpuSet)
+                    pGroup->aiCpuSetIdxs[idxMember] = idxCpuSet;
+            }
+        }
 }
 
 
@@ -1650,7 +1867,93 @@ bool VBOXCALL   supdrvOSObjCanAccess(PSUPDRVOBJ pObj, PSUPDRVSESSION pSession, c
  */
 bool VBOXCALL  supdrvOSGetForcedAsyncTscMode(PSUPDRVDEVEXT pDevExt)
 {
+    RT_NOREF1(pDevExt);
+    return g_Options.fOptForceAsyncTsc != 0;
+}
+
+
+/**
+ * Whether the host takes CPUs offline during a suspend/resume operation.
+ */
+bool VBOXCALL  supdrvOSAreCpusOfflinedOnSuspend(void)
+{
     return false;
+}
+
+
+/**
+ * Whether the hardware TSC has been synchronized by the OS.
+ */
+bool VBOXCALL  supdrvOSAreTscDeltasInSync(void)
+{
+    /* If IPRT didn't find KeIpiGenericCall we pretend windows(, the firmware,
+       or whoever) always configures TSCs perfectly. */
+    return !RTMpOnPairIsConcurrentExecSupported();
+}
+
+
+/**
+ * Checks whether we're allowed by Hyper-V to modify CR4.
+ */
+int  VBOXCALL supdrvOSGetRawModeUsability(void)
+{
+    int rc = VINF_SUCCESS;
+
+#ifdef RT_ARCH_AMD64
+    /*
+     * Broadwell running W10 17083.100:
+     *        CR4: 0x170678
+     *  Evil mask: 0x170638
+     *      X86_CR4_SMEP        - evil
+     *      X86_CR4_FSGSBASE    - evil
+     *      X86_CR4_PCIDE       - evil
+     *      X86_CR4_OSXSAVE     - evil
+     *      X86_CR4_OSFXSR      - evil
+     *      X86_CR4_OSXMMEEXCPT - evil
+     *      X86_CR4_PSE         - evil
+     *      X86_CR4_PAE         - evil
+     *      X86_CR4_MCE         - okay
+     *      X86_CR4_DE          - evil
+     */
+    if (ASMHasCpuId())
+    {
+        uint32_t cStd = ASMCpuId_EAX(0);
+        if (ASMIsValidStdRange(cStd))
+        {
+            uint32_t uIgn         = 0;
+            uint32_t fEdxFeatures = 0;
+            uint32_t fEcxFeatures = 0;
+            ASMCpuIdExSlow(1, 0, 0, 0, &uIgn, &uIgn, &fEcxFeatures, &fEdxFeatures);
+            if (fEcxFeatures & X86_CPUID_FEATURE_ECX_HVP)
+            {
+                RTCCUINTREG  const fOldFlags    = ASMIntDisableFlags();
+                RTCCUINTXREG const fCr4         = ASMGetCR4();
+
+                RTCCUINTXREG const fSafeToClear = X86_CR4_TSD      | X86_CR4_DE     | X86_CR4_PGE  | X86_CR4_PCE
+                                                | X86_CR4_FSGSBASE | X86_CR4_PCIDE  | X86_CR4_SMEP | X86_CR4_SMAP
+                                                | X86_CR4_OSXSAVE  | X86_CR4_OSFXSR | X86_CR4_OSXMMEEXCPT;
+                RTCCUINTXREG       fLoadCr4     = fCr4 & ~fSafeToClear;
+                RTCCUINTXREG const fCleared     = fCr4 & fSafeToClear;
+                if (!(fCleared & X86_CR4_TSD) && (fEdxFeatures & X86_CPUID_FEATURE_EDX_TSC))
+                    fLoadCr4 |= X86_CR4_TSD;
+                if (!(fCleared & X86_CR4_PGE) && (fEdxFeatures & X86_CPUID_FEATURE_EDX_PGE))
+                    fLoadCr4 |= X86_CR4_PGE;
+                __try
+                {
+                    ASMSetCR4(fLoadCr4);
+                }
+                __except(EXCEPTION_EXECUTE_HANDLER)
+                {
+                    rc = VERR_SUPDRV_NO_RAW_MODE_HYPER_V_ROOT;
+                }
+                if (RT_SUCCESS(rc))
+                    ASMSetCR4(fCr4);
+                ASMSetFlags(fOldFlags);
+            }
+        }
+    }
+#endif
+    return rc;
 }
 
 
@@ -1721,7 +2024,7 @@ int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
             Log(("ImageAddress=%p SectionPointer=%p ImageLength=%#x cbImageBits=%#x rcNt=%#x '%ls'\n",
                  Info.ImageAddress, Info.SectionPointer, Info.ImageLength, pImage->cbImageBits, rcNt, Info.Name.Buffer));
 # ifdef DEBUG_bird
-            SUPR0Printf("ImageAddress=%p SectionPointer=%p ImageLength=%#x cbImageBits=%#x rcNt=%#x '%ws'\n",
+            SUPR0Printf("ImageAddress=%p SectionPointer=%p ImageLength=%#x cbImageBits=%#x rcNt=%#x '%ls'\n",
                         Info.ImageAddress, Info.SectionPointer, Info.ImageLength, pImage->cbImageBits, rcNt, Info.Name.Buffer);
 # endif
             if (pImage->cbImageBits == Info.ImageLength)
@@ -1791,29 +2094,189 @@ int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
 }
 
 
-void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const char *pszFilename)
+{
+    NOREF(pDevExt); NOREF(pImage); NOREF(pszFilename);
+}
+
+
+void VBOXCALL   supdrvOSLdrNotifyUnloaded(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
 {
     NOREF(pDevExt); NOREF(pImage);
 }
 
 
-int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv, const uint8_t *pbImageBits)
+/**
+ * Common worker for supdrvOSLdrQuerySymbol and supdrvOSLdrValidatePointer.
+ *
+ * @note    Similar code in rtR0DbgKrnlNtParseModule.
+ */
+static int supdrvOSLdrValidatePointerOrQuerySymbol(PSUPDRVLDRIMAGE pImage, void *pv, const char *pszSymbol,
+                                                   size_t cchSymbol, void **ppvSymbol)
 {
-    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits);
+    AssertReturn(pImage->pvNtSectionObj, VERR_INVALID_STATE);
+    Assert(pszSymbol || !ppvSymbol);
+
+    /*
+     * Locate the export directory in the loaded image.
+     */
+    uint8_t const  *pbMapping      = (uint8_t const  *)pImage->pvImage;
+    uint32_t const  cbMapping      = pImage->cbImageBits;
+    uint32_t const  uRvaToValidate = (uint32_t)((uintptr_t)pv - (uintptr_t)pbMapping);
+    AssertReturn(uRvaToValidate < cbMapping || ppvSymbol, VERR_INTERNAL_ERROR_3);
+
+    uint32_t const  offNtHdrs = *(uint16_t *)pbMapping == IMAGE_DOS_SIGNATURE
+                              ? ((IMAGE_DOS_HEADER const *)pbMapping)->e_lfanew
+                              : 0;
+    AssertLogRelReturn(offNtHdrs + sizeof(IMAGE_NT_HEADERS) < cbMapping, VERR_INTERNAL_ERROR_5);
+
+    IMAGE_NT_HEADERS const *pNtHdrs = (IMAGE_NT_HEADERS const *)((uintptr_t)pbMapping + offNtHdrs);
+    AssertLogRelReturn(pNtHdrs->Signature == IMAGE_NT_SIGNATURE, VERR_INVALID_EXE_SIGNATURE);
+    AssertLogRelReturn(pNtHdrs->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR_MAGIC, VERR_BAD_EXE_FORMAT);
+    AssertLogRelReturn(pNtHdrs->OptionalHeader.NumberOfRvaAndSizes == IMAGE_NUMBEROF_DIRECTORY_ENTRIES, VERR_BAD_EXE_FORMAT);
+
+    uint32_t const offEndSectHdrs = offNtHdrs
+                                  + sizeof(*pNtHdrs)
+                                  + pNtHdrs->FileHeader.NumberOfSections * sizeof(IMAGE_SECTION_HEADER);
+    AssertReturn(offEndSectHdrs < cbMapping, VERR_BAD_EXE_FORMAT);
+
+    /*
+     * Find the export directory.
+     */
+    IMAGE_DATA_DIRECTORY ExpDir = pNtHdrs->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    if (!ExpDir.Size)
+    {
+        SUPR0Printf("SUPDrv: No exports in %s!\n", pImage->szName);
+        return ppvSymbol ? VERR_SYMBOL_NOT_FOUND : VERR_NOT_FOUND;
+    }
+    AssertReturn(   ExpDir.Size >= sizeof(IMAGE_EXPORT_DIRECTORY)
+                 && ExpDir.VirtualAddress >= offEndSectHdrs
+                 && ExpDir.VirtualAddress < cbMapping
+                 && ExpDir.VirtualAddress + ExpDir.Size <= cbMapping, VERR_BAD_EXE_FORMAT);
+
+    IMAGE_EXPORT_DIRECTORY const *pExpDir = (IMAGE_EXPORT_DIRECTORY const *)&pbMapping[ExpDir.VirtualAddress];
+
+    uint32_t const cNamedExports = pExpDir->NumberOfNames;
+    AssertReturn(cNamedExports              < _1M, VERR_BAD_EXE_FORMAT);
+    AssertReturn(pExpDir->NumberOfFunctions < _1M, VERR_BAD_EXE_FORMAT);
+    if (pExpDir->NumberOfFunctions == 0 || cNamedExports == 0)
+    {
+        SUPR0Printf("SUPDrv: No exports in %s!\n", pImage->szName);
+        return ppvSymbol ? VERR_SYMBOL_NOT_FOUND : VERR_NOT_FOUND;
+    }
+
+    uint32_t const cExports = RT_MAX(cNamedExports, pExpDir->NumberOfFunctions);
+
+    AssertReturn(   pExpDir->AddressOfFunctions >= offEndSectHdrs
+                 && pExpDir->AddressOfFunctions < cbMapping
+                 && pExpDir->AddressOfFunctions + cExports * sizeof(uint32_t) <= cbMapping,
+                 VERR_BAD_EXE_FORMAT);
+    uint32_t const * const paoffExports = (uint32_t const *)&pbMapping[pExpDir->AddressOfFunctions];
+
+    AssertReturn(   pExpDir->AddressOfNames >= offEndSectHdrs
+                 && pExpDir->AddressOfNames < cbMapping
+                 && pExpDir->AddressOfNames + cNamedExports * sizeof(uint32_t) <= cbMapping,
+                 VERR_BAD_EXE_FORMAT);
+    uint32_t const * const paoffNamedExports = (uint32_t const *)&pbMapping[pExpDir->AddressOfNames];
+
+    AssertReturn(   pExpDir->AddressOfNameOrdinals >= offEndSectHdrs
+                 && pExpDir->AddressOfNameOrdinals < cbMapping
+                 && pExpDir->AddressOfNameOrdinals + cNamedExports * sizeof(uint32_t) <= cbMapping,
+                 VERR_BAD_EXE_FORMAT);
+    uint16_t const * const pau16NameOrdinals = (uint16_t const *)&pbMapping[pExpDir->AddressOfNameOrdinals];
+
+    /*
+     * Validate the entrypoint RVA by scanning the export table.
+     */
+    uint32_t iExportOrdinal = UINT32_MAX;
+    if (!ppvSymbol)
+    {
+        for (uint32_t i = 0; i < cExports; i++)
+            if (paoffExports[i] == uRvaToValidate)
+            {
+                iExportOrdinal = i;
+                break;
+            }
+        if (iExportOrdinal == UINT32_MAX)
+        {
+            SUPR0Printf("SUPDrv: No export with rva %#x (%s) in %s!\n", uRvaToValidate, pszSymbol, pImage->szName);
+            return VERR_NOT_FOUND;
+        }
+    }
+
+    /*
+     * Can we validate the symbol name too or should we find a name?
+     * If so, just do a linear search.
+     */
+    if (pszSymbol && (RT_C_IS_UPPER(*pszSymbol) || ppvSymbol))
+    {
+        for (uint32_t i = 0; i < cNamedExports; i++)
+        {
+            uint32_t const     offName = paoffNamedExports[i];
+            AssertReturn(offName < cbMapping, VERR_BAD_EXE_FORMAT);
+            uint32_t const     cchMaxName = cbMapping - offName;
+            const char * const pszName    = (const char *)&pbMapping[offName];
+            const char * const pszEnd     = (const char *)memchr(pszName, '\0', cchMaxName);
+            AssertReturn(pszEnd, VERR_BAD_EXE_FORMAT);
+
+            if (   cchSymbol == (size_t)(pszEnd - pszName)
+                && memcmp(pszName, pszSymbol, cchSymbol) == 0)
+            {
+                if (ppvSymbol)
+                {
+                    iExportOrdinal = pau16NameOrdinals[i];
+                    if (   iExportOrdinal < cExports
+                        && paoffExports[iExportOrdinal] < cbMapping)
+                    {
+                        *ppvSymbol = (void *)(paoffExports[iExportOrdinal] + pbMapping);
+                        return VINF_SUCCESS;
+                    }
+                }
+                else if (pau16NameOrdinals[i] == iExportOrdinal)
+                    return VINF_SUCCESS;
+                else
+                    SUPR0Printf("SUPDrv: Different exports found for %s and rva %#x in %s: %#x vs %#x\n",
+                                pszSymbol, uRvaToValidate, pImage->szName, pau16NameOrdinals[i], iExportOrdinal);
+                return VERR_LDR_BAD_FIXUP;
+            }
+        }
+        if (!ppvSymbol)
+            SUPR0Printf("SUPDrv: No export named %s (%#x) in %s!\n", pszSymbol, uRvaToValidate, pImage->szName);
+        return VERR_SYMBOL_NOT_FOUND;
+    }
     return VINF_SUCCESS;
 }
 
 
+int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv,
+                                           const uint8_t *pbImageBits, const char *pszSymbol)
+{
+    RT_NOREF(pDevExt, pbImageBits);
+    return supdrvOSLdrValidatePointerOrQuerySymbol(pImage, pv, pszSymbol, pszSymbol ? strlen(pszSymbol) : 0, NULL);
+}
+
+
+int  VBOXCALL   supdrvOSLdrQuerySymbol(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage,
+                                       const char *pszSymbol, size_t cchSymbol, void **ppvSymbol)
+{
+    RT_NOREF(pDevExt);
+    AssertReturn(ppvSymbol, VERR_INVALID_PARAMETER);
+    AssertReturn(pszSymbol, VERR_INVALID_PARAMETER);
+    return supdrvOSLdrValidatePointerOrQuerySymbol(pImage, NULL, pszSymbol, cchSymbol, ppvSymbol);
+}
+
+
 /**
- * memcmp + log.
+ * memcmp + errormsg + log.
  *
  * @returns Same as memcmp.
  * @param   pImage          The image.
  * @param   pbImageBits     The image bits ring-3 uploads.
  * @param   uRva            The RVA to start comparing at.
  * @param   cb              The number of bytes to compare.
+ * @param   pReq            The load request.
  */
-static int supdrvNtCompare(PSUPDRVLDRIMAGE pImage, const uint8_t *pbImageBits, uint32_t uRva, uint32_t cb)
+static int supdrvNtCompare(PSUPDRVLDRIMAGE pImage, const uint8_t *pbImageBits, uint32_t uRva, uint32_t cb, PSUPLDRLOAD pReq)
 {
     int iDiff = memcmp((uint8_t const *)pImage->pvImage + uRva, pbImageBits + uRva, cb);
     if (iDiff)
@@ -1823,20 +2286,28 @@ static int supdrvNtCompare(PSUPDRVLDRIMAGE pImage, const uint8_t *pbImageBits, u
         for (size_t off = uRva; cbLeft > 0; off++, cbLeft--)
             if (pbNativeBits[off] != pbImageBits[off])
             {
-                char szBytes[128];
-                RTStrPrintf(szBytes, sizeof(szBytes), "native: %.*Rhxs  our: %.*Rhxs",
-                            RT_MIN(12, cbLeft), &pbNativeBits[off],
-                            RT_MIN(12, cbLeft), &pbImageBits[off]);
-                SUPR0Printf("VBoxDrv: Mismatch at %#x of %s: %s\n", off, pImage->szName, szBytes);
+                /* Note! We need to copy image bits into a temporary stack buffer here as we'd
+                         otherwise risk overwriting them while formatting the error message. */
+                uint8_t abBytes[64];
+                memcpy(abBytes, &pbImageBits[off], RT_MIN(64, cbLeft));
+                supdrvLdrLoadError(VERR_LDR_MISMATCH_NATIVE, pReq,
+                                   "Mismatch at %#x (%p) of %s loaded at %p:\n"
+                                   "ntld: %.*Rhxs\n"
+                                   "iprt: %.*Rhxs",
+                                   off, &pbNativeBits[off], pImage->szName, pImage->pvImage,
+                                   RT_MIN(64, cbLeft), &pbNativeBits[off],
+                                   RT_MIN(64, cbLeft), &abBytes[0]);
+                SUPR0Printf("VBoxDrv: %s", pReq->u.Out.szError);
                 break;
             }
     }
     return iDiff;
 }
 
+
 int  VBOXCALL   supdrvOSLdrLoad(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const uint8_t *pbImageBits, PSUPLDRLOAD pReq)
 {
-    NOREF(pDevExt); NOREF(pReq);
+    NOREF(pDevExt);
     if (pImage->pvNtSectionObj)
     {
         /*
@@ -1846,25 +2317,43 @@ int  VBOXCALL   supdrvOSLdrLoad(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
             return VINF_SUCCESS;
 
         /*
-         * However, on Windows Server 2003 (sp2 x86) both import thunk tables
-         * are fixed up and we typically get a mismatch in the INIT section.
+         * On Windows 10 the ImageBase member of the optional header is sometimes
+         * updated with the actual load address and sometimes not.
+         */
+        uint32_t const  offNtHdrs = *(uint16_t *)pbImageBits == IMAGE_DOS_SIGNATURE
+                                  ? ((IMAGE_DOS_HEADER const *)pbImageBits)->e_lfanew
+                                  : 0;
+        AssertLogRelReturn(offNtHdrs + sizeof(IMAGE_NT_HEADERS) < pImage->cbImageBits, VERR_INTERNAL_ERROR_5);
+        IMAGE_NT_HEADERS const *pNtHdrsIprt = (IMAGE_NT_HEADERS const *)(pbImageBits + offNtHdrs);
+        IMAGE_NT_HEADERS const *pNtHdrsNtLd = (IMAGE_NT_HEADERS const *)((uintptr_t)pImage->pvImage + offNtHdrs);
+
+        uint32_t const  offImageBase = offNtHdrs + RT_UOFFSETOF(IMAGE_NT_HEADERS, OptionalHeader.ImageBase);
+        uint32_t const  cbImageBase  = RT_SIZEOFMEMB(IMAGE_NT_HEADERS, OptionalHeader.ImageBase);
+        if (   pNtHdrsNtLd->OptionalHeader.ImageBase != pNtHdrsIprt->OptionalHeader.ImageBase
+            && (   pNtHdrsNtLd->OptionalHeader.ImageBase == (uintptr_t)pImage->pvImage
+                || pNtHdrsIprt->OptionalHeader.ImageBase == (uintptr_t)pImage->pvImage)
+            && pNtHdrsIprt->Signature == IMAGE_NT_SIGNATURE
+            && pNtHdrsIprt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR_MAGIC
+            && !memcmp(pImage->pvImage, pbImageBits, offImageBase)
+            && !memcmp((uint8_t const *)pImage->pvImage + offImageBase + cbImageBase,
+                       pbImageBits                      + offImageBase + cbImageBase,
+                       pImage->cbImageBits              - offImageBase - cbImageBase))
+            return VINF_SUCCESS;
+
+        /*
+         * On Windows Server 2003 (sp2 x86) both import thunk tables are fixed
+         * up and we typically get a mismatch in the INIT section.
          *
          * So, lets see if everything matches when excluding the
-         * OriginalFirstThunk tables.  To make life simpler, set the max number
-         * of imports to 16 and just record and sort the locations that needs
-         * to be excluded from the comparison.
+         * OriginalFirstThunk tables and (maybe) the ImageBase member.
+         * For simplicity the max number of exclusion regions is set to 16.
          */
-        IMAGE_NT_HEADERS const *pNtHdrs;
-        pNtHdrs = (IMAGE_NT_HEADERS const *)(pbImageBits
-                                             + (  *(uint16_t *)pbImageBits == IMAGE_DOS_SIGNATURE
-                                                ? ((IMAGE_DOS_HEADER const *)pbImageBits)->e_lfanew
-                                                : 0));
-        if (    pNtHdrs->Signature == IMAGE_NT_SIGNATURE
-            &&  pNtHdrs->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR_MAGIC
-            &&  pNtHdrs->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_IMPORT
-            &&  pNtHdrs->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size >= sizeof(IMAGE_IMPORT_DESCRIPTOR)
-            &&  pNtHdrs->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress > sizeof(IMAGE_NT_HEADERS)
-            &&  pNtHdrs->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress < pImage->cbImageBits
+        if (    pNtHdrsIprt->Signature == IMAGE_NT_SIGNATURE
+            &&  pNtHdrsIprt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR_MAGIC
+            &&  pNtHdrsIprt->OptionalHeader.NumberOfRvaAndSizes > IMAGE_DIRECTORY_ENTRY_IMPORT
+            &&  pNtHdrsIprt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size >= sizeof(IMAGE_IMPORT_DESCRIPTOR)
+            &&  pNtHdrsIprt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress > sizeof(IMAGE_NT_HEADERS)
+            &&  pNtHdrsIprt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress < pImage->cbImageBits
             )
         {
             struct MyRegion
@@ -1873,11 +2362,23 @@ int  VBOXCALL   supdrvOSLdrLoad(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
                 uint32_t cb;
             }           aExcludeRgns[16];
             unsigned    cExcludeRgns = 0;
-            uint32_t    cImpsLeft    = pNtHdrs->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size
+
+            /* ImageBase: */
+            if (   pNtHdrsNtLd->OptionalHeader.ImageBase != pNtHdrsIprt->OptionalHeader.ImageBase
+                && (   pNtHdrsNtLd->OptionalHeader.ImageBase == (uintptr_t)pImage->pvImage
+                    || pNtHdrsIprt->OptionalHeader.ImageBase == (uintptr_t)pImage->pvImage) )
+            {
+                aExcludeRgns[cExcludeRgns].uRva = offImageBase;
+                aExcludeRgns[cExcludeRgns].cb   = cbImageBase;
+                cExcludeRgns++;
+            }
+
+            /* Imports: */
+            uint32_t    cImpsLeft    = pNtHdrsIprt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size
                                      / sizeof(IMAGE_IMPORT_DESCRIPTOR);
-            IMAGE_IMPORT_DESCRIPTOR const *pImp;
-            pImp = (IMAGE_IMPORT_DESCRIPTOR const *)(pbImageBits
-                                                     + pNtHdrs->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
+            uint32_t    offImps      = pNtHdrsIprt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+            AssertLogRelReturn(offImps + cImpsLeft * sizeof(IMAGE_IMPORT_DESCRIPTOR) <= pImage->cbImageBits, VERR_INTERNAL_ERROR_3);
+            IMAGE_IMPORT_DESCRIPTOR const *pImp = (IMAGE_IMPORT_DESCRIPTOR const *)(pbImageBits + offImps);
             while (   cImpsLeft-- > 0
                    && cExcludeRgns < RT_ELEMENTS(aExcludeRgns))
             {
@@ -1917,19 +2418,19 @@ int  VBOXCALL   supdrvOSLdrLoad(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
             for (unsigned i = 0; !iDiff && i < cExcludeRgns; i++)
             {
                 if (uRvaNext < aExcludeRgns[i].uRva)
-                    iDiff = supdrvNtCompare(pImage, pbImageBits, uRvaNext, aExcludeRgns[i].uRva - uRvaNext);
+                    iDiff = supdrvNtCompare(pImage, pbImageBits, uRvaNext, aExcludeRgns[i].uRva - uRvaNext, pReq);
                 uRvaNext = aExcludeRgns[i].uRva + aExcludeRgns[i].cb;
             }
             if (!iDiff && uRvaNext < pImage->cbImageBits)
-                iDiff = supdrvNtCompare(pImage, pbImageBits, uRvaNext, pImage->cbImageBits - uRvaNext);
+                iDiff = supdrvNtCompare(pImage, pbImageBits, uRvaNext, pImage->cbImageBits - uRvaNext, pReq);
             if (!iDiff)
                 return VINF_SUCCESS;
         }
         else
-            supdrvNtCompare(pImage, pbImageBits, 0, pImage->cbImageBits);
+            supdrvNtCompare(pImage, pbImageBits, 0, pImage->cbImageBits, pReq);
         return VERR_LDR_MISMATCH_NATIVE;
     }
-    return VERR_INTERNAL_ERROR_4;
+    return supdrvLdrLoadError(VERR_INTERNAL_ERROR_4, pReq, "No NT section object! Impossible!");
 }
 
 
@@ -1951,6 +2452,227 @@ void VBOXCALL   supdrvOSLdrUnload(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
     }
     NOREF(pDevExt);
 }
+
+
+#ifdef SUPDRV_WITH_MSR_PROBER
+
+#if 1
+/** @todo make this selectable. */
+# define AMD_MSR_PASSCODE 0x9c5a203a
+#else
+# define ASMRdMsrEx(a, b, c) ASMRdMsr(a)
+# define ASMWrMsrEx(a, b, c) ASMWrMsr(a,c)
+#endif
+
+
+/**
+ * Argument package used by supdrvOSMsrProberRead and supdrvOSMsrProberWrite.
+ */
+typedef struct SUPDRVNTMSPROBERARGS
+{
+    uint32_t    uMsr;
+    uint64_t    uValue;
+    bool        fGp;
+} SUPDRVNTMSPROBERARGS;
+
+/** @callback_method_impl{FNRTMPWORKER, Worker for supdrvOSMsrProberRead.} */
+static DECLCALLBACK(void) supdrvNtMsProberReadOnCpu(RTCPUID idCpu, void *pvUser1, void *pvUser2)
+{
+    /*
+     * rdmsr and wrmsr faults can be caught even with interrupts disabled.
+     * (At least on 32-bit XP.)
+     */
+    SUPDRVNTMSPROBERARGS   *pArgs = (SUPDRVNTMSPROBERARGS *)pvUser1; NOREF(idCpu); NOREF(pvUser2);
+    RTCCUINTREG             fOldFlags = ASMIntDisableFlags();
+    __try
+    {
+        pArgs->uValue = ASMRdMsrEx(pArgs->uMsr, AMD_MSR_PASSCODE);
+        pArgs->fGp    = false;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)
+    {
+        pArgs->fGp    = true;
+        pArgs->uValue = 0;
+    }
+    ASMSetFlags(fOldFlags);
+}
+
+
+int VBOXCALL    supdrvOSMsrProberRead(uint32_t uMsr, RTCPUID idCpu, uint64_t *puValue)
+{
+    SUPDRVNTMSPROBERARGS Args;
+    Args.uMsr   = uMsr;
+    Args.uValue = 0;
+    Args.fGp    = true;
+
+    if (idCpu == NIL_RTCPUID)
+        supdrvNtMsProberReadOnCpu(idCpu, &Args, NULL);
+    else
+    {
+        int rc = RTMpOnSpecific(idCpu, supdrvNtMsProberReadOnCpu, &Args, NULL);
+        if (RT_FAILURE(rc))
+            return rc;
+    }
+
+    if (Args.fGp)
+        return VERR_ACCESS_DENIED;
+    *puValue = Args.uValue;
+    return VINF_SUCCESS;
+}
+
+
+/** @callback_method_impl{FNRTMPWORKER, Worker for supdrvOSMsrProberWrite.} */
+static DECLCALLBACK(void) supdrvNtMsProberWriteOnCpu(RTCPUID idCpu, void *pvUser1, void *pvUser2)
+{
+    /*
+     * rdmsr and wrmsr faults can be caught even with interrupts disabled.
+     * (At least on 32-bit XP.)
+     */
+    SUPDRVNTMSPROBERARGS   *pArgs = (SUPDRVNTMSPROBERARGS *)pvUser1; NOREF(idCpu); NOREF(pvUser2);
+    RTCCUINTREG             fOldFlags = ASMIntDisableFlags();
+    __try
+    {
+        ASMWrMsrEx(pArgs->uMsr, AMD_MSR_PASSCODE, pArgs->uValue);
+        pArgs->fGp = false;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)
+    {
+        pArgs->fGp = true;
+    }
+    ASMSetFlags(fOldFlags);
+}
+
+int VBOXCALL    supdrvOSMsrProberWrite(uint32_t uMsr, RTCPUID idCpu, uint64_t uValue)
+{
+    SUPDRVNTMSPROBERARGS Args;
+    Args.uMsr   = uMsr;
+    Args.uValue = uValue;
+    Args.fGp    = true;
+
+    if (idCpu == NIL_RTCPUID)
+        supdrvNtMsProberWriteOnCpu(idCpu, &Args, NULL);
+    else
+    {
+        int rc = RTMpOnSpecific(idCpu, supdrvNtMsProberWriteOnCpu, &Args, NULL);
+        if (RT_FAILURE(rc))
+            return rc;
+    }
+
+    if (Args.fGp)
+        return VERR_ACCESS_DENIED;
+    return VINF_SUCCESS;
+}
+
+/** @callback_method_impl{FNRTMPWORKER, Worker for supdrvOSMsrProberModify.} */
+static DECLCALLBACK(void) supdrvNtMsProberModifyOnCpu(RTCPUID idCpu, void *pvUser1, void *pvUser2)
+{
+    PSUPMSRPROBER       pReq        = (PSUPMSRPROBER)pvUser1;
+    register uint32_t   uMsr        = pReq->u.In.uMsr;
+    bool const          fFaster     = pReq->u.In.enmOp == SUPMSRPROBEROP_MODIFY_FASTER;
+    uint64_t            uBefore     = 0;
+    uint64_t            uWritten    = 0;
+    uint64_t            uAfter      = 0;
+    bool                fBeforeGp   = true;
+    bool                fModifyGp   = true;
+    bool                fAfterGp    = true;
+    bool                fRestoreGp  = true;
+    RTCCUINTREG         fOldFlags;
+    RT_NOREF2(idCpu, pvUser2);
+
+    /*
+     * Do the job.
+     */
+    fOldFlags = ASMIntDisableFlags();
+    ASMCompilerBarrier(); /* paranoia */
+    if (!fFaster)
+        ASMWriteBackAndInvalidateCaches();
+
+    __try
+    {
+        uBefore   = ASMRdMsrEx(uMsr, AMD_MSR_PASSCODE);
+        fBeforeGp = false;
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)
+    {
+        fBeforeGp = true;
+    }
+    if (!fBeforeGp)
+    {
+        register uint64_t uRestore = uBefore;
+
+        /* Modify. */
+        uWritten  = uRestore;
+        uWritten &= pReq->u.In.uArgs.Modify.fAndMask;
+        uWritten |= pReq->u.In.uArgs.Modify.fOrMask;
+        __try
+        {
+            ASMWrMsrEx(uMsr, AMD_MSR_PASSCODE, uWritten);
+            fModifyGp = false;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER)
+        {
+            fModifyGp = true;
+        }
+
+        /* Read modified value. */
+        __try
+        {
+            uAfter   = ASMRdMsrEx(uMsr, AMD_MSR_PASSCODE);
+            fAfterGp = false;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER)
+        {
+            fAfterGp = true;
+        }
+
+        /* Restore original value. */
+        __try
+        {
+            ASMWrMsrEx(uMsr, AMD_MSR_PASSCODE, uRestore);
+            fRestoreGp = false;
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER)
+        {
+            fRestoreGp = true;
+        }
+
+        /* Invalid everything we can. */
+        if (!fFaster)
+        {
+            ASMWriteBackAndInvalidateCaches();
+            ASMReloadCR3();
+            ASMNopPause();
+        }
+    }
+
+    ASMCompilerBarrier(); /* paranoia */
+    ASMSetFlags(fOldFlags);
+
+    /*
+     * Write out the results.
+     */
+    pReq->u.Out.uResults.Modify.uBefore    = uBefore;
+    pReq->u.Out.uResults.Modify.uWritten   = uWritten;
+    pReq->u.Out.uResults.Modify.uAfter     = uAfter;
+    pReq->u.Out.uResults.Modify.fBeforeGp  = fBeforeGp;
+    pReq->u.Out.uResults.Modify.fModifyGp  = fModifyGp;
+    pReq->u.Out.uResults.Modify.fAfterGp   = fAfterGp;
+    pReq->u.Out.uResults.Modify.fRestoreGp = fRestoreGp;
+    RT_ZERO(pReq->u.Out.uResults.Modify.afReserved);
+}
+
+
+int VBOXCALL    supdrvOSMsrProberModify(RTCPUID idCpu, PSUPMSRPROBER pReq)
+{
+    if (idCpu == NIL_RTCPUID)
+    {
+        supdrvNtMsProberModifyOnCpu(idCpu, pReq, NULL);
+        return VINF_SUCCESS;
+    }
+    return RTMpOnSpecific(idCpu, supdrvNtMsProberModifyOnCpu, pReq, NULL);
+}
+
+#endif /* SUPDRV_WITH_MSR_PROBER */
 
 
 /**
@@ -1984,7 +2706,6 @@ static NTSTATUS     VBoxDrvNtErr2NtStatus(int rc)
 }
 
 
-#if 0 /* See alternative in SUPDrvA-win.asm */
 /**
  * Alternative version of SUPR0Printf for Windows.
  *
@@ -1994,7 +2715,7 @@ static NTSTATUS     VBoxDrvNtErr2NtStatus(int rc)
 SUPR0DECL(int) SUPR0Printf(const char *pszFormat, ...)
 {
     va_list va;
-    char    szMsg[512];
+    char    szMsg[384];
 
     va_start(va, pszFormat);
     size_t cch = RTStrPrintfV(szMsg, sizeof(szMsg) - 1, pszFormat, va);
@@ -2004,12 +2725,8 @@ SUPR0DECL(int) SUPR0Printf(const char *pszFormat, ...)
     RTLogWriteDebugger(szMsg, cch);
     return 0;
 }
-#endif
 
 
-/**
- * Returns configuration flags of the host kernel.
- */
 SUPR0DECL(uint32_t) SUPR0GetKernelFeatures(void)
 {
     return 0;
@@ -2528,6 +3245,8 @@ static bool supdrvNtProtectIsAssociatedCsrss(PSUPDRVNTPROTECT pNtProtect, PEPROC
  */
 static bool supdrvNtProtectIsFrigginThemesService(PSUPDRVNTPROTECT pNtProtect, PEPROCESS pAnnoyingProcess)
 {
+    RT_NOREF1(pNtProtect);
+
     /*
      * Check the process name.
      */
@@ -2686,6 +3405,7 @@ static int supdrvNtProtectProtectNewStubChild(PSUPDRVNTPROTECT pNtParent, HANDLE
             bool fSuccess = RTAvlPVInsert(&g_NtProtectTree, &pNtChild->AvlCore);
             if (fSuccess)
             {
+                pNtChild->fInTree         = true;
                 pNtParent->u.pChild       = pNtChild; /* Parent keeps the initial reference. */
                 pNtParent->enmProcessKind = kSupDrvNtProtectKind_StubParent;
                 pNtChild->u.pParent       = pNtParent;
@@ -2872,6 +3592,8 @@ supdrvNtProtectCallback_ProcessCreateNotify(HANDLE hParentPid, HANDLE hNewPid, B
 static VOID __stdcall
 supdrvNtProtectCallback_ProcessCreateNotifyEx(PEPROCESS pNewProcess, HANDLE hNewPid, PPS_CREATE_NOTIFY_INFO pInfo)
 {
+    RT_NOREF1(pNewProcess);
+
     /*
      * Is it a new process that needs protection?
      */
@@ -2953,7 +3675,7 @@ AssertCompile((SUPDRV_NT_ALLOW_PROCESS_RIGHTS & SUPDRV_NT_EVIL_PROCESS_RIGHTS) =
 static OB_PREOP_CALLBACK_STATUS __stdcall
 supdrvNtProtectCallback_ProcessHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMATION pOpInfo)
 {
-    Assert(pvUser == NULL);
+    Assert(pvUser == NULL); RT_NOREF1(pvUser);
     Assert(pOpInfo->Operation == OB_OPERATION_HANDLE_CREATE || pOpInfo->Operation == OB_OPERATION_HANDLE_DUPLICATE);
     Assert(pOpInfo->ObjectType == *PsProcessType);
 
@@ -3016,6 +3738,8 @@ supdrvNtProtectCallback_ProcessHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMA
 #endif
             else
             {
+                ACCESS_MASK const fDesiredAccess = pOpInfo->Parameters->CreateHandleInformation.DesiredAccess;
+
                 /* Special case 1 on Vista, 7 & 8:
                    The CreateProcess code passes the handle over to CSRSS.EXE
                    and the code inBaseSrvCreateProcess will duplicate the
@@ -3032,7 +3756,7 @@ supdrvNtProtectCallback_ProcessHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMA
                     && ExGetPreviousMode() != KernelMode)
                 {
                     if (   !pOpInfo->KernelHandle
-                        && pOpInfo->Parameters->CreateHandleInformation.DesiredAccess == s_fCsrssStupidDesires)
+                        && fDesiredAccess == s_fCsrssStupidDesires)
                     {
                         if (g_uNtVerCombined < SUP_MAKE_NT_VER_SIMPLE(6, 3))
                             fAllowedRights |= s_fCsrssStupidDesires;
@@ -3061,7 +3785,7 @@ supdrvNtProtectCallback_ProcessHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMA
                     && supdrvNtProtectIsAssociatedCsrss(pNtProtect, PsGetCurrentProcess()) )
                 {
                     pNtProtect->fCsrssFirstProcessCreateHandle = false;
-                    if (pOpInfo->Parameters->CreateHandleInformation.DesiredAccess == s_fCsrssStupidDesires)
+                    if (fDesiredAccess == s_fCsrssStupidDesires)
                     {
                         /* Not needed: PROCESS_CREATE_THREAD, PROCESS_SET_SESSIONID,
                            PROCESS_CREATE_PROCESS */
@@ -3081,7 +3805,7 @@ supdrvNtProtectCallback_ProcessHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMA
                    go into making this more secure.  */
                 if (   g_uNtVerCombined >= SUP_MAKE_NT_VER_SIMPLE(6, 0)
                     && g_uNtVerCombined  < SUP_MAKE_NT_VER_SIMPLE(6, 2)
-                    && pOpInfo->Parameters->CreateHandleInformation.DesiredAccess == 0x1478 /* 6.1.7600.16385 (win7_rtm.090713-1255) */
+                    && fDesiredAccess == 0x1478 /* 6.1.7600.16385 (win7_rtm.090713-1255) */
                     && pNtProtect->fThemesFirstProcessCreateHandle
                     && pOpInfo->KernelHandle == 0
                     && ExGetPreviousMode() == UserMode
@@ -3092,11 +3816,29 @@ supdrvNtProtectCallback_ProcessHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMA
                     pOpInfo->CallContext = NULL; /* don't assert this. */
                 }
 
+                /* Special case 6a, Windows 10+: AudioDG.exe opens the process with the
+                   PROCESS_SET_LIMITED_INFORMATION right.  It seems like it need it for
+                   some myserious and weirdly placed cpu set management of our process.
+                   I'd love to understand what that's all about...
+                   Currently playing safe and only grand this right, however limited, to
+                   audiodg.exe. */
+                if (   g_uNtVerCombined >= SUP_MAKE_NT_VER_SIMPLE(10, 0)
+                    && (   fDesiredAccess == PROCESS_SET_LIMITED_INFORMATION
+                        || fDesiredAccess == (PROCESS_SET_LIMITED_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION) /* expected fix #1 */
+                        || fDesiredAccess == (PROCESS_SET_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION)         /* expected fix #2 */
+                        )
+                    && pOpInfo->KernelHandle == 0
+                    && ExGetPreviousMode() == UserMode
+                    && supdrvNtProtectIsSystem32ProcessMatch(PsGetCurrentProcess(), "audiodg.exe") )
+                {
+                    fAllowedRights |= PROCESS_SET_LIMITED_INFORMATION;
+                    pOpInfo->CallContext = NULL; /* don't assert this. */
+                }
+
                 Log(("vboxdrv/ProcessHandlePre: %sctx=%04zx/%p wants %#x to %p/pid=%04zx [%d], allow %#x => %#x; %s [prev=%#x]\n",
                      pOpInfo->KernelHandle ? "k" : "", PsGetProcessId(PsGetCurrentProcess()), PsGetCurrentProcess(),
-                     pOpInfo->Parameters->CreateHandleInformation.DesiredAccess,
-                     pOpInfo->Object, pNtProtect->AvlCore.Key, pNtProtect->enmProcessKind, fAllowedRights,
-                     pOpInfo->Parameters->CreateHandleInformation.DesiredAccess & fAllowedRights,
+                     fDesiredAccess, pOpInfo->Object, pNtProtect->AvlCore.Key, pNtProtect->enmProcessKind,
+                     fAllowedRights, fDesiredAccess & fAllowedRights,
                      PsGetProcessImageFileName(PsGetCurrentProcess()), ExGetPreviousMode() ));
 
                 pOpInfo->Parameters->CreateHandleInformation.DesiredAccess &= fAllowedRights;
@@ -3121,13 +3863,15 @@ supdrvNtProtectCallback_ProcessHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMA
             }
             else
             {
+                ACCESS_MASK const fDesiredAccess = pOpInfo->Parameters->DuplicateHandleInformation.DesiredAccess;
+
                 /* Special case 5 on Vista, 7 & 8:
                    This is the CSRSS.EXE end of special case #1. */
                 if (   g_uNtVerCombined < SUP_MAKE_NT_VER_SIMPLE(6, 3)
                     && pNtProtect->enmProcessKind == kSupDrvNtProtectKind_VmProcessUnconfirmed
                     && pNtProtect->cCsrssFirstProcessDuplicateHandle > 0
                     && pOpInfo->KernelHandle == 0
-                    && pOpInfo->Parameters->DuplicateHandleInformation.DesiredAccess == s_fCsrssStupidDesires
+                    && fDesiredAccess == s_fCsrssStupidDesires
                     &&    pNtProtect->hParentPid
                        == PsGetProcessId((PEPROCESS)pOpInfo->Parameters->DuplicateHandleInformation.SourceProcess)
                     && pOpInfo->Parameters->DuplicateHandleInformation.TargetProcess == PsGetCurrentProcess()
@@ -3147,12 +3891,26 @@ supdrvNtProtectCallback_ProcessHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMA
                     }
                 }
 
+                /* Special case 6b, Windows 10+: AudioDG.exe duplicates the handle it opened above. */
+                if (   g_uNtVerCombined >= SUP_MAKE_NT_VER_SIMPLE(10, 0)
+                    && (   fDesiredAccess == PROCESS_SET_LIMITED_INFORMATION
+                        || fDesiredAccess == (PROCESS_SET_LIMITED_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION) /* expected fix #1 */
+                        || fDesiredAccess == (PROCESS_SET_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION)         /* expected fix #2 */
+                        )
+                    && pOpInfo->KernelHandle == 0
+                    && ExGetPreviousMode() == UserMode
+                    && supdrvNtProtectIsSystem32ProcessMatch(PsGetCurrentProcess(), "audiodg.exe") )
+                {
+                    fAllowedRights |= PROCESS_SET_LIMITED_INFORMATION;
+                    pOpInfo->CallContext = NULL; /* don't assert this. */
+                }
+
                 Log(("vboxdrv/ProcessHandlePre: %sctx=%04zx/%p[%p] dup from %04zx/%p with %#x to %p in pid=%04zx [%d] %s\n",
                      pOpInfo->KernelHandle ? "k" : "", PsGetProcessId(PsGetCurrentProcess()), PsGetCurrentProcess(),
                      pOpInfo->Parameters->DuplicateHandleInformation.TargetProcess,
                      PsGetProcessId((PEPROCESS)pOpInfo->Parameters->DuplicateHandleInformation.SourceProcess),
                      pOpInfo->Parameters->DuplicateHandleInformation.SourceProcess,
-                     pOpInfo->Parameters->DuplicateHandleInformation.DesiredAccess,
+                     fDesiredAccess,
                      pOpInfo->Object, pNtProtect->AvlCore.Key, pNtProtect->enmProcessKind,
                      PsGetProcessImageFileName(PsGetCurrentProcess()) ));
 
@@ -3169,7 +3927,7 @@ supdrvNtProtectCallback_ProcessHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMA
 static VOID __stdcall
 supdrvNtProtectCallback_ProcessHandlePost(PVOID pvUser, POB_POST_OPERATION_INFORMATION pOpInfo)
 {
-    Assert(pvUser == NULL);
+    Assert(pvUser == NULL); RT_NOREF1(pvUser);
     Assert(pOpInfo->Operation == OB_OPERATION_HANDLE_CREATE || pOpInfo->Operation == OB_OPERATION_HANDLE_DUPLICATE);
     Assert(pOpInfo->ObjectType == *PsProcessType);
 
@@ -3231,7 +3989,7 @@ AssertCompile((SUPDRV_NT_EVIL_THREAD_RIGHTS & SUPDRV_NT_ALLOWED_THREAD_RIGHTS) =
 static OB_PREOP_CALLBACK_STATUS __stdcall
 supdrvNtProtectCallback_ThreadHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMATION pOpInfo)
 {
-    Assert(pvUser == NULL);
+    Assert(pvUser == NULL); RT_NOREF1(pvUser);
     Assert(pOpInfo->Operation == OB_OPERATION_HANDLE_CREATE || pOpInfo->Operation == OB_OPERATION_HANDLE_DUPLICATE);
     Assert(pOpInfo->ObjectType == *PsThreadType);
 
@@ -3379,7 +4137,7 @@ supdrvNtProtectCallback_ThreadHandlePre(PVOID pvUser, POB_PRE_OPERATION_INFORMAT
 static VOID __stdcall
 supdrvNtProtectCallback_ThreadHandlePost(PVOID pvUser, POB_POST_OPERATION_INFORMATION pOpInfo)
 {
-    Assert(pvUser == NULL);
+    Assert(pvUser == NULL); RT_NOREF1(pvUser);
     Assert(pOpInfo->Operation == OB_OPERATION_HANDLE_CREATE || pOpInfo->Operation == OB_OPERATION_HANDLE_DUPLICATE);
     Assert(pOpInfo->ObjectType == *PsThreadType);
 
@@ -3433,6 +4191,7 @@ static int supdrvNtProtectCreate(PSUPDRVNTPROTECT *ppNtProtect, HANDLE hPid, SUP
     {
         RTSpinlockAcquire(g_hNtProtectLock);
         bool fSuccess = RTAvlPVInsert(&g_NtProtectTree, &pNtProtect->AvlCore);
+        pNtProtect->fInTree = fSuccess;
         RTSpinlockRelease(g_hNtProtectLock);
 
         if (!fSuccess)
@@ -3473,9 +4232,13 @@ static void supdrvNtProtectRelease(PSUPDRVNTPROTECT pNtProtect)
          * child/parent references related to this protection structure.
          */
         ASMAtomicWriteU32(&pNtProtect->u32Magic, SUPDRVNTPROTECT_MAGIC_DEAD);
-        PSUPDRVNTPROTECT pRemoved = (PSUPDRVNTPROTECT)RTAvlPVRemove(&g_NtProtectTree, pNtProtect->AvlCore.Key);
+        if (pNtProtect->fInTree)
+        {
+            PSUPDRVNTPROTECT pRemoved = (PSUPDRVNTPROTECT)RTAvlPVRemove(&g_NtProtectTree, pNtProtect->AvlCore.Key);
+            Assert(pRemoved == pNtProtect); RT_NOREF_PV(pRemoved);
+            pNtProtect->fInTree = false;
+        }
 
-        PSUPDRVNTPROTECT pRemovedChild = NULL;
         PSUPDRVNTPROTECT pChild = NULL;
         if (pNtProtect->enmProcessKind == kSupDrvNtProtectKind_StubParent)
         {
@@ -3487,7 +4250,15 @@ static void supdrvNtProtectRelease(PSUPDRVNTPROTECT pNtProtect)
                 pChild->enmProcessKind = kSupDrvNtProtectKind_VmProcessDead;
                 uint32_t cChildRefs = ASMAtomicDecU32(&pChild->cRefs);
                 if (!cChildRefs)
-                    pRemovedChild = (PSUPDRVNTPROTECT)RTAvlPVRemove(&g_NtProtectTree, pChild->AvlCore.Key);
+                {
+                    Assert(pChild->fInTree);
+                    if (pChild->fInTree)
+                    {
+                        PSUPDRVNTPROTECT pRemovedChild = (PSUPDRVNTPROTECT)RTAvlPVRemove(&g_NtProtectTree, pChild->AvlCore.Key);
+                        Assert(pRemovedChild == pChild); RT_NOREF_PV(pRemovedChild);
+                        pChild->fInTree = false;
+                    }
+                }
                 else
                     pChild = NULL;
             }
@@ -3496,8 +4267,6 @@ static void supdrvNtProtectRelease(PSUPDRVNTPROTECT pNtProtect)
             AssertRelease(pNtProtect->enmProcessKind != kSupDrvNtProtectKind_VmProcessUnconfirmed);
 
         RTSpinlockRelease(g_hNtProtectLock);
-        Assert(pRemoved == pNtProtect);
-        Assert(pRemovedChild == pChild);
 
         if (pNtProtect->pCsrssProcess)
         {
@@ -3559,7 +4328,7 @@ static int supdrvNtProtectVerifyStubForVmProcess(PSUPDRVNTPROTECT pNtProtect, PR
             if (enmStub == kSupDrvNtProtectKind_StubParent)
             {
                 uint32_t cRefs = ASMAtomicIncU32(&pNtStub->cRefs);
-                Assert(cRefs > 0 && cRefs < 1024);
+                Assert(cRefs > 0 && cRefs < 1024); RT_NOREF_PV(cRefs);
             }
             else
                 pNtStub = NULL;
@@ -3697,7 +4466,7 @@ static int supdrvNtProtectRestrictHandlesToProcessAndThread(PSUPDRVNTPROTECT pNt
 
     SYSTEM_HANDLE_INFORMATION_EX const *pInfo = (SYSTEM_HANDLE_INFORMATION_EX const *)pbBuf;
     ULONG_PTR i = pInfo->NumberOfHandles;
-    AssertRelease(RT_OFFSETOF(SYSTEM_HANDLE_INFORMATION_EX, Handles[i]) == cbNeeded);
+    AssertRelease(RT_UOFFSETOF_DYN(SYSTEM_HANDLE_INFORMATION_EX, Handles[i]) == cbNeeded);
     while (i-- > 0)
     {
         const char *pszType;
@@ -3725,7 +4494,7 @@ static int supdrvNtProtectRestrictHandlesToProcessAndThread(PSUPDRVNTPROTECT pNt
                Windows 8.1 and later, and one in earlier. This is probably a
                little overly paranoid as I think we can safely trust the
                system process... */
-            if (   cSystemProcessHandles < (g_uNtVerCombined >= SUP_MAKE_NT_VER_SIMPLE(6, 3) ? 2 : 1)
+            if (   cSystemProcessHandles < (g_uNtVerCombined >= SUP_MAKE_NT_VER_SIMPLE(6, 3) ? UINT32_C(2) : UINT32_C(1))
                 && pHandleInfo->UniqueProcessId == PsGetProcessId(PsInitialSystemProcess))
             {
                 cSystemProcessHandles++;
@@ -3921,8 +4690,7 @@ static int supdrvNtProtectVerifyProcess(PSUPDRVNTPROTECT pNtProtect)
         if (!pErrorInfo->cchErrorInfo)
             pErrorInfo->cchErrorInfo = (uint32_t)RTStrPrintf(pErrorInfo->szErrorInfo, sizeof(pErrorInfo->szErrorInfo),
                                                              "supdrvNtProtectVerifyProcess: rc=%d", rc);
-        if (RT_FAILURE(rc))
-            RTLogWriteDebugger(pErrorInfo->szErrorInfo, pErrorInfo->cchErrorInfo);
+        RTLogWriteDebugger(pErrorInfo->szErrorInfo, pErrorInfo->cchErrorInfo);
 
         int rc2 = RTSemMutexRequest(g_hErrorInfoLock, RT_INDEFINITE_WAIT);
         if (RT_SUCCESS(rc2))
@@ -4035,6 +4803,7 @@ DECLASM(void) supdrvNtQueryVirtualMemory_0x22(void);
 DECLASM(void) supdrvNtQueryVirtualMemory_0x23(void);
 extern "C" NTSYSAPI NTSTATUS NTAPI ZwRequestWaitReplyPort(HANDLE, PVOID, PVOID);
 # endif
+
 
 /**
  * Initalizes the hardening bits.
@@ -4204,18 +4973,21 @@ static NTSTATUS supdrvNtProtectInit(void)
                     static OB_OPERATION_REGISTRATION s_aObOperations[] =
                     {
                         {
-                            PsProcessType,
+                            0, /* PsProcessType - imported, need runtime init, better do it explicitly. */
                             OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE,
                             supdrvNtProtectCallback_ProcessHandlePre,
                             supdrvNtProtectCallback_ProcessHandlePost,
                         },
                         {
-                            PsThreadType,
+                            0, /* PsThreadType - imported, need runtime init, better do it explicitly. */
                             OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE,
                             supdrvNtProtectCallback_ThreadHandlePre,
                             supdrvNtProtectCallback_ThreadHandlePost,
                         },
                     };
+                    s_aObOperations[0].ObjectType = PsProcessType;
+                    s_aObOperations[1].ObjectType = PsThreadType;
+
                     static OB_CALLBACK_REGISTRATION s_ObCallbackReg =
                     {
                         /* .Version                     = */ OB_FLT_REGISTRATION_VERSION,

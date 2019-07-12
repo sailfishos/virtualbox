@@ -1,5 +1,10 @@
+/* $Id: disk.c $ */
+/** @file
+ * PC BIOS - ???
+ */
+
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,6 +41,15 @@
  *  License along with this library; if not, write to the Free Software
  *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
  *
+ */
+
+/*
+ * Oracle LGPL Disclaimer: For the avoidance of doubt, except that if any license choice
+ * other than GPL or LGPL is available it will apply instead, Oracle elects to use only
+ * the Lesser General Public License version 2.1 (LGPLv2) at this time for any software where
+ * a choice of LGPL license versions is made available with the language indicating
+ * that LGPLv2 or any later version may be used, or where a choice of which version
+ * of the LGPL is applied is otherwise unspecified.
  */
 
 
@@ -79,7 +93,7 @@ dsk_acc_t   dskacc[DSKTYP_CNT] = {
 };
 
 
-//@todo: put in a header
+/// @todo put in a header
 #define AX      r.gr.u.r16.ax
 #define BX      r.gr.u.r16.bx
 #define CX      r.gr.u.r16.cx
@@ -98,12 +112,14 @@ dsk_acc_t   dskacc[DSKTYP_CNT] = {
  * Phoenix EDD 3.0. This is used as a fallback to generate sane logical
  * geometry in case none was provided in CMOS.
  */
-void set_geom_lba(chs_t __far *lgeo, uint32_t nsectors)
+void set_geom_lba(chs_t __far *lgeo, uint64_t nsectors64)
 {
     uint32_t    limit = 8257536;    /* 1024 * 128 * 63 */
+    uint32_t    nsectors;
     unsigned    heads = 255;
     int         i;
 
+    nsectors = (nsectors64 >> 32) ? 0xFFFFFFFFL : (uint32_t)nsectors64;
     /* Start with ~4GB limit, go down to 504MB. */
     for (i = 0; i < 4; ++i) {
         if (nsectors <= limit)
@@ -129,6 +145,8 @@ void BIOSCALL int13_harddisk(disk_regs_t r)
     bio_dsk_t __far     *bios_dsk;
 
     BX_DEBUG_INT13_HD("%s: AX=%04x BX=%04x CX=%04x DX=%04x ES=%04x\n", __func__, AX, BX, CX, DX, ES);
+
+    SET_IF();   /* INT 13h always returns with interrupts enabled. */
 
     bios_dsk = read_word(0x0040,0x000E) :> &EbdaData->bdisk;
     write_byte(0x0040, 0x008e, 0);  // clear completion flag
@@ -200,7 +218,7 @@ void BIOSCALL int13_harddisk(disk_regs_t r)
             goto int13_success;
 
         /* If required, translate LCHS to LBA and execute command. */
-        //@todo: The IS_SCSI_DEVICE check should be redundant...
+        /// @todo The IS_SCSI_DEVICE check should be redundant...
         if (( (bios_dsk->devices[device].pchs.heads != nlh) || (bios_dsk->devices[device].pchs.spt != nlspt)) || VBOX_IS_SCSI_DEVICE(device)) {
             lba = ((((uint32_t)cylinder * (uint32_t)nlh) + (uint32_t)head) * (uint32_t)nlspt) + (uint32_t)sector - 1;
             sector = 0; // this forces the command to be lba
@@ -217,7 +235,7 @@ void BIOSCALL int13_harddisk(disk_regs_t r)
         bios_dsk->drqp.lba      = lba;
         bios_dsk->drqp.buffer   = MK_FP(ES, BX);
         bios_dsk->drqp.nsect    = count;
-        bios_dsk->drqp.sect_sz  = 512;  //@todo: device specific?
+        bios_dsk->drqp.sect_sz  = 512;  /// @todo device specific?
         bios_dsk->drqp.cylinder = cylinder;
         bios_dsk->drqp.head     = head;
         bios_dsk->drqp.sector   = sector;
@@ -238,10 +256,9 @@ void BIOSCALL int13_harddisk(disk_regs_t r)
         break;
 
     case 0x05: /* format disk track */
-          BX_INFO("format disk track called\n");
-          goto int13_success;
-          return;
-          break;
+        BX_INFO("format disk track called\n");
+        goto int13_success;
+        break;
 
     case 0x08: /* read disk drive parameters */
 
@@ -260,7 +277,7 @@ void BIOSCALL int13_harddisk(disk_regs_t r)
         SET_DL(count); /* FIXME returns 0, 1, or n hard drives */
 
         // FIXME should set ES & DI
-        // @todo: Actually, the above comment is nonsense.
+        /// @todo Actually, the above comment is nonsense.
 
         goto int13_success;
         break;
@@ -330,7 +347,7 @@ int13_success_noah:
 
 void BIOSCALL int13_harddisk_ext(disk_regs_t r)
 {
-    uint32_t            lba;
+    uint64_t            lba;
     uint16_t            ebda_seg = read_word(0x0040,0x000E);
     uint16_t            segment, offset;
     uint16_t            npc, nph, npspt;
@@ -383,18 +400,13 @@ void BIOSCALL int13_harddisk_ext(disk_regs_t r)
         segment = i13_ext->segment;
         offset  = i13_ext->offset;
 
-        BX_DEBUG_INT13_HD("%s: %d sectors from lba %lu @ %04x:%04x\n", __func__,
-                          count, i13_ext->lba1, segment, offset);
-
-        // Can't use 64 bits lba
+        // Get 64 bits lba and check
         lba = i13_ext->lba2;
-        if (lba != 0L) {
-            BX_PANIC("%s: function %02x. Can't use 64bits lba\n", __func__, GET_AH());
-            goto int13x_fail;
-        }
+        lba <<= 32;
+        lba |= i13_ext->lba1;
 
-        // Get 32 bits lba and check
-        lba = i13_ext->lba1;
+        BX_DEBUG_INT13_HD("%s: %d sectors from LBA 0x%llx @ %04x:%04x\n", __func__,
+                          count, lba, segment, offset);
 
         type = bios_dsk->devices[device].type;
         if (lba >= bios_dsk->devices[device].sectors) {
@@ -414,7 +426,7 @@ void BIOSCALL int13_harddisk_ext(disk_regs_t r)
         bios_dsk->drqp.lba     = lba;
         bios_dsk->drqp.buffer  = MK_FP(segment, offset);
         bios_dsk->drqp.nsect   = count;
-        bios_dsk->drqp.sect_sz = 512;   //@todo: device specific?
+        bios_dsk->drqp.sect_sz = 512;   /// @todo device specific?
         bios_dsk->drqp.sector  = 0;     /* Indicate LBA. */
         bios_dsk->drqp.dev_id  = device;
 
@@ -466,8 +478,8 @@ void BIOSCALL int13_harddisk_ext(disk_regs_t r)
             dpt->heads     = nph;
             dpt->spt       = npspt;
             dpt->blksize   = blksize;
-            dpt->sector_count1 = lba;   // FIXME should be Bit64
-            dpt->sector_count2 = 0;
+            dpt->sector_count1 = lba;
+            dpt->sector_count2 = lba >> 32;
         }
 
         /* Fill in EDD 2.x table. */
@@ -489,7 +501,9 @@ void BIOSCALL int13_harddisk_ext(disk_regs_t r)
 
             options  = (translation == GEO_TRANSLATION_NONE ? 0 : 1 << 3);  // chs translation
             options |= (1 << 4);    // lba translation
+#if VBOX_BIOS_CPU >= 80386
             options |= (mode == ATA_MODE_PIO32 ? 1 : 0 << 7);
+#endif
             options |= (translation == GEO_TRANSLATION_LBA ? 1 : 0 << 9);
             options |= (translation == GEO_TRANSLATION_RECHS ? 3 : 0 << 9);
 

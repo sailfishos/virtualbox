@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/assert.h>
 #include "internal/iprt.h"
 
@@ -42,9 +42,9 @@
 #include "internal/assert.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The last assert message, 1st part. */
 RTDATADECL(char)                    g_szRTAssertMsg1[1024];
 RT_EXPORT_SYMBOL(g_szRTAssertMsg1);
@@ -145,7 +145,7 @@ RTDECL(void) RTAssertMsg1(const char *pszExpr, unsigned uLine, const char *pszFi
 #  endif
 # endif
 
-        PRTLOGGER pLog = RTLogRelDefaultInstance();
+        PRTLOGGER pLog = RTLogRelGetDefaultInstance();
         if (pLog)
         {
             RTLogRelPrintf("\n!!Assertion Failed!!\n"
@@ -254,7 +254,7 @@ static void rtAssertMsg2Worker(bool fInitial, const char *pszFormat, va_list va)
 #  endif
 # endif
 
-        PRTLOGGER pLog = RTLogRelDefaultInstance();
+        PRTLOGGER pLog = RTLogRelGetDefaultInstance();
         if (pLog)
         {
             va_copy(vaCopy, va);

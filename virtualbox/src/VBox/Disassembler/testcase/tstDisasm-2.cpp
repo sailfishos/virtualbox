@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/dis.h>
 #include <VBox/err.h>
 #include <iprt/alloc.h>
@@ -31,9 +32,9 @@
 #include <iprt/ctype.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef enum { kAsmStyle_Default, kAsmStyle_yasm, kAsmStyle_masm, kAsmStyle_gas, kAsmStyle_invalid } ASMSTYLE;
 typedef enum { kUndefOp_Fail, kUndefOp_All, kUndefOp_DefineByte, kUndefOp_End } UNDEFOPHANDLING;
 
@@ -169,6 +170,7 @@ static bool MyDisasIsValidInstruction(DISSTATE const *pDis)
  */
 static DECLCALLBACK(int) MyDisasInstrRead(PDISSTATE pDis, uint8_t offInstr, uint8_t cbMinRead, uint8_t cbMaxRead)
 {
+    RT_NOREF1(cbMaxRead);
     PMYDISSTATE pState   = (PMYDISSTATE)pDis;
     RTUINTPTR   uSrcAddr = pState->Dis.uInstrAddr + offInstr;
     if (RT_LIKELY(   pState->uNextAddr == uSrcAddr
@@ -180,7 +182,7 @@ static DECLCALLBACK(int) MyDisasInstrRead(PDISSTATE pDis, uint8_t offInstr, uint
         //size_t cbToRead    = cbMaxRead;
         size_t cbToRead    = cbMinRead;
         memcpy(&pState->Dis.abInstr[offInstr], pState->pbNext, cbToRead);
-        pState->Dis.cbCachedInstr = offInstr + cbToRead;
+        pState->Dis.cbCachedInstr = offInstr + (uint8_t)cbToRead;
         pState->pbNext    += cbToRead;
         pState->cbLeft    -= cbToRead;
         pState->uNextAddr += cbToRead;
@@ -237,6 +239,8 @@ static int MyDisasmBlock(const char *argv0, DISCPUMODE enmCpuMode, uint64_t uAdd
                          uint64_t uHighlightAddr, uint8_t *pbFile, size_t cbFile,
                          ASMSTYLE enmStyle, bool fListing, UNDEFOPHANDLING enmUndefOp)
 {
+    RT_NOREF1(fListing);
+
     /*
      * Initialize the CPU context.
      */
@@ -450,7 +454,7 @@ static int Usage(const char *argv0)
 "    The assembly output style. Default: default\n"
 "  --undef-op|-u <fail|all|db>\n"
 "    How to treat undefined opcodes. Default: fail\n"
-             , argv0, argv0);
+             , argv0, argv0, argv0);
     return 1;
 }
 
@@ -570,7 +574,7 @@ int main(int argc, char **argv)
                 break;
 
             case 'V':
-                RTPrintf("$Revision: 89645 $\n");
+                RTPrintf("$Revision: 118412 $\n");
                 return 0;
 
             default:
@@ -668,6 +672,7 @@ int main(int argc, char **argv)
              * Disassemble it.
              */
             rc = MyDisasmBlock(argv0, enmCpuMode, uAddress, uHighlightAddr, (uint8_t *)pvFile, cbFile, enmStyle, fListing, enmUndefOp);
+            RTFileReadAllFree(pvFile, cbFile);
             if (RT_FAILURE(rc))
                 break;
         }

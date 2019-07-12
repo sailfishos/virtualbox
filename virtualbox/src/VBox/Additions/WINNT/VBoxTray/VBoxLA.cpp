@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,10 +15,8 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-// #define LOG_ENABLED
-
 #define _WIN32_WINNT 0x0501
-#include <windows.h>
+#include <iprt/win/windows.h>
 
 #include "VBoxTray.h"
 #include "VBoxLA.h"
@@ -28,8 +26,13 @@
 #include <iprt/list.h>
 #include <iprt/ldr.h>
 
-#define LALOG(a) do { if (gCtx.fLogEnabled) LogRel(a); } while(0)
-#define LALOGFORCE(a) do { LogRel(a); } while(0)
+#ifdef DEBUG
+# define LOG_ENABLED
+# define LOG_GROUP LOG_GROUP_DEFAULT
+#endif
+#include <VBox/log.h>
+
+
 
 #define REG_KEY_LEN 1024
 #define MAX_CLIENT_NAME_CHARS 1024
@@ -51,7 +54,7 @@
 #define LA_UTCINFO_PROP_VALUE 1
 
 
-struct VBOXLACONTEXT
+typedef struct _VBOXLACONTEXT
 {
     const VBOXSERVICEENV *pEnv;
 
@@ -89,17 +92,17 @@ struct VBOXLACONTEXT
     } activeClient;
 
     BOOL (WINAPI * pfnProcessIdToSessionId)(DWORD dwProcessId, DWORD *pSessionId);
-};
+} VBOXLACONTEXT, *PVBOXLACONTEXT;
 
-typedef struct ACTIONENTRY
+typedef struct _ACTIONENTRY
 {
     RTLISTNODE nodeActionEntry;
     uint32_t u32Index;
     WCHAR wszCommandLine[1];
-} ACTIONENTRY;
+} ACTIONENTRY, *PACTIONENTRY;
 
 
-static VBOXLACONTEXT gCtx = {0};
+static VBOXLACONTEXT g_Ctx = { 0 };
 
 static const char *g_pszPropActiveClient = "/VirtualBox/HostInfo/VRDP/ActiveClient";
 
@@ -146,7 +149,7 @@ static BOOL laGetRegistryDWORD(WCHAR *pwszRegKey, WCHAR *pwszName, DWORD *pdwVal
 
     if (lErr != ERROR_SUCCESS)
     {
-        LALOGFORCE(("LA: RegOpenKeyExW: failed [%ls]\n",
+        LogRel(("LA: RegOpenKeyExW: failed [%ls]\n",
                     pwszRegKey));
         return FALSE;
     }
@@ -162,7 +165,7 @@ static BOOL laGetRegistryDWORD(WCHAR *pwszRegKey, WCHAR *pwszName, DWORD *pdwVal
 
     if (lErr != ERROR_SUCCESS)
     {
-        LALOGFORCE(("LA: RegQueryValueExW: failed [%ls/%ls]\n",
+        LogRel(("LA: RegQueryValueExW: failed [%ls/%ls]\n",
                     pwszRegKey, pwszName));
         RegCloseKey(hKey);
         return FALSE;
@@ -170,7 +173,7 @@ static BOOL laGetRegistryDWORD(WCHAR *pwszRegKey, WCHAR *pwszName, DWORD *pdwVal
 
     if (nRegData != sizeof(DWORD))
     {
-        LALOGFORCE(("LA: buffer overflow reg %d, [%ls]\n",
+        LogRel(("LA: buffer overflow reg %d, [%ls]\n",
                     nRegData, pwszRegKey));
         RegCloseKey(hKey);
         return FALSE;
@@ -178,7 +181,7 @@ static BOOL laGetRegistryDWORD(WCHAR *pwszRegKey, WCHAR *pwszName, DWORD *pdwVal
 
     if (dwType != REG_DWORD)
     {
-        LALOGFORCE(("LA: wrong type %d, [%ls/%ls]\n",
+        LogRel(("LA: wrong type %d, [%ls/%ls]\n",
                     dwType, pwszRegKey, pwszName));
         RegCloseKey(hKey);
         return FALSE;
@@ -196,8 +199,8 @@ static BOOL laGetRegistryDWORD(WCHAR *pwszRegKey, WCHAR *pwszName, DWORD *pdwVal
 
 static void ActionExecutorDeleteActions(RTLISTANCHOR *listActions)
 {
-    ACTIONENTRY *pIter = NULL;
-    ACTIONENTRY *pIterNext = NULL;
+    ACTIONENTRY *pIter;
+    ACTIONENTRY *pIterNext;
     RTListForEachSafe(listActions, pIter, pIterNext, ACTIONENTRY, nodeActionEntry)
     {
         RTListNodeRemove(&pIter->nodeActionEntry);
@@ -220,7 +223,7 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
 
     if (dwErr != ERROR_SUCCESS)
     {
-        LALOG(("LA: Can't open registry key [%ls], error %d\n",
+        LogFlowFunc(("Can't open registry key [%ls], error %d\n",
                pwszRegKey, dwErr));
         return FALSE;
     }
@@ -248,13 +251,13 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
 
         if (dwRet == ERROR_NO_MORE_ITEMS)
         {
-            LALOG(("LA: Enumeration exhausted\n"));
+            LogFlowFunc(("Enumeration exhausted\n"));
             bRet = TRUE;
             break;
         }
         else if (dwRet != ERROR_SUCCESS)
         {
-            LALOG(("LA: Enumeration failed, error %d\n",
+            LogFlowFunc(("Enumeration failed, error %d\n",
                    dwRet));
             bRet = FALSE;
             break;
@@ -262,7 +265,7 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
 
         if ((type != REG_SZ) && (type != REG_EXPAND_SZ))
         {
-            LALOG(("LA: skipped type %d\n",
+            LogFlowFunc(("skipped type %d\n",
                    type));
             continue;
         }
@@ -274,7 +277,7 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
                                  &pszName, sizeof(szName), NULL);
         if (RT_FAILURE(rc))
         {
-            LALOG(("LA: RTUtf16ToUtf8Ex for [%ls] rc %Rrc\n",
+            LogFlowFunc(("RTUtf16ToUtf8Ex for [%ls] rc %Rrc\n",
                     wszValueName, rc));
             continue;
         }
@@ -282,7 +285,7 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
         /* Check if the name starts with "Command" */
         if (RTStrNICmp(szName, g_szCommandPrefix, RT_ELEMENTS(g_szCommandPrefix) - 1) != 0)
         {
-            LALOG(("LA: skipped prefix %s\n",
+            LogFlowFunc(("skipped prefix %s\n",
                    szName));
             continue;
         }
@@ -292,7 +295,7 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
         uint32_t nIndex = RTStrToUInt32(pszIndex);
         if (nIndex == 0)
         {
-            LALOG(("LA: skipped index %s\n",
+            LogFlowFunc(("skipped index %s\n",
                    szName));
             continue;
         }
@@ -301,7 +304,7 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
         ACTIONENTRY *pEntry = (ACTIONENTRY *)RTMemAlloc(sizeof(ACTIONENTRY) + cbData);
         if (!pEntry)
         {
-            LALOG(("LA: RTMemAlloc failed\n"));
+            LogFlowFunc(("RTMemAlloc failed\n"));
             bRet = FALSE;
             break;
         }
@@ -319,7 +322,7 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
         else
         {
             bool fAdded = false;
-            ACTIONENTRY *pIter = NULL;
+            ACTIONENTRY *pIter;
             RTListForEach(listActions, pIter, ACTIONENTRY, nodeActionEntry)
             {
                 if (pIter->u32Index > nIndex)
@@ -335,17 +338,17 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
             }
         }
 
-        LALOG(("LA: added %d %ls\n",
+        LogFlowFunc(("added %d %ls\n",
                pEntry->u32Index, pEntry->wszCommandLine));
     }
 
     RegCloseKey(hKey);
 
 #ifdef LOG_ENABLED
-    ACTIONENTRY *pIter = NULL;
+    ACTIONENTRY *pIter;
     RTListForEach(listActions, pIter, ACTIONENTRY, nodeActionEntry)
     {
-        LALOG(("LA: [%u]: [%ls]\n",
+        LogFlowFunc(("[%u]: [%ls]\n",
                pIter->u32Index, pIter->wszCommandLine));
     }
 #endif
@@ -355,20 +358,19 @@ static BOOL ActionExecutorEnumerateRegistryKey(const WCHAR *pwszRegKey,
         ActionExecutorDeleteActions(listActions);
     }
 
-    LALOG(("LA: action enum %d\n",
-           bRet));
+    LogFlowFunc(("action enum %d\n", bRet));
 
     return bRet;
 }
 
 static void ActionExecutorExecuteActions(RTLISTANCHOR *listActions)
 {
-    LALOG(("LA: ExecuteActions\n"));
+    LogFlowFunc(("ExecuteActions\n"));
 
-    ACTIONENTRY *pIter = NULL;
+    ACTIONENTRY *pIter;
     RTListForEach(listActions, pIter, ACTIONENTRY, nodeActionEntry)
     {
-        LALOG(("LA: [%u]: [%ls]\n",
+        LogFlowFunc(("[%u]: [%ls]\n",
                pIter->u32Index, pIter->wszCommandLine));
 
         STARTUPINFOW si;
@@ -387,12 +389,12 @@ static void ActionExecutorExecuteActions(RTLISTANCHOR *listActions)
                             &si,                   // lpStartupInfo
                             &pi))                  // lpProcessInformation
         {
-            LALOG(("LA: Executing [%ls] failed, error %d\n",
+            LogFlowFunc(("Executing [%ls] failed, error %d\n",
                    pIter->wszCommandLine, GetLastError()));
         }
         else
         {
-            LALOG(("LA: Executing [%ls] succeeded\n",
+            LogFlowFunc(("Executing [%ls] succeeded\n",
                    pIter->wszCommandLine));
 
             /* Don't care about waiting on the new process, so close these. */
@@ -401,10 +403,10 @@ static void ActionExecutorExecuteActions(RTLISTANCHOR *listActions)
         }
     }
 
-    LALOG(("LA: ExecuteActions leave\n"));
+    LogFlowFunc(("ExecuteActions leave\n"));
 }
 
-static BOOL GetVolatileEnvironmentKey(WCHAR *pwszRegKey, DWORD cbRegKey)
+static BOOL GetVolatileEnvironmentKey(PVBOXLACONTEXT pCtx, WCHAR *pwszRegKey, DWORD cbRegKey)
 {
     BOOL fFound = FALSE;
 
@@ -414,8 +416,8 @@ static BOOL GetVolatileEnvironmentKey(WCHAR *pwszRegKey, DWORD cbRegKey)
     char szRegKey[REG_KEY_LEN];
 
     /* Attempt to open HKCU\Volatile Environment\<session ID> first. */
-    if (   gCtx.pfnProcessIdToSessionId != NULL
-        && gCtx.pfnProcessIdToSessionId(GetCurrentProcessId(), &nSessionID))
+    if (   pCtx->pfnProcessIdToSessionId
+        && pCtx->pfnProcessIdToSessionId(GetCurrentProcessId(), &nSessionID))
     {
         RTStrPrintf(szRegKey, sizeof(szRegKey),
                     "%s\\%d",
@@ -456,7 +458,7 @@ static BOOL GetVolatileEnvironmentKey(WCHAR *pwszRegKey, DWORD cbRegKey)
 
     if (fFound)
     {
-        LALOG(("LA: GetVolatileEnvironmentKey: [%s]\n", szRegKey));
+        LogFlowFunc(("GetVolatileEnvironmentKey: [%s]\n", szRegKey));
 
         /* Convert szRegKey to Utf16 string. */
         PRTUTF16 putf16Unicode = pwszRegKey;
@@ -466,28 +468,28 @@ static BOOL GetVolatileEnvironmentKey(WCHAR *pwszRegKey, DWORD cbRegKey)
                                 &putf16Unicode, cchUnicode, NULL);
         if (RT_FAILURE(rc))
         {
-            LALOG(("LA: RTStrToUtf16Ex failed %Rrc\n", rc));
+            LogFlowFunc(("RTStrToUtf16Ex failed %Rrc\n", rc));
             fFound = FALSE;
         }
         else
         {
-            LALOG(("LA: unicode [%ls]\n", putf16Unicode));
+            LogFlowFunc(("unicode [%ls]\n", putf16Unicode));
         }
     }
     else
     {
-        LALOG(("LA: GetVolatileEnvironmentKey: not found\n"));
+        LogFlowFunc(("GetVolatileEnvironmentKey: not found\n"));
     }
 
     return fFound;
 }
 
-static BOOL GetUtcInfoClientName(WCHAR *pwszClientName, DWORD cbClientName)
+static BOOL laGetUtcInfoClientName(PVBOXLACONTEXT pCtx, WCHAR *pwszClientName, DWORD cbClientName)
 {
     LONG lErr;
 
     WCHAR wszRegKey[REG_KEY_LEN];
-    if (!GetVolatileEnvironmentKey(wszRegKey, sizeof(wszRegKey)))
+    if (!GetVolatileEnvironmentKey(pCtx, wszRegKey, sizeof(wszRegKey)))
     {
         return FALSE;
     }
@@ -501,7 +503,7 @@ static BOOL GetUtcInfoClientName(WCHAR *pwszClientName, DWORD cbClientName)
 
     if (lErr != ERROR_SUCCESS)
     {
-        LALOG(("LA: RegOpenKeyExW: failed [%ls]\n",
+        LogFlowFunc(("RegOpenKeyExW: failed [%ls]\n",
                wszRegKey));
         return FALSE;
     }
@@ -517,7 +519,7 @@ static BOOL GetUtcInfoClientName(WCHAR *pwszClientName, DWORD cbClientName)
 
     if (lErr != ERROR_SUCCESS)
     {
-        LALOG(("LA: RegQueryValueExW: failed [%ls]\n",
+        LogFlowFunc(("RegQueryValueExW: failed [%ls]\n",
                wszRegKey));
         RegCloseKey(hKey);
         return FALSE;
@@ -525,7 +527,7 @@ static BOOL GetUtcInfoClientName(WCHAR *pwszClientName, DWORD cbClientName)
 
     if (nRegData >= cbClientName)
     {
-        LALOG(("LA: buffer overflow reg %d, buffer %d, [%ls]\n",
+        LogFlowFunc(("buffer overflow reg %d, buffer %d, [%ls]\n",
                nRegData, cbClientName, wszRegKey));
         RegCloseKey(hKey);
         return FALSE;
@@ -533,7 +535,7 @@ static BOOL GetUtcInfoClientName(WCHAR *pwszClientName, DWORD cbClientName)
 
     if (dwType != REG_SZ)
     {
-        LALOG(("LA: wrong type %d, [%ls]\n",
+        LogFlowFunc(("wrong type %d, [%ls]\n",
                dwType, wszRegKey));
         RegCloseKey(hKey);
         return FALSE;
@@ -558,12 +560,12 @@ static BOOL GetUtcInfoClientName(WCHAR *pwszClientName, DWORD cbClientName)
     return TRUE;
 }
 
-static BOOL SetClientName(const WCHAR *pwszClientName)
+static BOOL laSetClientName(PVBOXLACONTEXT pCtx, const WCHAR *pwszClientName)
 {
     LONG lErr;
 
     WCHAR wszRegKey[REG_KEY_LEN];
-    if (!GetVolatileEnvironmentKey(wszRegKey, sizeof(wszRegKey)))
+    if (!GetVolatileEnvironmentKey(pCtx, wszRegKey, sizeof(wszRegKey)))
     {
         return FALSE;
     }
@@ -610,24 +612,22 @@ static void laBroadcastSettingChange(void)
                             5000,
                             &dwResult) == 0)
     {
-        LALOG(("LA: SendMessageTimeout failed, error %d\n", GetLastError()));
+        LogFlowFunc(("SendMessageTimeout failed, error %ld\n", GetLastError()));
     }
 }
 
-static void laUpdateClientName(VBOXLACONTEXT *pCtx)
+static void laUpdateClientName(PVBOXLACONTEXT pCtx)
 {
     WCHAR wszUtcInfoClientName[MAX_CLIENT_NAME_CHARS];
 
-    if (GetUtcInfoClientName(wszUtcInfoClientName, sizeof(wszUtcInfoClientName)))
+    if (laGetUtcInfoClientName(pCtx, wszUtcInfoClientName, sizeof(wszUtcInfoClientName)))
     {
-        if (SetClientName(wszUtcInfoClientName))
-        {
+        if (laSetClientName(pCtx, wszUtcInfoClientName))
             laBroadcastSettingChange();
-        }
     }
 }
 
-static void laOnClientLocationInfo(char *pszClientInfo[][2])
+static void laOnClientLocationInfo(PVBOXLACONTEXT pCtx, char *pszClientInfo[][2])
 {
     /*
      * Write the client location info to:
@@ -639,9 +639,9 @@ static void laOnClientLocationInfo(char *pszClientInfo[][2])
      */
     unsigned int idx;
     WCHAR wszRegKey[REG_KEY_LEN];
-    if (!GetVolatileEnvironmentKey(wszRegKey, sizeof(wszRegKey)))
+    if (!GetVolatileEnvironmentKey(pCtx, wszRegKey, sizeof(wszRegKey)))
     {
-        LALOG(("LA: Failed to get 'Volatile Environment' registry key\n"));
+        LogFlowFunc(("Failed to get 'Volatile Environment' registry key\n"));
         return;
     }
 
@@ -657,8 +657,7 @@ static void laOnClientLocationInfo(char *pszClientInfo[][2])
 
     if (lRet != ERROR_SUCCESS)
     {
-        LALOG(("LA: Failed to open key [%ls], error %lu\n",
-               wszRegKey, lRet));
+        LogFlowFunc(("Failed to open key [%ls], error %lu\n", wszRegKey, lRet));
         return;
     }
 
@@ -676,7 +675,7 @@ static void laOnClientLocationInfo(char *pszClientInfo[][2])
 
         if (RT_FAILURE(rc))
         {
-            LALOG(("LA: RTStrToUniEx failed %Rrc\n", rc));
+            LogFlowFunc(("RTStrToUniEx failed %Rrc\n", rc));
             break;
         }
 
@@ -690,7 +689,7 @@ static void laOnClientLocationInfo(char *pszClientInfo[][2])
 
         if (lRet != ERROR_SUCCESS)
         {
-            LALOG(("LA: RegSetValueExW failed error %lu for %s \n", lRet, g_pwszUTCINFOClientInfo[idx]));
+            LogFlowFunc(("RegSetValueExW failed error %lu for %s \n", lRet, g_pwszUTCINFOClientInfo[idx]));
         }
     }
 
@@ -713,9 +712,9 @@ static void laOnClientLocationInfo(char *pszClientInfo[][2])
     }
 }
 
-static void laDoAttach(VBOXLACONTEXT *pCtx)
+static void laDoAttach(PVBOXLACONTEXT pCtx)
 {
-    LALOG(("LA: laDoAttach\n"));
+    LogFlowFunc(("laDoAttach\n"));
 
     /* Hardcoded action. */
     laUpdateClientName(pCtx);
@@ -724,9 +723,9 @@ static void laDoAttach(VBOXLACONTEXT *pCtx)
     ActionExecutorExecuteActions(&pCtx->listAttachActions);
 }
 
-static void laDoDetach(VBOXLACONTEXT *pCtx)
+static void laDoDetach(PVBOXLACONTEXT pCtx)
 {
-    LALOG(("LA: laDoDetach\n"));
+    LogFlowFunc(("laDoDetach\n"));
 
     /* Process configured actions. */
     ActionExecutorExecuteActions(&pCtx->listDetachActions);
@@ -772,7 +771,7 @@ static int laGetProperty(uint32_t u32GuestPropHandle, const char *pszName, uint6
 
     if (RT_SUCCESS(rc))
     {
-        LALOG(("LA: laGetProperty: [%s]\n"
+        LogFlowFunc(("laGetProperty: [%s]\n"
                "            value: [%s]\n"
                "        timestamp: %lld ns\n",
                pszName, (char *)pvBuf, *pu64Timestamp));
@@ -781,12 +780,12 @@ static int laGetProperty(uint32_t u32GuestPropHandle, const char *pszName, uint6
     }
     else if (rc == VERR_NOT_FOUND)
     {
-        LALOG(("LA: laGetProperty: not found [%s]\n", pszName));
+        LogFlowFunc(("laGetProperty: not found [%s]\n", pszName));
         RTMemFree(pvBuf);
     }
     else
     {
-        LALOG(("LA: Failed to retrieve the property value, error %Rrc\n", rc));
+        LogFlowFunc(("Failed to retrieve the property value, error %Rrc\n", rc));
         RTMemFree(pvBuf);
     }
 
@@ -833,9 +832,7 @@ static int laWaitProperties(uint32_t u32GuestPropHandle,
                                  &cbBuf);
 
         if (rc != VERR_BUFFER_OVERFLOW)
-        {
             break;
-        }
 
         cbBuf += 1024;
     }
@@ -874,13 +871,9 @@ static int laGetUint32(uint32_t u32GuestPropHandle, const char *pszName, uint64_
     }
 
     if (pszValue)
-    {
         RTMemFree(pszValue);
-    }
 
-    LALOG(("LA: laGetUint32: rc = %Rrc, [%s]\n",
-           rc, pszName));
-
+    LogFlowFunc(("laGetUint32: rc = %Rrc, [%s]\n", rc, pszName));
     return rc;
 }
 
@@ -891,44 +884,41 @@ static int laGetString(uint32_t u32GuestPropHandle, const char *pszName, uint64_
                            pu64Timestamp,
                            ppszValue);
 
-    LALOG(("LA: laGetString: rc = %Rrc, [%s]\n",
-           rc, pszName));
-
+    LogFlowFunc(("laGetString: rc = %Rrc, [%s]\n", rc, pszName));
     return rc;
 }
 
-static int laGetActiveClient(VBOXLACONTEXT *pCtx, uint64_t *pu64Timestamp, uint32_t *pu32Value)
+static int laGetActiveClient(PVBOXLACONTEXT pCtx, uint64_t *pu64Timestamp, uint32_t *pu32Value)
 {
     int rc = laGetUint32(pCtx->u32GuestPropHandle,
                          g_pszPropActiveClient,
                          pu64Timestamp,
                          pu32Value);
 
-    LALOG(("LA: laGetActiveClient: rc %Rrc, %d, %lld\n", rc, *pu32Value, *pu64Timestamp));
-
+    LogFlowFunc(("laGetActiveClient: rc %Rrc, %RU32, %RU64\n", rc, *pu32Value, *pu64Timestamp));
     return rc;
 }
 
-static int laUpdateCurrentState(VBOXLACONTEXT *pCtx, uint32_t u32ActiveClientId, uint64_t u64ActiveClientTS)
+static int laUpdateCurrentState(PVBOXLACONTEXT pCtx, uint32_t u32ActiveClientId, uint64_t u64ActiveClientTS)
 {
     /* Prepare the current state for the active client.
      * If u32ActiveClientId is 0, then there is no connected clients.
      */
-    LALOG(("LA: laUpdateCurrentState: %u %lld\n",
-            u32ActiveClientId, u64ActiveClientTS));
+    LogFlowFunc(("laUpdateCurrentState: %RU32 %RU64\n", u32ActiveClientId, u64ActiveClientTS));
 
     int rc = VINF_SUCCESS;
 
     int l;
 
-    char **pClientInfoMap[LA_UTCINFO_CLIENT_INFO_LAST + 1] = {
-                                                               &pCtx->activeClient.pszPropName,
-                                                               &pCtx->activeClient.pszPropIPAddr,
-                                                               &pCtx->activeClient.pszPropLocation,
-                                                               &pCtx->activeClient.pszPropOtherInfo,
-                                                             };
+    char **pClientInfoMap[LA_UTCINFO_CLIENT_INFO_LAST + 1] =
+    {
+        &pCtx->activeClient.pszPropName,
+        &pCtx->activeClient.pszPropIPAddr,
+        &pCtx->activeClient.pszPropLocation,
+        &pCtx->activeClient.pszPropOtherInfo,
+    };
 
-    pCtx->activeClient.u32LastAttach = ~0;
+    pCtx->activeClient.u32LastAttach = UINT32_MAX;
     pCtx->activeClient.u64LastAttachTimestamp = u64ActiveClientTS;
 
     if (pCtx->activeClient.pszLastName)
@@ -1016,16 +1006,13 @@ static int laUpdateCurrentState(VBOXLACONTEXT *pCtx, uint32_t u32ActiveClientId,
         pCtx->activeClient.u32ClientId = 0;
     }
 
-    LALOG(("LA: laUpdateCurrentState rc = %Rrc\n",
-           rc));
-
+    LogFlowFunc(("laUpdateCurrentState rc = %Rrc\n", rc));
     return rc;
 }
 
-static int laWait(VBOXLACONTEXT *pCtx, uint64_t *pu64Timestamp, uint32_t u32Timeout)
+static int laWait(PVBOXLACONTEXT pCtx, uint64_t *pu64Timestamp, uint32_t u32Timeout)
 {
-    LALOG(("LA: laWait [%s]\n",
-           pCtx->activeClient.pszPropWaitPattern));
+    LogFlowFunc(("laWait [%s]\n", pCtx->activeClient.pszPropWaitPattern));
 
     int rc = laWaitProperties(pCtx->u32GuestPropHandle,
                               pCtx->activeClient.pszPropWaitPattern,
@@ -1033,13 +1020,11 @@ static int laWait(VBOXLACONTEXT *pCtx, uint64_t *pu64Timestamp, uint32_t u32Time
                               pu64Timestamp,
                               u32Timeout);
 
-    LALOG(("LA: laWait rc %Rrc\n",
-           rc));
-
+    LogFlowFunc(("laWait rc %Rrc\n", rc));
     return rc;
 }
 
-static void laProcessClientInfo(VBOXLACONTEXT *pCtx)
+static void laProcessClientInfo(PVBOXLACONTEXT pCtx)
 {
     /* Check if the name was changed. */
     /* Get the name string and check if it was changed since last time.
@@ -1063,12 +1048,12 @@ static void laProcessClientInfo(VBOXLACONTEXT *pCtx)
                          &u64Timestamp,
                          &pClientInfoMap[idx][LA_UTCINFO_PROP_VALUE]);
 
-         LALOG(("LA: laProcessClientInfo: read [%s], at %lld\n",
-                pClientInfoMap[idx][LA_UTCINFO_PROP_VALUE], u64Timestamp));
+         LogFlowFunc(("laProcessClientInfo: read [%s], at %RU64\n",
+                      pClientInfoMap[idx][LA_UTCINFO_PROP_VALUE], u64Timestamp));
 
         if (RT_FAILURE(rc))
         {
-            LALOG(("LA: laProcessClientInfo failed at %s\n", pClientInfoMap[idx][LA_UTCINFO_PROP_NAME]));
+            LogFlowFunc(("laProcessClientInfo failed at %s\n", pClientInfoMap[idx][LA_UTCINFO_PROP_NAME]));
             break;
         }
     }
@@ -1077,7 +1062,7 @@ static void laProcessClientInfo(VBOXLACONTEXT *pCtx)
     {
         if (u64Timestamp != pCtx->activeClient.u64LastNameTimestamp)
         {
-            laOnClientLocationInfo(pClientInfoMap);
+            laOnClientLocationInfo(pCtx, pClientInfoMap);
 
             pCtx->activeClient.u64LastNameTimestamp = u64Timestamp;
         }
@@ -1092,13 +1077,13 @@ static void laProcessClientInfo(VBOXLACONTEXT *pCtx)
     }
 }
 
-static void laProcessAttach(VBOXLACONTEXT *pCtx)
+static void laProcessAttach(PVBOXLACONTEXT pCtx)
 {
     /* Check if the attach was changed. */
     pCtx->u32Action = LA_DO_NOTHING;
 
     uint64_t u64Timestamp = 0;
-    uint32_t u32Attach = ~0;
+    uint32_t u32Attach = UINT32_MAX;
 
     int rc = laGetUint32(pCtx->u32GuestPropHandle,
                          pCtx->activeClient.pszPropAttach,
@@ -1107,32 +1092,28 @@ static void laProcessAttach(VBOXLACONTEXT *pCtx)
 
     if (RT_SUCCESS(rc))
     {
-        LALOG(("LA: laProcessAttach: read %d, at %lld\n",
-               u32Attach, u64Timestamp));
-
+        LogFlowFunc(("laProcessAttach: read %RU32, at %RU64\n", u32Attach, u64Timestamp));
         if (u64Timestamp != pCtx->activeClient.u64LastAttachTimestamp)
         {
             if (u32Attach != pCtx->activeClient.u32LastAttach)
             {
-                LALOG(("LA: laProcessAttach: changed\n"));
+                LogFlowFunc(("laProcessAttach: changed\n"));
 
                 /* Just do the last action. */
-                pCtx->u32Action = u32Attach?
-                                       LA_DO_ATTACH:
-                                       LA_DO_DETACH;
+                pCtx->u32Action = u32Attach
+                                ? LA_DO_ATTACH : LA_DO_DETACH;
 
                 pCtx->activeClient.u32LastAttach = u32Attach;
             }
             else
             {
-                LALOG(("LA: laProcessAttach: same\n"));
+                LogFlowFunc(("laProcessAttach: same\n"));
 
                 /* The property has changed but the value is the same,
                  * which means that it was changed and restored.
                  */
-                pCtx->u32Action = u32Attach?
-                                       LA_DO_DETACH_AND_ATTACH:
-                                       LA_DO_ATTACH_AND_DETACH;
+                pCtx->u32Action = u32Attach
+                                ? LA_DO_DETACH_AND_ATTACH : LA_DO_ATTACH_AND_DETACH;
             }
 
             pCtx->activeClient.u64LastAttachTimestamp = u64Timestamp;
@@ -1140,19 +1121,18 @@ static void laProcessAttach(VBOXLACONTEXT *pCtx)
 
     }
 
-    LALOG(("LA: laProcessAttach: action %d\n",
-           pCtx->u32Action));
+    LogFlowFunc(("laProcessAttach: action %RU32\n", pCtx->u32Action));
 }
 
-static void laDoActions(VBOXLACONTEXT *pCtx)
+static void laDoActions(PVBOXLACONTEXT pCtx)
 {
-    /* Check if the attach was changed.
+    /*
+     * Check if the attach was changed.
      *
      * Caller assumes that this function will filter double actions.
      * That is two or more LA_DO_ATTACH will do just one LA_DO_ATTACH.
      */
-    LALOG(("LA: laDoActions: action %d, prev %d\n",
-           pCtx->u32Action, pCtx->u32PrevAction));
+    LogFlowFunc(("laDoActions: action %RU32, prev %RU32\n", pCtx->u32Action, pCtx->u32PrevAction));
 
     switch(pCtx->u32Action)
     {
@@ -1203,63 +1183,70 @@ static void laDoActions(VBOXLACONTEXT *pCtx)
 
     pCtx->u32Action = LA_DO_NOTHING;
 
-    LALOG(("LA: laDoActions: leave\n"));
+    LogFlowFunc(("laDoActions: leave\n"));
 }
 
-int VBoxLAInit(const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread)
+DECLCALLBACK(int) VBoxLAInit(const PVBOXSERVICEENV pEnv, void **ppInstance)
 {
-    gCtx.pEnv = pEnv;
+    AssertPtrReturn(pEnv, VERR_INVALID_POINTER);
+    AssertPtrReturn(ppInstance, VERR_INVALID_POINTER);
+
+    LogFlowFuncEnter();
+
+    PVBOXLACONTEXT pCtx = &g_Ctx; /* Only one instance at the moment. */
+    AssertPtr(pCtx);
+
+    pCtx->pEnv = pEnv;
 
     DWORD dwValue = 0;
     if (   laGetRegistryDWORD(L"SOFTWARE\\Oracle\\VirtualBox Guest Additions", L"VBoxTrayLog", &dwValue)
         && (dwValue & 0x10) != 0)
     {
-         gCtx.fLogEnabled = true;
+         pCtx->fLogEnabled = true;
     }
     else
     {
-         gCtx.fLogEnabled = false;
+         pCtx->fLogEnabled = false;
     }
-
-    LALOG(("VBoxTray: VBoxLAInit\n"));
 
     /* DetachOnDisconnect is enabled by default. */
     dwValue = 0x02;
     if (   laGetRegistryDWORD(L"SOFTWARE\\Oracle\\VirtualBox Guest Additions", L"VBoxTrayLA", &dwValue)
         && (dwValue & 0x02) == 0)
     {
-         gCtx.fDetachOnDisconnect = false;
+         pCtx->fDetachOnDisconnect = false;
     }
     else
     {
-         gCtx.fDetachOnDisconnect = true;
+         pCtx->fDetachOnDisconnect = true;
     }
 
-    LALOGFORCE(("VBoxTray: VBoxLAInit: dod %d, VBoxTrayLA %x\n", gCtx.fDetachOnDisconnect, dwValue));
+    LogRel(("LA: DetachOnDisconnect=%RTbool\n", pCtx->fDetachOnDisconnect));
 
-    int rc = VbglR3GuestPropConnect(&gCtx.u32GuestPropHandle);
+    int rc = VbglR3GuestPropConnect(&pCtx->u32GuestPropHandle);
     if (RT_FAILURE(rc))
-    {
         return rc;
-    }
 
-    RTListInit(&gCtx.listAttachActions);
-    RTListInit(&gCtx.listDetachActions);
+    RTListInit(&pCtx->listAttachActions);
+    RTListInit(&pCtx->listDetachActions);
 
-    RT_ZERO(gCtx.activeClient);
+    RT_ZERO(pCtx->activeClient);
 
-    *(void **)&gCtx.pfnProcessIdToSessionId = RTLdrGetSystemSymbol("kernel32.dll", "ProcessIdToSessionId");
-    *pfStartThread = true;
-    *ppInstance = &gCtx;
+    *(void **)&pCtx->pfnProcessIdToSessionId = RTLdrGetSystemSymbol("kernel32.dll", "ProcessIdToSessionId");
+
+    *ppInstance = pCtx;
+    LogFlowFuncLeaveRC(VINF_SUCCESS);
     return VINF_SUCCESS;
 }
 
-
-void VBoxLADestroy(const VBOXSERVICEENV *pEnv, void *pInstance)
+DECLCALLBACK(void) VBoxLADestroy(void *pInstance)
 {
-    LALOG(("VBoxTray: VBoxLADestroy\n"));
+    AssertPtrReturnVoid(pInstance);
 
-    VBOXLACONTEXT *pCtx = (VBOXLACONTEXT *)pInstance;
+    LogFlowFunc(("Destroying pInstance=%p\n", pInstance));
+
+    PVBOXLACONTEXT pCtx = (PVBOXLACONTEXT)pInstance;
+    AssertPtr(pCtx);
 
     if (pCtx->u32GuestPropHandle != 0)
     {
@@ -1275,11 +1262,18 @@ void VBoxLADestroy(const VBOXSERVICEENV *pEnv, void *pInstance)
 /*
  * Thread function to wait for and process property changes
  */
-unsigned __stdcall VBoxLAThread(void *pInstance)
+DECLCALLBACK(int) VBoxLAWorker(void *pInstance, bool volatile *pfShutdown)
 {
-    VBOXLACONTEXT *pCtx = (VBOXLACONTEXT *)pInstance;
+    AssertPtr(pInstance);
+    LogFlowFunc(("pInstance=%p\n", pInstance));
 
-    LALOG(("VBoxTray: VBoxLAThread: Started.\n"));
+    /*
+     * Tell the control thread that it can continue
+     * spawning services.
+     */
+    RTThreadUserSignal(RTThreadSelf());
+
+    PVBOXLACONTEXT pCtx = (PVBOXLACONTEXT)pInstance;
 
     /*
      * On name change event (/VirtualBox/HostInfo/VRDP/Client/%ID%/Name)
@@ -1292,19 +1286,21 @@ unsigned __stdcall VBoxLAThread(void *pInstance)
      * The active connected client id is /VirtualBox/HostInfo/VRDP/ActiveClientClient.
      */
 
-    if (!ActionExecutorEnumerateRegistryKey(g_pwszRegKeyReconnectActions, &gCtx.listAttachActions))
+    if (!ActionExecutorEnumerateRegistryKey(g_pwszRegKeyReconnectActions, &pCtx->listAttachActions))
     {
-        LALOG(("LA: Can't enumerate registry key %ls\n", g_pwszRegKeyReconnectActions));
+        LogFlowFunc(("Can't enumerate registry key %ls\n", g_pwszRegKeyReconnectActions));
     }
-    if (!ActionExecutorEnumerateRegistryKey(g_pwszRegKeyDisconnectActions, &gCtx.listDetachActions))
+    if (!ActionExecutorEnumerateRegistryKey(g_pwszRegKeyDisconnectActions, &pCtx->listDetachActions))
     {
-        LALOG(("LA: Can't enumerate registry key %ls\n", g_pwszRegKeyDisconnectActions));
+        LogFlowFunc(("Can't enumerate registry key %ls\n", g_pwszRegKeyDisconnectActions));
     }
 
     /* A non zero timestamp in the past. */
     pCtx->u64LastQuery = 1;
     /* Start at Detached state. */
     pCtx->u32PrevAction = LA_DO_DETACH;
+
+    int rc;
 
     for (;;)
     {
@@ -1320,7 +1316,7 @@ unsigned __stdcall VBoxLAThread(void *pInstance)
          */
         uint64_t u64Timestamp = 0;
         uint32_t u32ActiveClientId = 0;
-        int rc = laGetActiveClient(pCtx, &u64Timestamp, &u32ActiveClientId);
+        rc = laGetActiveClient(pCtx, &u64Timestamp, &u32ActiveClientId);
 
         if (RT_SUCCESS(rc))
         {
@@ -1354,7 +1350,7 @@ unsigned __stdcall VBoxLAThread(void *pInstance)
                     if (   pCtx->fDetachOnDisconnect
                         && fClientIdChanged)
                     {
-                        LALOG(("LA: client disconnected\n"));
+                        LogFlowFunc(("Client disconnected\n"));
 
                         /* laDoActions will prevent a repeated detach action. So if there
                          * was a detach already, then this detach will be ignored.
@@ -1369,31 +1365,54 @@ unsigned __stdcall VBoxLAThread(void *pInstance)
             }
         }
 
-        /* Check if it is time to exit.
+        /*
+         * Check if it is time to exit.
          * If the code above failed, wait a bit until repeating to avoid a loop.
          * Otherwise just check if the stop event was signalled.
          */
-        uint32_t u32Wait;
+        RTMSINTERVAL msWait;
         if (   rc == VERR_NOT_FOUND
             || pCtx->activeClient.u32ClientId == 0)
         {
             /* No connections, wait longer. */
-            u32Wait = 5000;
+            msWait = 5000;
+            rc = VINF_SUCCESS;
         }
         else if (RT_FAILURE(rc))
         {
-            u32Wait = 1000;
+            static int s_iBitchedAboutFailedGetActiveClient = 0;
+            if (s_iBitchedAboutFailedGetActiveClient++ < 32)
+                LogRel(("LA: Retrieving current client(s) failed with %Rrc\n", rc));
+
+            msWait = 10000;
         }
         else
-        {
-            u32Wait = 0;
-        }
-        if (WaitForSingleObject(pCtx->pEnv->hStopEvent, u32Wait) == WAIT_OBJECT_0)
-        {
+            msWait = 0;
+
+        if (*pfShutdown)
             break;
-        }
+
+        if (msWait)
+            RTThreadSleep(msWait);
     }
 
-    LALOG(("VBoxTray: VBoxLAThread: Finished.\n"));
-    return 0;
+    LogFlowFuncLeaveRC(rc);
+    return rc;
 }
+
+/**
+ * The service description.
+ */
+VBOXSERVICEDESC g_SvcDescLA =
+{
+    /* pszName. */
+    "LA",
+    /* pszDescription. */
+    "Location Awareness",
+    /* methods */
+    VBoxLAInit,
+    VBoxLAWorker,
+    NULL /* pfnStop */,
+    VBoxLADestroy
+};
+

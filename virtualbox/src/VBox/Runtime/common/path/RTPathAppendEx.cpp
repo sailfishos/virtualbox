@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/path.h>
 
@@ -146,7 +146,7 @@ RTDECL(int) RTPathAppendEx(char *pszPath, size_t cbPathDst, const char *pszAppen
             {
                 if ((size_t)(pszPathEnd - pszPath) + 1 + cchAppend >= cbPathDst)
                     return VERR_BUFFER_OVERFLOW;
-                *pszPathEnd++ = '/';
+                *pszPathEnd++ = RTPATH_SLASH;
             }
         }
         else

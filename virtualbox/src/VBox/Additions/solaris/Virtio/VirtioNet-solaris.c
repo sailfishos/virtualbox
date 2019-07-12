@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,12 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#ifdef DEBUG_ramshankar
-# define LOG_INSTANCE       RTLogRelDefaultInstance()
-#endif
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "Virtio-solaris.h"
 #include "VirtioPci-solaris.h"
 
@@ -47,9 +45,10 @@
 #include <iprt/rand.h>
 #include <iprt/string.h>
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define DEVICE_NAME               "virtnet"
 /** The module descriptions as seen in 'modinfo'. */
 #define DEVICE_DESC_DRV           "VirtualBox VirtioNet"
@@ -78,9 +77,9 @@
 #define VIRTIO_NET_CTRL_VLAN      0x00080000      /* Control channel VLAN filtering */
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void      *VirtioNetDevAlloc(PVIRTIODEVICE pDevice);
 static void       VirtioNetDevFree(PVIRTIODEVICE pDevice);
 static int        VirtioNetDevAttach(PVIRTIODEVICE pDevice);
@@ -103,9 +102,9 @@ static int        VirtioNetAttachQueues(PVIRTIODEVICE pDevice);
 static void       VirtioNetDetachQueues(PVIRTIODEVICE pDevice);
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Device operations for Virtio Net.
  */
@@ -324,7 +323,7 @@ int _info(struct modinfo *pModInfo)
  * Attach entry point, to attach a device to the system or resume it.
  *
  * @param   pDip            The module structure instance.
- * @param   enmCmd          Operation type (attach/resume).
+ * @param   Cmd             Operation type (attach/resume).
  *
  * @return corresponding solaris error code.
  */
@@ -338,7 +337,7 @@ static int VirtioNetAttach(dev_info_t *pDip, ddi_attach_cmd_t Cmd)
  * Detach entry point, to detach a device to the system or suspend it.
  *
  * @param   pDip            The module structure instance.
- * @param   enmCmd          Operation type (detach/suspend).
+ * @param   Cmd             Operation type (detach/suspend).
  *
  * @return corresponding solaris error code.
  */
@@ -362,7 +361,7 @@ static int VirtioNetTxBufCreate(void *pvBuf, void *pvArg, int fFlags)
     virtio_net_txbuf_t *pTxBuf = pvBuf;
     PVIRTIODEVICE pDevice = pvArg;
 
-    /* @todo ncookies handles? */
+    /** @todo ncookies handles? */
     int rc = ddi_dma_alloc_handle(pDevice->pDip, &g_VirtioNetBufDmaAttr,
                                   fFlags & KM_NOSLEEP ? DDI_DMA_DONTWAIT : DDI_DMA_SLEEP,
                                   0 /* Arg */, &pTxBuf->hDMA);
@@ -468,8 +467,8 @@ static int VirtioNetDevAttach(PVIRTIODEVICE pDevice)
         pMacRegHandle->m_callbacks  = &g_VirtioNetCallbacks;
         pMacRegHandle->m_type_ident = MAC_PLUGIN_IDENT_ETHER;
         pMacRegHandle->m_min_sdu    = 0;
-        pMacRegHandle->m_max_sdu    = 1500;    /* @todo verify */
-        /* @todo should we set the margin size? */
+        pMacRegHandle->m_max_sdu    = 1500;    /** @todo verify */
+        /** @todo should we set the margin size? */
         pMacRegHandle->m_src_addr   = pNet->MacAddr.au8;
 
         /*

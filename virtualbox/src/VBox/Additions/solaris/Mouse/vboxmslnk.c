@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -109,7 +109,7 @@ void handleArgs(int argc, char *argv[], int *pfNoLogo)
                "All rights reserved.\n\n");
     if (fShowUsage)
     {
-        printf("Usage:\n  -V|--version  print the tool vesion.\n"
+        printf("Usage:\n  -V|--version  print the tool version.\n"
                "  --nologo      do not display the logo text and only output the connection\n"
                "                ID number needed to disable pointer integration\n"
                "                again.\n"
@@ -118,3 +118,4 @@ void handleArgs(int argc, char *argv[], int *pfNoLogo)
     }
     *pfNoLogo = fNoLogo;
 }
+

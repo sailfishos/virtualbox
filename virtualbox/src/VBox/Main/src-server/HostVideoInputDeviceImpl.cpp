@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -74,14 +74,14 @@ void HostVideoInputDevice::uninit()
 {
     LogFlowThisFunc(("\n"));
 
-    m.name.setNull();
-    m.path.setNull();
-    m.alias.setNull();
-
     /* Enclose the state transition Ready->InUninit->NotReady */
     AutoUninitSpan autoUninitSpan(this);
     if (autoUninitSpan.uninitDone())
         return;
+
+    m.name.setNull();
+    m.path.setNull();
+    m.alias.setNull();
 }
 
 static HRESULT hostVideoInputDeviceAdd(HostVideoInputDeviceList *pList,
@@ -131,49 +131,41 @@ typedef FNVBOXHOSTWEBCAMLIST *PFNVBOXHOSTWEBCAMLIST;
 
 static int loadHostWebcamLibrary(const char *pszPath, RTLDRMOD *phmod, PFNVBOXHOSTWEBCAMLIST *ppfn)
 {
-    int rc = VINF_SUCCESS;
-    RTLDRMOD hmod = NIL_RTLDRMOD;
-
-    RTERRINFOSTATIC ErrInfo;
-    RTErrInfoInitStatic(&ErrInfo);
+    int rc;
     if (RTPathHavePath(pszPath))
-        rc = SUPR3HardenedLdrLoadPlugIn(pszPath, &hmod, &ErrInfo.Core);
-    else
-        rc = VERR_INVALID_PARAMETER;
-    if (RT_SUCCESS(rc))
     {
-        static const char *pszSymbol = "VBoxHostWebcamList";
-        rc = RTLdrGetSymbol(hmod, pszSymbol, (void **)ppfn);
-
-        if (RT_FAILURE(rc) && rc != VERR_SYMBOL_NOT_FOUND)
-            LogRel(("Resolving symbol '%s': %Rrc\n", pszSymbol, rc));
-    }
-    else
-    {
-        LogRel(("Loading the library '%s': %Rrc\n", pszPath, rc));
-        if (RTErrInfoIsSet(&ErrInfo.Core))
-            LogRel(("  %s\n", ErrInfo.Core.pszMsg));
-
-        hmod = NIL_RTLDRMOD;
-    }
-
-    if (RT_SUCCESS(rc))
-    {
-        *phmod = hmod;
-    }
-    else
-    {
-        if (hmod != NIL_RTLDRMOD)
+        RTLDRMOD hmod = NIL_RTLDRMOD;
+        RTERRINFOSTATIC ErrInfo;
+        rc = SUPR3HardenedLdrLoadPlugIn(pszPath, &hmod, RTErrInfoInitStatic(&ErrInfo));
+        if (RT_SUCCESS(rc))
         {
-            RTLdrClose(hmod);
-            hmod = NIL_RTLDRMOD;
+            static const char s_szSymbol[] = "VBoxHostWebcamList";
+            rc = RTLdrGetSymbol(hmod, s_szSymbol, (void **)ppfn);
+            if (RT_SUCCESS(rc))
+                *phmod = hmod;
+            else
+            {
+                if (rc != VERR_SYMBOL_NOT_FOUND)
+                    LogRel(("Resolving symbol '%s': %Rrc\n", s_szSymbol, rc));
+                RTLdrClose(hmod);
+                hmod = NIL_RTLDRMOD;
+            }
+        }
+        else
+        {
+            LogRel(("Loading the library '%s': %Rrc\n", pszPath, rc));
+            if (RTErrInfoIsSet(&ErrInfo.Core))
+                LogRel(("  %s\n", ErrInfo.Core.pszMsg));
         }
     }
-
+    else
+    {
+        LogRel(("Loading the library '%s': No path! Refusing to try loading it!\n", pszPath));
+        rc = VERR_INVALID_PARAMETER;
+    }
     return rc;
 }
 
-static const Utf8Str strExtPackPuel("Oracle VM VirtualBox Extension Pack");
 
 static HRESULT fillDeviceList(VirtualBox *pVirtualBox, HostVideoInputDeviceList *pList)
 {
@@ -181,8 +173,8 @@ static HRESULT fillDeviceList(VirtualBox *pVirtualBox, HostVideoInputDeviceList 
     Utf8Str strLibrary;
 
 #ifdef VBOX_WITH_EXTPACK
-    ExtPackManager *pExtPackMgr = pVirtualBox->getExtPackManager();
-    hr = pExtPackMgr->getLibraryPathForExtPack("VBoxHostWebcam", &strExtPackPuel, &strLibrary);
+    ExtPackManager *pExtPackMgr = pVirtualBox->i_getExtPackManager();
+    hr = pExtPackMgr->i_getLibraryPathForExtPack("VBoxHostWebcam", ORACLE_PUEL_EXTPACK_NAME, &strLibrary);
 #else
     hr = E_NOTIMPL;
 #endif

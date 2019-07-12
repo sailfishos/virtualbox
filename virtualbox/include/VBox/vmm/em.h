@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -33,6 +33,7 @@
 RT_C_DECLS_BEGIN
 
 /** @defgroup grp_em        The Execution Monitor / Manager API
+ * @ingroup grp_vmm
  * @{
  */
 
@@ -124,7 +125,7 @@ typedef FNEMULATELOCKPARAM3    *PFNEMULATELOCKPARAM3;
  *
  * @returns true if enabled.
  * @returns false if disabled.
- * @param   pVM         The VM to operate on.
+ * @param   pVM         The cross context VM structure.
  */
 #define EMIsRawRing3Enabled(pVM)            (!(pVM)->fRecompileUser)
 
@@ -133,7 +134,7 @@ typedef FNEMULATELOCKPARAM3    *PFNEMULATELOCKPARAM3;
  *
  * @returns true if enabled.
  * @returns false if disabled.
- * @param   pVM         The VM to operate on.
+ * @param   pVM         The cross context VM structure.
  */
 #define EMIsRawRing0Enabled(pVM)            (!(pVM)->fRecompileSupervisor)
 
@@ -143,7 +144,7 @@ typedef FNEMULATELOCKPARAM3    *PFNEMULATELOCKPARAM3;
  *
  * @returns true if enabled.
  * @returns false if disabled.
- * @param   pVM         The VM to operate on.
+ * @param   pVM         The cross context VM structure.
  */
 # define EMIsRawRing1Enabled(pVM)           ((pVM)->fRawRing1Enabled)
 #else
@@ -155,7 +156,7 @@ typedef FNEMULATELOCKPARAM3    *PFNEMULATELOCKPARAM3;
  *
  * @returns true if enabled.
  * @returns false if disabled.
- * @param   pVM         The VM to operate on.
+ * @param   pVM         The cross context VM structure.
  */
 #define EMIsHwVirtExecutionEnabled(pVM)     (!(pVM)->fRecompileSupervisor && !(pVM)->fRecompileUser)
 
@@ -165,7 +166,7 @@ typedef FNEMULATELOCKPARAM3    *PFNEMULATELOCKPARAM3;
  *
  * @returns true if enabled.
  * @returns false if disabled.
- * @param   pVM         The VM to operate on.
+ * @param   pVM         The cross context VM structure.
  */
 #define EMIsSupervisorCodeRecompiled(pVM) ((pVM)->fRecompileSupervisor)
 
@@ -192,16 +193,14 @@ VMM_INT_DECL(VBOXSTRICTRC)      EMInterpretMWait(PVM pVM, PVMCPU pVCpu, PCPUMCTX
 VMM_INT_DECL(int)               EMInterpretMonitor(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame);
 VMM_INT_DECL(int)               EMInterpretDRxWrite(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegDrx, uint32_t SrcRegGen);
 VMM_INT_DECL(int)               EMInterpretDRxRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegGen, uint32_t SrcRegDrx);
-VMM_INT_DECL(int)               EMInterpretCRxWrite(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegCrx, uint32_t SrcRegGen);
-VMM_INT_DECL(int)               EMInterpretCRxRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegGen, uint32_t SrcRegCrx);
-VMM_INT_DECL(int)               EMInterpretLMSW(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint16_t u16Data);
-VMM_INT_DECL(int)               EMInterpretCLTS(PVM pVM, PVMCPU pVCpu);
 VMM_INT_DECL(int)               EMInterpretRdmsr(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame);
 VMM_INT_DECL(int)               EMInterpretWrmsr(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame);
 VMM_INT_DECL(bool)              EMShouldContinueAfterHalt(PVMCPU pVCpu, PCPUMCTX pCtx);
 VMM_INT_DECL(bool)              EMMonitorWaitShouldContinue(PVMCPU pVCpu, PCPUMCTX pCtx);
 VMM_INT_DECL(int)               EMMonitorWaitPrepare(PVMCPU pVCpu, uint64_t rax, uint64_t rcx, uint64_t rdx, RTGCPHYS GCPhys);
+VMM_INT_DECL(bool)              EMMonitorIsArmed(PVMCPU pVCpu);
 VMM_INT_DECL(int)               EMMonitorWaitPerform(PVMCPU pVCpu, uint64_t rax, uint64_t rcx);
+VMM_INT_DECL(int)               EMUnhaltAndWakeUp(PVM pVM, PVMCPU pVCpuDst);
 
 /** @name Assembly routines
  * @{ */
@@ -250,7 +249,6 @@ VMM_INT_DECL(int)               EMRemTryLock(PVM pVM);
 
 #ifdef IN_RING3
 /** @defgroup grp_em_r3     The EM Host Context Ring-3 API
- * @ingroup grp_em
  * @{
  */
 

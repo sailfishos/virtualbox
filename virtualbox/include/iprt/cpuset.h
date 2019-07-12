@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -47,7 +47,7 @@ RT_C_DECLS_BEGIN
  */
 DECLINLINE(PRTCPUSET) RTCpuSetEmpty(PRTCPUSET pSet)
 {
-    unsigned i;
+    size_t i;
     for (i = 0; i < RT_ELEMENTS(pSet->bmSet); i++)
         pSet->bmSet[i] = 0;
     return pSet;
@@ -62,9 +62,39 @@ DECLINLINE(PRTCPUSET) RTCpuSetEmpty(PRTCPUSET pSet)
  */
 DECLINLINE(PRTCPUSET) RTCpuSetFill(PRTCPUSET pSet)
 {
-    unsigned i;
+    size_t i;
     for (i = 0; i < RT_ELEMENTS(pSet->bmSet); i++)
         pSet->bmSet[i] = UINT64_MAX;
+    return pSet;
+}
+
+
+/**
+ * Copies one set to another.
+ *
+ * @param   pDst    Pointer to the destination set.
+ * @param   pSrc    Pointer to the source set.
+ */
+DECLINLINE(void) RTCpuSetCopy(PRTCPUSET pDst, PRTCPUSET pSrc)
+{
+    size_t i;
+    for (i = 0; i < RT_ELEMENTS(pDst->bmSet); i++)
+        pDst->bmSet[i] = pSrc->bmSet[i];
+}
+
+
+/**
+ * ANDs the given CPU set with another.
+ *
+ * @returns pSet.
+ * @param   pSet          Pointer to the set.
+ * @param   pAndMaskSet   Pointer to the AND-mask set.
+ */
+DECLINLINE(PRTCPUSET) RTCpuSetAnd(PRTCPUSET pSet, PRTCPUSET pAndMaskSet)
+{
+    size_t i;
+    for (i = 0; i < RT_ELEMENTS(pSet->bmSet); i++)
+        ASMAtomicAndU64((volatile uint64_t *)&pSet->bmSet[i], pAndMaskSet->bmSet[i]);
     return pSet;
 }
 
@@ -80,10 +110,12 @@ DECLINLINE(PRTCPUSET) RTCpuSetFill(PRTCPUSET pSet)
 DECLINLINE(int) RTCpuSetAdd(PRTCPUSET pSet, RTCPUID idCpu)
 {
     int iCpu = RTMpCpuIdToSetIndex(idCpu);
-    if (RT_UNLIKELY(iCpu < 0))
-        return -1;
-    ASMAtomicBitSet(pSet, iCpu);
-    return 0;
+    if (RT_LIKELY(iCpu >= 0))
+    {
+        ASMAtomicBitSet(pSet, iCpu);
+        return 0;
+    }
+    return -1;
 }
 
 
@@ -97,10 +129,12 @@ DECLINLINE(int) RTCpuSetAdd(PRTCPUSET pSet, RTCPUID idCpu)
  */
 DECLINLINE(int) RTCpuSetAddByIndex(PRTCPUSET pSet, int iCpu)
 {
-    if (RT_UNLIKELY((unsigned)iCpu >= RTCPUSET_MAX_CPUS))
-        return -1;
-    ASMAtomicBitSet(pSet, iCpu);
-    return 0;
+    if (RT_LIKELY((unsigned)iCpu < RTCPUSET_MAX_CPUS))
+    {
+        ASMAtomicBitSet(pSet, iCpu);
+        return 0;
+    }
+    return -1;
 }
 
 
@@ -115,10 +149,12 @@ DECLINLINE(int) RTCpuSetAddByIndex(PRTCPUSET pSet, int iCpu)
 DECLINLINE(int) RTCpuSetDel(PRTCPUSET pSet, RTCPUID idCpu)
 {
     int iCpu = RTMpCpuIdToSetIndex(idCpu);
-    if (RT_UNLIKELY(iCpu < 0))
-        return -1;
-    ASMAtomicBitClear(pSet, iCpu);
-    return 0;
+    if (RT_LIKELY(iCpu >= 0))
+    {
+        ASMAtomicBitClear(pSet, iCpu);
+        return 0;
+    }
+    return -1;
 }
 
 
@@ -132,10 +168,12 @@ DECLINLINE(int) RTCpuSetDel(PRTCPUSET pSet, RTCPUID idCpu)
  */
 DECLINLINE(int) RTCpuSetDelByIndex(PRTCPUSET pSet, int iCpu)
 {
-    if (RT_UNLIKELY((unsigned)iCpu >= RTCPUSET_MAX_CPUS))
-        return -1;
-    ASMAtomicBitClear(pSet, iCpu);
-    return 0;
+    if (RT_LIKELY((unsigned)iCpu < RTCPUSET_MAX_CPUS))
+    {
+        ASMAtomicBitClear(pSet, iCpu);
+        return 0;
+    }
+    return -1;
 }
 
 
@@ -150,9 +188,9 @@ DECLINLINE(int) RTCpuSetDelByIndex(PRTCPUSET pSet, int iCpu)
 DECLINLINE(bool) RTCpuSetIsMember(PCRTCPUSET pSet, RTCPUID idCpu)
 {
     int iCpu = RTMpCpuIdToSetIndex(idCpu);
-    if (RT_UNLIKELY(iCpu < 0))
-        return false;
-    return ASMBitTest((volatile void *)pSet, iCpu);
+    if (RT_LIKELY(iCpu >= 0))
+        return ASMBitTest((volatile void *)pSet, iCpu);
+    return false;
 }
 
 
@@ -166,9 +204,9 @@ DECLINLINE(bool) RTCpuSetIsMember(PCRTCPUSET pSet, RTCPUID idCpu)
  */
 DECLINLINE(bool) RTCpuSetIsMemberByIndex(PCRTCPUSET pSet, int iCpu)
 {
-    if (RT_UNLIKELY((unsigned)iCpu >= RTCPUSET_MAX_CPUS))
-        return false;
-    return ASMBitTest((volatile void *)pSet, iCpu);
+    if (RT_LIKELY((unsigned)iCpu < RTCPUSET_MAX_CPUS))
+        return ASMBitTest((volatile void *)pSet, iCpu);
+    return false;
 }
 
 
@@ -181,9 +219,25 @@ DECLINLINE(bool) RTCpuSetIsMemberByIndex(PCRTCPUSET pSet, int iCpu)
  */
 DECLINLINE(bool) RTCpuSetIsEqual(PCRTCPUSET pSet1, PCRTCPUSET pSet2)
 {
-    unsigned i;
+    size_t i;
     for (i = 0; i < RT_ELEMENTS(pSet1->bmSet); i++)
         if (pSet1->bmSet[i] != pSet2->bmSet[i])
+            return false;
+    return true;
+}
+
+
+/**
+ * Checks if the CPU set is empty or not.
+ *
+ * @returns true / false accordingly.
+ * @param   pSet    Pointer to the set.
+ */
+DECLINLINE(bool) RTCpuSetIsEmpty(PRTCPUSET pSet)
+{
+    size_t i;
+    for (i = 0; i < RT_ELEMENTS(pSet->bmSet); i++)
+        if (pSet->bmSet[i])
             return false;
     return true;
 }
@@ -210,7 +264,7 @@ DECLINLINE(uint64_t) RTCpuSetToU64(PCRTCPUSET pSet)
  */
 DECLINLINE(PRTCPUSET) RTCpuSetFromU64(PRTCPUSET pSet, uint64_t fMask)
 {
-    unsigned i;
+    size_t i;
 
     pSet->bmSet[0] = fMask;
     for (i = 1; i < RT_ELEMENTS(pSet->bmSet); i++)
@@ -229,7 +283,7 @@ DECLINLINE(PRTCPUSET) RTCpuSetFromU64(PRTCPUSET pSet, uint64_t fMask)
 DECLINLINE(int) RTCpuSetCount(PCRTCPUSET pSet)
 {
     int         cCpus = 0;
-    unsigned    i;
+    size_t      i;
 
     for (i = 0; i < RT_ELEMENTS(pSet->bmSet); i++)
     {
@@ -257,7 +311,7 @@ DECLINLINE(int) RTCpuSetCount(PCRTCPUSET pSet)
  */
 DECLINLINE(int) RTCpuLastIndex(PCRTCPUSET pSet)
 {
-    unsigned i = RT_ELEMENTS(pSet->bmSet);
+    size_t i = RT_ELEMENTS(pSet->bmSet);
     while (i-- > 0)
     {
         uint64_t u64 = pSet->bmSet[i];
@@ -271,7 +325,7 @@ DECLINLINE(int) RTCpuLastIndex(PCRTCPUSET pSet)
                     break;
                 u64 <<= 1;
             }
-            return i * 64 + iBit;
+            return (int)i * 64 + iBit;
         }
     }
     return 0;

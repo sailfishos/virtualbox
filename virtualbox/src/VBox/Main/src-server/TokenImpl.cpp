@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -176,12 +176,12 @@ void MediumLockToken::uninit()
     {
         if (m.fWrite)
         {
-            HRESULT rc = m.pMedium->unlockWrite(NULL);
+            HRESULT rc = m.pMedium->i_unlockWrite(NULL);
             AssertComRC(rc);
         }
         else
         {
-            HRESULT rc = m.pMedium->unlockRead(NULL);
+            HRESULT rc = m.pMedium->i_unlockRead(NULL);
             AssertComRC(rc);
         }
         m.pMedium.setNull();

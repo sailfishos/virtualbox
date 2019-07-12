@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,12 +17,27 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/** @page pg_patm   PATM - Patch Manager
+ *
+ * The patch manager (PATM) patches privileged guest code to allow it to execute
+ * directly in raw-mode.
+ *
+ * The PATM works closely together with the @ref pg_csam "CSAM" detect code
+ * needing patching and detected changes to the patch.  It also interfaces with
+ * other components, like @ref pg_trpm "TRPM" and @ref pg_rem "REM", for these
+ * purposes.
+ *
+ * @sa @ref grp_patm
+ */
+
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PATM
 #include <VBox/vmm/patm.h>
 #include <VBox/vmm/stam.h>
+#include <VBox/vmm/pdmapi.h>
 #include <VBox/vmm/pgm.h>
 #include <VBox/vmm/cpum.h>
 #include <VBox/vmm/cpumdis.h>
@@ -48,7 +63,6 @@
 #include <iprt/asm.h>
 #include <VBox/dis.h>
 #include <VBox/disopcode.h>
-#include "internal/pgm.h"
 
 #include <iprt/string.h>
 #include "PATMA.h"
@@ -87,10 +101,9 @@ typedef struct
 } PATMDISASM, *PPATMDISASM;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int          patmDisableUnusablePatch(PVM pVM, RTRCPTR pInstrGC, RTRCPTR pConflictAddr, PPATCHINFO pPatch);
 static int          patmActivateInt3Patch(PVM pVM, PPATCHINFO pPatch);
 static int          patmDeactivateInt3Patch(PVM pVM, PPATCHINFO pPatch);
@@ -108,8 +121,10 @@ static void         patmPrintStat(PVM pVM, void *pvSample, char *pszBuf, size_t 
 #define             patmPatchGCPtr2PatchHCPtr(pVM, pGC)      (pVM->patm.s.pPatchMemHC + (pGC - pVM->patm.s.pPatchMemGC))
 
 static int               patmReinit(PVM pVM);
-static DECLCALLBACK(int) RelocatePatches(PAVLOU32NODECORE pNode, void *pParam);
+static DECLCALLBACK(int) patmR3RelocatePatches(PAVLOU32NODECORE pNode, void *pParam);
+#ifdef PATM_RESOLVE_CONFLICTS_WITH_JUMP_PATCHES
 static RTRCPTR      patmR3GuestGCPtrToPatchGCPtrSimple(PVM pVM, RCPTRTYPE(uint8_t*) pInstrGC);
+#endif
 static int          patmR3MarkDirtyPatch(PVM pVM, PPATCHINFO pPatch);
 
 #ifdef VBOX_WITH_DEBUGGER
@@ -133,7 +148,7 @@ static unsigned int cIDTHandlersDisabled = 0;
  * Initializes the PATM.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3_INT_DECL(int) PATMR3Init(PVM pVM)
 {
@@ -159,8 +174,8 @@ VMMR3_INT_DECL(int) PATMR3Init(PVM pVM)
     AssertCompile(VMCPU_FF_INTERRUPT_APIC == RT_BIT_32(0));
     AssertCompile(VMCPU_FF_INTERRUPT_PIC == RT_BIT_32(1));
 
-    AssertReleaseMsg(PATMInterruptFlag == (VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC | VMCPU_FF_TIMER | VMCPU_FF_REQUEST),
-                     ("Interrupt flags out of sync!! PATMInterruptFlag=%#x expected %#x. broken assembler?\n", PATMInterruptFlag, VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC | VMCPU_FF_TIMER | VMCPU_FF_REQUEST));
+    AssertReleaseMsg(g_fPatmInterruptFlag == (VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC | VMCPU_FF_TIMER | VMCPU_FF_REQUEST),
+                     ("Interrupt flags out of sync!! g_fPatmInterruptFlag=%#x expected %#x. broken assembler?\n", g_fPatmInterruptFlag, VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC | VMCPU_FF_TIMER | VMCPU_FF_REQUEST));
 
     /* Allocate patch memory and GC patch state memory. */
     pVM->patm.s.cbPatchMem = PATCH_MEMORY_SIZE;
@@ -217,9 +232,19 @@ VMMR3_INT_DECL(int) PATMR3Init(PVM pVM)
         return rc;
 
     /*
+     * Register the virtual page access handler type.
+     */
+    rc = PGMR3HandlerVirtualTypeRegister(pVM, PGMVIRTHANDLERKIND_ALL, false /*fRelocUserRC*/,
+                                         NULL /*pfnInvalidateR3*/,
+                                         patmVirtPageHandler,
+                                         "patmVirtPageHandler", "patmRCVirtPagePfHandler",
+                                         "PATMMonitorPatchJump", &pVM->patm.s.hMonitorPageType);
+    AssertRCReturn(rc, rc);
+
+    /*
      * Register save and load state notifiers.
      */
-    rc = SSMR3RegisterInternal(pVM, "PATM", 0, PATM_SSM_VERSION, sizeof(pVM->patm.s) + PATCH_MEMORY_SIZE  + PAGE_SIZE + PATM_STACK_TOTAL_SIZE + PAGE_SIZE,
+    rc = SSMR3RegisterInternal(pVM, "PATM", 0, PATM_SAVED_STATE_VERSION, sizeof(pVM->patm.s) + PATCH_MEMORY_SIZE  + PAGE_SIZE + PATM_STACK_TOTAL_SIZE + PAGE_SIZE,
                                NULL, NULL, NULL,
                                NULL, patmR3Save, NULL,
                                NULL, patmR3Load, NULL);
@@ -307,14 +332,14 @@ VMMR3_INT_DECL(int) PATMR3Init(PVM pVM)
     STAM_REG(pVM, &pVM->patm.s.StatCheckPendingIRQ,   STAMTYPE_COUNTER, "/PATM/GC/CheckIRQ" ,        STAMUNIT_OCCURENCES,     "Number of traps that ask to check for pending irqs.");
 #endif /* VBOX_WITH_STATISTICS */
 
-    Log(("PATMCallRecord.size           %d\n", PATMCallRecord.size));
-    Log(("PATMCallIndirectRecord.size   %d\n", PATMCallIndirectRecord.size));
-    Log(("PATMRetRecord.size            %d\n", PATMRetRecord.size));
-    Log(("PATMJumpIndirectRecord.size   %d\n", PATMJumpIndirectRecord.size));
-    Log(("PATMPopf32Record.size         %d\n", PATMPopf32Record.size));
-    Log(("PATMIretRecord.size           %d\n", PATMIretRecord.size));
-    Log(("PATMStiRecord.size            %d\n", PATMStiRecord.size));
-    Log(("PATMCheckIFRecord.size        %d\n", PATMCheckIFRecord.size));
+    Log(("g_patmCallRecord.cbFunction           %u\n", g_patmCallRecord.cbFunction));
+    Log(("g_patmCallIndirectRecord.cbFunction   %u\n", g_patmCallIndirectRecord.cbFunction));
+    Log(("g_patmRetRecord.cbFunction            %u\n", g_patmRetRecord.cbFunction));
+    Log(("g_patmJumpIndirectRecord.cbFunction   %u\n", g_patmJumpIndirectRecord.cbFunction));
+    Log(("g_patmPopf32Record.cbFunction         %u\n", g_patmPopf32Record.cbFunction));
+    Log(("g_patmIretRecord.cbFunction           %u\n", g_patmIretRecord.cbFunction));
+    Log(("g_patmStiRecord.cbFunction            %u\n", g_patmStiRecord.cbFunction));
+    Log(("g_patmCheckIFRecord.cbFunction        %u\n", g_patmCheckIFRecord.cbFunction));
 
     return rc;
 }
@@ -323,33 +348,57 @@ VMMR3_INT_DECL(int) PATMR3Init(PVM pVM)
  * Finalizes HMA page attributes.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3_INT_DECL(int) PATMR3InitFinalize(PVM pVM)
 {
     if (HMIsEnabled(pVM))
         return VINF_SUCCESS;
 
-    /* The GC state, stack and statistics must be read/write for the guest (supervisor only of course). */
+    /*
+     * The GC state, stack and statistics must be read/write for the guest
+     * (supervisor only of course).
+     *
+     * Remember, we run guest code at ring-1 and ring-2 levels, which are
+     * considered supervisor levels by the paging  structures.  We run the VMM
+     * in ring-0 with CR0.WP=0 and mapping all VMM structures as read-only
+     * pages.  The following structures are exceptions and must be mapped with
+     * write access so the ring-1 and ring-2 code can modify them.
+     */
     int rc = PGMMapSetPage(pVM, pVM->patm.s.pGCStateGC, PAGE_SIZE, X86_PTE_P | X86_PTE_A | X86_PTE_D | X86_PTE_RW);
-    if (RT_FAILURE(rc))
-        Log(("PATMR3InitFinalize: PGMMapSetPage failed with %Rrc!!\n", rc));
+    AssertLogRelMsgReturn(RT_SUCCESS(rc), ("Failed to make the GCState accessible to ring-1 and ring-2 code: %Rrc\n", rc), rc);
 
     rc = PGMMapSetPage(pVM, pVM->patm.s.pGCStackGC, PATM_STACK_TOTAL_SIZE, X86_PTE_P | X86_PTE_A | X86_PTE_D | X86_PTE_RW);
-    if (RT_FAILURE(rc))
-        Log(("PATMR3InitFinalize: PGMMapSetPage failed with %Rrc!!\n", rc));
+    AssertLogRelMsgReturn(RT_SUCCESS(rc), ("Failed to make the GCStack accessible to ring-1 and ring-2 code: %Rrc\n", rc), rc);
 
     rc = PGMMapSetPage(pVM, pVM->patm.s.pStatsGC, PATM_STAT_MEMSIZE, X86_PTE_P | X86_PTE_A | X86_PTE_D | X86_PTE_RW);
-    if (RT_FAILURE(rc))
-        Log(("PATMR3InitFinalize: PGMMapSetPage failed with %Rrc!!\n", rc));
+    AssertLogRelMsgReturn(RT_SUCCESS(rc), ("Failed to make the stats struct accessible to ring-1 and ring-2 code: %Rrc\n", rc), rc);
 
-    return rc;
+    /*
+     * Find the patch helper segment so we can identify code running there as patch code.
+     */
+    rc = PDMR3LdrGetSymbolRC(pVM, NULL, "g_PatchHlpBegin", &pVM->patm.s.pbPatchHelpersRC);
+    AssertLogRelMsgReturn(RT_SUCCESS(rc), ("Failed to resolve g_PatchHlpBegin: %Rrc\n", rc), rc);
+    pVM->patm.s.pbPatchHelpersR3 = (uint8_t *)MMHyperRCToR3(pVM, pVM->patm.s.pbPatchHelpersRC);
+    AssertLogRelReturn(pVM->patm.s.pbPatchHelpersR3 != NULL, VERR_INTERNAL_ERROR_3);
+
+    RTRCPTR RCPtrEnd;
+    rc = PDMR3LdrGetSymbolRC(pVM, NULL, "g_PatchHlpEnd", &RCPtrEnd);
+    AssertLogRelMsgReturn(RT_SUCCESS(rc), ("Failed to resolve g_PatchHlpEnd: %Rrc\n", rc), rc);
+
+    pVM->patm.s.cbPatchHelpers = RCPtrEnd - pVM->patm.s.pbPatchHelpersRC;
+    AssertLogRelMsgReturn(pVM->patm.s.cbPatchHelpers < _128K,
+                          ("%RRv-%RRv => %#x\n", pVM->patm.s.pbPatchHelpersRC, RCPtrEnd, pVM->patm.s.cbPatchHelpers),
+                          VERR_INTERNAL_ERROR_4);
+
+
+    return VINF_SUCCESS;
 }
 
 /**
  * (Re)initializes PATM
  *
- * @param   pVM     The VM.
+ * @param   pVM     The cross context VM structure.
  */
 static int patmReinit(PVM pVM)
 {
@@ -358,13 +407,13 @@ static int patmReinit(PVM pVM)
     /*
      * Assert alignment and sizes.
      */
-    AssertRelease(!(RT_OFFSETOF(VM, patm.s) & 31));
+    AssertRelease(!(RT_UOFFSETOF(VM, patm.s) & 31));
     AssertRelease(sizeof(pVM->patm.s) <= sizeof(pVM->patm.padding));
 
     /*
      * Setup any fixed pointers and offsets.
      */
-    pVM->patm.s.offVM = RT_OFFSETOF(VM, patm);
+    pVM->patm.s.offVM = RT_UOFFSETOF(VM, patm);
 
 #ifndef RT_ARCH_AMD64 /* would be nice if this was changed everywhere. was driving me crazy on AMD64. */
 #ifndef PATM_DISABLE_ALL
@@ -412,7 +461,7 @@ static int patmReinit(PVM pVM)
     pVM->patm.s.deltaReloc           = 0;
 
     /* Lowest and highest patched instruction */
-    pVM->patm.s.pPatchedInstrGCLowest     = ~0;
+    pVM->patm.s.pPatchedInstrGCLowest     = RTRCPTR_MAX;
     pVM->patm.s.pPatchedInstrGCHighest    = 0;
 
     pVM->patm.s.PatchLookupTreeHC->PatchTree            = 0;
@@ -459,53 +508,51 @@ static int patmReinit(PVM pVM)
  *
  * The PATM will update the addresses used by the switcher.
  *
- * @param   pVM     The VM.
+ * @param   pVM         The cross context VM structure.
+ * @param   offDelta    The relocation delta.
  */
-VMMR3_INT_DECL(void) PATMR3Relocate(PVM pVM)
+VMMR3_INT_DECL(void) PATMR3Relocate(PVM pVM, RTRCINTPTR offDelta)
 {
     if (HMIsEnabled(pVM))
         return;
 
     RTRCPTR     GCPtrNew = MMHyperR3ToRC(pVM, pVM->patm.s.pGCStateHC);
-    RTRCINTPTR  delta = GCPtrNew - pVM->patm.s.pGCStateGC;
+    Assert((RTRCINTPTR)(GCPtrNew - pVM->patm.s.pGCStateGC) == offDelta);
 
-    Log(("PATMR3Relocate from %RRv to %RRv - delta %08X\n", pVM->patm.s.pGCStateGC, GCPtrNew, delta));
-    if (delta)
+    Log(("PATMR3Relocate from %RRv to %RRv - delta %08X\n", pVM->patm.s.pGCStateGC, GCPtrNew, offDelta));
+    if (offDelta)
     {
         PCPUMCTX pCtx;
 
         /* Update CPUMCTX guest context pointer. */
-        pVM->patm.s.pCPUMCtxGC   += delta;
+        pVM->patm.s.pCPUMCtxGC += offDelta;
 
-        pVM->patm.s.deltaReloc = delta;
+        pVM->patm.s.deltaReloc = offDelta;
+        RTAvloU32DoWithAll(&pVM->patm.s.PatchLookupTreeHC->PatchTree, true, patmR3RelocatePatches, (void *)pVM);
 
-        RTAvloU32DoWithAll(&pVM->patm.s.PatchLookupTreeHC->PatchTree, true, RelocatePatches, (void *)pVM);
-
-        pCtx = CPUMQueryGuestCtxPtr(VMMGetCpu(pVM));
-
-        /* If we are running patch code right now, then also adjust EIP. */
-        if (PATMIsPatchGCAddr(pVM, pCtx->eip))
-            pCtx->eip += delta;
-
-        pVM->patm.s.pGCStateGC  = GCPtrNew;
-        pVM->patm.s.pPatchMemGC = MMHyperR3ToRC(pVM, pVM->patm.s.pPatchMemHC);
-
-        pVM->patm.s.pGCStackGC  = MMHyperR3ToRC(pVM, pVM->patm.s.pGCStackHC);
-
-        pVM->patm.s.pStatsGC    = MMHyperR3ToRC(pVM, pVM->patm.s.pStatsHC);
-
+        pVM->patm.s.pGCStateGC        = GCPtrNew;
+        pVM->patm.s.pPatchMemGC       = MMHyperR3ToRC(pVM, pVM->patm.s.pPatchMemHC);
+        pVM->patm.s.pGCStackGC        = MMHyperR3ToRC(pVM, pVM->patm.s.pGCStackHC);
+        pVM->patm.s.pStatsGC          = MMHyperR3ToRC(pVM, pVM->patm.s.pStatsHC);
         pVM->patm.s.PatchLookupTreeGC = MMHyperR3ToRC(pVM, pVM->patm.s.PatchLookupTreeHC);
 
         if (pVM->patm.s.pfnSysEnterPatchGC)
-            pVM->patm.s.pfnSysEnterPatchGC += delta;
+            pVM->patm.s.pfnSysEnterPatchGC += offDelta;
+
+        /* If we are running patch code right now, then also adjust EIP. */
+        pCtx = CPUMQueryGuestCtxPtr(VMMGetCpu(pVM));
+        if (PATMIsPatchGCAddr(pVM, pCtx->eip))
+            pCtx->eip += offDelta;
 
         /* Deal with the global patch functions. */
-        pVM->patm.s.pfnHelperCallGC += delta;
-        pVM->patm.s.pfnHelperRetGC  += delta;
-        pVM->patm.s.pfnHelperIretGC += delta;
-        pVM->patm.s.pfnHelperJumpGC += delta;
+        pVM->patm.s.pfnHelperCallGC += offDelta;
+        pVM->patm.s.pfnHelperRetGC  += offDelta;
+        pVM->patm.s.pfnHelperIretGC += offDelta;
+        pVM->patm.s.pfnHelperJumpGC += offDelta;
 
-        RelocatePatches(&pVM->patm.s.pGlobalPatchRec->Core, (void *)pVM);
+        pVM->patm.s.pbPatchHelpersRC += offDelta;
+
+        patmR3RelocatePatches(&pVM->patm.s.pGlobalPatchRec->Core, (void *)pVM);
     }
 }
 
@@ -517,7 +564,7 @@ VMMR3_INT_DECL(void) PATMR3Relocate(PVM pVM)
  * the VM it self is at this point powered off or suspended.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3_INT_DECL(int) PATMR3Term(PVM pVM)
 {
@@ -535,7 +582,7 @@ VMMR3_INT_DECL(int) PATMR3Term(PVM pVM)
  * PATM reset callback.
  *
  * @returns VBox status code.
- * @param   pVM     The VM which is reset.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3_INT_DECL(int) PATMR3Reset(PVM pVM)
 {
@@ -729,7 +776,7 @@ static void patmLogRawPatchInstr(PVM pVM, PPATCHINFO pPatch, uint32_t fFlags,
  * @param   pNode       Current node
  * @param   pParam      Pointer to the VM.
  */
-static DECLCALLBACK(int) RelocatePatches(PAVLOU32NODECORE pNode, void *pParam)
+static DECLCALLBACK(int) patmR3RelocatePatches(PAVLOU32NODECORE pNode, void *pParam)
 {
     PPATMPATCHREC   pPatch = (PPATMPATCHREC)pNode;
     PVM             pVM = (PVM)pParam;
@@ -747,22 +794,26 @@ static DECLCALLBACK(int) RelocatePatches(PAVLOU32NODECORE pNode, void *pParam)
     delta = (RTRCINTPTR)pVM->patm.s.deltaReloc;
 
     /*
-     * Apply fixups
+     * Apply fixups.
      */
-    PRELOCREC pRec = 0;
-    AVLPVKEY  key  = 0;
-
-    while (true)
+    AVLPVKEY key = NULL;
+    for (;;)
     {
-        /* Get the record that's closest from above */
-        pRec = (PRELOCREC)RTAvlPVGetBestFit(&pPatch->patch.FixupTree, key, true);
-        if (pRec == 0)
+        /* Get the record that's closest from above (after or equal to key). */
+        PRELOCREC pRec = (PRELOCREC)RTAvlPVGetBestFit(&pPatch->patch.FixupTree, key, true);
+        if (!pRec)
             break;
 
-        key = (AVLPVKEY)(pRec->pRelocPos + 1);   /* search for the next record during the next round. */
+        key = (uint8_t *)pRec->Core.Key + 1;   /* search for the next record during the next round. */
 
         switch (pRec->uType)
         {
+        case FIXUP_ABSOLUTE_IN_PATCH_ASM_TMPL:
+            Assert(pRec->pDest == pRec->pSource); Assert(PATM_IS_ASMFIX(pRec->pSource));
+            Log(("Absolute patch template fixup type %#x at %RHv -> %RHv at %RRv\n", pRec->pSource, *(RTRCUINTPTR *)pRec->pRelocPos, *(RTRCINTPTR*)pRec->pRelocPos + delta, pRec->pRelocPos));
+            *(RTRCUINTPTR *)pRec->pRelocPos += delta;
+            break;
+
         case FIXUP_ABSOLUTE:
             Log(("Absolute fixup at %RRv %RHv -> %RHv at %RRv\n", pRec->pSource, *(RTRCUINTPTR *)pRec->pRelocPos, *(RTRCINTPTR*)pRec->pRelocPos + delta, pRec->pRelocPos));
             if (    !pRec->pSource
@@ -792,7 +843,10 @@ static DECLCALLBACK(int) RelocatePatches(PAVLOU32NODECORE pNode, void *pParam)
                     RTRCPTR pPage = pPatch->patch.pPrivInstrGC & PAGE_BASE_GC_MASK;
 
                     Log(("PATM: Patch page not present -> check later!\n"));
-                    rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_ALL, pPage, pPage + (PAGE_SIZE - 1) /* inclusive! */, 0, patmVirtPageHandler, "PATMGCMonitorPage", 0, "PATMMonitorPatchJump");
+                    rc = PGMR3HandlerVirtualRegister(pVM, VMMGetCpu(pVM), pVM->patm.s.hMonitorPageType,
+                                                     pPage,
+                                                     pPage + (PAGE_SIZE - 1) /* inclusive! */,
+                                                     (void *)(uintptr_t)pPage, NIL_RTRCPTR /*pvUserRC*/, NULL /*pszDesc*/);
                     Assert(RT_SUCCESS(rc) || rc == VERR_PGM_HANDLER_VIRTUAL_CONFLICT);
                 }
                 else
@@ -802,7 +856,7 @@ static DECLCALLBACK(int) RelocatePatches(PAVLOU32NODECORE pNode, void *pParam)
                     /*
                      * Disable patch; this is not a good solution
                      */
-                     /* @todo hopefully it was completely overwritten (if the read was successful)!!!! */
+                     /** @todo hopefully it was completely overwritten (if the read was successful)!!!! */
                     pPatch->patch.uState = PATCH_DISABLED;
                 }
                 else
@@ -870,8 +924,11 @@ static DECLCALLBACK(int) RelocatePatches(PAVLOU32NODECORE pNode, void *pParam)
                     ||  rc == VERR_PAGE_TABLE_NOT_PRESENT)
                 {
                     RTRCPTR pPage = pPatch->patch.pPrivInstrGC & PAGE_BASE_GC_MASK;
-
-                    rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_ALL, pPage, pPage + (PAGE_SIZE - 1) /* inclusive! */, 0, patmVirtPageHandler, "PATMGCMonitorPage", 0, "PATMMonitorPatchJump");
+                    Log(("PATM: Patch page not present -> check later!\n"));
+                    rc = PGMR3HandlerVirtualRegister(pVM, VMMGetCpu(pVM), pVM->patm.s.hMonitorPageType,
+                                                     pPage,
+                                                     pPage + (PAGE_SIZE - 1) /* inclusive! */,
+                                                     (void *)(uintptr_t)pPage, NIL_RTRCPTR /*pvUserRC*/, NULL /*pszDesc*/);
                     Assert(RT_SUCCESS(rc) || rc == VERR_PGM_HANDLER_VIRTUAL_CONFLICT);
                 }
                 else
@@ -881,7 +938,7 @@ static DECLCALLBACK(int) RelocatePatches(PAVLOU32NODECORE pNode, void *pParam)
                     /*
                      * Disable patch; this is not a good solution
                      */
-                     /* @todo hopefully it was completely overwritten (if the read was successful)!!!! */
+                     /** @todo hopefully it was completely overwritten (if the read was successful)!!!! */
                     pPatch->patch.uState = PATCH_DISABLED;
                 }
                 else
@@ -912,6 +969,13 @@ static DECLCALLBACK(int) RelocatePatches(PAVLOU32NODECORE pNode, void *pParam)
             break;
         }
 
+        case FIXUP_REL_HELPER_IN_PATCH_ASM_TMPL:
+        case FIXUP_CONSTANT_IN_PATCH_ASM_TMPL:
+            /* Only applicable when loading state. */
+            Assert(pRec->pDest == pRec->pSource);
+            Assert(PATM_IS_ASMFIX(pRec->pSource));
+            break;
+
         default:
             AssertMsg(0, ("Invalid fixup type!!\n"));
             return VERR_INVALID_PARAMETER;
@@ -923,34 +987,6 @@ static DECLCALLBACK(int) RelocatePatches(PAVLOU32NODECORE pNode, void *pParam)
     return 0;
 }
 
-/**
- * \#PF Handler callback for virtual access handler ranges.
- *
- * Important to realize that a physical page in a range can have aliases, and
- * for ALL and WRITE handlers these will also trigger.
- *
- * @returns VINF_SUCCESS if the handler have carried out the operation.
- * @returns VINF_PGM_HANDLER_DO_DEFAULT if the caller should carry out the access operation.
- * @param   pVM             Pointer to the VM.
- * @param   GCPtr           The virtual address the guest is writing to. (not correct if it's an alias!)
- * @param   pvPtr           The HC mapping of that address.
- * @param   pvBuf           What the guest is reading/writing.
- * @param   cbBuf           How much it's reading/writing.
- * @param   enmAccessType   The access type.
- * @param   pvUser          User argument.
- */
-DECLCALLBACK(int) patmVirtPageHandler(PVM pVM, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf,
-                                      PGMACCESSTYPE enmAccessType, void *pvUser)
-{
-    Assert(enmAccessType == PGMACCESSTYPE_WRITE); NOREF(enmAccessType);
-    NOREF(pvPtr); NOREF(pvBuf); NOREF(cbBuf); NOREF(pvUser);
-
-    /** @todo could be the wrong virtual address (alias) */
-    pVM->patm.s.pvFaultMonitor = GCPtr;
-    PATMR3HandleMonitoredPage(pVM);
-    return VINF_PGM_HANDLER_DO_DEFAULT;
-}
-
 #ifdef VBOX_WITH_DEBUGGER
 
 /**
@@ -960,7 +996,7 @@ DECLCALLBACK(int) patmVirtPageHandler(PVM pVM, RTGCPTR GCPtr, void *pvPtr, void 
  *
  * @returns 0 (continue enumeration).
  * @param   pNode       Current node
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 static DECLCALLBACK(int) EnableAllPatches(PAVLOU32NODECORE pNode, void *pVM)
 {
@@ -978,7 +1014,7 @@ static DECLCALLBACK(int) EnableAllPatches(PAVLOU32NODECORE pNode, void *pVM)
  *
  * @returns 0 (continue enumeration).
  * @param   pNode       Current node
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 static DECLCALLBACK(int) DisableAllPatches(PAVLOU32NODECORE pNode, void *pVM)
 {
@@ -989,69 +1025,18 @@ static DECLCALLBACK(int) DisableAllPatches(PAVLOU32NODECORE pNode, void *pVM)
 }
 
 #endif /* VBOX_WITH_DEBUGGER */
-#ifdef UNUSED_FUNCTIONS
-
-/**
- * Returns the host context pointer and size of the patch memory block
- *
- * @returns Host context pointer.
- * @param   pVM         Pointer to the VM.
- * @param   pcb         Size of the patch memory block
- * @internal
- */
-VMMR3_INT_DECL(void *) PATMR3QueryPatchMemHC(PVM pVM, uint32_t *pcb)
-{
-    AssertReturn(!HMIsEnabled(pVM), NULL);
-    if (pcb)
-        *pcb = pVM->patm.s.cbPatchMem;
-    return pVM->patm.s.pPatchMemHC;
-}
-
-
-/**
- * Returns the guest context pointer and size of the patch memory block
- *
- * @returns Guest context pointer.
- * @param   pVM         Pointer to the VM.
- * @param   pcb         Size of the patch memory block
- */
-VMMR3_INT_DECL(RTRCPTR) PATMR3QueryPatchMemGC(PVM pVM, uint32_t *pcb)
-{
-    AssertReturn(!HMIsEnabled(pVM), NIL_RTRCPTR);
-    if (pcb)
-        *pcb = pVM->patm.s.cbPatchMem;
-    return pVM->patm.s.pPatchMemGC;
-}
-
-#endif /* UNUSED_FUNCTIONS */
 
 /**
  * Returns the host context pointer of the GC context structure
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3_INT_DECL(PPATMGCSTATE) PATMR3QueryGCStateHC(PVM pVM)
 {
     AssertReturn(!HMIsEnabled(pVM), NULL);
     return pVM->patm.s.pGCStateHC;
 }
-
-
-#ifdef UNUSED_FUNCTION
-/**
- * Checks whether the HC address is part of our patch region
- *
- * @returns true/false.
- * @param   pVM         Pointer to the VM.
- * @param   pAddrHC     Host context ring-3 address to check.
- */
-VMMR3_INT_DECL(bool) PATMR3IsPatchHCAddr(PVM pVM, void *pAddrHC)
-{
-    return (uintptr_t)pAddrHC >= (uintptr_t)pVM->patm.s.pPatchMemHC
-        && (uintptr_t)pAddrHC <  (uintptr_t)pVM->patm.s.pPatchMemHC + pVM->patm.s.cbPatchMem;
-}
-#endif
 
 
 /**
@@ -1094,15 +1079,21 @@ VMMR3DECL(bool) PATMR3IsEnabled(PUVM pUVM)
  * Convert a GC patch block pointer to a HC patch pointer
  *
  * @returns HC pointer or NULL if it's not a GC patch pointer
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pAddrGC     GC pointer
  */
 VMMR3_INT_DECL(void *) PATMR3GCPtrToHCPtr(PVM pVM, RTRCPTR pAddrGC)
 {
     AssertReturn(!HMIsEnabled(pVM), NULL);
-    if (pVM->patm.s.pPatchMemGC <= pAddrGC && pVM->patm.s.pPatchMemGC + pVM->patm.s.cbPatchMem > pAddrGC)
-        return pVM->patm.s.pPatchMemHC + (pAddrGC - pVM->patm.s.pPatchMemGC);
-    return NULL;
+    RTRCUINTPTR offPatch = (RTRCUINTPTR)pAddrGC - (RTRCUINTPTR)pVM->patm.s.pPatchMemGC;
+    if (offPatch >= pVM->patm.s.cbPatchMem)
+    {
+        offPatch = (RTRCUINTPTR)pAddrGC - (RTRCUINTPTR)pVM->patm.s.pbPatchHelpersRC;
+        if (offPatch >= pVM->patm.s.cbPatchHelpers)
+            return NULL;
+        return pVM->patm.s.pbPatchHelpersR3 + offPatch;
+    }
+    return pVM->patm.s.pPatchMemHC + offPatch;
 }
 
 
@@ -1110,7 +1101,7 @@ VMMR3_INT_DECL(void *) PATMR3GCPtrToHCPtr(PVM pVM, RTRCPTR pAddrGC)
  * Convert guest context address to host context pointer
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCacheRec   Address conversion cache record
  * @param   pGCPtr      Guest context pointer
  *
@@ -1123,12 +1114,16 @@ R3PTRTYPE(uint8_t *) patmR3GCVirtToHCVirt(PVM pVM, PPATMP2GLOOKUPREC pCacheRec, 
     R3PTRTYPE(uint8_t *) pHCPtr;
     uint32_t offset;
 
-    if (PATMIsPatchGCAddr(pVM, pGCPtr))
+    offset = (RTRCUINTPTR)pGCPtr - (RTRCUINTPTR)pVM->patm.s.pPatchMemGC;
+    if (offset < pVM->patm.s.cbPatchMem)
     {
+#ifdef VBOX_STRICT
         PPATCHINFO pPatch = (PPATCHINFO)pCacheRec->pPatch;
-        Assert(pPatch);
-        return PATCHCODE_PTR_HC(pPatch) + (pGCPtr - PATCHCODE_PTR_GC(pPatch));
+        Assert(pPatch); Assert(offset - pPatch->pPatchBlockOffset < pPatch->cbPatchBlockSize);
+#endif
+        return pVM->patm.s.pPatchMemHC + offset;
     }
+    /* Note! We're _not_ including the patch helpers here. */
 
     offset = pGCPtr & PAGE_OFFSET_MASK;
     if (pCacheRec->pGuestLoc == (pGCPtr & PAGE_BASE_GC_MASK))
@@ -1157,7 +1152,7 @@ R3PTRTYPE(uint8_t *) patmR3GCVirtToHCVirt(PVM pVM, PPATMP2GLOOKUPREC pCacheRec, 
  * Calculates and fills in all branch targets
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Current patch block pointer
  *
  */
@@ -1253,7 +1248,7 @@ static int patmr3SetBranchTargets(PVM pVM, PPATCHINFO pPatch)
 /**
  * Add an illegal instruction record
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pPatch          Patch structure ptr
  * @param   pInstrGC        Guest context pointer to privileged instruction
  *
@@ -1285,7 +1280,7 @@ static bool patmIsIllegalInstr(PPATCHINFO pPatch, RTRCPTR pInstrGC)
 /**
  * Add a patch to guest lookup record
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pPatch          Patch structure ptr
  * @param   pPatchInstrHC   Guest context pointer to patch block
  * @param   pInstrGC        Guest context pointer to privileged instruction
@@ -1353,7 +1348,7 @@ void patmR3AddP2GLookupRecord(PVM pVM, PPATCHINFO pPatch, uint8_t *pPatchInstrHC
 /**
  * Removes a patch to guest lookup record
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pPatch          Patch structure ptr
  * @param   pPatchInstrGC   Guest context pointer to patch block
  */
@@ -1397,7 +1392,7 @@ static DECLCALLBACK(int) patmEmptyTreePVCallback(PAVLPVNODECORE pNode, void *)
 /**
  * Empty the specified tree (PV tree, MMR3 heap)
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   ppTree          Tree to empty
  */
 static void patmEmptyTree(PVM pVM, PAVLPVNODECORE *ppTree)
@@ -1419,7 +1414,7 @@ static DECLCALLBACK(int) patmEmptyTreeU32Callback(PAVLU32NODECORE pNode, void *)
 /**
  * Empty the specified tree (U32 tree, MMR3 heap)
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   ppTree          Tree to empty
  */
 static void patmEmptyTreeU32(PVM pVM, PPAVLU32NODECORE ppTree)
@@ -1433,7 +1428,7 @@ static void patmEmptyTreeU32(PVM pVM, PPAVLU32NODECORE ppTree)
  * Analyses the instructions following the cli for compliance with our heuristics for cli & pushf
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCpu        CPU disassembly state
  * @param   pInstrGC    Guest context pointer to privileged instruction
  * @param   pCurInstrGC Guest context pointer to the current instruction
@@ -1560,7 +1555,7 @@ static int patmAnalyseBlockCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uint8_
             }
             break;  /* sti doesn't mark the end of a pushf block; only popf does. */
         }
-        /* else: fall through. */
+        RT_FALL_THRU();
     case OP_RETN: /* exit point for function replacement */
         return VINF_SUCCESS;
 
@@ -1601,7 +1596,7 @@ static int patmAnalyseBlockCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uint8_
  * Analyses the instructions inside a function for compliance
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCpu        CPU disassembly state
  * @param   pInstrGC    Guest context pointer to privileged instruction
  * @param   pCurInstrGC Guest context pointer to the current instruction
@@ -1658,7 +1653,7 @@ static int patmAnalyseFunctionCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uin
         }
 
     #if 0
-        ///@todo we can handle certain in/out and privileged instructions in the guest context
+        /// @todo we can handle certain in/out and privileged instructions in the guest context
         if (pCpu->pCurInstr->fOpType & DISOPTYPE_PRIVILEGED && pCpu->pCurInstr->uOpcode != OP_STI)
         {
             Log(("Illegal instructions for function patch!!\n"));
@@ -1712,14 +1707,14 @@ static int patmAnalyseFunctionCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uin
  * Recompiles the instructions in a code block
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCpu        CPU disassembly state
  * @param   pInstrGC    Guest context pointer to privileged instruction
  * @param   pCurInstrGC Guest context pointer to the current instruction
  * @param   pCacheRec   Cache record ptr
  *
  */
-static int patmRecompileCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uint8_t *) pInstrGC, RCPTRTYPE(uint8_t *) pCurInstrGC, PPATMP2GLOOKUPREC pCacheRec)
+static DECLCALLBACK(int) patmRecompileCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uint8_t *) pInstrGC, RCPTRTYPE(uint8_t *) pCurInstrGC, PPATMP2GLOOKUPREC pCacheRec)
 {
     PPATCHINFO pPatch = (PPATCHINFO)pCacheRec->pPatch;
     int        rc     = VINF_SUCCESS;
@@ -1996,7 +1991,7 @@ static int patmRecompileCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uint8_t *
         break;
 
     case OP_STR:
-#ifdef VBOX_WITH_SAFE_STR   /* @todo remove DISOPTYPE_PRIVILEGED_NOTRAP from disasm table and move OP_STR into #ifndef */
+#ifdef VBOX_WITH_SAFE_STR   /** @todo remove DISOPTYPE_PRIVILEGED_NOTRAP from disasm table and move OP_STR into ifndef */
         /* Now safe because our shadow TR entry is identical to the guest's. */
         goto duplicate_instr;
 #endif
@@ -2158,7 +2153,7 @@ end:
 /**
  * Add a disasm jump record (temporary for prevent duplicate analysis)
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pPatch          Patch structure ptr
  * @param   pInstrGC        Guest context pointer to privileged instruction
  *
@@ -2197,14 +2192,15 @@ static bool patmIsKnownDisasmJump(PPATCHINFO pPatch, RTRCPTR pInstrGC)
  * For proper disassembly of the final patch block
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCpu        CPU disassembly state
  * @param   pInstrGC    Guest context pointer to privileged instruction
  * @param   pCurInstrGC Guest context pointer to the current instruction
  * @param   pCacheRec   Cache record ptr
  *
  */
-int patmr3DisasmCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uint8_t *) pInstrGC, RCPTRTYPE(uint8_t *) pCurInstrGC, PPATMP2GLOOKUPREC pCacheRec)
+DECLCALLBACK(int) patmR3DisasmCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uint8_t *) pInstrGC,
+                                       RCPTRTYPE(uint8_t *) pCurInstrGC, PPATMP2GLOOKUPREC pCacheRec)
 {
     PPATCHINFO pPatch = (PPATCHINFO)pCacheRec->pPatch;
     NOREF(pInstrGC);
@@ -2255,7 +2251,7 @@ int patmr3DisasmCallback(PVM pVM, DISCPUSTATE *pCpu, RCPTRTYPE(uint8_t *) pInstr
  * Disassembles the code stream until the callback function detects a failure or decides everything is acceptable
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context pointer to the initial privileged instruction
  * @param   pCurInstrGC Guest context pointer to the current instruction
  * @param   pfnPATMR3Disasm Callback for testing the disassembled instruction
@@ -2381,7 +2377,7 @@ end:
  * Disassembles the code stream until the callback function detects a failure or decides everything is acceptable
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context pointer to the initial privileged instruction
  * @param   pCurInstrGC Guest context pointer to the current instruction
  * @param   pfnPATMR3Disasm Callback for testing the disassembled instruction
@@ -2404,7 +2400,7 @@ int patmr3DisasmCodeStream(PVM pVM, RCPTRTYPE(uint8_t *) pInstrGC, RCPTRTYPE(uin
  * Detects it the specified address falls within a 5 byte jump generated for an active patch.
  * If so, this patch is permanently disabled.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context pointer to instruction
  * @param   pConflictGC Guest context pointer to check
  *
@@ -2424,7 +2420,7 @@ VMMR3_INT_DECL(int) PATMR3DetectConflict(PVM pVM, RTRCPTR pInstrGC, RTRCPTR pCon
  * Recompile the code stream until the callback function detects a failure or decides everything is acceptable
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context pointer to privileged instruction
  * @param   pCurInstrGC Guest context pointer to the current instruction
  * @param   pfnPATMR3Recompile Callback for testing the disassembled instruction
@@ -2621,9 +2617,10 @@ end:
  * Generate the jump from guest to patch code
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch record
  * @param   pCacheRec   Guest translation lookup cache record
+ * @param   fAddFixup   Whether to add a fixup record.
  */
 static int patmGenJumpToPatch(PVM pVM, PPATCHINFO pPatch, PPATMP2GLOOKUPREC pCacheRec, bool fAddFixup = true)
 {
@@ -2647,7 +2644,8 @@ static int patmGenJumpToPatch(PVM pVM, PPATCHINFO pPatch, PPATMP2GLOOKUPREC pCac
             // jmp [PatchCode]
             if (fAddFixup)
             {
-                if (patmPatchAddReloc32(pVM, pPatch, &pPB[1], FIXUP_REL_JMPTOPATCH, pPatch->pPrivInstrGC + pPatch->cbPatchJump, pPatch->pPatchJumpDestGC) != VINF_SUCCESS)
+                if (patmPatchAddReloc32(pVM, pPatch, &pPB[1], FIXUP_REL_JMPTOPATCH, pPatch->pPrivInstrGC + pPatch->cbPatchJump,
+                                        pPatch->pPatchJumpDestGC) != VINF_SUCCESS)
                 {
                     Log(("Relocation failed for the jump in the guest code!!\n"));
                     return VERR_PATCHING_REFUSED;
@@ -2663,7 +2661,8 @@ static int patmGenJumpToPatch(PVM pVM, PPATCHINFO pPatch, PPATMP2GLOOKUPREC pCac
             // jmp [PatchCode]
             if (fAddFixup)
             {
-                if (patmPatchAddReloc32(pVM, pPatch, &pPB[2], FIXUP_REL_JMPTOPATCH, pPatch->pPrivInstrGC + pPatch->cbPatchJump, pPatch->pPatchJumpDestGC) != VINF_SUCCESS)
+                if (patmPatchAddReloc32(pVM, pPatch, &pPB[2], FIXUP_REL_JMPTOPATCH, pPatch->pPrivInstrGC + pPatch->cbPatchJump,
+                                        pPatch->pPatchJumpDestGC) != VINF_SUCCESS)
                 {
                     Log(("Relocation failed for the jump in the guest code!!\n"));
                     return VERR_PATCHING_REFUSED;
@@ -2688,7 +2687,8 @@ static int patmGenJumpToPatch(PVM pVM, PPATCHINFO pPatch, PPATMP2GLOOKUPREC pCac
         // jmp [PatchCode]
         if (fAddFixup)
         {
-            if (patmPatchAddReloc32(pVM, pPatch, &pPB[1], FIXUP_REL_JMPTOPATCH, pPatch->pPrivInstrGC + SIZEOF_NEARJUMP32, PATCHCODE_PTR_GC(pPatch)) != VINF_SUCCESS)
+            if (patmPatchAddReloc32(pVM, pPatch, &pPB[1], FIXUP_REL_JMPTOPATCH, pPatch->pPrivInstrGC + SIZEOF_NEARJUMP32,
+                                    PATCHCODE_PTR_GC(pPatch)) != VINF_SUCCESS)
             {
                 Log(("Relocation failed for the jump in the guest code!!\n"));
                 return VERR_PATCHING_REFUSED;
@@ -2710,7 +2710,7 @@ static int patmGenJumpToPatch(PVM pVM, PPATCHINFO pPatch, PPATMP2GLOOKUPREC pCac
  * Remove the jump from guest to patch code
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch record
  */
 static int patmRemoveJumpToPatch(PVM pVM, PPATCHINFO pPatch)
@@ -2761,10 +2761,12 @@ static int patmRemoveJumpToPatch(PVM pVM, PPATCHINFO pPatch)
  * Generate the call from guest to patch code
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch record
- * @param   pInstrHC    HC address where to insert the jump
+ * @param   pTargetGC   The target of the fixup (i.e. the patch code we're
+ *                      calling into).
  * @param   pCacheRec   Guest translation cache record
+ * @param   fAddFixup   Whether to add a fixup record.
  */
 static int patmGenCallToPatch(PVM pVM, PPATCHINFO pPatch, RTRCPTR pTargetGC, PPATMP2GLOOKUPREC pCacheRec, bool fAddFixup = true)
 {
@@ -2782,7 +2784,8 @@ static int patmGenCallToPatch(PVM pVM, PPATCHINFO pPatch, RTRCPTR pTargetGC, PPA
     // jmp [PatchCode]
     if (fAddFixup)
     {
-        if (patmPatchAddReloc32(pVM, pPatch, &pPB[1], FIXUP_REL_JMPTOPATCH, pPatch->pPrivInstrGC + SIZEOF_NEARJUMP32, pTargetGC) != VINF_SUCCESS)
+        if (patmPatchAddReloc32(pVM, pPatch, &pPB[1], FIXUP_REL_JMPTOPATCH,
+                                pPatch->pPrivInstrGC + SIZEOF_NEARJUMP32, pTargetGC) != VINF_SUCCESS)
         {
             Log(("Relocation failed for the jump in the guest code!!\n"));
             return VERR_PATCHING_REFUSED;
@@ -2804,7 +2807,7 @@ static int patmGenCallToPatch(PVM pVM, PPATCHINFO pPatch, RTRCPTR pTargetGC, PPA
  * Patch cli/sti pushf/popf instruction block at specified location
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   pInstrHC    Host context point to privileged instruction
  * @param   uOpcode     Instruction opcode
@@ -2819,7 +2822,7 @@ static int patmR3PatchBlock(PVM pVM, RTRCPTR pInstrGC, R3PTRTYPE(uint8_t *) pIns
 {
     PPATCHINFO pPatch = &pPatchRec->patch;
     int rc = VERR_PATCHING_REFUSED;
-    uint32_t orgOffsetPatchMem = ~0;
+    uint32_t orgOffsetPatchMem = UINT32_MAX;
     RTRCPTR pInstrStart;
     bool fInserted;
     NOREF(pInstrHC); NOREF(uOpSize);
@@ -2954,7 +2957,7 @@ static int patmR3PatchBlock(PVM pVM, RTRCPTR pInstrGC, R3PTRTYPE(uint8_t *) pIns
 
 #ifdef LOG_ENABLED
     Log(("Patch code ----------------------------------------------------------\n"));
-    patmr3DisasmCodeStream(pVM, PATCHCODE_PTR_GC(pPatch), PATCHCODE_PTR_GC(pPatch), patmr3DisasmCallback, &cacheRec);
+    patmr3DisasmCodeStream(pVM, PATCHCODE_PTR_GC(pPatch), PATCHCODE_PTR_GC(pPatch), patmR3DisasmCallback, &cacheRec);
     /* Free leftover lock if any. */
     if (cacheRec.Lock.pvMap)
     {
@@ -3038,7 +3041,7 @@ failure:
  * Patch IDT handler
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   uOpSize     Size of starting instruction
  * @param   pPatchRec   Patch record
@@ -3055,7 +3058,7 @@ static int patmIdtHandler(PVM pVM, RTRCPTR pInstrGC, uint32_t uOpSize, PPATMPATC
     uint32_t cbInstr;
     RTRCPTR  pCurInstrGC = pInstrGC;
     uint8_t *pCurInstrHC, *pInstrHC;
-    uint32_t orgOffsetPatchMem = ~0;
+    uint32_t orgOffsetPatchMem = UINT32_MAX;
 
     pInstrHC = pCurInstrHC = patmR3GCVirtToHCVirt(pVM, pCacheRec, pCurInstrGC);
     AssertReturn(pCurInstrHC, VERR_PAGE_NOT_PRESENT);
@@ -3138,7 +3141,7 @@ static int patmIdtHandler(PVM pVM, RTRCPTR pInstrGC, uint32_t uOpSize, PPATMPATC
 
 #ifdef LOG_ENABLED
             Log(("Patch code ----------------------------------------------------------\n"));
-            patmr3DisasmCodeStream(pVM, PATCHCODE_PTR_GC(pPatch), PATCHCODE_PTR_GC(pPatch), patmr3DisasmCallback, pCacheRec);
+            patmr3DisasmCodeStream(pVM, PATCHCODE_PTR_GC(pPatch), PATCHCODE_PTR_GC(pPatch), patmR3DisasmCallback, pCacheRec);
             Log(("Patch code ends -----------------------------------------------------\n"));
 #endif
             Log(("Successfully installed IDT handler patch at %RRv\n", pInstrGC));
@@ -3169,7 +3172,7 @@ failure:
  * Install a trampoline to call a guest trap handler directly
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   pPatchRec   Patch record
  * @param   pCacheRec   Cache record ptr
@@ -3179,7 +3182,7 @@ static int patmInstallTrapTrampoline(PVM pVM, RTRCPTR pInstrGC, PPATMPATCHREC pP
 {
     PPATCHINFO pPatch = &pPatchRec->patch;
     int rc = VERR_PATCHING_REFUSED;
-    uint32_t orgOffsetPatchMem = ~0;
+    uint32_t orgOffsetPatchMem = UINT32_MAX;
     bool fInserted;
 
     // save original offset (in case of failures later on)
@@ -3212,8 +3215,10 @@ static int patmInstallTrapTrampoline(PVM pVM, RTRCPTR pInstrGC, PPATMPATCHREC pP
 
 #ifdef LOG_ENABLED
     Log(("Patch code ----------------------------------------------------------\n"));
-    patmr3DisasmCodeStream(pVM, PATCHCODE_PTR_GC(pPatch), PATCHCODE_PTR_GC(pPatch), patmr3DisasmCallback, pCacheRec);
+    patmr3DisasmCodeStream(pVM, PATCHCODE_PTR_GC(pPatch), PATCHCODE_PTR_GC(pPatch), patmR3DisasmCallback, pCacheRec);
     Log(("Patch code ends -----------------------------------------------------\n"));
+#else
+    RT_NOREF_PV(pCacheRec);
 #endif
     PATM_LOG_ORG_PATCH_INSTR(pVM, pPatch, "TRAP handler");
     Log(("Successfully installed Trap Trampoline patch at %RRv\n", pInstrGC));
@@ -3250,7 +3255,7 @@ failure:
  * Check if the instruction is patched as a common idt handler
  *
  * @returns true or false
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to the instruction
  *
  */
@@ -3270,7 +3275,7 @@ static bool patmIsCommonIDTHandlerPatch(PVM pVM, RTRCPTR pInstrGC)
  * Duplicates a complete function
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   pPatchRec   Patch record
  * @param   pCacheRec   Cache record ptr
@@ -3280,7 +3285,7 @@ static int patmDuplicateFunction(PVM pVM, RTRCPTR pInstrGC, PPATMPATCHREC pPatch
 {
     PPATCHINFO pPatch = &pPatchRec->patch;
     int rc = VERR_PATCHING_REFUSED;
-    uint32_t orgOffsetPatchMem = ~0;
+    uint32_t orgOffsetPatchMem = UINT32_MAX;
     bool fInserted;
 
     Log(("patmDuplicateFunction %RRv\n", pInstrGC));
@@ -3359,7 +3364,7 @@ static int patmDuplicateFunction(PVM pVM, RTRCPTR pInstrGC, PPATMPATCHREC pPatch
 
 #ifdef LOG_ENABLED
     Log(("Patch code ----------------------------------------------------------\n"));
-    patmr3DisasmCodeStream(pVM, PATCHCODE_PTR_GC(pPatch), PATCHCODE_PTR_GC(pPatch), patmr3DisasmCallback, pCacheRec);
+    patmr3DisasmCodeStream(pVM, PATCHCODE_PTR_GC(pPatch), PATCHCODE_PTR_GC(pPatch), patmR3DisasmCallback, pCacheRec);
     Log(("Patch code ends -----------------------------------------------------\n"));
 #endif
 
@@ -3402,7 +3407,7 @@ failure:
  * Creates trampoline code to jump inside an existing patch
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   pPatchRec   Patch record
  *
@@ -3411,7 +3416,7 @@ static int patmCreateTrampoline(PVM pVM, RTRCPTR pInstrGC, PPATMPATCHREC pPatchR
 {
     PPATCHINFO  pPatch = &pPatchRec->patch;
     RTRCPTR     pPage, pPatchTargetGC = 0;
-    uint32_t    orgOffsetPatchMem = ~0;
+    uint32_t    orgOffsetPatchMem = UINT32_MAX;
     int         rc = VERR_PATCHING_REFUSED;
     PPATCHINFO  pPatchToJmp = NULL; /**< Patch the trampoline jumps to. */
     PTRAMPREC   pTrampRec = NULL; /**< Trampoline record used to find the patch. */
@@ -3566,7 +3571,7 @@ failure:
  * (in responds to a VINF_PATM_DUPLICATE_FUNCTION GC exit reason)
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCtx        Pointer to the guest CPU context.
  *
  */
@@ -3610,7 +3615,7 @@ VMMR3_INT_DECL(int) PATMR3DuplicateFunctionRequest(PVM pVM, PCPUMCTX pCtx)
 
     if (pPatchTargetGC)
     {
-        /* Create a trampoline that also sets PATM_INTERRUPTFLAG. */
+        /* Create a trampoline that also sets PATM_ASMFIX_INTERRUPTFLAG. */
         rc = PATMR3InstallPatch(pVM, pBranchTarget, PATMFL_CODE32 | PATMFL_TRAMPOLINE);
     }
     else
@@ -3648,7 +3653,7 @@ VMMR3_INT_DECL(int) PATMR3DuplicateFunctionRequest(PVM pVM, PCPUMCTX pCtx)
  * Replaces a function call by a call to an existing function duplicate (or jmp -> jmp)
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCpu        Disassembly CPU structure ptr
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   pCacheRec   Cache record ptr
@@ -3750,7 +3755,7 @@ failure:
  * Replace the address in an MMIO instruction with the cached version.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   pCpu        Disassembly CPU structure ptr
  * @param   pCacheRec   Cache record ptr
@@ -3817,7 +3822,7 @@ failure:
  * Replace the address in an MMIO instruction with the cached version. (instruction is part of an existing patch)
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   pPatch      Patch record
  *
@@ -3875,7 +3880,7 @@ static int patmPatchPATMMMIOInstr(PVM pVM, RTRCPTR pInstrGC, PPATCHINFO pPatch)
  * Activates an int3 patch
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch record
  */
 static int patmActivateInt3Patch(PVM pVM, PPATCHINFO pPatch)
@@ -3899,19 +3904,19 @@ static int patmActivateInt3Patch(PVM pVM, PPATCHINFO pPatch)
  * Deactivates an int3 patch
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch record
  */
 static int patmDeactivateInt3Patch(PVM pVM, PPATCHINFO pPatch)
 {
-    uint8_t ASMInt3 = 0xCC;
+    uint8_t cbASMInt3 = 1;
     int     rc;
 
     Assert(pPatch->flags & (PATMFL_INT3_REPLACEMENT|PATMFL_INT3_REPLACEMENT_BLOCK));
     Assert(pPatch->uState == PATCH_ENABLED || pPatch->uState == PATCH_DIRTY);
 
     /* Restore first opcode byte. */
-    rc = PGMPhysSimpleDirtyWriteGCPtr(VMMGetCpu0(pVM), pPatch->pPrivInstrGC, pPatch->aPrivInstr, sizeof(ASMInt3));
+    rc = PGMPhysSimpleDirtyWriteGCPtr(VMMGetCpu0(pVM), pPatch->pPrivInstrGC, pPatch->aPrivInstr, cbASMInt3);
     AssertRC(rc);
     return rc;
 }
@@ -3921,7 +3926,7 @@ static int patmDeactivateInt3Patch(PVM pVM, PPATCHINFO pPatch)
  * in the raw-mode context.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   pInstrHC    Host context point to privileged instruction
  * @param   pCpu        Disassembly CPU structure ptr
@@ -3932,8 +3937,9 @@ static int patmDeactivateInt3Patch(PVM pVM, PPATCHINFO pPatch)
  */
 int patmR3PatchInstrInt3(PVM pVM, RTRCPTR pInstrGC, R3PTRTYPE(uint8_t *) pInstrHC, DISCPUSTATE *pCpu, PPATCHINFO pPatch)
 {
-    uint8_t bASMInt3 = 0xCC;
+    uint8_t cbASMInt3 = 1;
     int rc;
+    RT_NOREF_PV(pInstrHC);
 
     /* Note: Do not use patch memory here! It might called during patch installation too. */
     PATM_LOG_PATCH_INSTR(pVM, pPatch, PATMREAD_ORGCODE, "patmR3PatchInstrInt3:", "");
@@ -3941,7 +3947,7 @@ int patmR3PatchInstrInt3(PVM pVM, RTRCPTR pInstrGC, R3PTRTYPE(uint8_t *) pInstrH
     /* Save the original instruction. */
     rc = PGMPhysSimpleReadGCPtr(VMMGetCpu0(pVM), pPatch->aPrivInstr, pPatch->pPrivInstrGC, pPatch->cbPrivInstr);
     AssertRC(rc);
-    pPatch->cbPatchJump = sizeof(bASMInt3);  /* bit of a misnomer in this case; size of replacement instruction. */
+    pPatch->cbPatchJump = cbASMInt3;  /* bit of a misnomer in this case; size of replacement instruction. */
 
     pPatch->flags |= PATMFL_INT3_REPLACEMENT;
 
@@ -3967,7 +3973,7 @@ failure:
  * Patch a jump instruction at specified location
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context point to privileged instruction
  * @param   pInstrHC    Host context point to privileged instruction
  * @param   pCpu        Disassembly CPU structure ptr
@@ -4092,14 +4098,14 @@ failure:
  * Gives hint to PATM about supervisor guest instructions
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pInstr      Guest context point to privileged instruction
+ * @param   pVM         The cross context VM structure.
+ * @param   pInstrGC    Guest context point to privileged instruction
  * @param   flags       Patch flags
  */
 VMMR3_INT_DECL(int) PATMR3AddHint(PVM pVM, RTRCPTR pInstrGC, uint32_t flags)
 {
     Assert(pInstrGC);
-    Assert(flags == PATMFL_CODE32);
+    Assert(flags == PATMFL_CODE32); RT_NOREF_PV(flags);
 
     Log(("PATMR3AddHint %RRv\n", pInstrGC));
     return PATMR3InstallPatch(pVM, pInstrGC, PATMFL_CODE32 | PATMFL_INSTR_HINT);
@@ -4109,8 +4115,9 @@ VMMR3_INT_DECL(int) PATMR3AddHint(PVM pVM, RTRCPTR pInstrGC, uint32_t flags)
  * Patch privileged instruction at specified location
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pInstr      Guest context point to privileged instruction (0:32 flat address)
+ * @param   pVM         The cross context VM structure.
+ * @param   pInstrGC    Guest context point to privileged instruction (0:32 flat
+ *                      address)
  * @param   flags       Patch flags
  *
  * @note    returns failure if patching is not allowed or possible
@@ -4575,21 +4582,22 @@ VMMR3_INT_DECL(int) PATMR3InstallPatch(PVM pVM, RTRCPTR pInstrGC, uint64_t flags
 #ifndef DEBUG_sandervl
             /* Full breakdown for the GUI. */
             STAMR3RegisterF(pVM, &pVM->patm.s.pStatsHC[pPatchRec->patch.uPatchIdx], STAMTYPE_RATIO_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_GOOD_BAD, PATMPatchType(pVM, &pPatchRec->patch),
-                            "/PATM/Stats/PatchBD/0x%RRv", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.cbPatchBlockSize,STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_BYTES,      NULL, "/PATM/Stats/PatchBD/0x%RRv/cbPatchBlockSize", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.cbPatchJump,     STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_BYTES,      NULL, "/PATM/Stats/PatchBD/0x%RRv/cbPatchJump", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.cbPrivInstr,     STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_BYTES,      NULL, "/PATM/Stats/PatchBD/0x%RRv/cbPrivInstr", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.cCodeWrites,     STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/Stats/PatchBD/0x%RRv/cCodeWrites", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.cInvalidWrites,  STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/Stats/PatchBD/0x%RRv/cInvalidWrites", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.cTraps,          STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/Stats/PatchBD/0x%RRv/cTraps", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.flags,           STAMTYPE_X32, STAMVISIBILITY_ALWAYS, STAMUNIT_NONE,       NULL, "/PATM/Stats/PatchBD/0x%RRv/flags", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.nrJumpRecs,      STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/Stats/PatchBD/0x%RRv/nrJumpRecs", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.nrFixups,        STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/Stats/PatchBD/0x%RRv/nrFixups", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.opcode,          STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/Stats/PatchBD/0x%RRv/opcode", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.uOldState,       STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_NONE,       NULL, "/PATM/Stats/PatchBD/0x%RRv/uOldState", pPatchRec->patch.pPrivInstrGC);
-            STAMR3RegisterF(pVM, &pPatchRec->patch.uOpMode,         STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_NONE,       NULL, "/PATM/Stats/PatchBD/0x%RRv/uOpMode", pPatchRec->patch.pPrivInstrGC);
+                            "/PATM/PatchBD/0x%RRv", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.pPatchBlockOffset,STAMTYPE_X32, STAMVISIBILITY_ALWAYS, STAMUNIT_BYTES,     NULL, "/PATM/PatchBD/0x%RRv/offPatchBlock", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.cbPatchBlockSize,STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_BYTES,      NULL, "/PATM/PatchBD/0x%RRv/cbPatchBlockSize", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.cbPatchJump,     STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_BYTES,      NULL, "/PATM/PatchBD/0x%RRv/cbPatchJump", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.cbPrivInstr,     STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_BYTES,      NULL, "/PATM/PatchBD/0x%RRv/cbPrivInstr", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.cCodeWrites,     STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/PatchBD/0x%RRv/cCodeWrites", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.cInvalidWrites,  STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/PatchBD/0x%RRv/cInvalidWrites", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.cTraps,          STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/PatchBD/0x%RRv/cTraps", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.flags,           STAMTYPE_X64, STAMVISIBILITY_ALWAYS, STAMUNIT_NONE,       NULL, "/PATM/PatchBD/0x%RRv/flags", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.nrJumpRecs,      STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/PatchBD/0x%RRv/nrJumpRecs", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.nrFixups,        STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/PatchBD/0x%RRv/nrFixups", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.opcode,          STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_OCCURENCES, NULL, "/PATM/PatchBD/0x%RRv/opcode", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.uOldState,       STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_NONE,       NULL, "/PATM/PatchBD/0x%RRv/uOldState", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.uOpMode,         STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_NONE,       NULL, "/PATM/PatchBD/0x%RRv/uOpMode", pPatchRec->patch.pPrivInstrGC);
             /// @todo change the state to be a callback so we can get a state mnemonic instead.
-            STAMR3RegisterF(pVM, &pPatchRec->patch.uState,          STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_NONE,       NULL, "/PATM/Stats/PatchBD/0x%RRv/uState", pPatchRec->patch.pPrivInstrGC);
+            STAMR3RegisterF(pVM, &pPatchRec->patch.uState,          STAMTYPE_U32, STAMVISIBILITY_ALWAYS, STAMUNIT_NONE,       NULL, "/PATM/PatchBD/0x%RRv/uState", pPatchRec->patch.pPrivInstrGC);
 #endif
         }
 #endif
@@ -4607,7 +4615,7 @@ VMMR3_INT_DECL(int) PATMR3InstallPatch(PVM pVM, RTRCPTR pInstrGC, uint64_t flags
  * Query instruction size
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch record
  * @param   pInstrGC    Instruction address
  */
@@ -4635,7 +4643,7 @@ static uint32_t patmGetInstrSize(PVM pVM, PPATCHINFO pPatch, RTRCPTR pInstrGC)
  * Add patch to page record
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPage       Page address
  * @param   pPatch      Patch record
  */
@@ -4761,7 +4769,7 @@ int patmAddPatchToPage(PVM pVM, RTRCUINTPTR pPage, PPATCHINFO pPatch)
  * Remove patch from page record
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPage       Page address
  * @param   pPatch      Patch record
  */
@@ -4822,7 +4830,7 @@ int patmRemovePatchFromPage(PVM pVM, RTRCUINTPTR pPage, PPATCHINFO pPatch)
  * Insert page records for all guest pages that contain instructions that were recompiled for this patch
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch record
  */
 int patmInsertPatchPages(PVM pVM, PPATCHINFO pPatch)
@@ -4856,7 +4864,7 @@ int patmInsertPatchPages(PVM pVM, PPATCHINFO pPatch)
  * Remove page records for all guest pages that contain instructions that were recompiled for this patch
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch record
  */
 static int patmRemovePatchPages(PVM pVM, PPATCHINFO pPatch)
@@ -4889,7 +4897,7 @@ static int patmRemovePatchPages(PVM pVM, PPATCHINFO pPatch)
  * Notifies PATM about a (potential) write to code that has been patched.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtr       GC pointer to write address
  * @param   cbWrite     Nr of bytes to write
  *
@@ -5064,7 +5072,7 @@ invalid_write_loop_start:
  * Disable all patches in a flushed page
  *
  * @returns VBox status code
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   addr        GC address of the page to flush
  * @note    Currently only called by CSAMR3FlushPage; optimization to avoid
  *          having to double check if the physical address has changed
@@ -5100,7 +5108,7 @@ VMMR3_INT_DECL(int) PATMR3FlushPage(PVM pVM, RTRCPTR addr)
  * Checks if the instructions at the specified address has been patched already.
  *
  * @returns boolean, patched or not
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context pointer to instruction
  */
 VMMR3_INT_DECL(bool) PATMR3HasBeenPatched(PVM pVM, RTRCPTR pInstrGC)
@@ -5117,7 +5125,7 @@ VMMR3_INT_DECL(bool) PATMR3HasBeenPatched(PVM pVM, RTRCPTR pInstrGC)
  * Query the opcode of the original code that was overwritten by the 5 bytes patch jump
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    GC address of instr
  * @param   pByte       opcode byte pointer (OUT)
  *
@@ -5161,7 +5169,7 @@ VMMR3DECL(int) PATMR3QueryOpcode(PVM pVM, RTRCPTR pInstrGC, uint8_t *pByte)
  * bytes patch jump.
  *
  * @returns VINF_SUCCESS or VERR_PATCH_NOT_FOUND.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtrInstr  GC address of instr
  * @param   pbDst       The output buffer.
  * @param   cbToRead    The maximum number bytes to read.
@@ -5196,10 +5204,10 @@ VMMR3_INT_DECL(int) PATMR3ReadOrgInstr(PVM pVM, RTGCPTR32 GCPtrInstr, uint8_t *p
             cbToRead = cbMax;
         switch (cbToRead)
         {
-            case 5: pbDst[4] = pbSrc[4];
-            case 4: pbDst[3] = pbSrc[3];
-            case 3: pbDst[2] = pbSrc[2];
-            case 2: pbDst[1] = pbSrc[1];
+            case 5: pbDst[4] = pbSrc[4]; RT_FALL_THRU();
+            case 4: pbDst[3] = pbSrc[3]; RT_FALL_THRU();
+            case 3: pbDst[2] = pbSrc[2]; RT_FALL_THRU();
+            case 2: pbDst[1] = pbSrc[1]; RT_FALL_THRU();
             case 1: pbDst[0] = pbSrc[0];
                 break;
             default:
@@ -5220,8 +5228,8 @@ VMMR3_INT_DECL(int) PATMR3ReadOrgInstr(PVM pVM, RTGCPTR32 GCPtrInstr, uint8_t *p
  * Disable patch for privileged instruction at specified location
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pInstr      Guest context point to privileged instruction
+ * @param   pVM         The cross context VM structure.
+ * @param   pInstrGC    Guest context point to privileged instruction
  *
  * @note    returns failure if patching is not allowed or possible
  *
@@ -5368,8 +5376,8 @@ VMMR3_INT_DECL(int) PATMR3DisablePatch(PVM pVM, RTRCPTR pInstrGC)
  * Permanently disable patch for privileged instruction at specified location
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pInstr      Guest context instruction pointer
+ * @param   pVM         The cross context VM structure.
+ * @param   pInstrGC    Guest context instruction pointer
  * @param   pConflictAddr  Guest context pointer which conflicts with specified patch
  * @param   pConflictPatch Conflicting patch
  *
@@ -5418,6 +5426,8 @@ static int patmDisableUnusablePatch(PVM pVM, RTRCPTR pInstrGC, RTRCPTR pConflict
             return VINF_SUCCESS;
         }
     }
+#else
+    RT_NOREF_PV(pInstrGC);
 #endif
 
     if (pConflictPatch->opcode == OP_CLI)
@@ -5467,8 +5477,8 @@ static int patmDisableUnusablePatch(PVM pVM, RTRCPTR pInstrGC, RTRCPTR pConflict
  * Enable patch for privileged instruction at specified location
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pInstr      Guest context point to privileged instruction
+ * @param   pVM         The cross context VM structure.
+ * @param   pInstrGC    Guest context point to privileged instruction
  *
  * @note    returns failure if patching is not allowed or possible
  *
@@ -5589,7 +5599,7 @@ VMMR3_INT_DECL(int) PATMR3EnablePatch(PVM pVM, RTRCPTR pInstrGC)
  * Remove patch for privileged instruction at specified location
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pPatchRec       Patch record
  * @param   fForceRemove    Remove *all* patches
  */
@@ -5628,7 +5638,7 @@ int patmR3RemovePatch(PVM pVM, PPATMPATCHREC pPatchRec, bool fForceRemove)
     if (PATM_STAT_INDEX_IS_VALID(pPatchRec->patch.uPatchIdx))
     {
         STAMR3DeregisterF(pVM->pUVM, "/PATM/Stats/Patch/0x%RRv", pPatchRec->patch.pPrivInstrGC);
-        STAMR3DeregisterF(pVM->pUVM, "/PATM/Stats/PatchBD/0x%RRv*", pPatchRec->patch.pPrivInstrGC);
+        STAMR3DeregisterF(pVM->pUVM, "/PATM/PatchBD/0x%RRv*", pPatchRec->patch.pPrivInstrGC);
     }
 #endif
 
@@ -5662,7 +5672,7 @@ int patmR3RemovePatch(PVM pVM, PPATMPATCHREC pPatchRec, bool fForceRemove)
  * @param   pNode    The current patch to guest record to check.
  * @param   pvUser   The refresh state.
  */
-static int patmR3PatchRefreshFindTrampolinePatch(PAVLU32NODECORE pNode, void *pvUser)
+static DECLCALLBACK(int) patmR3PatchRefreshFindTrampolinePatch(PAVLU32NODECORE pNode, void *pvUser)
 {
     PRECPATCHTOGUEST  pPatch2GuestRec = (PRECPATCHTOGUEST)pNode;
     PPATMREFRESHPATCH pRefreshPatchState = (PPATMREFRESHPATCH)pvUser;
@@ -5696,7 +5706,7 @@ static int patmR3PatchRefreshFindTrampolinePatch(PAVLU32NODECORE pNode, void *pv
  * Attempt to refresh the patch by recompiling its entire code block
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pPatchRec       Patch record
  */
 int patmR3RefreshPatch(PVM pVM, PPATMPATCHREC pPatchRec)
@@ -5741,7 +5751,7 @@ int patmR3RefreshPatch(PVM pVM, PPATMPATCHREC pPatchRec)
     if (PATM_STAT_INDEX_IS_VALID(pPatchRec->patch.uPatchIdx))
     {
         STAMR3DeregisterF(pVM->pUVM, "/PATM/Stats/Patch/0x%RRv", pPatchRec->patch.pPrivInstrGC);
-        STAMR3DeregisterF(pVM->pUVM, "/PATM/Stats/PatchBD/0x%RRv*", pPatchRec->patch.pPrivInstrGC);
+        STAMR3DeregisterF(pVM->pUVM, "/PATM/PatchBD/0x%RRv*", pPatchRec->patch.pPrivInstrGC);
     }
 #endif
 
@@ -5847,10 +5857,10 @@ failure:
  * Find patch for privileged instruction at specified location
  *
  * @returns Patch structure pointer if found; else NULL
- * @param   pVM           Pointer to the VM.
- * @param   pInstr        Guest context point to instruction that might lie within 5 bytes of an existing patch jump
+ * @param   pVM           The cross context VM structure.
+ * @param   pInstrGC      Guest context point to instruction that might lie
+ *                        within 5 bytes of an existing patch jump
  * @param   fIncludeHints Include hinted patches or not
- *
  */
 PPATCHINFO patmFindActivePatchByEntrypoint(PVM pVM, RTRCPTR pInstrGC, bool fIncludeHints)
 {
@@ -5884,7 +5894,7 @@ PPATCHINFO patmFindActivePatchByEntrypoint(PVM pVM, RTRCPTR pInstrGC, bool fIncl
  * Checks whether the GC address is inside a generated patch jump
  *
  * @returns true -> yes, false -> no
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pAddr       Guest context address.
  * @param   pPatchAddr  Guest context patch address (if true).
  */
@@ -5913,8 +5923,8 @@ VMMR3_INT_DECL(bool) PATMR3IsInsidePatchJump(PVM pVM, RTRCPTR pAddr, PRTGCPTR32 
  * Remove patch for privileged instruction at specified location
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pInstr      Guest context point to privileged instruction
+ * @param   pVM         The cross context VM structure.
+ * @param   pInstrGC    Guest context point to privileged instruction
  *
  * @note    returns failure if patching is not allowed or possible
  *
@@ -5941,7 +5951,7 @@ VMMR3_INT_DECL(int) PATMR3RemovePatch(PVM pVM, RTRCPTR pInstrGC)
  * Mark patch as dirty
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch record
  *
  * @note    returns failure if patching is not allowed or possible
@@ -5983,7 +5993,7 @@ static int patmR3MarkDirtyPatch(PVM pVM, PPATCHINFO pPatch)
  * Query the corresponding GC instruction pointer from a pointer inside the patch block itself
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch block structure pointer
  * @param   pPatchGC    GC address in patch block
  */
@@ -6002,7 +6012,7 @@ RTRCPTR patmPatchGCPtr2GuestGCPtr(PVM pVM, PPATCHINFO pPatch, RCPTRTYPE(uint8_t 
  * Converts Guest code GC ptr to Patch code GC ptr (if found)
  *
  * @returns corresponding GC pointer in patch block
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Current patch block pointer
  * @param   pInstrGC    Guest context pointer to privileged instruction
  *
@@ -6019,11 +6029,12 @@ RTRCPTR patmGuestGCPtrToPatchGCPtr(PVM pVM, PPATCHINFO pPatch, RCPTRTYPE(uint8_t
     return 0;
 }
 
+#ifdef PATM_RESOLVE_CONFLICTS_WITH_JUMP_PATCHES
 /**
  * Converts Guest code GC ptr to Patch code GC ptr (if found)
  *
  * @returns corresponding GC pointer in patch block
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    Guest context pointer to privileged instruction
  */
 static RTRCPTR patmR3GuestGCPtrToPatchGCPtrSimple(PVM pVM, RCPTRTYPE(uint8_t*) pInstrGC)
@@ -6033,13 +6044,14 @@ static RTRCPTR patmR3GuestGCPtrToPatchGCPtrSimple(PVM pVM, RCPTRTYPE(uint8_t*) p
         return patmGuestGCPtrToPatchGCPtr(pVM, &pPatchRec->patch, pInstrGC);
     return NIL_RTRCPTR;
 }
+#endif
 
 /**
  * Converts Guest code GC ptr to Patch code GC ptr (or nearest from below if no
  * identical match)
  *
  * @returns corresponding GC pointer in patch block
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Current patch block pointer
  * @param   pInstrGC    Guest context pointer to privileged instruction
  *
@@ -6056,7 +6068,7 @@ RTRCPTR patmGuestGCPtrToClosestPatchGCPtr(PVM pVM, PPATCHINFO pPatch, RCPTRTYPE(
  * Query the corresponding GC instruction pointer from a pointer inside the patch block itself
  *
  * @returns original GC instruction pointer or 0 if not found
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatchGC    GC address in patch block
  * @param   pEnmState   State of the translated address (out)
  *
@@ -6125,7 +6137,7 @@ VMMR3_INT_DECL(RTRCPTR) PATMR3PatchToGCPtr(PVM pVM, RTRCPTR pPatchGC, PATMTRANSS
  * Returns the GC pointer of the patch for the specified GC address
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pAddrGC     Guest context address
  */
 VMMR3_INT_DECL(RTRCPTR) PATMR3QueryPatchGCPtr(PVM pVM, RTRCPTR pAddrGC)
@@ -6146,7 +6158,7 @@ VMMR3_INT_DECL(RTRCPTR) PATMR3QueryPatchGCPtr(PVM pVM, RTRCPTR pAddrGC)
  * Attempt to recover dirty instructions
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pCtx                Pointer to the guest CPU context.
  * @param   pPatch              Patch record.
  * @param   pPatchToGuestRec    Patch to guest address record.
@@ -6373,7 +6385,7 @@ static int patmR3HandleDirtyInstr(PVM pVM, PCPUMCTX pCtx, PPATMPATCHREC pPatch, 
  * Handle trap inside patch code
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCtx        Pointer to the guest CPU context.
  * @param   pEip        GC pointer of trapping instruction.
  * @param   ppNewEip    GC pointer to new instruction.
@@ -6525,13 +6537,15 @@ VMMR3_INT_DECL(int) PATMR3HandleTrap(PVM pVM, PCPUMCTX pCtx, RTRCPTR pEip, RTGCP
         /* Very bad. We crashed in emitted code. Probably stack? */
         if (pPatch)
         {
-            AssertReleaseMsg(pVM->patm.s.pGCStateHC->fPIF == 1,
-                            ("Crash in patch code %RRv (%RRv) esp=%RX32\nPatch state=%x flags=%RX64 fDirty=%d\n%s\n", pEip, pNewEip, CPUMGetGuestESP(pVCpu), pPatch->patch.uState, pPatch->patch.flags, pPatchToGuestRec->fDirty, szBuf));
+            AssertLogRelMsg(pVM->patm.s.pGCStateHC->fPIF == 1,
+                            ("Crash in patch code %RRv (%RRv) esp=%RX32\nPatch state=%x flags=%RX64 fDirty=%d\n%s\n",
+                             pEip, pNewEip, CPUMGetGuestESP(pVCpu), pPatch->patch.uState, pPatch->patch.flags,
+                             pPatchToGuestRec->fDirty, szBuf));
         }
         else
-            AssertReleaseMsg(pVM->patm.s.pGCStateHC->fPIF == 1,
+            AssertLogRelMsg(pVM->patm.s.pGCStateHC->fPIF == 1,
                             ("Crash in patch code %RRv (%RRv) esp=%RX32\n%s\n", pEip, pNewEip, CPUMGetGuestESP(pVCpu), szBuf));
-        EMR3FatalError(pVCpu, VERR_INTERNAL_ERROR);
+        EMR3FatalError(pVCpu, VERR_PATM_IPE_TRAP_IN_PATCH_CODE);
     }
 
     /* From here on, we must have a valid patch to guest translation. */
@@ -6669,16 +6683,17 @@ VMMR3_INT_DECL(int) PATMR3HandleTrap(PVM pVM, PCPUMCTX pCtx, RTRCPTR pEip, RTGCP
  * Handle page-fault in monitored page
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3_INT_DECL(int) PATMR3HandleMonitoredPage(PVM pVM)
 {
     AssertReturn(!HMIsEnabled(pVM), VERR_PATM_HM_IPE);
+    PVMCPU pVCpu = VMMGetCpu0(pVM);
 
     RTRCPTR addr = pVM->patm.s.pvFaultMonitor;
     addr &= PAGE_BASE_GC_MASK;
 
-    int rc = PGMHandlerVirtualDeregister(pVM, addr);
+    int rc = PGMHandlerVirtualDeregister(pVM, pVCpu, addr, false /*fHypervisor*/);
     AssertRC(rc); NOREF(rc);
 
     PPATMPATCHREC pPatchRec = (PPATMPATCHREC)RTAvloU32GetBestFit(&pVM->patm.s.PatchLookupTreeHC->PatchTree, addr, false);
@@ -6777,7 +6792,7 @@ static const char *PATMPatchState(PVM pVM, PPATCHINFO pPatch)
 
 /**
  * Resets the sample.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    The sample registered using STAMR3RegisterCallback.
  */
 static void patmResetStat(PVM pVM, void *pvSample)
@@ -6792,7 +6807,7 @@ static void patmResetStat(PVM pVM, void *pvSample)
 /**
  * Prints the sample into the buffer.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    The sample registered using STAMR3RegisterCallback.
  * @param   pszBuf      The buffer to print into.
  * @param   cchBuf      The size of the buffer.
@@ -6814,27 +6829,20 @@ static void patmPrintStat(PVM pVM, void *pvSample, char *pszBuf, size_t cchBuf)
  * Returns the GC address of the corresponding patch statistics counter
  *
  * @returns Stat address
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPatch      Patch structure
  */
 RTRCPTR patmPatchQueryStatAddress(PVM pVM, PPATCHINFO pPatch)
 {
     Assert(pPatch->uPatchIdx != PATM_STAT_INDEX_NONE);
-    return pVM->patm.s.pStatsGC + sizeof(STAMRATIOU32) * pPatch->uPatchIdx + RT_OFFSETOF(STAMRATIOU32, u32A);
+    return pVM->patm.s.pStatsGC + sizeof(STAMRATIOU32) * pPatch->uPatchIdx + RT_UOFFSETOF(STAMRATIOU32, u32A);
 }
 
 #endif /* VBOX_WITH_STATISTICS */
 #ifdef VBOX_WITH_DEBUGGER
 
 /**
- * The '.patmoff' command.
- *
- * @returns VBox status.
- * @param   pCmd        Pointer to the command descriptor (as registered).
- * @param   pCmdHlp     Pointer to command helper functions.
- * @param   pVM         Pointer to the current VM (if any).
- * @param   paArgs      Pointer to (readonly) array of arguments.
- * @param   cArgs       Number of arguments in the array.
+ * @callback_method_impl{FNDBGCCMD, The '.patmoff' command.}
  */
 static DECLCALLBACK(int) patmr3CmdOff(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -6855,14 +6863,7 @@ static DECLCALLBACK(int) patmr3CmdOff(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM 
 }
 
 /**
- * The '.patmon' command.
- *
- * @returns VBox status.
- * @param   pCmd        Pointer to the command descriptor (as registered).
- * @param   pCmdHlp     Pointer to command helper functions.
- * @param   pVM         Pointer to the current VM (if any).
- * @param   paArgs      Pointer to (readonly) array of arguments.
- * @param   cArgs       Number of arguments in the array.
+ * @callback_method_impl{FNDBGCCMD, The '.patmon' command.}
  */
 static DECLCALLBACK(int) patmr3CmdOn(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -6883,3 +6884,4 @@ static DECLCALLBACK(int) patmr3CmdOn(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM p
 }
 
 #endif /* VBOX_WITH_DEBUGGER */
+

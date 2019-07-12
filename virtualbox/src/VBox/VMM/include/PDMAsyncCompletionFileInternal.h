@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -483,6 +483,8 @@ typedef struct PDMACTASKFILE
     PDMACTASKFILETRANSFER                enmTransferType;
     /** Start offset */
     RTFOFF                               Off;
+    /** Amount of data transfered so far. */
+    size_t                               cbTransfered;
     /** Data segment. */
     RTSGSEG                              DataSeg;
     /** When non-zero the segment uses a bounce buffer because the provided buffer
@@ -541,8 +543,6 @@ void pdmacFileTaskFree(PPDMASYNCCOMPLETIONENDPOINTFILE pEndpoint,
                        PPDMACTASKFILE pTask);
 
 int pdmacFileEpAddTask(PPDMASYNCCOMPLETIONENDPOINTFILE pEndpoint, PPDMACTASKFILE pTask);
-
-void pdmacFileEpTaskCompleted(PPDMACTASKFILE pTask, void *pvUser, int rc);
 
 int pdmacFileCacheInit(PPDMASYNCCOMPLETIONEPCLASSFILE pClassFile, PCFGMNODE pCfgNode);
 void pdmacFileCacheDestroy(PPDMASYNCCOMPLETIONEPCLASSFILE pClassFile);

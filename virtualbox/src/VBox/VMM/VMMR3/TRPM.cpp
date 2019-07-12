@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -69,9 +69,10 @@
  *
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_TRPM
 #include <VBox/vmm/trpm.h>
 #include <VBox/vmm/cpum.h>
@@ -80,7 +81,6 @@
 #include <VBox/vmm/pdmapi.h>
 #include <VBox/vmm/em.h>
 #include <VBox/vmm/pgm.h>
-#include "internal/pgm.h"
 #include <VBox/vmm/dbgf.h>
 #include <VBox/vmm/mm.h>
 #include <VBox/vmm/stam.h>
@@ -103,9 +103,9 @@
 #include <iprt/alloc.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Trap handler function.
  * @todo need to specialize this as we go along.
@@ -125,9 +125,9 @@ typedef enum TRPMHANDLER
 } TRPMHANDLER, *PTRPMHANDLER;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Preinitialized IDT.
  * The u16OffsetLow is a value of the TRPMHANDLER enum which TRPMR3Relocate()
  * will use to pick the right address. The u16SegSel is always VMM CS.
@@ -423,58 +423,50 @@ static VBOXIDTE_GENERIC     g_aIdt[256] =
 };
 
 
-#ifdef VBOX_WITH_RAW_MODE
-/** Enable or disable tracking of Guest's IDT. */
-# define TRPM_TRACK_GUEST_IDT_CHANGES
-/** Enable or disable tracking of Shadow IDT. */
-# define TRPM_TRACK_SHADOW_IDT_CHANGES
-#endif
-
 /** TRPM saved state version. */
 #define TRPM_SAVED_STATE_VERSION        9
 #define TRPM_SAVED_STATE_VERSION_UNI    8   /* SMP support bumped the version */
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int) trpmR3Save(PVM pVM, PSSMHANDLE pSSM);
 static DECLCALLBACK(int) trpmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass);
-#ifdef TRPM_TRACK_GUEST_IDT_CHANGES
-static DECLCALLBACK(int) trpmR3GuestIDTWriteHandler(PVM pVM, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf, PGMACCESSTYPE enmAccessType, void *pvUser);
-#endif
+static DECLCALLBACK(void) trpmR3InfoEvent(PVM pVM, PCDBGFINFOHLP pHlp, const char *pszArgs);
 
 
 /**
  * Initializes the Trap Manager
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) TRPMR3Init(PVM pVM)
 {
     LogFlow(("TRPMR3Init\n"));
+    int rc;
 
     /*
      * Assert sizes and alignments.
      */
-    AssertRelease(!(RT_OFFSETOF(VM, trpm.s) & 31));
-    AssertRelease(!(RT_OFFSETOF(VM, trpm.s.aIdt) & 15));
+    AssertRelease(!(RT_UOFFSETOF(VM, trpm.s) & 31));
+    AssertRelease(!(RT_UOFFSETOF(VM, trpm.s.aIdt) & 15));
     AssertRelease(sizeof(pVM->trpm.s) <= sizeof(pVM->trpm.padding));
     AssertRelease(RT_ELEMENTS(pVM->trpm.s.aGuestTrapHandler) == sizeof(pVM->trpm.s.au32IdtPatched)*8);
 
     /*
      * Initialize members.
      */
-    pVM->trpm.s.offVM              = RT_OFFSETOF(VM, trpm);
-    pVM->trpm.s.offTRPMCPU         = RT_OFFSETOF(VM, aCpus[0].trpm) - RT_OFFSETOF(VM, trpm);
+    pVM->trpm.s.offVM              = RT_UOFFSETOF(VM, trpm);
+    pVM->trpm.s.offTRPMCPU         = RT_UOFFSETOF(VM, aCpus[0].trpm) - RT_UOFFSETOF(VM, trpm);
 
     for (VMCPUID i = 0; i < pVM->cCpus; i++)
     {
         PVMCPU pVCpu = &pVM->aCpus[i];
 
-        pVCpu->trpm.s.offVM         = RT_OFFSETOF(VM, aCpus[i].trpm);
-        pVCpu->trpm.s.offVMCpu      = RT_OFFSETOF(VMCPU, trpm);
+        pVCpu->trpm.s.offVM         = RT_UOFFSETOF_DYN(VM, aCpus[i].trpm);
+        pVCpu->trpm.s.offVMCpu      = RT_UOFFSETOF(VMCPU, trpm);
         pVCpu->trpm.s.uActiveVector = ~0U;
     }
 
@@ -489,14 +481,14 @@ VMMR3DECL(int) TRPMR3Init(PVM pVM)
     if (pTRPMNode)
     {
         bool f;
-        int rc = CFGMR3QueryBool(pTRPMNode, "SafeToDropGuestIDTMonitoring", &f);
+        rc = CFGMR3QueryBool(pTRPMNode, "SafeToDropGuestIDTMonitoring", &f);
         if (RT_SUCCESS(rc))
             pVM->trpm.s.fSafeToDropGuestIDTMonitoring = f;
     }
 
     /* write config summary to log */
     if (pVM->trpm.s.fSafeToDropGuestIDTMonitoring)
-        LogRel(("TRPM: Dropping Guest IDT Monitoring.\n"));
+        LogRel(("TRPM: Dropping Guest IDT Monitoring\n"));
 
     /*
      * Initialize the IDT.
@@ -506,14 +498,44 @@ VMMR3DECL(int) TRPMR3Init(PVM pVM)
     memcpy(&pVM->trpm.s.aIdt[0], &g_aIdt[0], sizeof(pVM->trpm.s.aIdt));
 
     /*
+     * Register virtual access handlers.
+     */
+    pVM->trpm.s.hShadowIdtWriteHandlerType = NIL_PGMVIRTHANDLERTYPE;
+    pVM->trpm.s.hGuestIdtWriteHandlerType  = NIL_PGMVIRTHANDLERTYPE;
+#ifdef VBOX_WITH_RAW_MODE
+    if (!HMIsEnabled(pVM))
+    {
+# ifdef TRPM_TRACK_SHADOW_IDT_CHANGES
+        rc = PGMR3HandlerVirtualTypeRegister(pVM, PGMVIRTHANDLERKIND_HYPERVISOR, false /*fRelocUserRC*/,
+                                             NULL /*pfnInvalidateR3*/, NULL /*pfnHandlerR3*/,
+                                             NULL /*pszHandlerRC*/, "trpmRCShadowIDTWritePfHandler",
+                                             "Shadow IDT write access handler", &pVM->trpm.s.hShadowIdtWriteHandlerType);
+        AssertRCReturn(rc, rc);
+# endif
+        rc = PGMR3HandlerVirtualTypeRegister(pVM, PGMVIRTHANDLERKIND_WRITE, false /*fRelocUserRC*/,
+                                             NULL /*pfnInvalidateR3*/, trpmGuestIDTWriteHandler,
+                                             "trpmGuestIDTWriteHandler", "trpmRCGuestIDTWritePfHandler",
+                                             "Guest IDT write access handler", &pVM->trpm.s.hGuestIdtWriteHandlerType);
+        AssertRCReturn(rc, rc);
+    }
+#endif /* VBOX_WITH_RAW_MODE */
+
+    /*
      * Register the saved state data unit.
      */
-    int rc = SSMR3RegisterInternal(pVM, "trpm", 1, TRPM_SAVED_STATE_VERSION, sizeof(TRPM),
-                                   NULL, NULL, NULL,
-                                   NULL, trpmR3Save, NULL,
-                                   NULL, trpmR3Load, NULL);
+    rc = SSMR3RegisterInternal(pVM, "trpm", 1, TRPM_SAVED_STATE_VERSION, sizeof(TRPM),
+                               NULL, NULL, NULL,
+                               NULL, trpmR3Save, NULL,
+                               NULL, trpmR3Load, NULL);
     if (RT_FAILURE(rc))
         return rc;
+
+    /*
+     * Register info handlers.
+     */
+    rc = DBGFR3InfoRegisterInternalEx(pVM, "trpmevent", "Dumps TRPM pending event.", trpmR3InfoEvent,
+                                      DBGFINFO_FLAGS_ALL_EMTS);
+    AssertRCReturn(rc, rc);
 
     /*
      * Statistics.
@@ -605,7 +627,7 @@ VMMR3DECL(int) TRPMR3Init(PVM pVM)
  * This function will be called at init and whenever the VMM need
  * to relocate itself inside the GC.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   offDelta    Relocation delta relative to old location.
  */
 VMMR3DECL(void) TRPMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
@@ -621,23 +643,23 @@ VMMR3DECL(void) TRPMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
     /*
      * Get the trap handler addresses.
      *
-     * If VMMGC.gc is screwed, so are we. We'll assert here since it elsewise
+     * If VMMRC.rc is screwed, so are we. We'll assert here since it elsewise
      * would make init order impossible if we should assert the presence of these
      * exports in TRPMR3Init().
      */
     RTRCPTR aRCPtrs[TRPM_HANDLER_MAX];
     RT_ZERO(aRCPtrs);
-    int rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "TRPMGCHandlerInterupt", &aRCPtrs[TRPM_HANDLER_INT]);
-    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerInterupt in VMMGC.gc!\n"));
+    int rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "TRPMGCHandlerInterupt", &aRCPtrs[TRPM_HANDLER_INT]);
+    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerInterupt in VMMRC.rc!\n"));
 
-    rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "TRPMGCHandlerGeneric",  &aRCPtrs[TRPM_HANDLER_TRAP]);
-    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerGeneric in VMMGC.gc!\n"));
+    rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "TRPMGCHandlerGeneric",  &aRCPtrs[TRPM_HANDLER_TRAP]);
+    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerGeneric in VMMRC.rc!\n"));
 
-    rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "TRPMGCHandlerTrap08",   &aRCPtrs[TRPM_HANDLER_TRAP_08]);
-    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerTrap08 in VMMGC.gc!\n"));
+    rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "TRPMGCHandlerTrap08",   &aRCPtrs[TRPM_HANDLER_TRAP_08]);
+    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerTrap08 in VMMRC.rc!\n"));
 
-    rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "TRPMGCHandlerTrap12",   &aRCPtrs[TRPM_HANDLER_TRAP_12]);
-    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerTrap12 in VMMGC.gc!\n"));
+    rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "TRPMGCHandlerTrap12",   &aRCPtrs[TRPM_HANDLER_TRAP_12]);
+    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerTrap12 in VMMRC.rc!\n"));
 
     RTSEL SelCS = CPUMGetHyperCS(pVCpu);
 
@@ -691,12 +713,13 @@ VMMR3DECL(void) TRPMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
 # ifdef TRPM_TRACK_SHADOW_IDT_CHANGES
     if (pVM->trpm.s.pvMonShwIdtRC != RTRCPTR_MAX)
     {
-        rc = PGMHandlerVirtualDeregister(pVM, pVM->trpm.s.pvMonShwIdtRC);
+        rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->trpm.s.pvMonShwIdtRC, true /*fHypervisor*/);
         AssertRC(rc);
     }
     pVM->trpm.s.pvMonShwIdtRC = VM_RC_ADDR(pVM, &pVM->trpm.s.aIdt[0]);
-    rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_HYPERVISOR, pVM->trpm.s.pvMonShwIdtRC, pVM->trpm.s.pvMonShwIdtRC + sizeof(pVM->trpm.s.aIdt) - 1,
-                                     0, 0, "trpmRCShadowIDTWriteHandler", 0, "Shadow IDT write access handler");
+    rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->trpm.s.hShadowIdtWriteHandlerType,
+                                     pVM->trpm.s.pvMonShwIdtRC, pVM->trpm.s.pvMonShwIdtRC + sizeof(pVM->trpm.s.aIdt) - 1,
+                                     NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
     AssertRC(rc);
 # endif
 
@@ -726,7 +749,10 @@ VMMR3DECL(void) TRPMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
     pVM->trpm.s.paStatForwardedIRQRC += offDelta;
     pVM->trpm.s.paStatHostIrqRC += offDelta;
 # endif
-#endif /* VBOX_WITH_RAW_MODE */
+
+#else  /* !VBOX_WITH_RAW_MODE */
+    RT_NOREF(pVM, offDelta);
+#endif /* !VBOX_WITH_RAW_MODE */
 }
 
 
@@ -734,7 +760,7 @@ VMMR3DECL(void) TRPMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
  * Terminates the Trap Manager
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) TRPMR3Term(PVM pVM)
 {
@@ -748,7 +774,7 @@ VMMR3DECL(int) TRPMR3Term(PVM pVM)
  *
  * Used by TRPMR3Reset and CPU hot plugging.
  *
- * @param   pVCpu               Pointer to the VMCPU.
+ * @param   pVCpu               The cross context virtual CPU structure.
  */
 VMMR3DECL(void) TRPMR3ResetCpu(PVMCPU pVCpu)
 {
@@ -762,7 +788,7 @@ VMMR3DECL(void) TRPMR3ResetCpu(PVMCPU pVCpu)
  * For the TRPM component this means that any IDT write monitors
  * needs to be removed, any pending trap cleared, and the IDT reset.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(void) TRPMR3Reset(PVM pVM)
 {
@@ -774,7 +800,7 @@ VMMR3DECL(void) TRPMR3Reset(PVM pVM)
     {
         if (!pVM->trpm.s.fSafeToDropGuestIDTMonitoring)
         {
-            int rc = PGMHandlerVirtualDeregister(pVM, pVM->trpm.s.GuestIdtr.pIdt);
+            int rc = PGMHandlerVirtualDeregister(pVM, VMMGetCpu(pVM), pVM->trpm.s.GuestIdtr.pIdt, false /*fHypervisor*/);
             AssertRC(rc);
         }
         pVM->trpm.s.GuestIdtr.pIdt = RTRCPTR_MAX;
@@ -811,7 +837,7 @@ VMMR3DECL(void) TRPMR3Reset(PVM pVM)
  * Called by PDM when loading or relocating RC modules.
  *
  * @returns VBox status
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pszSymbol       Symbol to resolv
  * @param   pRCPtrValue     Where to store the symbol value.
  *
@@ -823,6 +849,16 @@ VMMR3_INT_DECL(int) TRPMR3GetImportRC(PVM pVM, const char *pszSymbol, PRTRCPTR p
         *pRCPtrValue = VM_RC_ADDR(pVM, &pVM->trpm);
     else if (!strcmp(pszSymbol, "g_TRPMCPU"))
         *pRCPtrValue = VM_RC_ADDR(pVM, &pVM->aCpus[0].trpm);
+    else if (!strcmp(pszSymbol, "g_trpmGuestCtx"))
+    {
+        PCPUMCTX pCtx = CPUMQueryGuestCtxPtr(VMMGetCpuById(pVM, 0));
+        *pRCPtrValue = VM_RC_ADDR(pVM, pCtx);
+    }
+    else if (!strcmp(pszSymbol, "g_trpmHyperCtx"))
+    {
+        PCPUMCTX pCtx = CPUMGetHyperCtxPtr(VMMGetCpuById(pVM, 0));
+        *pRCPtrValue = VM_RC_ADDR(pVM, pCtx);
+    }
     else if (!strcmp(pszSymbol, "g_trpmGuestCtxCore"))
     {
         PCPUMCTX pCtx = CPUMQueryGuestCtxPtr(VMMGetCpuById(pVM, 0));
@@ -844,7 +880,7 @@ VMMR3_INT_DECL(int) TRPMR3GetImportRC(PVM pVM, const char *pszSymbol, PRTRCPTR p
  * Execute state save operation.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            SSM operation handle.
  */
 static DECLCALLBACK(int) trpmR3Save(PVM pVM, PSSMHANDLE pSSM)
@@ -869,10 +905,10 @@ static DECLCALLBACK(int) trpmR3Save(PVM pVM, PSSMHANDLE pSSM)
         SSMR3PutGCUInt(pSSM,    pTrpmCpu->uPrevVector);
     }
     SSMR3PutBool(pSSM,      HMIsEnabled(pVM));
-    PVMCPU pVCpu = &pVM->aCpus[0];  /* raw mode implies 1 VCPU */
-    SSMR3PutUInt(pSSM,      VM_WHEN_RAW_MODE(VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_TRPM_SYNC_IDT), 0));
+    PVMCPU pVCpu0 = &pVM->aCpus[0]; NOREF(pVCpu0); /* raw mode implies 1 VCPU */
+    SSMR3PutUInt(pSSM,      VM_WHEN_RAW_MODE(VMCPU_FF_IS_SET(pVCpu0, VMCPU_FF_TRPM_SYNC_IDT), 0));
     SSMR3PutMem(pSSM,       &pTrpm->au32IdtPatched[0], sizeof(pTrpm->au32IdtPatched));
-    SSMR3PutU32(pSSM, ~0);              /* separator. */
+    SSMR3PutU32(pSSM, UINT32_MAX);          /* separator. */
 
     /*
      * Save any trampoline gates.
@@ -887,7 +923,7 @@ static DECLCALLBACK(int) trpmR3Save(PVM pVM, PSSMHANDLE pSSM)
         }
     }
 
-    return SSMR3PutU32(pSSM, ~0);       /* terminator */
+    return SSMR3PutU32(pSSM, UINT32_MAX);   /* terminator */
 }
 
 
@@ -895,7 +931,7 @@ static DECLCALLBACK(int) trpmR3Save(PVM pVM, PSSMHANDLE pSSM)
  * Execute state load operation.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            SSM operation handle.
  * @param   uVersion        Data layout version.
  * @param   uPass           The data pass.
@@ -1032,8 +1068,8 @@ static DECLCALLBACK(int) trpmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion,
  * (callback for the VMCPU_FF_TRPM_SYNC_IDT forced action).
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  */
 VMMR3DECL(int) TRPMR3SyncIDT(PVM pVM, PVMCPU pVCpu)
 {
@@ -1081,12 +1117,13 @@ VMMR3DECL(int) TRPMR3SyncIDT(PVM pVM, PVMCPU pVCpu)
              */
             if (pVM->trpm.s.GuestIdtr.pIdt != RTRCPTR_MAX)
             {
-                rc = PGMHandlerVirtualDeregister(pVM, pVM->trpm.s.GuestIdtr.pIdt);
+                rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->trpm.s.GuestIdtr.pIdt, false /*fHypervisor*/);
                 AssertRCReturn(rc, rc);
             }
             /* limit is including */
-            rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_WRITE, IDTR.pIdt, IDTR.pIdt + IDTR.cbIdt /* already inclusive */,
-                                             0, trpmR3GuestIDTWriteHandler, "trpmRCGuestIDTWriteHandler", 0, "Guest IDT write access handler");
+            rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->trpm.s.hGuestIdtWriteHandlerType,
+                                             IDTR.pIdt, IDTR.pIdt + IDTR.cbIdt /* already inclusive */,
+                                             NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
 
             if (rc == VERR_PGM_HANDLER_VIRTUAL_CONFLICT)
             {
@@ -1095,8 +1132,9 @@ VMMR3DECL(int) TRPMR3SyncIDT(PVM pVM, PVMCPU pVCpu)
                 if (PAGE_ADDRESS(IDTR.pIdt) != PAGE_ADDRESS(IDTR.pIdt + IDTR.cbIdt))
                     CSAMR3RemovePage(pVM, IDTR.pIdt + IDTR.cbIdt);
 
-                rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_WRITE, IDTR.pIdt, IDTR.pIdt + IDTR.cbIdt /* already inclusive */,
-                                                 0, trpmR3GuestIDTWriteHandler, "trpmRCGuestIDTWriteHandler", 0, "Guest IDT write access handler");
+                rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->trpm.s.hGuestIdtWriteHandlerType,
+                                                 IDTR.pIdt, IDTR.pIdt + IDTR.cbIdt /* already inclusive */,
+                                                 NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
             }
 
             AssertRCReturn(rc, rc);
@@ -1133,42 +1171,11 @@ VMMR3DECL(int) TRPMR3SyncIDT(PVM pVM, PVMCPU pVCpu)
 }
 
 
-# ifdef TRPM_TRACK_GUEST_IDT_CHANGES
-/**
- * \#PF Handler callback for virtual access handler ranges.
- *
- * Important to realize that a physical page in a range can have aliases, and
- * for ALL and WRITE handlers these will also trigger.
- *
- * @returns VINF_SUCCESS if the handler have carried out the operation.
- * @returns VINF_PGM_HANDLER_DO_DEFAULT if the caller should carry out the access operation.
- * @param   pVM             Pointer to the VM.
- * @param   GCPtr           The virtual address the guest is writing to. (not correct if it's an alias!)
- * @param   pvPtr           The HC mapping of that address.
- * @param   pvBuf           What the guest is reading/writing.
- * @param   cbBuf           How much it's reading/writing.
- * @param   enmAccessType   The access type.
- * @param   pvUser          User argument.
- */
-static DECLCALLBACK(int) trpmR3GuestIDTWriteHandler(PVM pVM, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf,
-                                                    PGMACCESSTYPE enmAccessType, void *pvUser)
-{
-    Assert(enmAccessType == PGMACCESSTYPE_WRITE); NOREF(enmAccessType);
-    Log(("trpmR3GuestIDTWriteHandler: write to %RGv size %d\n", GCPtr, cbBuf)); NOREF(GCPtr); NOREF(cbBuf);
-    NOREF(pvPtr); NOREF(pvUser); NOREF(pvBuf);
-    Assert(!HMIsEnabled(pVM));
-
-    VMCPU_FF_SET(VMMGetCpu(pVM), VMCPU_FF_TRPM_SYNC_IDT);
-    return VINF_PGM_HANDLER_DO_DEFAULT;
-}
-# endif /* TRPM_TRACK_GUEST_IDT_CHANGES */
-
-
 /**
  * Clear passthrough interrupt gate handler (reset to default handler)
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   iTrap       Trap/interrupt gate number.
  */
 int trpmR3ClearPassThroughHandler(PVM pVM, unsigned iTrap)
@@ -1183,8 +1190,8 @@ int trpmR3ClearPassThroughHandler(PVM pVM, unsigned iTrap)
 
     memset(aGCPtrs, 0, sizeof(aGCPtrs));
 
-    rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "TRPMGCHandlerInterupt", &aGCPtrs[TRPM_HANDLER_INT]);
-    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerInterupt in VMMGC.gc!\n"));
+    rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "TRPMGCHandlerInterupt", &aGCPtrs[TRPM_HANDLER_INT]);
+    AssertReleaseMsgRC(rc, ("Couldn't find TRPMGCHandlerInterupt in VMMRC.rc!\n"));
 
     if (    iTrap < TRPM_HANDLER_INT_BASE
         ||  iTrap >= RT_ELEMENTS(pVM->trpm.s.aIdt))
@@ -1229,9 +1236,9 @@ int trpmR3ClearPassThroughHandler(PVM pVM, unsigned iTrap)
 /**
  * Check if address is a gate handler (interrupt or trap).
  *
- * @returns gate nr or ~0 is not found
+ * @returns gate nr or UINT32_MAX is not found
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtr       GC address to check.
  */
 VMMR3DECL(uint32_t) TRPMR3QueryGateByHandler(PVM pVM, RTRCPTR GCPtr)
@@ -1253,7 +1260,7 @@ VMMR3DECL(uint32_t) TRPMR3QueryGateByHandler(PVM pVM, RTRCPTR GCPtr)
                 return iTrap;
         }
     }
-    return ~0;
+    return UINT32_MAX;
 }
 
 
@@ -1261,7 +1268,7 @@ VMMR3DECL(uint32_t) TRPMR3QueryGateByHandler(PVM pVM, RTRCPTR GCPtr)
  * Get guest trap/interrupt gate handler
  *
  * @returns Guest trap handler address or TRPM_INVALID_HANDLER if none installed
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   iTrap       Interrupt/trap number.
  */
 VMMR3DECL(RTRCPTR) TRPMR3GetGuestTrapHandler(PVM pVM, unsigned iTrap)
@@ -1278,7 +1285,7 @@ VMMR3DECL(RTRCPTR) TRPMR3GetGuestTrapHandler(PVM pVM, unsigned iTrap)
  * Used for setting up trap gates used for kernel calls.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   iTrap       Interrupt/trap number.
  * @param   pHandler    GC handler pointer
  */
@@ -1404,7 +1411,7 @@ VMMR3DECL(int) TRPMR3SetGuestTrapHandler(PVM pVM, unsigned iTrap, RTRCPTR pHandl
  *
  * @returns True is gate handler, false if not.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtr       GC address to check.
  */
 VMMR3DECL(bool) TRPMR3IsGateHandler(PVM pVM, RTRCPTR GCPtr)
@@ -1483,14 +1490,14 @@ VMMR3DECL(bool) TRPMR3IsGateHandler(PVM pVM, RTRCPTR GCPtr)
  * Inject event (such as external irq or trap)
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   enmEvent    Trpm event type
  */
 VMMR3DECL(int) TRPMR3InjectEvent(PVM pVM, PVMCPU pVCpu, TRPMEVENT enmEvent)
 {
-    PCPUMCTX pCtx = CPUMQueryGuestCtxPtr(pVCpu);
 #ifdef VBOX_WITH_RAW_MODE
+    PCPUMCTX pCtx = CPUMQueryGuestCtxPtr(pVCpu);
     Assert(!PATMIsPatchGCAddr(pVM, pCtx->eip));
 #endif
     Assert(!VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_INHIBIT_INTERRUPTS));
@@ -1498,87 +1505,135 @@ VMMR3DECL(int) TRPMR3InjectEvent(PVM pVM, PVMCPU pVCpu, TRPMEVENT enmEvent)
     /* Currently only useful for external hardware interrupts. */
     Assert(enmEvent == TRPM_HARDWARE_INT);
 
-    if (   !EMIsSupervisorCodeRecompiled(pVM)
-#ifdef VBOX_WITH_REM
-        && REMR3QueryPendingInterrupt(pVM, pVCpu) == REM_NO_PENDING_IRQ
-#endif
-        )
-    {
-#ifdef TRPM_FORWARD_TRAPS_IN_GC
+#if defined(TRPM_FORWARD_TRAPS_IN_GC) && !defined(IEM_VERIFICATION_MODE)
 
 # ifdef LOG_ENABLED
-        DBGFR3_INFO_LOG(pVM, "cpumguest", "TRPMInject");
-        DBGFR3_DISAS_INSTR_CUR_LOG(pVCpu, "TRPMInject");
+    DBGFR3_INFO_LOG(pVM, pVCpu, "cpumguest", "TRPMInject");
+    DBGFR3_DISAS_INSTR_CUR_LOG(pVCpu, "TRPMInject");
 # endif
 
-        uint8_t u8Interrupt;
-        int rc = PDMGetInterrupt(pVCpu, &u8Interrupt);
-        Log(("TRPMR3InjectEvent: CPU%d u8Interrupt=%d (%#x) rc=%Rrc\n", pVCpu->idCpu, u8Interrupt, u8Interrupt, rc));
-        if (RT_SUCCESS(rc))
+    uint8_t u8Interrupt = 0;
+    int rc = PDMGetInterrupt(pVCpu, &u8Interrupt);
+    Log(("TRPMR3InjectEvent: CPU%d u8Interrupt=%d (%#x) rc=%Rrc\n", pVCpu->idCpu, u8Interrupt, u8Interrupt, rc));
+    if (RT_SUCCESS(rc))
+    {
+        if (HMIsEnabled(pVM) || EMIsSupervisorCodeRecompiled(pVM))
         {
-# ifndef IEM_VERIFICATION_MODE
-            if (HMIsEnabled(pVM))
-# endif
-            {
-                rc = TRPMAssertTrap(pVCpu, u8Interrupt, enmEvent);
-                AssertRC(rc);
-                STAM_COUNTER_INC(&pVM->trpm.s.paStatForwardedIRQR3[u8Interrupt]);
-                return HMR3IsActive(pVCpu) ? VINF_EM_RESCHEDULE_HM : VINF_EM_RESCHEDULE_REM;
-            }
-            /* If the guest gate is not patched, then we will check (again) if we can patch it. */
-            if (pVM->trpm.s.aGuestTrapHandler[u8Interrupt] == TRPM_INVALID_HANDLER)
-            {
-                CSAMR3CheckGates(pVM, u8Interrupt, 1);
-                Log(("TRPMR3InjectEvent: recheck gate %x -> valid=%d\n", u8Interrupt, TRPMR3GetGuestTrapHandler(pVM, u8Interrupt) != TRPM_INVALID_HANDLER));
-            }
-
-            if (pVM->trpm.s.aGuestTrapHandler[u8Interrupt] != TRPM_INVALID_HANDLER)
-            {
-                /* Must check pending forced actions as our IDT or GDT might be out of sync */
-                rc = EMR3CheckRawForcedActions(pVM, pVCpu);
-                if (rc == VINF_SUCCESS)
-                {
-                    /* There's a handler -> let's execute it in raw mode */
-                    rc = TRPMForwardTrap(pVCpu, CPUMCTX2CORE(pCtx), u8Interrupt, 0, TRPM_TRAP_NO_ERRORCODE, enmEvent, -1);
-                    if (rc == VINF_SUCCESS /* Don't use RT_SUCCESS */)
-                    {
-                        Assert(!VMCPU_FF_IS_PENDING(pVCpu, VMCPU_FF_SELM_SYNC_GDT | VMCPU_FF_SELM_SYNC_LDT | VMCPU_FF_TRPM_SYNC_IDT | VMCPU_FF_SELM_SYNC_TSS));
-
-                        STAM_COUNTER_INC(&pVM->trpm.s.paStatForwardedIRQR3[u8Interrupt]);
-                        return VINF_EM_RESCHEDULE_RAW;
-                    }
-                }
-            }
-            else
-                STAM_COUNTER_INC(&pVM->trpm.s.StatForwardFailNoHandler);
-# ifdef VBOX_WITH_REM
-            REMR3NotifyPendingInterrupt(pVM, pVCpu, u8Interrupt);
-# endif
-        }
-        else
-        {
-            AssertRC(rc);
-            return HMR3IsActive(pVCpu) ? VINF_EM_RESCHEDULE_HM : VINF_EM_RESCHEDULE_REM; /* (Heed the halted state if this is changed!) */
-        }
-#else /* !TRPM_FORWARD_TRAPS_IN_GC */
-        uint8_t u8Interrupt;
-        int rc = PDMGetInterrupt(pVCpu, &u8Interrupt);
-        Log(("TRPMR3InjectEvent: u8Interrupt=%d (%#x) rc=%Rrc\n", u8Interrupt, u8Interrupt, rc));
-        if (RT_SUCCESS(rc))
-        {
-            rc = TRPMAssertTrap(pVCpu, u8Interrupt, TRPM_HARDWARE_INT);
+            rc = TRPMAssertTrap(pVCpu, u8Interrupt, enmEvent);
             AssertRC(rc);
             STAM_COUNTER_INC(&pVM->trpm.s.paStatForwardedIRQR3[u8Interrupt]);
             return HMR3IsActive(pVCpu) ? VINF_EM_RESCHEDULE_HM : VINF_EM_RESCHEDULE_REM;
         }
-#endif /* !TRPM_FORWARD_TRAPS_IN_GC */
+        /* If the guest gate is not patched, then we will check (again) if we can patch it. */
+        if (pVM->trpm.s.aGuestTrapHandler[u8Interrupt] == TRPM_INVALID_HANDLER)
+        {
+            CSAMR3CheckGates(pVM, u8Interrupt, 1);
+            Log(("TRPMR3InjectEvent: recheck gate %x -> valid=%d\n", u8Interrupt, TRPMR3GetGuestTrapHandler(pVM, u8Interrupt) != TRPM_INVALID_HANDLER));
+        }
+
+        if (pVM->trpm.s.aGuestTrapHandler[u8Interrupt] != TRPM_INVALID_HANDLER)
+        {
+            /* Must check pending forced actions as our IDT or GDT might be out of sync */
+            rc = EMR3CheckRawForcedActions(pVM, pVCpu);
+            if (rc == VINF_SUCCESS)
+            {
+                /* There's a handler -> let's execute it in raw mode */
+                rc = TRPMForwardTrap(pVCpu, CPUMCTX2CORE(pCtx), u8Interrupt, 0, TRPM_TRAP_NO_ERRORCODE, enmEvent, -1);
+                if (rc == VINF_SUCCESS /* Don't use RT_SUCCESS */)
+                {
+                    Assert(!VMCPU_FF_IS_PENDING(pVCpu, VMCPU_FF_SELM_SYNC_GDT | VMCPU_FF_SELM_SYNC_LDT | VMCPU_FF_TRPM_SYNC_IDT | VMCPU_FF_SELM_SYNC_TSS));
+
+                    STAM_COUNTER_INC(&pVM->trpm.s.paStatForwardedIRQR3[u8Interrupt]);
+                    return VINF_EM_RESCHEDULE_RAW;
+                }
+            }
+        }
+        else
+            STAM_COUNTER_INC(&pVM->trpm.s.StatForwardFailNoHandler);
+
+        rc = TRPMAssertTrap(pVCpu, u8Interrupt, enmEvent);
+        AssertRCReturn(rc, rc);
     }
+    else
+    {
+        /* Can happen if the interrupt is masked by TPR or APIC is disabled. */
+        AssertMsg(rc == VERR_APIC_INTR_MASKED_BY_TPR || rc == VERR_NO_DATA, ("PDMGetInterrupt failed. rc=%Rrc\n", rc));
+        return HMR3IsActive(pVCpu) ? VINF_EM_RESCHEDULE_HM : VINF_EM_RESCHEDULE_REM; /* (Heed the halted state if this is changed!) */
+    }
+
     /** @todo check if it's safe to translate the patch address to the original guest address.
      *        this implies a safe state in translated instructions and should take sti successors into account (instruction fusing)
      */
-    /* Note: if it's a PATM address, then we'll go back to raw mode regardless of the return code below. */
+    /* Note: if it's a PATM address, then we'll go back to raw mode regardless of the return codes below. */
 
     /* Fall back to the recompiler */
     return VINF_EM_RESCHEDULE_REM; /* (Heed the halted state if this is changed!) */
+
+#else  /* !TRPM_FORWARD_TRAPS_IN_GC || IEM_VERIFICATION_MODE */
+    RT_NOREF(pVM, enmEvent);
+    uint8_t u8Interrupt = 0;
+    int rc = PDMGetInterrupt(pVCpu, &u8Interrupt);
+    Log(("TRPMR3InjectEvent: u8Interrupt=%d (%#x) rc=%Rrc\n", u8Interrupt, u8Interrupt, rc));
+    if (RT_SUCCESS(rc))
+    {
+        rc = TRPMAssertTrap(pVCpu, u8Interrupt, TRPM_HARDWARE_INT);
+        AssertRC(rc);
+        STAM_COUNTER_INC(&pVM->trpm.s.paStatForwardedIRQR3[u8Interrupt]);
+    }
+    else
+    {
+        /* Can happen if the interrupt is masked by TPR or APIC is disabled. */
+        AssertMsg(rc == VERR_APIC_INTR_MASKED_BY_TPR || rc == VERR_NO_DATA, ("PDMGetInterrupt failed. rc=%Rrc\n", rc));
+    }
+    return HMR3IsActive(pVCpu) ? VINF_EM_RESCHEDULE_HM : VINF_EM_RESCHEDULE_REM; /* (Heed the halted state if this is changed!) */
+#endif /* !TRPM_FORWARD_TRAPS_IN_GC || IEM_VERIFICATION_MODE */
+
+}
+
+
+/**
+ * Displays the pending TRPM event.
+ *
+ * @param   pVM         The cross context VM structure.
+ * @param   pHlp        The info helper functions.
+ * @param   pszArgs     Arguments, ignored.
+ */
+static DECLCALLBACK(void) trpmR3InfoEvent(PVM pVM, PCDBGFINFOHLP pHlp, const char *pszArgs)
+{
+    NOREF(pszArgs);
+    PVMCPU pVCpu = VMMGetCpu(pVM);
+    if (!pVCpu)
+        pVCpu = &pVM->aCpus[0];
+
+    uint8_t     uVector;
+    uint8_t     cbInstr;
+    TRPMEVENT   enmTrapEvent;
+    RTGCUINT    uErrorCode;
+    RTGCUINTPTR uCR2;
+    int rc = TRPMQueryTrapAll(pVCpu, &uVector, &enmTrapEvent, &uErrorCode, &uCR2, &cbInstr);
+    if (RT_SUCCESS(rc))
+    {
+        pHlp->pfnPrintf(pHlp, "CPU[%u]: TRPM event\n", pVCpu->idCpu);
+        static const char * const s_apszTrpmEventType[] =
+        {
+            "Trap",
+            "Hardware Int",
+            "Software Int"
+        };
+        if (RT_LIKELY((size_t)enmTrapEvent < RT_ELEMENTS(s_apszTrpmEventType)))
+        {
+            pHlp->pfnPrintf(pHlp, " Type       = %s\n", s_apszTrpmEventType[enmTrapEvent]);
+            pHlp->pfnPrintf(pHlp, " uVector    = %#x\n", uVector);
+            pHlp->pfnPrintf(pHlp, " uErrorCode = %#RGu\n", uErrorCode);
+            pHlp->pfnPrintf(pHlp, " uCR2       = %#RGp\n", uCR2);
+            pHlp->pfnPrintf(pHlp, " cbInstr    = %u bytes\n", cbInstr);
+        }
+        else
+            pHlp->pfnPrintf(pHlp, " Type       = %#x (Invalid!)\n", enmTrapEvent);
+    }
+    else if (rc == VERR_TRPM_NO_ACTIVE_TRAP)
+        pHlp->pfnPrintf(pHlp, "CPU[%u]: TRPM event (None)\n", pVCpu->idCpu);
+    else
+        pHlp->pfnPrintf(pHlp, "CPU[%u]: TRPM event - Query failed! rc=%Rrc\n", pVCpu->idCpu, rc);
 }
 

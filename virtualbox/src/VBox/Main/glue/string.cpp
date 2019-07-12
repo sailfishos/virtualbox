@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,6 +20,8 @@
 #include <iprt/err.h>
 #include <iprt/path.h>
 #include <iprt/log.h>
+#include <iprt/string.h>
+#include <iprt/uni.h>
 
 namespace com
 {
@@ -36,7 +38,7 @@ const Bstr Bstr::Empty; /* default ctor is OK */
 void Bstr::copyFromN(const char *a_pszSrc, size_t a_cchMax)
 {
     /*
-     * Initialie m_bstr first in case of throws further down in the code, then
+     * Initialize m_bstr first in case of throws further down in the code, then
      * check for empty input (m_bstr == NULL means empty, there are no NULL
      * strings).
      */
@@ -50,25 +52,67 @@ void Bstr::copyFromN(const char *a_pszSrc, size_t a_cchMax)
      */
     size_t cwc;
     int vrc = ::RTStrCalcUtf16LenEx(a_pszSrc, a_cchMax, &cwc);
-    if (RT_FAILURE(vrc))
+    if (RT_SUCCESS(vrc))
     {
-        /* ASSUME: input is valid Utf-8. Fake out of memory error. */
-        AssertLogRelMsgFailed(("%Rrc %.*Rhxs\n", vrc, RTStrNLen(a_pszSrc, a_cchMax), a_pszSrc));
-        throw std::bad_alloc();
+        m_bstr = ::SysAllocStringByteLen(NULL, (unsigned)(cwc * sizeof(OLECHAR)));
+        if (RT_LIKELY(m_bstr))
+        {
+            PRTUTF16 pwsz = (PRTUTF16)m_bstr;
+            vrc = ::RTStrToUtf16Ex(a_pszSrc, a_cchMax, &pwsz, cwc + 1, NULL);
+            if (RT_SUCCESS(vrc))
+                return;
+
+            /* This should not happen! */
+            AssertRC(vrc);
+            cleanup();
+        }
     }
+    else /* ASSUME: input is valid Utf-8. Fake out of memory error. */
+        AssertLogRelMsgFailed(("%Rrc %.*Rhxs\n", vrc, RTStrNLen(a_pszSrc, a_cchMax), a_pszSrc));
+    throw std::bad_alloc();
+}
 
-    m_bstr = ::SysAllocStringByteLen(NULL, (unsigned)(cwc * sizeof(OLECHAR)));
-    if (RT_UNLIKELY(!m_bstr))
-        throw std::bad_alloc();
+int Bstr::compareUtf8(const char *a_pszRight, CaseSensitivity a_enmCase /*= CaseSensitive*/) const
+{
+    PCRTUTF16 pwszLeft = m_bstr;
 
-    PRTUTF16 pwsz = (PRTUTF16)m_bstr;
-    vrc = ::RTStrToUtf16Ex(a_pszSrc, a_cchMax, &pwsz, cwc + 1, NULL);
-    if (RT_FAILURE(vrc))
+    /*
+     * Special case for null/empty strings.  Unlike RTUtf16Cmp we
+     * treat null and empty equally.
+     */
+    if (!pwszLeft)
+        return !a_pszRight || *a_pszRight == '\0' ? 0 : -1;
+    if (!a_pszRight)
+        return *pwszLeft == '\0'                  ? 0 :  1;
+
+    /*
+     * Compare with a UTF-8 string by enumerating them char by char.
+     */
+    for (;;)
     {
-        /* This should not happen! */
-        AssertRC(vrc);
-        cleanup();
-        throw std::bad_alloc();
+        RTUNICP ucLeft;
+        int rc = RTUtf16GetCpEx(&pwszLeft, &ucLeft);
+        AssertRCReturn(rc, 1);
+
+        RTUNICP ucRight;
+        rc = RTStrGetCpEx(&a_pszRight, &ucRight);
+        AssertRCReturn(rc, -1);
+        if (ucLeft == ucRight)
+        {
+            if (ucLeft)
+                continue;
+            return 0;
+        }
+
+        if (a_enmCase == CaseInsensitive)
+        {
+            if (RTUniCpToUpper(ucLeft) == RTUniCpToUpper(ucRight))
+                continue;
+            if (RTUniCpToLower(ucLeft) == RTUniCpToLower(ucRight))
+                continue;
+        }
+
+        return ucLeft < ucRight ? -1 : 1;
     }
 }
 
@@ -80,20 +124,23 @@ const Utf8Str Utf8Str::Empty; /* default ctor is OK */
 void Utf8Str::cloneTo(char **pstr) const
 {
     size_t cb = length() + 1;
-    *pstr = (char*)nsMemory::Alloc(cb);
-    if (RT_UNLIKELY(!*pstr))
+    *pstr = (char *)nsMemory::Alloc(cb);
+    if (RT_LIKELY(*pstr))
+        memcpy(*pstr, c_str(), cb);
+    else
         throw std::bad_alloc();
-    memcpy(*pstr, c_str(), cb);
 }
 
 HRESULT Utf8Str::cloneToEx(char **pstr) const
 {
     size_t cb = length() + 1;
-    *pstr = (char*)nsMemory::Alloc(cb);
-    if (RT_UNLIKELY(!*pstr))
-        return E_OUTOFMEMORY;
-    memcpy(*pstr, c_str(), cb);
-    return S_OK;
+    *pstr = (char *)nsMemory::Alloc(cb);
+    if (RT_LIKELY(*pstr))
+    {
+        memcpy(*pstr, c_str(), cb);
+        return S_OK;
+    }
+    return E_OUTOFMEMORY;
 }
 #endif
 
@@ -134,14 +181,45 @@ Utf8Str& Utf8Str::stripPath()
     return *this;
 }
 
-Utf8Str& Utf8Str::stripExt()
+Utf8Str& Utf8Str::stripSuffix()
 {
     if (length())
     {
-        RTPathStripExt(m_psz);
+        RTPathStripSuffix(m_psz);
         jolt();
     }
     return *this;
+}
+
+size_t Utf8Str::parseKeyValue(Utf8Str &a_rKey, Utf8Str &a_rValue, size_t a_offStart /* = 0*/,
+                              const Utf8Str &a_rPairSeparator /*= ","*/, const Utf8Str &a_rKeyValueSeparator /*= "="*/) const
+{
+    /* Find the end of the next pair, skipping empty pairs.
+       Note! The skipping allows us to pass the return value of a parseKeyValue()
+             call as offStart to the next call. */
+    size_t offEnd;
+    while (   a_offStart == (offEnd = find(&a_rPairSeparator, a_offStart))
+           && offEnd != npos)
+        a_offStart++;
+
+    /* Look for a key/value separator before the end of the pair.
+       ASSUMES npos value returned by find when the substring is not found is
+       really high. */
+    size_t offKeyValueSep = find(&a_rKeyValueSeparator, a_offStart);
+    if (offKeyValueSep < offEnd)
+    {
+        a_rKey = substr(a_offStart, offKeyValueSep - a_offStart);
+        if (offEnd == npos)
+            offEnd = m_cch; /* No confusing npos when returning strings. */
+        a_rValue = substr(offKeyValueSep + 1, offEnd - offKeyValueSep - 1);
+    }
+    else
+    {
+        a_rKey.setNull();
+        a_rValue.setNull();
+    }
+
+    return offEnd;
 }
 
 /**
@@ -159,15 +237,17 @@ Utf8Str& Utf8Str::stripExt()
  *
  * @param   a_pbstr         The source string.  The caller guarantees that this
  *                          is valid UTF-16.
+ * @param   a_cwcMax        The number of characters to be copied. If set to RTSTR_MAX,
+ *                          the entire string will be copied.
  *
  * @sa      RTCString::copyFromN
  */
-void Utf8Str::copyFrom(CBSTR a_pbstr)
+void Utf8Str::copyFrom(CBSTR a_pbstr, size_t a_cwcMax)
 {
     if (a_pbstr && *a_pbstr)
     {
         int vrc = RTUtf16ToUtf8Ex((PCRTUTF16)a_pbstr,
-                                  RTSTR_MAX,        // size_t cwcString: translate entire string
+                                  a_cwcMax,        // size_t cwcString: translate entire string
                                   &m_psz,           // char **ppsz: output buffer
                                   0,                // size_t cch: if 0, func allocates buffer in *ppsz
                                   &m_cch);          // size_t *pcch: receives the size of the output string, excluding the terminator.

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define RTZIP_USE_STORE 1
 #define RTZIP_USE_ZLIB 1
 //#define RTZIP_USE_BZLIB 1
@@ -39,9 +39,9 @@
 /** @todo FastLZ? QuickLZ? Others? */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RTZIP_USE_BZLIB
 # include <bzlib.h>
 #endif
@@ -72,9 +72,9 @@
 #include <errno.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 #ifdef RTZIP_USE_LZF
 
@@ -530,7 +530,6 @@ static DECLCALLBACK(int) rtZipZlibCompFinish(PRTZIPCOMP pZip)
         if (rc != Z_OK && rc != Z_STREAM_END)
             return zipErrConvertFromZlib(rc, true /*fCompressing*/);
     }
-    return VINF_SUCCESS;
 }
 
 
@@ -1100,7 +1099,7 @@ static bool rtZipLZFValidHeader(PCRTZIPLZFHDR pHdr)
         ||  pHdr->cbUncompressed > RTZIPLZF_MAX_UNCOMPRESSED_DATA_SIZE
        )
     {
-        AssertMsgFailed(("Invalid LZF header! %.*%Rhxs\n", sizeof(pHdr), pHdr));
+        AssertMsgFailed(("Invalid LZF header! %.*Rhxs\n", sizeof(*pHdr), pHdr));
         return false;
     }
     return true;
@@ -1717,11 +1716,11 @@ RT_EXPORT_SYMBOL(RTZipDecompDestroy);
 
 RTDECL(int) RTZipBlockCompress(RTZIPTYPE enmType, RTZIPLEVEL enmLevel, uint32_t fFlags,
                                void const *pvSrc, size_t cbSrc,
-                               void *pvDst, size_t cbDst, size_t *pcbDstActual) RT_NO_THROW
+                               void *pvDst, size_t cbDst, size_t *pcbDstActual) RT_NO_THROW_DEF
 {
     /* input validation - the crash and burn approach as speed is essential here. */
-    Assert(enmLevel <= RTZIPLEVEL_MAX && enmLevel >= RTZIPLEVEL_STORE);
-    Assert(!fFlags);
+    Assert(enmLevel <= RTZIPLEVEL_MAX && enmLevel >= RTZIPLEVEL_STORE); RT_NOREF_PV(enmLevel);
+    Assert(!fFlags);                                                    RT_NOREF_PV(fFlags);
 
     /*
      * Deal with flags involving prefixes.
@@ -1833,10 +1832,10 @@ RT_EXPORT_SYMBOL(RTZipBlockCompress);
 
 RTDECL(int) RTZipBlockDecompress(RTZIPTYPE enmType, uint32_t fFlags,
                                  void const *pvSrc, size_t cbSrc, size_t *pcbSrcActual,
-                                 void *pvDst, size_t cbDst, size_t *pcbDstActual) RT_NO_THROW
+                                 void *pvDst, size_t cbDst, size_t *pcbDstActual) RT_NO_THROW_DEF
 {
     /* input validation - the crash and burn approach as speed is essential here. */
-    Assert(!fFlags);
+    Assert(!fFlags); RT_NOREF_PV(fFlags);
 
     /*
      * Deal with flags involving prefixes.
@@ -1964,7 +1963,7 @@ RTDECL(int) RTZipBlockDecompress(RTZIPTYPE enmType, uint32_t fFlags,
                 return zipErrConvertFromZlib(rc, false /*fCompressing*/);
 
             if (pcbSrcActual)
-                *pcbSrcActual = ZStrm.avail_in - cbSrc;
+                *pcbSrcActual = cbSrc - ZStrm.avail_in;
             if (pcbDstActual)
                 *pcbDstActual = ZStrm.total_out;
             break;

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,13 +15,13 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGC
 #include <VBox/dbg.h>
 #include <VBox/vmm/dbgf.h>
-#include <VBox/vmm/vm.h>
 #include <VBox/param.h>
 #include <VBox/err.h>
 #include <VBox/log.h>
@@ -44,13 +44,14 @@
 #include "DBGCInternal.h"
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static FNDBGCCMD dbgcCmdHelp;
 static FNDBGCCMD dbgcCmdQuit;
 static FNDBGCCMD dbgcCmdStop;
 static FNDBGCCMD dbgcCmdDetect;
+static FNDBGCCMD dbgcCmdDmesg;
 static FNDBGCCMD dbgcCmdCpu;
 static FNDBGCCMD dbgcCmdInfo;
 static FNDBGCCMD dbgcCmdLog;
@@ -68,16 +69,15 @@ static FNDBGCCMD dbgcCmdLoadVars;
 static FNDBGCCMD dbgcCmdShowVars;
 static FNDBGCCMD dbgcCmdLoadPlugIn;
 static FNDBGCCMD dbgcCmdUnloadPlugIn;
-static FNDBGCCMD dbgcCmdShowPlugIns;
 static FNDBGCCMD dbgcCmdHarakiri;
 static FNDBGCCMD dbgcCmdEcho;
 static FNDBGCCMD dbgcCmdRunScript;
 static FNDBGCCMD dbgcCmdWriteCore;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** One argument of any kind. */
 static const DBGCVARDESC    g_aArgAny[] =
 {
@@ -105,6 +105,14 @@ static const DBGCVARDESC    g_aArgCpu[] =
 {
     /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
     {  0,           1,     DBGCVAR_CAT_NUMBER_NO_RANGE, 0,                              "idCpu",        "CPU ID" },
+};
+
+
+/** 'dmesg' arguments. */
+static const DBGCVARDESC    g_aArgDmesg[] =
+{
+    /* cTimesMin,   cTimesMax,  enmCategory,            fFlags,                         pszName,        pszDescription */
+    {  0,           1,     DBGCVAR_CAT_NUMBER_NO_RANGE, 0,                              "messages",     "Limit the output to the last N messages. (optional)" },
 };
 
 
@@ -231,6 +239,7 @@ const DBGCCMD    g_aDbgcCmds[] =
     { "exit",       0,        0,        NULL,                0,                            0, dbgcCmdQuit,      "",                     "Exits the debugger." },
     { "format",     1,        1,        &g_aArgAny[0],       RT_ELEMENTS(g_aArgAny),       0, dbgcCmdFormat,    "",                     "Evaluates an expression and formats it." },
     { "detect",     0,        0,        NULL,                0,                            0, dbgcCmdDetect,    "",                     "Detects or re-detects the guest os and starts the OS specific digger." },
+    { "dmesg",      0,        1,        &g_aArgDmesg[0],     RT_ELEMENTS(g_aArgDmesg),     0, dbgcCmdDmesg,     "[N last messages]",    "Displays the guest os kernel messages, if available." },
     { "harakiri",   0,        0,        NULL,                0,                            0, dbgcCmdHarakiri,  "",                     "Kills debugger process." },
     { "help",       0,        ~0U,      &g_aArgHelp[0],      RT_ELEMENTS(g_aArgHelp),      0, dbgcCmdHelp,      "[cmd/op [..]]",        "Display help. For help about info items try 'info help'." },
     { "info",       1,        2,        &g_aArgInfo[0],      RT_ELEMENTS(g_aArgInfo),      0, dbgcCmdInfo,      "<info> [args]",        "Display info register in the DBGF. For a list of info items try 'info help'." },
@@ -256,7 +265,6 @@ const DBGCCMD    g_aDbgcCmds[] =
     { "runscript",  1,        1,        &g_aArgFilename[0],  RT_ELEMENTS(g_aArgFilename),  0, dbgcCmdRunScript, "<filename>",           "Runs the command listed in the script. Lines starting with '#' "
                                                                                                                                         "(after removing blanks) are comment. blank lines are ignored. Stops on failure." },
     { "set",        2,        2,        &g_aArgSet[0],       RT_ELEMENTS(g_aArgSet),       0, dbgcCmdSet,       "<var> <value>",        "Sets a global variable." },
-    { "showplugins",0,        0,        NULL,                0,                            0, dbgcCmdShowPlugIns,"",                     "List loaded plugins." },
     { "showvars",   0,        0,        NULL,                0,                            0, dbgcCmdShowVars,  "",                     "List all the defined variables." },
     { "stop",       0,        0,        NULL,                0,                            0, dbgcCmdStop,      "",                     "Stop execution." },
     { "unload",     1,       ~0U,       &g_aArgUnload[0],    RT_ELEMENTS(g_aArgUnload),    0, dbgcCmdUnload,    "<modname1> [modname2..N]", "Unloads one or more modules in the current address space." },
@@ -328,7 +336,7 @@ PCDBGCCMD dbgcCommandLookup(PDBGC pDbgc, const char *pachName, size_t cchName, b
 /**
  * Register one or more external commands.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   paCommands      Pointer to an array of command descriptors.
  *                          The commands must be unique. It's not possible
  *                          to register the same commands more than once.
@@ -376,7 +384,7 @@ DBGDECL(int)    DBGCRegisterCommands(PCDBGCCMD paCommands, unsigned cCommands)
  * Deregister one or more external commands previously registered by
  * DBGCRegisterCommands().
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   paCommands      Pointer to an array of command descriptors
  *                          as given to DBGCRegisterCommands().
  * @param   cCommands       Number of commands.
@@ -582,6 +590,7 @@ static void dbgcPrintHelpFunction(PDBGCCMDHLP pCmdHlp, PCDBGCFUNC pFunc, bool fE
 static void dbgcCmdHelpCommandsWorker(PDBGC pDbgc, PDBGCCMDHLP pCmdHlp, PCDBGCCMD paCmds, uint32_t cCmds, bool fExternal,
                                       const char *pszDescFmt, ...)
 {
+    RT_NOREF1(pDbgc);
     if (pszDescFmt)
     {
         va_list va;
@@ -620,6 +629,7 @@ static void dbgcCmdHelpCommands(PDBGC pDbgc, PDBGCCMDHLP pCmdHlp, uint32_t *pcHi
 static void dbgcCmdHelpFunctionsWorker(PDBGC pDbgc, PDBGCCMDHLP pCmdHlp, PCDBGCFUNC paFuncs, size_t cFuncs, bool fExternal,
                                        const char *pszDescFmt, ...)
 {
+    RT_NOREF1(pDbgc);
     if (pszDescFmt)
     {
         va_list va;
@@ -659,6 +669,7 @@ static void dbgcCmdHelpFunctions(PDBGC pDbgc, PDBGCCMDHLP pCmdHlp, uint32_t *pcH
 
 static void dbgcCmdHelpOperators(PDBGC pDbgc, PDBGCCMDHLP pCmdHlp, uint32_t *pcHits)
 {
+    RT_NOREF1(pDbgc);
     DBGCCmdHlpPrintf(pCmdHlp, !*pcHits ? "Operators:\n" : "\nOperators:\n");
     *pcHits += 1;
 
@@ -697,6 +708,7 @@ static void dbgcCmdHelpAll(PDBGC pDbgc, PDBGCCMDHLP pCmdHlp, uint32_t *pcHits)
 
 static void dbgcCmdHelpSummary(PDBGC pDbgc, PDBGCCMDHLP pCmdHlp, uint32_t *pcHits)
 {
+    RT_NOREF1(pDbgc);
     *pcHits += 1;
     DBGCCmdHlpPrintf(pCmdHlp,
                      "\n"
@@ -716,7 +728,7 @@ static void dbgcCmdHelpSummary(PDBGC pDbgc, PDBGCCMDHLP pCmdHlp, uint32_t *pcHit
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'help' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'help' command.}
  */
 static DECLCALLBACK(int) dbgcCmdHelp(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -830,7 +842,7 @@ static DECLCALLBACK(int) dbgcCmdHelp(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM p
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'quit', 'exit' and 'bye' commands. }
+ * @callback_method_impl{FNDBGCCMD, The 'quit'\, 'exit' and 'bye' commands. }
  */
 static DECLCALLBACK(int) dbgcCmdQuit(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -844,7 +856,7 @@ static DECLCALLBACK(int) dbgcCmdQuit(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM p
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'stop' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'stop' command.}
  */
 static DECLCALLBACK(int) dbgcCmdStop(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -869,7 +881,7 @@ static DECLCALLBACK(int) dbgcCmdStop(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM p
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'echo' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'echo' command.}
  */
 static DECLCALLBACK(int) dbgcCmdEcho(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -890,88 +902,25 @@ static DECLCALLBACK(int) dbgcCmdEcho(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM p
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'runscript' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'runscript' command.}
  */
 static DECLCALLBACK(int) dbgcCmdRunScript(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
+    RT_NOREF2(pUVM, pCmd);
+
     /* check that the parser did what it's supposed to do. */
     if (    cArgs != 1
         ||  paArgs[0].enmType != DBGCVAR_TYPE_STRING)
         return DBGCCmdHlpPrintf(pCmdHlp, "parser error\n");
 
-    /** @todo Load the script here, but someone else should do the actual
-     *        evaluation and execution of it.  */
-
-    /*
-     * Try open the script.
-     */
+    /* Pass it on to a common function. */
     const char *pszFilename = paArgs[0].u.pszString;
-    FILE *pFile = fopen(pszFilename, "r");
-    if (!pFile)
-        return DBGCCmdHlpPrintf(pCmdHlp, "Failed to open '%s'.\n", pszFilename);
-
-    /*
-     * Execute it line by line.
-     */
-    int rc = 0;
-    unsigned iLine = 0;
-    char szLine[8192];
-    while (fgets(szLine, sizeof(szLine), pFile))
-    {
-        /* check that the line isn't too long. */
-        char *pszEnd = strchr(szLine, '\0');
-        if (pszEnd == &szLine[sizeof(szLine) - 1])
-        {
-            rc = DBGCCmdHlpPrintf(pCmdHlp, "runscript error: Line #%u is too long\n", iLine);
-            break;
-        }
-        iLine++;
-
-        /* strip leading blanks and check for comment / blank line. */
-        char *psz = RTStrStripL(szLine);
-        if (    *psz == '\0'
-            ||  *psz == '\n'
-            ||  *psz == '#')
-            continue;
-
-        /* strip trailing blanks and check for empty line (\r case). */
-        while (     pszEnd > psz
-               &&   RT_C_IS_SPACE(pszEnd[-1])) /* RT_C_IS_SPACE includes \n and \r normally. */
-            *--pszEnd = '\0';
-
-        /** @todo check for Control-C / Cancel at this point... */
-
-        /*
-         * Execute the command.
-         *
-         * This is a bit wasteful with scratch space btw., can fix it later.
-         * The whole return code crap should be fixed too, so that it's possible
-         * to know whether a command succeeded (RT_SUCCESS()) or failed, and
-         * more importantly why it failed.
-         */
-        rc = pCmdHlp->pfnExec(pCmdHlp, "%s", psz);
-        if (RT_FAILURE(rc))
-        {
-            if (rc == VERR_BUFFER_OVERFLOW)
-                rc = DBGCCmdHlpPrintf(pCmdHlp, "runscript error: Line #%u is too long (exec overflowed)\n", iLine);
-            break;
-        }
-        if (rc == VWRN_DBGC_CMD_PENDING)
-        {
-            rc = DBGCCmdHlpPrintf(pCmdHlp, "runscript error: VWRN_DBGC_CMD_PENDING on line #%u, script terminated\n", iLine);
-            break;
-        }
-    }
-
-    fclose(pFile);
-
-    NOREF(pCmd); NOREF(pUVM);
-    return rc;
+    return dbgcEvalScript(DBGC_CMDHLP2DBGC(pCmdHlp), pszFilename, false /*fAnnounce*/);
 }
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'detect' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'detect' command.}
  */
 static DECLCALLBACK(int) dbgcCmdDetect(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1002,7 +951,67 @@ static DECLCALLBACK(int) dbgcCmdDetect(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'cpu' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'dmesg' command.}
+ */
+static DECLCALLBACK(int) dbgcCmdDmesg(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
+{
+    /* check that the parser did what it's supposed to do. */
+    if (cArgs > 1)
+        return DBGCCmdHlpPrintf(pCmdHlp, "parser error\n");
+    uint32_t cMessages = UINT32_MAX;
+    if (cArgs == 1)
+    {
+        if (paArgs[0].enmType != DBGCVAR_TYPE_NUMBER)
+            return DBGCCmdHlpPrintf(pCmdHlp, "parser error\n");
+        cMessages = paArgs[0].u.u64Number <= UINT32_MAX ? (uint32_t)paArgs[0].u.u64Number : UINT32_MAX;
+    }
+
+    /*
+     * Query the interface.
+     */
+    int rc;
+    PDBGFOSIDMESG pDmesg = (PDBGFOSIDMESG)DBGFR3OSQueryInterface(pUVM, DBGFOSINTERFACE_DMESG);
+    if (pDmesg)
+    {
+        size_t  cbActual;
+        size_t  cbBuf  = _512K;
+        char   *pszBuf = (char *)RTMemAlloc(cbBuf);
+        if (pszBuf)
+        {
+            rc = pDmesg->pfnQueryKernelLog(pDmesg, pUVM, 0 /*fFlags*/, cMessages, pszBuf, cbBuf, &cbActual);
+
+            uint32_t cTries = 10;
+            while (rc == VERR_BUFFER_OVERFLOW && cbBuf < 16*_1M && cTries-- > 0)
+            {
+                RTMemFree(pszBuf);
+                cbBuf = RT_ALIGN_Z(cbActual + _4K, _4K);
+                pszBuf = (char *)RTMemAlloc(cbBuf);
+                if (RT_UNLIKELY(!pszBuf))
+                {
+                    rc = DBGCCmdHlpFail(pCmdHlp, pCmd, "Error allocating %#zu bytes.\n", cbBuf);
+                    break;
+                }
+                rc = pDmesg->pfnQueryKernelLog(pDmesg, pUVM, 0 /*fFlags*/, cMessages, pszBuf, cbBuf, &cbActual);
+            }
+            if (RT_SUCCESS(rc))
+                rc = DBGCCmdHlpPrintf(pCmdHlp, "%s\n", pszBuf);
+            else if (rc == VERR_BUFFER_OVERFLOW && pszBuf)
+                rc = DBGCCmdHlpPrintf(pCmdHlp, "%s\nWarning: incomplete\n", pszBuf);
+            else
+                rc = DBGCCmdHlpFail(pCmdHlp, pCmd, "pfnQueryKernelLog failed: %Rrc\n", rc);
+            RTMemFree(pszBuf);
+        }
+        else
+            rc = DBGCCmdHlpFail(pCmdHlp, pCmd, "Error allocating %#zu bytes.\n", cbBuf);
+    }
+    else
+        rc = DBGCCmdHlpFail(pCmdHlp, pCmd, "The dmesg interface isn't implemented by guest OS.\n");
+    return rc;
+}
+
+
+/**
+ * @callback_method_impl{FNDBGCCMD, The 'cpu' command.}
  */
 static DECLCALLBACK(int) dbgcCmdCpu(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1023,7 +1032,7 @@ static DECLCALLBACK(int) dbgcCmdCpu(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pU
         VMCPUID cCpus = DBGFR3CpuGetCount(pUVM);
         if (paArgs[0].u.u64Number >= cCpus)
             rc = DBGCCmdHlpPrintf(pCmdHlp, "error: idCpu %u is out of range! Highest ID is %u.\n",
-                                    paArgs[0].u.u64Number, cCpus);
+                                    paArgs[0].u.u64Number, cCpus-1);
         else
         {
             rc = DBGCCmdHlpPrintf(pCmdHlp, "Changed CPU from %u to %u.\n",
@@ -1036,7 +1045,7 @@ static DECLCALLBACK(int) dbgcCmdCpu(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'info' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'info' command.}
  */
 static DECLCALLBACK(int) dbgcCmdInfo(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1068,7 +1077,7 @@ static DECLCALLBACK(int) dbgcCmdInfo(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM p
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'log' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'log' command.}
  */
 static DECLCALLBACK(int) dbgcCmdLog(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1093,7 +1102,7 @@ static DECLCALLBACK(int) dbgcCmdLog(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'logdest' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'logdest' command.}
  */
 static DECLCALLBACK(int) dbgcCmdLogDest(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1118,7 +1127,7 @@ static DECLCALLBACK(int) dbgcCmdLogDest(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'logflags' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'logflags' command.}
  */
 static DECLCALLBACK(int) dbgcCmdLogFlags(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1144,12 +1153,14 @@ static DECLCALLBACK(int) dbgcCmdLogFlags(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'logflush' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'logflush' command.}
  */
 static DECLCALLBACK(int) dbgcCmdLogFlush(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
+    RT_NOREF3(pCmdHlp, pUVM, paArgs);
+
     RTLogFlush(NULL);
-    PRTLOGGER pLogRel = RTLogRelDefaultInstance();
+    PRTLOGGER pLogRel = RTLogRelGetDefaultInstance();
     if (pLogRel)
         RTLogFlush(pLogRel);
 
@@ -1159,7 +1170,7 @@ static DECLCALLBACK(int) dbgcCmdLogFlush(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'format' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'format' command.}
  */
 static DECLCALLBACK(int) dbgcCmdFormat(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1286,7 +1297,7 @@ static DECLCALLBACK(int) dbgcCmdFormat(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'loadimage' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'loadimage' command.}
  */
 static DECLCALLBACK(int) dbgcCmdLoadImage(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1337,7 +1348,7 @@ static DECLCALLBACK(int) dbgcCmdLoadImage(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, P
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'loadmap' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'loadmap' command.}
  */
 static DECLCALLBACK(int) dbgcCmdLoadMap(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1397,7 +1408,7 @@ static DECLCALLBACK(int) dbgcCmdLoadMap(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'loadseg' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'loadseg' command.}
  */
 static DECLCALLBACK(int) dbgcCmdLoadSeg(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1446,7 +1457,7 @@ static DECLCALLBACK(int) dbgcCmdLoadSeg(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUV
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'unload' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'unload' command.}
  */
 static DECLCALLBACK(int) dbgcCmdUnload(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1474,7 +1485,7 @@ static DECLCALLBACK(int) dbgcCmdUnload(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'set' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'set' command.}
  */
 static DECLCALLBACK(int) dbgcCmdSet(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1496,7 +1507,7 @@ static DECLCALLBACK(int) dbgcCmdSet(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pU
                                 paArgs[0].u.pszString);
 
     while (RT_C_IS_ALNUM(*pszVar) || *pszVar == '_')
-        *pszVar++;
+        pszVar++;
     if (*pszVar)
         return DBGCCmdHlpPrintf(pCmdHlp,
                                 "syntax error: Invalid variable name '%s'. Variable names must match regex '[_a-zA-Z][_a-zA-Z0-9*]'!",
@@ -1563,7 +1574,7 @@ static DECLCALLBACK(int) dbgcCmdSet(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'unset' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'unset' command.}
  */
 static DECLCALLBACK(int) dbgcCmdUnset(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1606,7 +1617,7 @@ static DECLCALLBACK(int) dbgcCmdUnset(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM 
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'loadvars' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'loadvars' command.}
  */
 static DECLCALLBACK(int) dbgcCmdLoadVars(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1656,7 +1667,7 @@ static DECLCALLBACK(int) dbgcCmdLoadVars(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'showvars' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'showvars' command.}
  */
 static DECLCALLBACK(int) dbgcCmdShowVars(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -1677,307 +1688,11 @@ static DECLCALLBACK(int) dbgcCmdShowVars(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
 
 
 /**
- * Extracts the plugin name from a plugin specifier that may or may not include
- * path and/or suffix.
- *
- * @returns VBox status code.
- *
- * @param   pszDst      Where to return the name. At least DBGCPLUGIN_MAX_NAME
- *                      worth of buffer space.
- * @param   pszPlugIn   The plugin specifier to parse.
- */
-static int dbgcPlugInExtractName(char *pszDst, const char *pszPlugIn)
-{
-    /*
-     * Parse out the name stopping at the extension.
-     */
-    const char *pszName = RTPathFilename(pszPlugIn);
-    if (!pszName || !*pszName)
-        return VERR_INVALID_NAME;
-    if (!RTStrNICmp(pszName, DBGC_PLUG_IN_PREFIX, sizeof(DBGC_PLUG_IN_PREFIX) - 1))
-    {
-        pszName += sizeof(DBGC_PLUG_IN_PREFIX) - 1;
-        if (!*pszName)
-            return VERR_INVALID_NAME;
-    }
-
-    int         ch;
-    size_t      cchName = 0;
-    while (   (ch = pszName[cchName]) != '\0'
-           && ch != '.')
-    {
-        if (    !RT_C_IS_ALPHA(ch)
-            &&  (   !RT_C_IS_DIGIT(ch)
-                 || cchName == 0))
-            return VERR_INVALID_NAME;
-        cchName++;
-    }
-
-    if (cchName >= DBGCPLUGIN_MAX_NAME)
-        return VERR_OUT_OF_RANGE;
-
-    /*
-     * We're very picky about the extension if there is no path.
-     */
-    if (    ch == '.'
-        &&  !RTPathHavePath(pszPlugIn)
-        &&  RTStrICmp(&pszName[cchName], RTLdrGetSuff()))
-        return VERR_INVALID_NAME;
-
-    /*
-     * Copy it.
-     */
-    memcpy(pszDst, pszName, cchName);
-    pszDst[cchName] = '\0';
-    return VINF_SUCCESS;
-}
-
-
-/**
- * Locate a plug-in in list.
- *
- * @returns Pointer to the plug-in tracking structure.
- * @param   pDbgc               Pointer to the DBGC instance data.
- * @param   pszName             The name of the plug-in we're looking for.
- * @param   ppPrev              Where to optionally return the pointer to the
- *                              previous list member.
- */
-static PDBGCPLUGIN dbgcPlugInLocate(PDBGC pDbgc, const char *pszName, PDBGCPLUGIN *ppPrev)
-{
-    PDBGCPLUGIN pPrev = NULL;
-    PDBGCPLUGIN pCur  = pDbgc->pPlugInHead;
-    while (pCur)
-    {
-        if (!RTStrICmp(pCur->szName, pszName))
-        {
-            if (ppPrev)
-                *ppPrev = pPrev;
-            return pCur;
-        }
-
-        /* advance */
-        pPrev = pCur;
-        pCur  = pCur->pNext;
-    }
-    return NULL;
-}
-
-
-/**
- * Try load the specified plug-in module.
- *
- * @returns VINF_SUCCESS on success, path error or loader error on failure.
- *
- * @param   pPlugIn     The plugin tracing record.
- * @param   pszModule   Module name.
- */
-static int dbgcPlugInTryLoad(PDBGCPLUGIN pPlugIn, const char *pszModule)
-{
-    /*
-     * Load it and try resolve the entry point.
-     */
-    int rc = RTLdrLoad(pszModule, &pPlugIn->hLdrMod);
-    if (RT_SUCCESS(rc))
-    {
-        rc = RTLdrGetSymbol(pPlugIn->hLdrMod, DBGC_PLUG_IN_ENTRYPOINT, (void **)&pPlugIn->pfnEntry);
-        if (RT_SUCCESS(rc))
-            return VINF_SUCCESS;
-        LogRel(("DBGC: RTLdrGetSymbol('%s', '%s',) -> %Rrc\n", pszModule, DBGC_PLUG_IN_ENTRYPOINT, rc));
-
-        RTLdrClose(pPlugIn->hLdrMod);
-        pPlugIn->hLdrMod = NIL_RTLDRMOD;
-    }
-    return rc;
-}
-
-
-/**
- * RTPathTraverseList callback.
- *
- * @returns See FNRTPATHTRAVERSER.
- *
- * @param   pchPath     See FNRTPATHTRAVERSER.
- * @param   cchPath     See FNRTPATHTRAVERSER.
- * @param   pvUser1     The plug-in specifier.
- * @param   pvUser2     The plug-in tracking record.
- */
-static DECLCALLBACK(int) dbgcPlugInLoadCallback(const char *pchPath, size_t cchPath, void *pvUser1, void *pvUser2)
-{
-    PDBGCPLUGIN pPlugIn   = (PDBGCPLUGIN)pvUser2;
-    const char *pszPlugIn = (const char *)pvUser1;
-
-    /*
-     * Join the path and the specified plug-in module name, first with the
-     * prefix and then without it.
-     */
-    size_t      cchModule = cchPath + 1 + strlen(pszPlugIn) + sizeof(DBGC_PLUG_IN_PREFIX) + 8;
-    char       *pszModule = (char *)alloca(cchModule);
-    AssertReturn(pszModule, VERR_TRY_AGAIN);
-    memcpy(pszModule, pchPath, cchPath);
-    pszModule[cchPath] = '\0';
-
-    int rc = RTPathAppend(pszModule, cchModule, DBGC_PLUG_IN_PREFIX);
-    AssertRCReturn(rc, VERR_TRY_AGAIN);
-    strcat(pszModule, pszPlugIn);
-    rc = dbgcPlugInTryLoad(pPlugIn, pszModule);
-    if (RT_SUCCESS(rc))
-        return VINF_SUCCESS;
-
-    pszModule[cchPath] = '\0';
-    rc = RTPathAppend(pszModule, cchModule, pszPlugIn);
-    AssertRCReturn(rc, VERR_TRY_AGAIN);
-    rc = dbgcPlugInTryLoad(pPlugIn, pszModule);
-    if (RT_SUCCESS(rc))
-        return VINF_SUCCESS;
-
-    return VERR_TRY_AGAIN;
-}
-
-
-/**
- * Loads a plug-in.
- *
- * @returns VBox status code. If pCmd is specified, it's the return from
- *          DBGCCmdHlpFail.
- * @param   pDbgc               The DBGC instance data.
- * @param   pszName             The plug-in name.
- * @param   pszPlugIn           The plug-in module name.
- * @param   pCmd                The command pointer if invoked by the user, NULL
- *                              if invoked from elsewhere.
- */
-static int dbgcPlugInLoad(PDBGC pDbgc, const char *pszName, const char *pszPlugIn, PCDBGCCMD pCmd)
-{
-    PDBGCCMDHLP pCmdHlp = &pDbgc->CmdHlp;
-
-    /*
-     * Try load it.  If specified with a path, we're assuming the user
-     * wants to load a plug-in from some specific location.  Otherwise
-     * search for it.
-     */
-    PDBGCPLUGIN pPlugIn = (PDBGCPLUGIN)RTMemAllocZ(sizeof(*pPlugIn));
-    if (!pPlugIn)
-        return pCmd
-             ? DBGCCmdHlpFail(pCmdHlp, pCmd, "out of memory\n")
-             : VERR_NO_MEMORY;
-    strcpy(pPlugIn->szName, pszName);
-
-    int rc;
-    if (RTPathHavePath(pszPlugIn))
-        rc = dbgcPlugInTryLoad(pPlugIn, pszPlugIn);
-    else
-    {
-        /* 1. The private architecture directory. */
-        char szPath[4*_1K];
-        rc = RTPathAppPrivateArch(szPath, sizeof(szPath));
-        if (RT_SUCCESS(rc))
-            rc = RTPathTraverseList(szPath, '\0', dbgcPlugInLoadCallback, (void *)pszPlugIn, pPlugIn);
-        if (RT_FAILURE(rc))
-        {
-            /* 2. The DBGC PLUGIN_PATH variable. */
-            DBGCVAR PathVar;
-            int rc2 = DBGCCmdHlpEval(pCmdHlp, &PathVar, "$PLUGIN_PATH");
-            if (    RT_SUCCESS(rc2)
-                &&  PathVar.enmType == DBGCVAR_TYPE_STRING)
-                rc = RTPathTraverseList(PathVar.u.pszString, ';', dbgcPlugInLoadCallback, (void *)pszPlugIn, pPlugIn);
-            if (RT_FAILURE_NP(rc))
-            {
-                /* 3. The DBGC_PLUGIN_PATH environment variable. */
-                rc2 = RTEnvGetEx(RTENV_DEFAULT, "DBGC_PLUGIN_PATH", szPath, sizeof(szPath), NULL);
-                if (RT_SUCCESS(rc2))
-                    rc = RTPathTraverseList(szPath, ';', dbgcPlugInLoadCallback, (void *)pszPlugIn, pPlugIn);
-            }
-        }
-    }
-    if (RT_FAILURE(rc))
-    {
-        RTMemFree(pPlugIn);
-        return pCmd
-            ? DBGCCmdHlpFail(pCmdHlp, pCmd, "could not find/load '%s'\n", pszPlugIn)
-            : rc;
-    }
-
-    /*
-     * Try initialize it.
-     */
-    rc = pPlugIn->pfnEntry(DBGCPLUGINOP_INIT, pDbgc->pUVM, VBOX_VERSION);
-    if (RT_FAILURE(rc))
-    {
-        RTLdrClose(pPlugIn->hLdrMod);
-        RTMemFree(pPlugIn);
-        return pCmd
-            ? DBGCCmdHlpFail(pCmdHlp, pCmd, "initialization of plug-in '%s' failed with rc=%Rrc\n", pszPlugIn, rc)
-            : rc;
-    }
-
-    /*
-     * Link it and we're good.
-     */
-    pPlugIn->pNext = pDbgc->pPlugInHead;
-    pDbgc->pPlugInHead = pPlugIn;
-    DBGCCmdHlpPrintf(pCmdHlp, "Loaded plug-in '%s'.\n", pPlugIn->szName);
-    return VINF_SUCCESS;
-}
-
-
-
-
-/**
- * Automatically load plug-ins from the architecture private directory of
- * VirtualBox.
- *
- * This is called during console init.
- *
- * @param   pDbgc       The DBGC instance data.
- */
-void dbgcPlugInAutoLoad(PDBGC pDbgc)
-{
-    /*
-     * Open the architecture specific directory with a filter on our prefix
-     * and names including a dot.
-     */
-    const char *pszSuff = RTLdrGetSuff();
-    size_t      cchSuff = strlen(pszSuff);
-
-    char szPath[RTPATH_MAX];
-    int rc = RTPathAppPrivateArch(szPath, sizeof(szPath) - cchSuff);
-    AssertRCReturnVoid(rc);
-    size_t offDir = strlen(szPath);
-
-    rc = RTPathAppend(szPath, sizeof(szPath) - cchSuff, DBGC_PLUG_IN_PREFIX "*");
-    AssertRCReturnVoid(rc);
-    strcat(szPath, pszSuff);
-
-    PRTDIR pDir;
-    rc = RTDirOpenFiltered(&pDir, szPath, RTDIRFILTER_WINNT, 0);
-    if (RT_SUCCESS(rc))
-    {
-        /*
-         * Now read it and try load each of the plug-in modules.
-         */
-        RTDIRENTRY DirEntry;
-        while (RT_SUCCESS(RTDirRead(pDir, &DirEntry, NULL)))
-        {
-            szPath[offDir] = '\0';
-            rc = RTPathAppend(szPath, sizeof(szPath), DirEntry.szName);
-            if (RT_SUCCESS(rc))
-            {
-                char szName[DBGCPLUGIN_MAX_NAME];
-                rc = dbgcPlugInExtractName(szName, DirEntry.szName);
-                if (RT_SUCCESS(rc))
-                    dbgcPlugInLoad(pDbgc, szName, szPath, NULL /*pCmd*/);
-            }
-        }
-
-        RTDirClose(pDir);
-    }
-}
-
-
-/**
- * @interface_method_impl{FNDBCCMD, The 'loadplugin' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'loadplugin' command.}
  */
 static DECLCALLBACK(int) dbgcCmdLoadPlugIn(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
+    RT_NOREF1(pUVM);
     PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
 
     /*
@@ -1985,23 +1700,20 @@ static DECLCALLBACK(int) dbgcCmdLoadPlugIn(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
      */
     for (unsigned i = 0; i < cArgs; i++)
     {
-        const char *pszPlugIn = paArgs[i].u.pszString;
-
-        /* Extract the plug-in name. */
-        char szName[DBGCPLUGIN_MAX_NAME];
-        int rc = dbgcPlugInExtractName(szName, pszPlugIn);
-        if (RT_FAILURE(rc))
-            return DBGCCmdHlpFail(pCmdHlp, pCmd, "Malformed plug-in name: '%s'\n", pszPlugIn);
-
-        /* Loaded? */
-        PDBGCPLUGIN pPlugIn = dbgcPlugInLocate(pDbgc, szName, NULL);
-        if (pPlugIn)
-            return DBGCCmdHlpFail(pCmdHlp, pCmd, "'%s' is already loaded\n", szName);
-
-        /* Load it. */
-        rc = dbgcPlugInLoad(pDbgc, szName, pszPlugIn, pCmd);
-        if (RT_FAILURE(rc))
-            return rc;
+        char            szPlugIn[128];
+        RTERRINFOSTATIC ErrInfo;
+        szPlugIn[0] = '\0';
+        int rc = DBGFR3PlugInLoad(pDbgc->pUVM, paArgs[i].u.pszString, szPlugIn, sizeof(szPlugIn), RTErrInfoInitStatic(&ErrInfo));
+        if (RT_SUCCESS(rc))
+            DBGCCmdHlpPrintf(pCmdHlp, "Loaded plug-in '%s' (%s)\n", szPlugIn, paArgs[i].u.pszString);
+        else if (rc == VERR_ALREADY_EXISTS)
+            DBGCCmdHlpPrintf(pCmdHlp, "A plug-in named '%s' is already loaded\n", szPlugIn);
+        else if (szPlugIn[0])
+            return DBGCCmdHlpFailRc(pCmdHlp, pCmd, rc, "DBGFR3PlugInLoad failed for '%s' ('%s'): %s",
+                                    szPlugIn, paArgs[i].u.pszString, ErrInfo.szMsg);
+        else
+            return DBGCCmdHlpFailRc(pCmdHlp, pCmd, rc, "DBGFR3PlugInLoad failed for '%s': %s",
+                                    paArgs[i].u.pszString, ErrInfo.szMsg);
     }
 
     return VINF_SUCCESS;
@@ -2009,69 +1721,25 @@ static DECLCALLBACK(int) dbgcCmdLoadPlugIn(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, 
 
 
 /**
- * Unload all plug-ins.
- *
- * @param   pDbgc       The DBGC instance data.
- */
-void dbgcPlugInUnloadAll(PDBGC pDbgc)
-{
-    while (pDbgc->pPlugInHead)
-    {
-        PDBGCPLUGIN pPlugIn = pDbgc->pPlugInHead;
-        pDbgc->pPlugInHead = pPlugIn->pNext;
-
-        if (    pDbgc->pVM /* prevents trouble during destruction. */
-            &&  pDbgc->pVM->enmVMState < VMSTATE_DESTROYING)
-        {
-            pPlugIn->pfnEntry(DBGCPLUGINOP_TERM, pDbgc->pUVM, 0);
-            RTLdrClose(pPlugIn->hLdrMod);
-        }
-        pPlugIn->hLdrMod = NIL_RTLDRMOD;
-
-        RTMemFree(pPlugIn);
-    }
-}
-
-
-/**
- * @interface_method_impl{FNDBCCMD, The 'unload' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'unload' command.}
  */
 static DECLCALLBACK(int) dbgcCmdUnloadPlugIn(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
+    RT_NOREF1(pUVM);
     PDBGC pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
 
     /*
-     * Loop thru the plugin names.
+     * Loop thru the given plug-in names.
      */
     for (unsigned i = 0; i < cArgs; i++)
     {
-        const char *pszPlugIn = paArgs[i].u.pszString;
-
-        /* Extract the plug-in name. */
-        char szName[DBGCPLUGIN_MAX_NAME];
-        int rc = dbgcPlugInExtractName(szName, pszPlugIn);
-        if (RT_FAILURE(rc))
-            return DBGCCmdHlpFail(pCmdHlp, pCmd, "Malformed plug-in name: '%s'\n", pszPlugIn);
-
-        /* Loaded? */
-        PDBGCPLUGIN pPrevPlugIn;
-        PDBGCPLUGIN pPlugIn = dbgcPlugInLocate(pDbgc, szName, &pPrevPlugIn);
-        if (!pPlugIn)
-            return DBGCCmdHlpFail(pCmdHlp, pCmd, "'%s' is not\n", szName);
-
-        /*
-         * Terminate and unload it.
-         */
-        pPlugIn->pfnEntry(DBGCPLUGINOP_TERM, pDbgc->pUVM, 0);
-        RTLdrClose(pPlugIn->hLdrMod);
-        pPlugIn->hLdrMod = NIL_RTLDRMOD;
-
-        if (pPrevPlugIn)
-            pPrevPlugIn->pNext = pPlugIn->pNext;
+        int rc = DBGFR3PlugInUnload(pDbgc->pUVM, paArgs[i].u.pszString);
+        if (RT_SUCCESS(rc))
+            DBGCCmdHlpPrintf(pCmdHlp, "Unloaded plug-in '%s'\n", paArgs[i].u.pszString);
+        else if (rc == VERR_NOT_FOUND)
+            return DBGCCmdHlpFail(pCmdHlp, pCmd, "'%s' was not found\n", paArgs[i].u.pszString);
         else
-            pDbgc->pPlugInHead = pPlugIn->pNext;
-        RTMemFree(pPlugIn->pNext);
-        DBGCCmdHlpPrintf(pCmdHlp, "Unloaded plug-in '%s'\n", szName);
+            return DBGCCmdHlpFailRc(pCmdHlp, pCmd, rc, "DBGFR3PlugInUnload failed for '%s'", paArgs[i].u.pszString);
     }
 
     return VINF_SUCCESS;
@@ -2079,30 +1747,7 @@ static DECLCALLBACK(int) dbgcCmdUnloadPlugIn(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'showplugins' command.}
- */
-static DECLCALLBACK(int) dbgcCmdShowPlugIns(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
-{
-    PDBGC       pDbgc = DBGC_CMDHLP2DBGC(pCmdHlp);
-    PDBGCPLUGIN pPlugIn = pDbgc->pPlugInHead;
-    if (!pPlugIn)
-        return DBGCCmdHlpPrintf(pCmdHlp, "No plug-ins loaded\n");
-
-    DBGCCmdHlpPrintf(pCmdHlp, "Plug-ins: %s", pPlugIn->szName);
-    for (;;)
-    {
-        pPlugIn = pPlugIn->pNext;
-        if (!pPlugIn)
-            break;
-        DBGCCmdHlpPrintf(pCmdHlp, ", %s", pPlugIn->szName);
-    }
-    return DBGCCmdHlpPrintf(pCmdHlp, "\n");
-}
-
-
-
-/**
- * @interface_method_impl{FNDBCCMD, The 'harakiri' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'harakiri' command.}
  */
 static DECLCALLBACK(int) dbgcCmdHarakiri(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -2114,7 +1759,7 @@ static DECLCALLBACK(int) dbgcCmdHarakiri(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PU
 
 
 /**
- * @interface_method_impl{FNDBCCMD, The 'writecore' command.}
+ * @callback_method_impl{FNDBGCCMD, The 'writecore' command.}
  */
 static DECLCALLBACK(int) dbgcCmdWriteCore(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, PUVM pUVM, PCDBGCVAR paArgs, unsigned cArgs)
 {
@@ -2138,21 +1783,6 @@ static DECLCALLBACK(int) dbgcCmdWriteCore(PCDBGCCMD pCmd, PDBGCCMDHLP pCmdHlp, P
     if (RT_FAILURE(rc))
         return DBGCCmdHlpFail(pCmdHlp, pCmd, "DBGFR3WriteCore failed. rc=%Rrc\n", rc);
 
-    return VINF_SUCCESS;
-}
-
-
-
-/**
- * @callback_method_impl{The randu32() function implementation.}
- */
-static DECLCALLBACK(int) dbgcFuncRandU32(PCDBGCFUNC pFunc, PDBGCCMDHLP pCmdHlp, PVM pUVM, PCDBGCVAR paArgs, uint32_t cArgs,
-                                         PDBGCVAR pResult)
-{
-    AssertReturn(cArgs == 0, VERR_DBGC_PARSE_BUG);
-    uint32_t u32 = RTRandU32();
-    DBGCVAR_INIT_NUMBER(pResult, u32);
-    NOREF(pFunc); NOREF(pCmdHlp); NOREF(pUVM); NOREF(paArgs);
     return VINF_SUCCESS;
 }
 

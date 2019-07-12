@@ -1,11 +1,10 @@
+/* $Id: UISettingsPage.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UISettingsPage class declaration
+ * VBox Qt GUI - UISettingsPage class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +24,8 @@
 
 /* GUI includes: */
 #include "QIWithRetranslateUI.h"
-#include "UIDefs.h"
 #include "UISettingsDefs.h"
-#include "VBoxGlobalSettings.h"
+#include "UIExtraDataDefs.h"
 
 /* COM includes: */
 #include "COMEnums.h"
@@ -53,10 +51,9 @@ enum UISettingsPageType
 struct UISettingsDataGlobal
 {
     UISettingsDataGlobal() {}
-    UISettingsDataGlobal(const CSystemProperties &properties, const VBoxGlobalSettings &settings)
-        : m_properties(properties), m_settings(settings) {}
+    UISettingsDataGlobal(const CSystemProperties &properties)
+        : m_properties(properties) {}
     CSystemProperties m_properties;
-    VBoxGlobalSettings m_settings;
 };
 Q_DECLARE_METATYPE(UISettingsDataGlobal);
 
@@ -79,21 +76,39 @@ class UISettingsPage : public QIWithRetranslateUI<QWidget>
 {
     Q_OBJECT;
 
+signals:
+
+    /** Notifies listeners about particular operation progress change.
+      * @param iOperations  holds the number of operations CProgress have,
+      * @param strOperation holds the description of the current CProgress operation,
+      * @param iOperation   holds the index of the current CProgress operation,
+      * @param iPercent     holds the percentage of the current CProgress operation. */
+    void sigOperationProgressChange(ulong iOperations, QString strOperation,
+                                    ulong iOperation, ulong iPercent);
+
+    /** Notifies listeners about particular COM error.
+      * @param strErrorInfo holds the details of the error happened. */
+    void sigOperationProgressError(QString strErrorInfo);
+
 public:
 
-    /* Load data to cache from corresponding external object(s),
-     * this task COULD be performed in other than GUI thread: */
+    /** Loads data into the cache from corresponding external object(s),
+      * this task COULD be performed in other than the GUI thread. */
     virtual void loadToCacheFrom(QVariant &data) = 0;
-    /* Load data to corresponding widgets from cache,
-     * this task SHOULD be performed in GUI thread only: */
+    /** Loads data into corresponding widgets from the cache,
+      * this task SHOULD be performed in the GUI thread only. */
     virtual void getFromCache() = 0;
 
-    /* Save data from corresponding widgets to cache,
-     * this task SHOULD be performed in GUI thread only: */
+    /** Saves data from corresponding widgets to the cache,
+      * this task SHOULD be performed in the GUI thread only. */
     virtual void putToCache() = 0;
-    /* Save data from cache to corresponding external object(s),
-     * this task COULD be performed in other than GUI thread: */
+    /** Saves data from the cache to corresponding external object(s),
+      * this task COULD be performed in other than the GUI thread. */
     virtual void saveFromCacheTo(QVariant &data) = 0;
+
+    /** Notifies listeners about particular COM error.
+      * @param  strErrorInfo  Brings the details of the error happened. */
+    void notifyOperationProgressError(const QString &strErrorInfo);
 
     /* Validation stuff: */
     void setValidator(UIPageValidator *pValidator);
@@ -107,15 +122,16 @@ public:
     /* Settings page type stuff: */
     UISettingsPageType pageType() const { return m_pageType; }
 
-    /* Settings dialog type stuff: */
-    SettingsDialogType dialogType() const { return m_dialogType; }
-    virtual void setDialogType(SettingsDialogType settingsDialogType) { m_dialogType = settingsDialogType; polishPage(); }
-    bool isMachineOffline() const { return dialogType() == SettingsDialogType_Offline; }
-    bool isMachineSaved() const { return dialogType() == SettingsDialogType_Saved; }
-    bool isMachineOnline() const { return dialogType() == SettingsDialogType_Online; }
-    bool isMachineInValidMode() const { return isMachineOffline() || isMachineSaved() || isMachineOnline(); }
+    /* Configuration access level stuff: */
+    ConfigurationAccessLevel configurationAccessLevel() const { return m_configurationAccessLevel; }
+    virtual void setConfigurationAccessLevel(ConfigurationAccessLevel newConfigurationAccessLevel) { m_configurationAccessLevel = newConfigurationAccessLevel; polishPage(); }
+    bool isMachineOffline() const { return configurationAccessLevel() == ConfigurationAccessLevel_Full; }
+    bool isMachinePoweredOff() const { return configurationAccessLevel() == ConfigurationAccessLevel_Partial_PoweredOff; }
+    bool isMachineSaved() const { return configurationAccessLevel() == ConfigurationAccessLevel_Partial_Saved; }
+    bool isMachineOnline() const { return configurationAccessLevel() == ConfigurationAccessLevel_Partial_Running; }
+    bool isMachineInValidMode() const { return isMachineOffline() || isMachinePoweredOff() || isMachineSaved() || isMachineOnline(); }
 
-    /* Page changed: */
+    /** Returns whether the page content was changed. */
     virtual bool changed() const = 0;
 
     /* Page 'ID' stuff: */
@@ -153,7 +169,7 @@ private:
 
     /* Variables: */
     UISettingsPageType m_pageType;
-    SettingsDialogType m_dialogType;
+    ConfigurationAccessLevel m_configurationAccessLevel;
     int m_cId;
     bool m_fProcessed;
     bool m_fFailed;
@@ -187,12 +203,11 @@ protected:
     /* Upload m_properties & m_settings to data: */
     void uploadData(QVariant &data) const;
 
-    /* Page changed: */
+    /** Returns whether the page content was changed. */
     bool changed() const { return false; }
 
     /* Global data source: */
     CSystemProperties m_properties;
-    VBoxGlobalSettings m_settings;
 };
 
 /* Machine settings page class: */

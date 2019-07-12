@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_MM_HYPER_HEAP
 #include <VBox/vmm/mm.h>
 #include <VBox/vmm/stam.h>
@@ -33,9 +33,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define ASSERT_L(u1, u2)    AssertMsg((u1) <  (u2), ("u1=%#x u2=%#x\n", u1, u2))
 #define ASSERT_LE(u1, u2)   AssertMsg((u1) <= (u2), ("u1=%#x u2=%#x\n", u1, u2))
 #define ASSERT_GE(u1, u2)   AssertMsg((u1) >= (u2), ("u1=%#x u2=%#x\n", u1, u2))
@@ -131,9 +131,9 @@
     } while (0)
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static PMMHYPERCHUNK mmHyperAllocChunk(PMMHYPERHEAP pHeap, uint32_t cb, unsigned uAlignment);
 static void *mmHyperAllocPages(PMMHYPERHEAP pHeap, uint32_t cb);
 #ifdef VBOX_WITH_STATISTICS
@@ -153,7 +153,7 @@ static void mmHyperHeapCheck(PMMHYPERHEAP pHeap);
  * Locks the hypervisor heap.
  * This might call back to Ring-3 in order to deal with lock contention in GC and R3.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 static int mmHyperLock(PVM pVM)
 {
@@ -178,7 +178,7 @@ static int mmHyperLock(PVM pVM)
 /**
  * Unlocks the hypervisor heap.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 static void mmHyperUnlock(PVM pVM)
 {
@@ -197,7 +197,7 @@ static void mmHyperUnlock(PVM pVM)
  * The returned memory is of course zeroed.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   cb          Number of bytes to allocate.
  * @param   uAlignment  Required memory alignment in bytes.
  *                      Values are 0,8,16,32,64 and PAGE_SIZE.
@@ -261,6 +261,8 @@ static int mmHyperAllocInternal(PVM pVM, size_t cb, unsigned uAlignment, MMTAG e
         AssertMsgFailed(("Failed to allocate statistics!\n"));
         return VERR_MM_HYPER_NO_MEMORY;
     }
+#else
+    NOREF(enmTag);
 #endif
     if (uAlignment < PAGE_SIZE)
     {
@@ -341,6 +343,17 @@ VMMDECL(int) MMHyperAlloc(PVM pVM, size_t cb, unsigned uAlignment, MMTAG enmTag,
 
 /**
  * Duplicates a block of memory.
+ *
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
+ * @param   pvSrc       The source memory block to copy from.
+ * @param   cb          Size of the source memory block.
+ * @param   uAlignment  Required memory alignment in bytes.
+ *                      Values are 0,8,16,32,64 and PAGE_SIZE.
+ *                      0 -> default alignment, i.e. 8 bytes.
+ * @param   enmTag      The statistics tag.
+ * @param   ppv         Where to store the address to the allocated
+ *                      memory.
  */
 VMMDECL(int) MMHyperDupMem(PVM pVM, const void *pvSrc, size_t cb, unsigned uAlignment, MMTAG enmTag, void **ppv)
 {
@@ -768,7 +781,7 @@ static void mmR3HyperStatRegisterOne(PVM pVM, PMMHYPERSTAT pStat)
  * The caller validates the parameters of this request.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pv          The memory to free.
  * @remark  Try avoid free hyper memory.
  */
@@ -825,7 +838,7 @@ static int mmHyperFreeInternal(PVM pVM, void *pv)
     AssertMsgReturn(pHeap->u32Magic == MMHYPERHEAP_MAGIC,
                     ("%p: u32Magic=%#x\n", pv, pHeap->u32Magic),
                     VERR_INVALID_POINTER);
-    Assert(pHeap == pVM->mm.s.CTX_SUFF(pHyperHeap));
+    Assert(pHeap == pVM->mm.s.CTX_SUFF(pHyperHeap)); NOREF(pVM);
 
     /* Some more verifications using additional info from pHeap. */
     AssertMsgReturn((uintptr_t)pChunk + offPrev >= (uintptr_t)pHeap->CTX_SUFF(pbHeap),
@@ -1099,7 +1112,7 @@ static int mmHyperFree(PMMHYPERHEAP pHeap, PMMHYPERCHUNK pChunk)
 }
 
 
-#if defined(DEBUG) || defined(MMHYPER_HEAP_STRICT)
+#if defined(DEBUG) || defined(MMHYPER_HEAP_STRICT_FENCE)
 /**
  * Dumps a heap chunk to the log.
  *
@@ -1125,6 +1138,7 @@ static void mmHyperHeapDumpOne(PMMHYPERHEAP pHeap, PMMHYPERCHUNKFREE pCur)
                  pCur->core.offNext, -MMHYPERCHUNK_GET_OFFPREV(&pCur->core),
                  (MMTAG)pStat->Core.Key, pszSelf));
 #endif
+            NOREF(pStat); NOREF(pszSelf);
         }
         else
             Log(("%p  %06x USED offNext=%06x offPrev=-%06x\n",
@@ -1175,7 +1189,7 @@ static void mmHyperHeapCheck(PMMHYPERHEAP pHeap)
                 Assert(cbFence >= MMHYPER_HEAP_STRICT_FENCE_SIZE);
             }
 
-            uint32_t *pu32Bad = ASMMemIsAllU32((uint8_t *)pu32End - cbFence, cbFence - sizeof(uint32_t), MMHYPER_HEAP_STRICT_FENCE_U32);
+            uint32_t *pu32Bad = ASMMemFirstMismatchingU32((uint8_t *)pu32End - cbFence, cbFence - sizeof(uint32_t), MMHYPER_HEAP_STRICT_FENCE_U32);
             if (RT_UNLIKELY(pu32Bad))
             {
                 mmHyperHeapDumpOne(pHeap, pCur);
@@ -1198,7 +1212,7 @@ static void mmHyperHeapCheck(PMMHYPERHEAP pHeap)
  * Performs consistency checks on the heap if MMHYPER_HEAP_STRICT was
  * defined at build time.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMDECL(void) MMHyperHeapCheck(PVM pVM)
 {
@@ -1209,6 +1223,8 @@ VMMDECL(void) MMHyperHeapCheck(PVM pVM)
     AssertRC(rc);
     mmHyperHeapCheck(pVM->mm.s.CTX_SUFF(pHyperHeap));
     mmHyperUnlock(pVM);
+#else
+    NOREF(pVM);
 #endif
 }
 
@@ -1216,7 +1232,7 @@ VMMDECL(void) MMHyperHeapCheck(PVM pVM)
 #ifdef DEBUG
 /**
  * Dumps the hypervisor heap to Log.
- * @param pVM       Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMDECL(void) MMHyperHeapDump(PVM pVM)
 {
@@ -1247,6 +1263,7 @@ VMMDECL(size_t) MMHyperHeapGetFreeSize(PVM pVM)
     return pVM->mm.s.CTX_SUFF(pHyperHeap)->cbFree;
 }
 
+
 /**
  * Query the size the hypervisor heap.
  *
@@ -1259,10 +1276,39 @@ VMMDECL(size_t) MMHyperHeapGetSize(PVM pVM)
 
 
 /**
+ * Converts a context neutral heap offset into a pointer.
+ *
+ * @returns Pointer to hyper heap data.
+ * @param   pVM         The cross context VM structure.
+ * @param   offHeap     The hyper heap offset.
+ */
+VMMDECL(void *) MMHyperHeapOffsetToPtr(PVM pVM, uint32_t offHeap)
+{
+    Assert(offHeap - MMYPERHEAP_HDR_SIZE <= pVM->mm.s.CTX_SUFF(pHyperHeap)->cbHeap);
+    return (uint8_t *)pVM->mm.s.CTX_SUFF(pHyperHeap) + offHeap;
+}
+
+
+/**
+ * Converts a context specific heap pointer into a neutral heap offset.
+ *
+ * @returns Heap offset.
+ * @param   pVM         The cross context VM structure.
+ * @param   pv          Pointer to the heap data.
+ */
+VMMDECL(uint32_t) MMHyperHeapPtrToOffset(PVM pVM, void *pv)
+{
+    size_t offHeap = (uint8_t *)pv - (uint8_t *)pVM->mm.s.CTX_SUFF(pHyperHeap);
+    Assert(offHeap - MMYPERHEAP_HDR_SIZE <= pVM->mm.s.CTX_SUFF(pHyperHeap)->cbHeap);
+    return (uint32_t)offHeap;
+}
+
+
+/**
  * Query the address and size the hypervisor memory area.
  *
  * @returns Base address of the hypervisor area.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pcb         Where to store the size of the hypervisor area. (out)
  */
 VMMDECL(RTGCPTR) MMHyperGetArea(PVM pVM, size_t *pcb)
@@ -1278,7 +1324,7 @@ VMMDECL(RTGCPTR) MMHyperGetArea(PVM pVM, size_t *pcb)
  *
  * @returns true if inside.
  * @returns false if outside.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtr       The pointer to check.
  */
 VMMDECL(bool) MMHyperIsInsideArea(PVM pVM, RTGCPTR GCPtr)

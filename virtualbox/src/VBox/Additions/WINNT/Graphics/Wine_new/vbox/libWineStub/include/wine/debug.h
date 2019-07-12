@@ -31,7 +31,11 @@
 #define __WINE_WINE_DEBUG_H
 
 #include <stdarg.h>
+#ifndef VBOX_WINE_WITHOUT_LIBWINE
 #include <windef.h>
+#else
+# include <iprt/win/windows.h>
+#endif
 #ifndef GUID_DEFINED
 #include <guiddef.h>
 #endif
@@ -276,9 +280,9 @@ static inline const char *wine_dbgstr_longlong( ULONGLONG ll )
 #define WINE_ERR_ON(ch)            __WINE_IS_DEBUG_ON(_ERR,&__wine_dbch_##ch)
 
 #define WINE_DECLARE_DEBUG_CHANNEL(ch) \
-    static struct __wine_debug_channel __wine_dbch_##ch = { ~0, #ch }
+    static struct __wine_debug_channel __wine_dbch_##ch = { /*was: ~0, VBox:*/ UINT8_MAX, #ch }
 #define WINE_DEFAULT_DEBUG_CHANNEL(ch) \
-    static struct __wine_debug_channel __wine_dbch_##ch = { ~0, #ch }; \
+    static struct __wine_debug_channel __wine_dbch_##ch = { /*was: ~0, VBox:*/ UINT8_MAX, #ch }; \
     static struct __wine_debug_channel * const __wine_dbch___default = &__wine_dbch_##ch
 
 #define WINE_DPRINTF               wine_dbg_printf

@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 1999-2012 knut st. osmundsen <bird-src-spam@anduin.net>
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -184,9 +184,9 @@ typedef uint32_t    AVLU32KEY;
 /** AVL Core node. */
 typedef struct _AVLU32NodeCore
 {
-    AVLU32KEY               Key;        /**< Key value. */
     struct _AVLU32NodeCore *pLeft;      /**< Pointer to left leaf node. */
     struct _AVLU32NodeCore *pRight;     /**< Pointer to right leaf node. */
+    AVLU32KEY               Key;        /**< Key value. */
     unsigned char           uchHeight;  /**< Height of this tree: max(height(left), height(right)) + 1 */
 } AVLU32NODECORE, *PAVLU32NODECORE, **PPAVLU32NODECORE;
 
@@ -486,7 +486,7 @@ typedef PAVLGCPTRNODECORE     AVLGCPTRTREE;
 /** Pointer to a tree of RTGCPTR keys. */
 typedef PPAVLGCPTRNODECORE    PAVLGCPTRTREE;
 
-/** Callback function for RTAvlGCPtrDoWithAll(). 
+/** Callback function for RTAvlGCPtrDoWithAll().
  *  @returns IPRT status codes. */
 typedef DECLCALLBACK(int)   AVLGCPTRCALLBACK(PAVLGCPTRNODECORE pNode, void *pvUser);
 /** Pointer to callback function for RTAvlGCPtrDoWithAll(). */

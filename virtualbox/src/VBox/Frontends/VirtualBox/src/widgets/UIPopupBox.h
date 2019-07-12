@@ -1,11 +1,10 @@
+/* $Id: UIPopupBox.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIPopupBox/UIPopupBoxGroup classes declaration
+ * VBox Qt GUI - UIPopupBox/UIPopupBoxGroup classes declaration.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

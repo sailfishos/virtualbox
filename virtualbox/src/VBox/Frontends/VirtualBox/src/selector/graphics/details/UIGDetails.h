@@ -1,11 +1,10 @@
+/* $Id: UIGDetails.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGDetails class declaration
+ * VBox Qt GUI - UIGDetails class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -48,7 +47,12 @@ signals:
 public:
 
     /* Constructor: */
-    UIGDetails(QWidget *pParent);
+    UIGDetails(QWidget *pParent = 0);
+
+    /** Return the Details-model instance. */
+    UIGDetailsModel *model() const { return m_pDetailsModel; }
+    /** Return the Details-view instance. */
+    UIGDetailsView *view() const { return m_pDetailsView; }
 
     /* API: Current item(s) stuff: */
     void setItems(const QList<UIVMItem*> &items);

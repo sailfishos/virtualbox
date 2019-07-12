@@ -207,13 +207,13 @@ struct CRContext {
 
 DECLEXPORT(void) crStateInit(void);
 DECLEXPORT(void) crStateDestroy(void);
-DECLEXPORT(void) crStateVBoxDetachThread();
-DECLEXPORT(void) crStateVBoxAttachThread();
+DECLEXPORT(void) crStateVBoxDetachThread(void);
+DECLEXPORT(void) crStateVBoxAttachThread(void);
 DECLEXPORT(CRContext *) crStateCreateContext(const CRLimitsState *limits, GLint visBits, CRContext *share);
 DECLEXPORT(CRContext *) crStateCreateContextEx(const CRLimitsState *limits, GLint visBits, CRContext *share, GLint presetID);
 DECLEXPORT(void) crStateMakeCurrent(CRContext *ctx);
 DECLEXPORT(void) crStateSetCurrent(CRContext *ctx);
-DECLEXPORT(void) crStateCleanupCurrent();
+DECLEXPORT(void) crStateCleanupCurrent(void);
 DECLEXPORT(CRContext *) crStateGetCurrent(void);
 DECLEXPORT(void) crStateDestroyContext(CRContext *ctx);
 DECLEXPORT(GLboolean) crStateEnableDiffOnMakeCurrent(GLboolean fEnable);
@@ -222,7 +222,7 @@ void crStateSwitchPrepare(CRContext *toCtx, CRContext *fromCtx, GLuint idDrawFBO
 void crStateSwitchPostprocess(CRContext *toCtx, CRContext *fromCtx, GLuint idDrawFBO, GLuint idReadFBO);
 
 void crStateSyncHWErrorState(CRContext *ctx);
-GLenum crStateCleanHWErrorState();
+GLenum crStateCleanHWErrorState(void);
 
 #define CR_STATE_CLEAN_HW_ERR_WARN(_s) do {\
             GLenum _err = crStateCleanHWErrorState(); \
@@ -270,6 +270,7 @@ typedef struct CRFBData
 {
     /* override default draw and read buffers to be used for offscreen rendering */
     GLint idOverrrideFBO;
+    uint32_t u32Version;
     uint32_t cElements;
     CRFBDataElement aElements[1];
 } CRFBData;
@@ -294,8 +295,8 @@ DECLEXPORT(void) crStateFreeShared(CRContext *pContext, CRSharedState *s);
 DECLEXPORT(int32_t) crStateLoadGlobals(PSSMHANDLE pSSM, uint32_t u32Version);
 DECLEXPORT(int32_t) crStateSaveGlobals(PSSMHANDLE pSSM);
 
-DECLEXPORT(CRSharedState *) crStateGlobalSharedAcquire();
-DECLEXPORT(void) crStateGlobalSharedRelease();
+DECLEXPORT(CRSharedState *) crStateGlobalSharedAcquire(void);
+DECLEXPORT(void) crStateGlobalSharedRelease(void);
 #endif
 
 DECLEXPORT(void) crStateSetTextureUsed(GLuint texture, GLboolean used);

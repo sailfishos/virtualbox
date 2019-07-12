@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,12 +13,21 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <mach/mach.h>
 #include <Carbon/Carbon.h>
 #include <IOKit/IOKitLib.h>
@@ -79,7 +88,7 @@ static bool tstDictGetU64(CFMutableDictionaryRef DictRef, CFStringRef KeyStrRef,
 }
 
 
-static int tstDoWork(io_object_t USBDevice, mach_port_t MasterPort, const char *argv0)
+static int tstDoWork(io_object_t USBDevice, const char *argv0)
 {
     /*
      * Create a plugin interface for the device and query its IOUSBDeviceInterface.
@@ -189,7 +198,6 @@ int main(int argc, char **argv)
     uint32_t u32LocationId = 0;
 
     int ch;
-    int i = 1;
     RTGETOPTUNION ValueUnion;
     RTGETOPTSTATE GetState;
     RTGetOptInit(&GetState, argc, argv, g_aOptions, RT_ELEMENTS(g_aOptions), 1, 0 /* fFlags */);
@@ -206,7 +214,7 @@ int main(int argc, char **argv)
             case 'h':
                 return tstSyntax(argv[0]);
             case 'V':
-                RTPrintf("$Revision: 83575 $\n");
+                RTPrintf("$Revision: 118839 $\n");
                 return 0;
 
             default:
@@ -217,7 +225,7 @@ int main(int argc, char **argv)
     /*
      * Open the master port.
      */
-    mach_port_t MasterPort = NULL;
+    mach_port_t MasterPort = MACH_PORT_NULL;
     krc = IOMasterPort(MACH_PORT_NULL, &MasterPort);
     if (krc != KERN_SUCCESS)
     {
@@ -235,7 +243,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    io_iterator_t USBDevices = NULL;
+    io_iterator_t USBDevices = IO_OBJECT_NULL;
     IOReturn irc = IOServiceGetMatchingServices(MasterPort, RefMatchingDict, &USBDevices);
     if (irc != kIOReturnSuccess)
     {
@@ -266,7 +274,7 @@ int main(int argc, char **argv)
             {
                 cMatches++;
                 CFRelease(PropsRef);
-                tstDoWork(USBDevice, MasterPort, argv[0]);
+                tstDoWork(USBDevice, argv[0]);
             }
             else
                 CFRelease(PropsRef);

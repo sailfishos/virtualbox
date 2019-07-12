@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -129,6 +129,14 @@ int rtPathFromNativeCopy(char *pszPath, size_t cbPath, const char *pszNativePath
  *                          representation.  NULL if current directory.
  */
 int rtPathFromNativeDup(char **ppszPath, const char *pszNativePath, const char *pszBasePath);
+
+
+#if defined(RT_OS_WINDOWS) && defined(___iprt_fs_h) && defined(UNICODE_NULL)
+DECLHIDDEN(int) rtPathNtQueryInfoWorker(HANDLE hRootDir, struct _UNICODE_STRING *pNtName, PRTFSOBJINFO pObjInfo,
+                                        RTFSOBJATTRADD enmAdditionalAttribs, uint32_t fFlags, const char *pszPath);
+DECLHIDDEN(int) rtPathNtQueryInfoFromHandle(HANDLE hFile, void *pvBuf, size_t cbBuf, PRTFSOBJINFO pObjInfo,
+                                            RTFSOBJATTRADD enmAddAttr, const char *pszPath, ULONG uReparseTag);
+#endif
 
 
 RT_C_DECLS_END

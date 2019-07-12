@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_MISC
 #include <VBox/vmm/pdmdev.h>
 #include <VBox/version.h>
@@ -28,9 +28,9 @@
 #include <iprt/assert.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Device Instance Data.
  */
@@ -42,18 +42,12 @@ typedef VBOXSAMPLEDEVICE *PVBOXSAMPLEDEVICE;
 
 
 
-
-    FNPDMDEVCONSTRUCT  pfnConstruct;
-    /** Destruct instance - optional. */
-    FNPDMDEVDESTRUCT   pfnDestruct;
-
 static DECLCALLBACK(int) devSampleDestruct(PPDMDEVINS pDevIns)
 {
     /*
      * Check the versions here as well since the destructor is *always* called.
      */
-    AssertMsgReturn(pDevIns->u32Version            == PDM_DEVINS_VERSION, ("%#x, expected %#x\n", pDevIns->u32Version,            PDM_DEVINS_VERSION), VERR_VERSION_MISMATCH);
-    AssertMsgReturn(pDevIns->pHlpR3->u32Version == PDM_DEVHLPR3_VERSION, ("%#x, expected %#x\n", pDevIns->pHlpR3->u32Version, PDM_DEVHLPR3_VERSION), VERR_VERSION_MISMATCH);
+    PDMDEV_CHECK_VERSIONS_RETURN_QUIET(pDevIns);
 
     return VINF_SUCCESS;
 }
@@ -61,14 +55,15 @@ static DECLCALLBACK(int) devSampleDestruct(PPDMDEVINS pDevIns)
 
 static DECLCALLBACK(int) devSampleConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
+
     /*
      * Check that the device instance and device helper structures are compatible.
      */
-    AssertLogRelMsgReturn(pDevIns->u32Version            == PDM_DEVINS_VERSION, ("%#x, expected %#x\n", pDevIns->u32Version,            PDM_DEVINS_VERSION), VERR_VERSION_MISMATCH);
-    AssertLogRelMsgReturn(pDevIns->pHlpR3->u32Version == PDM_DEVHLPR3_VERSION, ("%#x, expected %#x\n", pDevIns->pHlpR3->u32Version, PDM_DEVHLPR3_VERSION), VERR_VERSION_MISMATCH);
+    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
+    NOREF(pCfg);
 
     /*
-     * Initialize the instance data so that the destructure won't mess up.
+     * Initialize the instance data so that the destructor won't mess up.
      */
     PVBOXSAMPLEDEVICE pThis = PDMINS_2_DATA(pDevIns, PVBOXSAMPLEDEVICE);
     pThis->Whatever = 0;
@@ -76,11 +71,13 @@ static DECLCALLBACK(int) devSampleConstruct(PPDMDEVINS pDevIns, int iInstance, P
     /*
      * Validate and read the configuration.
      */
-    if (!CFGMR3AreValuesValid(pCfg,
-                              "Whatever1\0"
-                              "Whatever2\0"))
-        return VERR_PDM_DEVINS_UNKNOWN_CFG_VALUES;
+    PDMDEV_VALIDATE_CONFIG_RETURN(pDevIns, "Whatever1|Whatever2", "");
 
+    /*
+     * Use the instance number if necessary (not for this device, which in
+     * g_DeviceSample below declares a maximum instance count of 1).
+     */
+    NOREF(iInstance);
 
     return VINF_SUCCESS;
 }
@@ -143,7 +140,7 @@ static const PDMDEVREG g_DeviceSample =
 
 
 /**
- * Register builtin devices.
+ * Register devices provided by the plugin.
  *
  * @returns VBox status code.
  * @param   pCallbacks      Pointer to the callback table.
@@ -153,8 +150,11 @@ extern "C" DECLEXPORT(int) VBoxDevicesRegister(PPDMDEVREGCB pCallbacks, uint32_t
 {
     LogFlow(("VBoxSampleDevice::VBoxDevicesRegister: u32Version=%#x pCallbacks->u32Version=%#x\n", u32Version, pCallbacks->u32Version));
 
+    AssertLogRelMsgReturn(u32Version >= VBOX_VERSION,
+                          ("VirtualBox version %#x, expected %#x or higher\n", u32Version, VBOX_VERSION),
+                          VERR_VERSION_MISMATCH);
     AssertLogRelMsgReturn(pCallbacks->u32Version == PDM_DEVREG_CB_VERSION,
-                          ("%#x, expected %#x\n", pCallbacks->u32Version, PDM_DEVREG_CB_VERSION),
+                          ("callback version %#x, expected %#x\n", pCallbacks->u32Version, PDM_DEVREG_CB_VERSION),
                           VERR_VERSION_MISMATCH);
 
     return pCallbacks->pfnRegister(pCallbacks, &g_DeviceSample);

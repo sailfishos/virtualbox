@@ -1,11 +1,10 @@
+/* $Id: QIDialogButtonBox.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: QIDialogButtonBox class declaration
+ * VBox Qt GUI - VBox Qt extensions: QIDialogButtonBox class declaration.
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

@@ -1,7 +1,10 @@
 /* $Id: DumpD3DCaps9.cpp $ */
-
 /** @file
- * Copyright (C) 2011 Oracle Corporation
+ * ???
+ */
+
+/*
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -11,7 +14,8 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-#include <windows.h>
+
+#include <iprt/win/windows.h>
 #include <d3d9types.h>
 #include <d3d9caps.h>
 #include <d3d9.h>
@@ -27,7 +31,7 @@
 #define DUMP_STRCASE(_t) \
         case _t: { Log(("%s", #_t"")); break; }
 #define DUMP_STRCASE_DEFAULT_DWORD(_dw) \
-        default: { Log(("0x%08", (_dw))); break; }
+        default: { Log(("0x%08x", (_dw))); break; }
 
 #define DUMP_STRIF_INIT(_ps, _t) \
         const char * _pSep = (_ps); \

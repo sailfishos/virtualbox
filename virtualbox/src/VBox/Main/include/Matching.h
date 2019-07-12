@@ -1,11 +1,11 @@
+/* $Id: Matching.h $ */
 /** @file
- *
  * Declaration of template classes that provide simple API to
  * do matching between values and value filters constructed from strings.
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -43,6 +43,9 @@ public:
 
     ParsedFilter_base() : mValid (false), mNull (true), mErrorPosition (0) {};
 
+    /**
+     * Returns @c true if the filter is valid, @c false otherwise.
+     */
     bool isValid() const { return mNull || mValid; }
     bool isNull() const { return mNull; }
 
@@ -55,10 +58,10 @@ public:
 protected:
 
     /**
-     *  Returns true if current isNull() and isValid() values make further
-     *  detailed matching meaningful, otherwise returns false.
+     *  Returns @c true if current isNull() and isValid() values make further
+     *  detailed matching meaningful, otherwise returns @c false.
      *  Must be called as a first method of every isMatch() implementation,
-     *  so that isMatch() will immediately return false if isPreMatch() returns
+     *  so that isMatch() will immediately return @c false if isPreMatch() returns
      *  false.
      */
     bool isPreMatch() const
@@ -112,11 +115,12 @@ protected:
 
 /**
  *  Represents a parsed interval filter.
- *  The string format is: "int:(<m>|([<m>]-[<n>]))|(<m>|([<m>]-[<n>]))+"
- *  where <m> and <n> are numbers in the decimal, hex (0xNNN) or octal (0NNN)
- *  form, and <m> < <n>. Spaces are allowed around <m> and <n>.
+ *  The string format is:
+ *      "int:(\<m\>|([\<m\>]-[\<n\>]))|(\<m\>|([\<m\>]-[\<n\>]))+"
+ *  where \<m\> and \<n\> are numbers in the decimal, hex (0xNNN) or octal
+ *  (0NNN) form, and \<m\> \< \<n\>. Spaces are allowed around \<m\> and \<n\>.
  *
- *  @param T    type of values to match. Must be a fundamental integer type.
+ *  @tparam T    type of values to match. Must be a fundamental integer type.
  */
 template <class T>
 class ParsedIntervalFilter : public ParsedIntervalFilter_base
@@ -349,22 +353,23 @@ private:
 
 /**
  *  Represents a parsed regexp filter.
- *  The string format is: "rx:<regexp>" or "<string>"
- *  where <regexp> is a valid regexp and <string> is the exact match.
  *
- *  @param Conv
+ *  The string format is: "rx:\<regexp\>" or "\<string\>"
+ *  where \<regexp\> is a valid regexp and \<string\> is the exact match.
+ *
+ *  @tparam Conv
  *      class that must define a public static function
  *      <tt>Bstr toBstr (T aValue)</tt>, where T is the
  *      type of values that should be accepted by #isMatch().
  *      This function is used to get the string representation of T
  *      for regexp matching.
- *  @param aIgnoreCase
+ *  @tparam aIgnoreCase
  *      true if the case insensitive comparison should be done by default
  *      and false otherwise
- *  @param aMinLen
+ *  @tparam aMinLen
  *      minimum string length, or 0 if not limited.
  *      Used only when the filter string represents the exact match.
- *  @param aMaxLen
+ *  @tparam aMaxLen
  *      maximum string length, or 0 if not limited.
  *      Used only when the filter string represents the exact match.
  */
@@ -406,11 +411,11 @@ protected:
  *  for which isNull() = false after parsing the string becomes the active
  *  one (F1 is tried first).
  *
- *  Both filters must have <tt>bool isMatch (const T&)</tt>
- *  methods where T is the same type as used in #isMatch().
+ *  Both filters must have <tt>bool isMatch(const T&)</tt> methods where T is
+ *  the same type as used in #isMatch().
  *
- *  @param F1   first filter class
- *  @param F2   second filter class
+ *  @tparam F1  first filter class
+ *  @tparam F2  second filter class
  */
 template <class F1, class F2>
 class TwoParsedFilters
@@ -465,7 +470,7 @@ private:
  *  Inherits from the given parsed filter class and keeps the string used to
  *  construct the filter as a member.
  *
- *  @param F    parsed filter class
+ *  @tparam F   parsed filter class
  */
 template <class F>
 class Matchable : public F
@@ -518,5 +523,5 @@ private:
 
 } /* namespace matching */
 
-#endif // ____H_MATCHING
+#endif // !____H_MATCHING
 /* vi: set tabstop=4 shiftwidth=4 expandtab: */

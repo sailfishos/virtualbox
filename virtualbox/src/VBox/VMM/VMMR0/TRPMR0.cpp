@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_TRPM
 #include <VBox/vmm/trpm.h>
 #include "TRPMInternal.h"
@@ -30,10 +30,15 @@
 #include <iprt/asm-amd64-x86.h>
 
 
+#if defined(RT_OS_DARWIN) && ARCH_BITS == 32
+# error "32-bit darwin is no longer supported. Go back to 4.3 or earlier!"
+#endif
+
+
 /**
  * Dispatches an interrupt that arrived while we were in the guest context.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @remark  Must be called with interrupts disabled.
  */
 VMMR0DECL(void) TRPMR0DispatchHostInterrupt(PVM pVM)
@@ -56,18 +61,6 @@ VMMR0DECL(void) TRPMR0DispatchHostInterrupt(PVM pVM)
     trpmR0DispatchHostInterruptSimple(uActiveVector);
 
 #else  /* The complicated way: */
-
-# ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-    /*
-     * Check if we're in long mode or not.
-     */
-    if (    (ASMCpuId_EDX(0x80000001) & X86_CPUID_EXT_FEATURE_EDX_LONG_MODE)
-        &&  (ASMRdMsr(MSR_K6_EFER) & MSR_K6_EFER_LMA))
-    {
-        trpmR0DispatchHostInterruptSimple(uActiveVector);
-        return;
-    }
-# endif
 
     /*
      * Get the handler pointer (16:32 ptr) / (16:48 ptr).

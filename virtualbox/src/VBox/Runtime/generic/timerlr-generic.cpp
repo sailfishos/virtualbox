@@ -7,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,9 +28,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/timer.h>
 #include "internal/iprt.h"
 
@@ -45,9 +45,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The internal representation of a timer handle.
  */
@@ -83,9 +83,9 @@ typedef struct RTTIMERLRINT
 typedef RTTIMERLRINT *PRTTIMERLRINT;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int) rtTimerLRThread(RTTHREAD hThread, void *pvUser);
 
 
@@ -261,7 +261,7 @@ RTDECL(int) RTTimerLRChangeInterval(RTTIMERLR hTimerLR, uint64_t u64NanoInterval
         ASMAtomicWriteU64(&pThis->u64StartTS, u64Now);
         ASMAtomicWriteU64(&pThis->u64NextTS, u64Now);
         ASMAtomicWriteU64(&pThis->u64NanoInterval, u64NanoInterval);
-        int rc = RTSemEventSignal(pThis->hEvent);
+        RTSemEventSignal(pThis->hEvent);
     }
 
     return VINF_SUCCESS;

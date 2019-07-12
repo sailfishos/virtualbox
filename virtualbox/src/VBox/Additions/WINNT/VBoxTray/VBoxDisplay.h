@@ -1,9 +1,10 @@
+/* $Id: VBoxDisplay.h $ */
 /** @file
  * VBoxSeamless - Display notifications
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,20 +18,18 @@
 #ifndef __VBOXSERVICEDISPLAY__H
 #define __VBOXSERVICEDISPLAY__H
 
-/* The display service prototypes. */
-int                VBoxDisplayInit    (const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread);
-unsigned __stdcall VBoxDisplayThread  (void *pInstance);
-void               VBoxDisplayDestroy (const VBOXSERVICEENV *pEnv, void *pInstance);
+DWORD VBoxDisplayGetCount();
+DWORD VBoxDisplayGetConfig(const DWORD NumDevices, DWORD *pDevPrimaryNum, DWORD *pNumDevices, DISPLAY_DEVICE *paDisplayDevices, DEVMODE *paDeviceModes);
 
-DWORD VBoxGetDisplayConfigCount();
-DWORD VBoxGetDisplayConfig(const DWORD NumDevices, DWORD *pDevPrimaryNum, DWORD *pNumDevices, DISPLAY_DEVICE *paDisplayDevices, DEVMODE *paDeviceModes);
+DWORD EnableAndResizeDispDev(DEVMODE *paDeviceModes, DISPLAY_DEVICE *paDisplayDevices, DWORD totalDispNum, UINT Id, DWORD aWidth, DWORD aHeight,
+                             DWORD aBitsPerPixel, LONG aPosX, LONG aPosY, BOOL fEnabled, BOOL fExtDispSup);
 
 #ifndef VBOX_WITH_WDDM
-static bool isVBoxDisplayDriverActive (void);
+static bool isVBoxDisplayDriverActive(void);
 #else
 /* @misha: getVBoxDisplayDriverType is used instead.
  * it seems bad to put static function declaration to header,
  * so it is moved to VBoxDisplay.cpp */
 #endif
 
-#endif /* __VBOXSERVICEDISPLAY__H */
+#endif /* !__VBOXSERVICEDISPLAY__H */

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -14,9 +14,11 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VSCSI
 #include <VBox/log.h>
 #include <VBox/err.h>
@@ -25,9 +27,10 @@
 
 #include "VSCSIInternal.h"
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * A VSCSI VPD page.
@@ -45,9 +48,9 @@ typedef struct VSCSIVPDPAGE
 typedef VSCSIVPDPAGE *PVSCSIVPDPAGE;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 int vscsiVpdPagePoolInit(PVSCSIVPDPOOL pVScsiVpdPool)
 {
@@ -80,7 +83,7 @@ int vscsiVpdPagePoolAllocNewPage(PVSCSIVPDPOOL pVScsiVpdPool, uint8_t uPage, siz
             return VERR_ALREADY_EXISTS;
     }
 
-    pPage = (PVSCSIVPDPAGE)RTMemAllocZ(RT_OFFSETOF(VSCSIVPDPAGE, abPage[cbPage]));
+    pPage = (PVSCSIVPDPAGE)RTMemAllocZ(RT_UOFFSETOF_DYN(VSCSIVPDPAGE, abPage[cbPage]));
     if (pPage)
     {
         pPage->cbPage    = cbPage;

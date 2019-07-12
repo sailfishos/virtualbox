@@ -1,150 +1,144 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
-"http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+"http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd">
 <chapter id="Security">
   <title>Security guide</title>
 
   <sect1>
-    <title>Overview</title>
-    <para>
+    <title>General Security Principles</title>
+
+    <para>The following principles are fundamental to using any application
+      securely.
+      <glosslist>
+        <glossentry>
+          <glossterm>Keep Software Up To Date</glossterm>
+          <glossdef>
+            <para>
+              One of the principles of good security practise is to keep all
+              software versions and patches up to date. Activate the VirtualBox
+              update notification to get notified when a new VirtualBox release
+              is available. When updating VirtualBox, do not forget to update
+              the Guest Additions. Keep the host operating system as well as the
+              guest operating system up to date.
+            </para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>Restrict Network Access to Critical Services</glossterm>
+          <glossdef>
+            <para>
+              Use proper means, for instance a firewall, to protect your computer
+              and your guest(s) from accesses from the outside. Choosing the proper
+              networking mode for VMs helps to separate host networking from the
+              guest and vice versa.
+            </para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>Follow the Principle of Least Privilege</glossterm>
+          <glossdef>
+            <para>
+              The principle of least privilege states that users should be given the
+              least amount of privilege necessary to perform their jobs. Always execute VirtualBox
+              as a regular user. We strongly discourage anyone from executing
+              VirtualBox with system privileges.
+            </para>
+            <para>
+              Choose restrictive permissions when creating configuration files,
+              for instance when creating /etc/default/virtualbox, see
+              <xref linkend="linux_install_opts"/>. Mode 0600 would be preferred.
+            </para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>Monitor System Activity</glossterm>
+          <glossdef>
+            <para>
+              System security builds on three pillars: good security protocols, proper
+              system configuration and system monitoring. Auditing and reviewing audit
+              records address the third requirement. Each component within a system
+              has some degree of monitoring capability. Follow audit advice in this
+              document and regularly monitor audit records.
+            </para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm>Keep Up To Date on Latest Security Information</glossterm>
+          <glossdef>
+            <para>
+              Oracle continually improves its software and documentation. Check this
+              note yearly for revisions.
+            </para>
+          </glossdef>
+        </glossentry>
+
+      </glosslist>
     </para>
-
-    <sect2>
-      <title>General Security Principles</title>
-
-      <para>The following principles are fundamental to using any application
-        securely.
-        <glosslist>
-          <glossentry>
-            <glossterm>Keep Software Up To Date</glossterm>
-            <glossdef>
-              <para>
-                One of the principles of good security practise is to keep all
-                software versions and patches up to date. Activate the VirtualBox
-                update notification to get notified when a new VirtualBox release
-                is available. When updating VirtualBox, do not forget to update
-                the Guest Additions. Keep the host operating system as well as the
-                guest operating system up to date.
-              </para>
-            </glossdef>
-          </glossentry>
-
-          <glossentry>
-            <glossterm>Restrict Network Access to Critical Services</glossterm>
-            <glossdef>
-              <para>
-                Use proper means, for instance a firewall, to protect your computer
-                and your guest(s) from accesses from the outside. Choosing the proper
-                networking mode for VMs helps to separate host networking from the
-                guest and vice versa.
-              </para>
-            </glossdef>
-          </glossentry>
-
-          <glossentry>
-            <glossterm>Follow the Principle of Least Privilege</glossterm>
-            <glossdef>
-              <para>
-                The principle of least privilege states that users should be given the
-                least amount of privilege necessary to perform their jobs. Always execute VirtualBox
-                as a regular user. We strongly discourage anyone from executing
-                VirtualBox with system privileges.
-              </para>
-              <para>
-                Choose restrictive permissions when creating configuration files,
-                for instance when creating /etc/default/virtualbox, see
-                <xref linkend="linux_install_opts"/>. Mode 0600 would be preferred.
-              </para>
-            </glossdef>
-          </glossentry>
-
-          <glossentry>
-            <glossterm>Monitor System Activity</glossterm>
-            <glossdef>
-              <para>
-                System security builds on three pillars: good security protocols, proper
-                system configuration and system monitoring. Auditing and reviewing audit
-                records address the third requirement. Each component within a system
-                has some degree of monitoring capability. Follow audit advice in this
-                document and regularly monitor audit records.
-              </para>
-            </glossdef>
-          </glossentry>
-
-          <glossentry>
-            <glossterm>Keep Up To Date on Latest Security Information</glossterm>
-            <glossdef>
-              <para>
-                Oracle continually improves its software and documentation. Check this
-                note note yearly for revisions.
-              </para>
-            </glossdef>
-          </glossentry>
-
-        </glosslist>
-      </para>
-    </sect2>
   </sect1>
 
   <sect1>
     <title>Secure Installation and Configuration</title>
+
+    <sect2>
+      <title>Installation Overview</title>
+      <para>
+        The VirtualBox base package should be downloaded only from a trusted source,
+        for instance the official website
+        <ulink url="http://www.virtualbox.org">http://www.virtualbox.org</ulink>.
+        The integrity of the package should be verified with the provided SHA256
+        checksum which can be found on the official website.
+      </para>
+      <para>
+        General VirtualBox installation instructions for the supported hosts
+        can be found in <xref linkend="installation"/>.
+      </para>
+      <para>
+        On Windows hosts, the installer allows for disabling USB support, support
+        for bridged networking, support for host-only networking and the Python
+        language bindings, see <xref linkend="installation_windows"/>.
+        All these features are enabled by default but disabling some
+        of them could be appropriate if the corresponding functionality is not
+        required by any virtual machine. The Python language bindings are only
+        required if the VirtualBox API is to be used by external Python
+        applications. In particular USB support and support
+        for the two networking modes require the installation of Windows kernel
+        drivers on the host. Therefore disabling those selected features can
+        not only be used to restrict the user to certain functionality but
+        also to minimize the surface provided to a potential attacker.     </para>
+      <para>
+        The general case is to install the complete VirtualBox package. The
+        installation must be done with system privileges. All VirtualBox binaries
+        should be executed as a regular user and never as a privileged user.
+      </para>
+      <para>
+        The Oracle VM VirtualBox extension pack provides additional features
+        and must be downloaded and installed separately, see
+        <xref linkend="intro-installing"/>. As for the base package, the SHA256
+        checksum of the extension pack should be verified. As the installation
+        requires system privileges, VirtualBox will ask for the system
+        password during the installation of the extension pack.
+      </para>
+    </sect2>
+
+    <sect2>
+      <title>Post Installation Configuration</title>
+      <para>
+        Normally there is no post installation configuration of VirtualBox components
+        required. However, on Solaris and Linux hosts it is necessary to configure
+        the proper permissions for users executing VMs and who should be able to
+        access certain host resources. For instance, Linux users must be member of
+        the <emphasis>vboxusers</emphasis> group to be able to pass USB devices to a
+        guest. If a serial host interface should be accessed from a VM, the proper
+        permissions must be granted to the user to be able to access that device.
+        The same applies to other resources like raw partitions, DVD/CD drives
+        and sound devices.
+      </para>
+    </sect2>
   </sect1>
-
-  <sect2>
-    <title>Installation Overview</title>
-    <para>
-      The VirtualBox base package should be downloaded only from a trusted source,
-      for instance the official website
-      <ulink url="http://www.virtualbox.org">http://www.virtualbox.org</ulink>.
-      The integrity of the package should be verified with the provided SHA256
-      checksum which can be found on the official website.
-    </para>
-    <para>
-      General VirtualBox installation instructions for the supported hosts
-      can be found in <xref linkend="installation"/>.
-    </para>
-    <para>
-      On Windows hosts, the installer allows for disabling USB support, support
-      for bridged networking, support for host-only networking and the Python
-      language bindings, see <xref linkend="installation_windows"/>.
-      All these features are enabled by default but disabling some
-      of them could be appropriate if the corresponding functionality is not
-      required by any virtual machine. The Python language bindings are only
-      required if the VirtualBox API is to be used by external Python
-      applications. In particular USB support and support
-      for the two networking modes require the installation of Windows kernel
-      drivers on the host. Therefore disabling those selected features can
-      not only be used to restrict the user to certain functionality but
-      also to minimize the surface provided to a potential attacker.     </para>
-    <para>
-      The general case is to install the complete VirtualBox package. The
-      installation must be done with system privileges. All VirtualBox binaries
-      should be executed as a regular user and never as a privileged user.
-    </para>
-    <para>
-      The Oracle VM VirtualBox extension pack provides additional features
-      and must be downloaded and installed separately, see
-      <xref linkend="intro-installing"/>. As for the base package, the SHA256
-      checksum of the extension pack should be verified. As the installation
-      requires system privileges, VirtualBox will ask for the system
-      password during the installation of the extension pack.
-    </para>
-  </sect2>
-
-  <sect2>
-    <title>Post Installation Configuration</title>
-    <para>
-      Normally there is no post installation configuration of VirtualBox components
-      required. However, on Solaris and Linux hosts it is necessary to configure
-      the proper permissions for users executing VMs and who should be able to
-      access certain host resources. For instance, Linux users must be member of
-      the <emphasis>vboxusers</emphasis> group to be able to pass USB devices to a
-      guest. If a serial host interface should be accessed from a VM, the proper
-      permissions must be granted to the user to be able to access that device.
-      The same applies to other resources like raw partitions, DVD/CD drives
-      and sound devices.
-    </para>
-  </sect2>
 
   <sect1>
     <title>Security Features</title>
@@ -166,7 +160,7 @@
         (for example remote control, certain screen settings and others).
       </para>
     </sect2>
-    
+
     <sect2>
       <title>Secure Configuration of Virtual Machines</title>
       <para>
@@ -311,7 +305,7 @@
     </sect2>
     -->
 
-    <sect2>
+    <sect2 id="pot-insecure">
     <title>Potentially insecure operations</title>
 
       <para>The following features of VirtualBox can present security
@@ -334,6 +328,17 @@
         </listitem>
 
         <listitem>
+          <para>When Page Fusion (see <xref linkend="guestadd-pagefusion"/>)
+          is enabled, it is possible that a side-channel opens up that allows
+          a malicious guest to determine the address space layout (i.e. where
+          DLLs are typically loaded) of one other VM running on the same host.
+          This information leak in it self is harmless, however the malicious
+          guest may use it to optimize attack against that VM via unrelated
+          attack vectors.  It is recommended to only enable Page Fusion if you
+          do not think this is a concern in your setup.</para>
+        </listitem>
+
+        <listitem>
           <para>When using the VirtualBox web service to control a VirtualBox
           host remotely, connections to the web service (through which the API
           calls are transferred via SOAP XML) are not encrypted, but use plain
@@ -345,7 +350,7 @@
           a regular user and only the VMs of that user can be controlled. By
           default, the service binds to localhost preventing any remote connection.</para>
         </listitem>
-        
+
         <listitem>
           <para>Traffic sent over a UDP Tunnel network attachment is not
           encrypted. You can either encrypt it on the host network level (with
@@ -384,5 +389,166 @@
     <title>Security Considerations for Developers</title>
   </sect1>
   -->
+
+  <sect1 id="security-recommendations">
+    <title>Security Recommendations</title>
+
+    <para>This section contains security recommendations for specific issues.
+    By default VirtualBox will configure the VMs to run in a secure manner,
+    however this may not always be possible without additional user actions (e.g.
+    host OS / firmware configuration changes).</para>
+
+    <sect2 id="sec-rec-cve-2018-3646">
+      <title>CVE-2018-3646</title>
+
+      <para>This security issue affects a range of Intel CPUs with nested paging.
+      AMD CPUs are expected not to be impacted (pending direct confirmation by AMD).
+      Also the issue does not affect VMs running with hardware virtualization
+      disabled or with nested paging disabled.</para>
+
+      <para>For more information about nested paging, see <xref linkend="nestedpaging" />.</para>
+
+      <para>Mitigation options:</para>
+
+      <sect3>
+        <title>Disable nested paging</title>
+
+        <para>By disabling nested paging (EPT), the VMM will construct page tables
+        shadowing the ones in the guest.  It is no possible for the guest to insert
+        anything fishy into the page tables, since the VMM carefully validates each
+        entry before shadowing it.</para>
+
+        <para>As a side effect of disabling nested paging, several CPU features
+        will not be made available to the guest.  Among these features are AVX,
+        AVX2, XSAVE, AESNI, and POPCNT.  Not all guests may be able to cope with
+        dropping these features after installation.  Also, for some guests,
+        especially in SMP configurations, there could be stability issues arising
+        from disabling nested paging.  Finally, some workloads may experience a
+        performance degradation.</para>
+      </sect3>
+
+      <sect3>
+        <title>Flushing the level 1 data cache</title>
+
+        <para>This aims at removing potentially sensitive data from the level 1
+        data cache when running guest code.  However, it is made difficult by
+        hyper-threading setups sharing the level 1 cache and thereby potentially
+        letting the other thread in a pair refill the cache with data the user
+        does not want the guest to see.  In addition, flushing the level 1 data
+        cache is usually not without performance side effects.</para>
+
+        <para>Up to date CPU microcode is a prerequisite for the cache flushing
+        mitigations.  Some host OSes may install these automatically, though it
+        has traditionally been a task best performed by the system firmware.  So,
+        please check with your system / mainboard manufacturer for the latest
+        firmware update.</para>
+
+        <para>We recommend disabling hyper-threading on the host.  This is
+        traditionally done from the firmware setup, but some OSes also offer
+        ways to disable HT.  In some cases it may be disabled by default, but please
+        verify as the effectiveness of the mitigation depends on it.</para>
+
+        <para>The default action taken by VirtualBox is to flush the level 1
+        data cache when a thread is scheduled to execute guest code, rather
+        than on each VM entry.  This reduces the performance impact, while
+        making the assumption that the host OS will not handle security
+        sensitive data from interrupt handlers and similar without taking
+        precautions.</para>
+
+        <para>A more aggressive flushing option is provided via the VBoxManage
+        modifyvm option <computeroutput>--l1d-flush-on-vm-entry</computeroutput>.
+        When enabled the level 1 data cache will be flushed on every VM entry.
+        The performance impact is greater than with the default option, though
+        this of course depends on the workload.  Workloads producing a lot of
+        VM exits (like networking, VGA access, and similiar) will probably be
+        most impacted.</para>
+
+        <para>For users not concerned by this security issue, the default
+        mitigation can be disabled using</para>
+        <para><computeroutput>VBoxManage modifyvm name --l1d-flush-on-sched off</computeroutput></para>
+      </sect3>
+
+    </sect2>
+
+    <sect2 id="sec-rec-cve-2018-12126-et-al">
+
+      <title>CVE-2018-12126, CVE-2018-12127, CVE-2018-12130, CVE-2019-11091</title>
+
+      <para>
+        These security issues affect a range of Intel CPUs starting with
+        Nehalem.  The CVE-2018-12130 also affects some Atom Silvermont,
+        Atom Airmont, and Knights family CPUs, however the scope is so limited
+        that the host OS should deal with it for us and VBox therefore not
+        be affected (leaks only happens when entering and leaving C states).
+      </para>
+
+      <para>
+        Mitigation option:
+      </para>
+
+      <sect3>
+
+        <title>Buffer overwriting and disabling HT</title>
+
+        <para>
+          First, up to date CPU microcode is a prerequisite for the buffer
+          overwriting (clearing) mitigations.  Some host OSes may install
+          these automatically, though it has traditionally been a task best
+          performed by the system firmware.  So, please check with your
+          system / mainboard manufacturer for the latest firmware update.
+        </para>
+
+        <para>
+          This mitigation aims at removing potentially sensitive data from
+          the affected buffers before running guest code.  Since this means
+          additional work each time the guest is scheduled, there might be
+          some performance side effects.
+        </para>
+
+        <para>
+          We recommend disabling hyper threading on host affected by
+          CVE-2018-12126 and CVE-2018-12127 because the affected sets of
+          buffers are normally shared between thread pairs and therefore
+          cause leaks between the threads. This is traditionally done from
+          the firmware setup, but some OSes also offers ways disable HT. In
+          some cases it may be disabled by default, but please verify as the
+          effectiveness of the mitigation depends on it.
+        </para>
+
+        <para>
+          The default action taken by VirtualBox is to clear the affected
+          buffers when a thread is scheduled to execute guest code, rather
+          than on each VM entry. This reduces the performance impact, while
+          making the assumption that the host OS will not handle security
+          sensitive data from interrupt handlers and similar without taking
+          precautions.
+        </para>
+
+        <para>
+          A more aggressive flushing option is provided via the
+          VBoxManage modifyvm option
+          <computeroutput>--mds-clear-on-vm-entry</computeroutput>. When
+          enabled the affected buffers will be cleared on every VM entry.
+          The performance impact is greater than with the default option,
+          though this of course depends on the workload.  Workloads producing
+          a lot of VM exits (like networking, VGA access, and similiar) will
+          probably be most impacted.
+        </para>
+
+        <para>
+          For users not concerned by this security issue, the default
+          mitigation can be disabled using
+        </para>
+
+        <para>
+          <computeroutput>VBoxManage modifyvm name --mds-clear-on-sched
+          off</computeroutput>
+        </para>
+
+      </sect3>
+
+    </sect2>
+
+  </sect1>
 
 </chapter>

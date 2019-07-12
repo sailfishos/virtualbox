@@ -1,12 +1,10 @@
 /* $Id: UIUpdateManager.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIUpdateManager class implementation
+ * VBox Qt GUI - UIUpdateManager class implementation.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,33 +15,46 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QTimer>
-#include <QDir>
-#include <QPointer>
-#include <VBox/version.h>
+# include <QTimer>
+# include <QDir>
+# include <QPointer>
+# include <QUrl>
+# include <QUrlQuery>
 
 /* GUI includes: */
-#include "UIUpdateDefs.h"
-#include "UIUpdateManager.h"
-#include "UINetworkManager.h"
-#include "UINetworkCustomer.h"
-#include "UINetworkRequest.h"
-#include "VBoxGlobal.h"
-#include "UIMessageCenter.h"
-#include "UIModalWindowManager.h"
-#include "VBoxUtils.h"
-#include "UIDownloaderExtensionPack.h"
-#include "UIGlobalSettingsExtension.h"
-#include "QIProcess.h"
+# include "UIUpdateDefs.h"
+# include "UIUpdateManager.h"
+# include "UINetworkManager.h"
+# include "UINetworkCustomer.h"
+# include "UINetworkRequest.h"
+# include "VBoxGlobal.h"
+# include "UIMessageCenter.h"
+# include "UIExtraDataManager.h"
+# include "UIModalWindowManager.h"
+# include "VBoxUtils.h"
+# include "UIDownloaderExtensionPack.h"
+# include "UIGlobalSettingsExtension.h"
+# include "QIProcess.h"
 
 /* COM includes: */
-#include "CExtPack.h"
-#include "CExtPackManager.h"
+# include "CExtPack.h"
+# include "CExtPackManager.h"
 
 /* Other VBox includes: */
-#include <iprt/path.h>
-#include <iprt/system.h>
+# include <iprt/path.h>
+# include <iprt/system.h>
+# include <VBox/version.h>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+
+/* enable to test the version update check */
+//#define VBOX_NEW_VERSION_TEST "5.1.12_0 http://unknown.unknown.org/0.0.0/VirtualBox-0.0.0-0-unknown.pkg"
 
 /* Forward declarations: */
 class UIUpdateStep;
@@ -102,20 +113,20 @@ public:
         if (pQueue->isEmpty())
         {
             /* Connect starting-signal of the queue to starting-slot of this step: */
-            connect(pQueue, SIGNAL(sigStartQueue()), this, SLOT(sltStartStep()), Qt::QueuedConnection);
+            connect(pQueue, &UIUpdateQueue::sigStartQueue, this, &UIUpdateStep::sltStartStep, Qt::QueuedConnection);
         }
         /* If queue has at least one step already: */
         else
         {
             /* Reconnect completion-signal of the last-step from completion-signal of the queue to starting-slot of this step: */
-            disconnect(pQueue->lastStep(), SIGNAL(sigStepComplete()), pQueue, SIGNAL(sigQueueFinished()));
-            connect(pQueue->lastStep(), SIGNAL(sigStepComplete()), this, SLOT(sltStartStep()), Qt::QueuedConnection);
+            disconnect(pQueue->lastStep(), &UIUpdateStep::sigStepComplete, pQueue, &UIUpdateQueue::sigQueueFinished);
+            connect(pQueue->lastStep(), &UIUpdateStep::sigStepComplete, this, &UIUpdateStep::sltStartStep, Qt::QueuedConnection);
         }
 
         /* Connect completion-signal of this step to the completion-signal of the queue: */
-        connect(this, SIGNAL(sigStepComplete()), pQueue, SIGNAL(sigQueueFinished()), Qt::QueuedConnection);
+        connect(this, &UIUpdateStep::sigStepComplete, pQueue, &UIUpdateQueue::sigQueueFinished, Qt::QueuedConnection);
         /* Connect completion-signal of this step to the destruction-slot of this step: */
-        connect(this, SIGNAL(sigStepComplete()), this, SLOT(deleteLater()), Qt::QueuedConnection);
+        connect(this, &UIUpdateStep::sigStepComplete, this, &UIUpdateStep::deleteLater, Qt::QueuedConnection);
 
         /* Remember this step as the last one: */
         pQueue->setLastStep(this);
@@ -157,21 +168,17 @@ private slots:
 
 private:
 
+    /** Returns description of the current network operation. */
+    virtual const QString description() const
+    {
+        return tr("Checking for a new VirtualBox version...");
+    }
+
     /* Prepare network request: */
     void prepareNetworkRequest()
     {
-        /* Calculate the count of checks left: */
-        int cCount = 1;
-        QString strCount = vboxGlobal().virtualBox().GetExtraData(GUI_UpdateCheckCount);
-        if (!strCount.isEmpty())
-        {
-            bool ok = false;
-            int c = strCount.toLongLong(&ok);
-            if (ok) cCount = c;
-        }
-
         /* Compose query: */
-        QUrl url(m_url);
+        QUrlQuery url;
         url.addQueryItem("platform", vboxGlobal().virtualBox().GetPackageType());
         /* Check if branding is active: */
         if (vboxGlobal().brandingIsActive())
@@ -188,15 +195,16 @@ private:
             url.addQueryItem("version", QString("%1_%2").arg(vboxGlobal().virtualBox().GetVersion())
                                                         .arg(vboxGlobal().virtualBox().GetRevision()));
         }
-        url.addQueryItem("count", QString::number(cCount));
-        url.addQueryItem("branch", VBoxUpdateData(vboxGlobal().virtualBox().GetExtraData(GUI_UpdateDate)).branchName());
+        url.addQueryItem("count", QString::number(gEDataManager->applicationUpdateCheckCounter()));
+        url.addQueryItem("branch", VBoxUpdateData(gEDataManager->applicationUpdateData()).branchName());
         QString strUserAgent(QString("VirtualBox %1 <%2>").arg(vboxGlobal().virtualBox().GetVersion()).arg(platformInfo()));
 
         /* Send GET request: */
-        QNetworkRequest request;
-        request.setUrl(url);
-        request.setRawHeader("User-Agent", strUserAgent.toAscii());
-        createNetworkRequest(request, UINetworkRequestType_GET_Our, tr("Checking for a new VirtualBox version..."));
+        UserDictionary headers;
+        headers["User-Agent"] = strUserAgent;
+        QUrl fullUrl(m_url);
+        fullUrl.setQuery(url);
+        createNetworkRequest(UINetworkRequestType_GET, QList<QUrl>() << fullUrl, headers);
     }
 
     /* Handle network reply canceled: */
@@ -212,8 +220,11 @@ private:
         /* Deserialize incoming data: */
         QString strResponseData(pReply->readAll());
 
+#ifdef VBOX_NEW_VERSION_TEST
+        strResponseData = VBOX_NEW_VERSION_TEST;
+#endif
         /* Newer version of necessary package found: */
-        if (strResponseData.indexOf(QRegExp("^\\d+\\.\\d+\\.\\d+ \\S+$")) == 0)
+        if (strResponseData.indexOf(QRegExp("^\\d+\\.\\d+\\.\\d+(_[0-9A-Z]+)? \\S+$")) == 0)
         {
             QStringList response = strResponseData.split(" ", QString::SkipEmptyParts);
             msgCenter().showUpdateSuccess(response[0], response[1]);
@@ -225,16 +236,8 @@ private:
                 msgCenter().showUpdateNotFound();
         }
 
-        /* Save left count of checks: */
-        int cCount = 1;
-        QString strCount = vboxGlobal().virtualBox().GetExtraData(GUI_UpdateCheckCount);
-        if (!strCount.isEmpty())
-        {
-            bool ok = false;
-            int c = strCount.toLongLong(&ok);
-            if (ok) cCount = c;
-        }
-        vboxGlobal().virtualBox().SetExtraData(GUI_UpdateCheckCount, QString("%1").arg((qulonglong)cCount + 1));
+        /* Increment update check counter: */
+        gEDataManager->incrementApplicationUpdateCheckCounter();
 
         /* Notify about step completion: */
         emit sigStepComplete();
@@ -338,6 +341,13 @@ private slots:
     /* Startup slot: */
     void sltStartStep()
     {
+        /* Return if Selector UI has a direct request to install EP: */
+        if (vboxGlobal().isEPInstallationRequested())
+        {
+            emit sigStepComplete();
+            return;
+        }
+
         /* Return if already downloading: */
         if (UIDownloaderExtensionPack::current())
         {
@@ -355,22 +365,32 @@ private slots:
         }
 
         /* Get VirtualBox version: */
-        QString strVBoxVersion(vboxGlobal().vboxVersionStringNormalized());
-        QByteArray abVBoxVersion = strVBoxVersion.toUtf8();
-        VBoxVersion vboxVersion(strVBoxVersion);
-
+        UIVersion vboxVersion(vboxGlobal().vboxVersionStringNormalized());
         /* Get extension pack version: */
         QString strExtPackVersion(extPack.GetVersion());
         QByteArray abExtPackVersion = strExtPackVersion.toUtf8();
 
-        /* Skip the check in unstable VBox version and if the extension pack
-           is equal to or newer than VBox.
+        /* If this version being developed: */
+        if (vboxVersion.z() % 2 == 1)
+        {
+            /* If this version being developed on release branch (we use released one): */
+            if (vboxVersion.z() < 97)
+                vboxVersion.setZ(vboxVersion.z() - 1);
+            /* If this version being developed on trunk (we skip check at all): */
+            else
+            {
+                emit sigStepComplete();
+                return;
+            }
+        }
 
-           Note! Use RTStrVersionCompare for the comparison here as it takes
-                 the beta/alpha/preview/whatever tags into consideration when
-                 comparing versions. */
-        if (   vboxVersion.z() % 2 != 0
-            || RTStrVersionCompare(abExtPackVersion.constData(), abVBoxVersion.constData()) >= 0)
+        /* Get updated VirtualBox version: */
+        const QString strVBoxVersion = vboxVersion.toString();
+
+        /* Skip the check if the extension pack is equal to or newer than VBox.
+         * Note! Use RTStrVersionCompare for the comparison here as it takes the
+         *       beta/alpha/preview/whatever tags into consideration when comparing versions. */
+        if (RTStrVersionCompare(abExtPackVersion.constData(), strVBoxVersion.toUtf8().constData()) >= 0)
         {
             emit sigStepComplete();
             return;
@@ -396,10 +416,11 @@ private slots:
         /* Create and configure the Extension Pack downloader: */
         UIDownloaderExtensionPack *pDl = UIDownloaderExtensionPack::create();
         /* After downloading finished => propose to install the Extension Pack: */
-        connect(pDl, SIGNAL(sigDownloadFinished(const QString&, const QString&, QString)),
-                this, SLOT(sltHandleDownloadedExtensionPack(const QString&, const QString&, QString)));
+        connect(pDl, &UIDownloaderExtensionPack::sigDownloadFinished,
+                this, &UIUpdateStepVirtualBoxExtensionPack::sltHandleDownloadedExtensionPack);
         /* Also, destroyed downloader is a signal to finish the step: */
-        connect(pDl, SIGNAL(destroyed(QObject*)), this, SIGNAL(sigStepComplete()));
+        connect(pDl, &UIDownloaderExtensionPack::destroyed,
+                this, &UIUpdateStepVirtualBoxExtensionPack::sigStepComplete);
         /* Start downloading: */
         pDl->start();
     }
@@ -410,6 +431,27 @@ private slots:
         /* Warn the user about extension pack was downloaded and saved, propose to install it: */
         if (msgCenter().proposeInstallExtentionPack(GUI_ExtPackName, strSource, QDir::toNativeSeparators(strTarget)))
             UIGlobalSettingsExtension::doInstallation(strTarget, strDigest, windowManager().networkManagerOrMainWindowShown(), NULL);
+        /* Propose to delete the downloaded extension pack: */
+        if (msgCenter().proposeDeleteExtentionPack(QDir::toNativeSeparators(strTarget)))
+        {
+            /* Delete the downloaded extension pack: */
+            QFile::remove(QDir::toNativeSeparators(strTarget));
+            /* Get the list of old extension pack files in VirtualBox homefolder: */
+            const QStringList oldExtPackFiles = QDir(vboxGlobal().homeFolder()).entryList(QStringList("*.vbox-extpack"),
+                                                                                          QDir::Files);
+            /* Propose to delete old extension pack files if there are any: */
+            if (oldExtPackFiles.size())
+            {
+                if (msgCenter().proposeDeleteOldExtentionPacks(oldExtPackFiles))
+                {
+                    foreach (const QString &strExtPackFile, oldExtPackFiles)
+                    {
+                        /* Delete the old extension pack file: */
+                        QFile::remove(QDir::toNativeSeparators(QDir(vboxGlobal().homeFolder()).filePath(strExtPackFile)));
+                    }
+                }
+            }
+        }
     }
 };
 
@@ -454,13 +496,11 @@ UIUpdateManager::UIUpdateManager()
         m_pInstance = this;
 
     /* Configure queue: */
-    connect(m_pQueue, SIGNAL(sigQueueFinished()), this, SLOT(sltHandleUpdateFinishing()));
+    connect(m_pQueue, &UIUpdateQueue::sigQueueFinished, this, &UIUpdateManager::sltHandleUpdateFinishing);
 
 #ifdef VBOX_WITH_UPDATE_REQUEST
     /* Ask updater to check for the first time: */
-    CVirtualBox vbox = vboxGlobal().virtualBox();
-    if (VBoxGlobal::shouldWeAllowApplicationUpdate(vbox) &&
-        !vboxGlobal().isVMConsoleProcess())
+    if (gEDataManager->applicationUpdateEnabled() && !vboxGlobal().isVMConsoleProcess())
         QTimer::singleShot(0, this, SLOT(sltCheckIfUpdateIsNecessary()));
 #endif /* VBOX_WITH_UPDATE_REQUEST */
 }
@@ -490,10 +530,14 @@ void UIUpdateManager::sltCheckIfUpdateIsNecessary(bool fForceCall /* = false */)
     m_fIsRunning = true;
 
     /* Load/decode curent update data: */
-    VBoxUpdateData currentData(vboxGlobal().virtualBox().GetExtraData(GUI_UpdateDate));
+    VBoxUpdateData currentData(gEDataManager->applicationUpdateData());
 
     /* If update is really necessary: */
-    if (fForceCall || currentData.isNeedToCheck())
+    if (
+#ifdef VBOX_NEW_VERSION_TEST
+        true ||
+#endif
+        fForceCall || currentData.isNeedToCheck())
     {
         /* Prepare update queue: */
         new UIUpdateStepVirtualBox(m_pQueue, fForceCall);
@@ -508,10 +552,10 @@ void UIUpdateManager::sltCheckIfUpdateIsNecessary(bool fForceCall /* = false */)
 void UIUpdateManager::sltHandleUpdateFinishing()
 {
     /* Load/decode curent update data: */
-    VBoxUpdateData currentData(vboxGlobal().virtualBox().GetExtraData(GUI_UpdateDate));
+    VBoxUpdateData currentData(gEDataManager->applicationUpdateData());
     /* Encode/save new update data: */
     VBoxUpdateData newData(currentData.periodIndex(), currentData.branchIndex());
-    vboxGlobal().virtualBox().SetExtraData(GUI_UpdateDate, newData.data());
+    gEDataManager->setApplicationUpdateData(newData.data());
 
 #ifdef VBOX_WITH_UPDATE_REQUEST
     /* Ask updater to check for the next time: */

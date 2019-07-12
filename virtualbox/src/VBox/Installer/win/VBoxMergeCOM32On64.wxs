@@ -2,7 +2,7 @@
 <!--
     VirtualBox Windows Installation Script (WiX)
 
-    Copyright (C) 2006-2014 Oracle Corporation
+    Copyright (C) 2006-2015 Oracle Corporation
 
     This file is part of VirtualBox Open Source Edition (OSE), as
     available from http://www.virtualbox.org. This file is free software;
@@ -13,10 +13,10 @@
     hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
 -->
 
-<?include Properties.wxi ?>
-
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
      xmlns:difxapp="http://schemas.microsoft.com/wix/DifxAppExtension">
+
+    <?include Defines.wxi ?>
 
     <Module Id="msm_VBoxCOM32On64"
             Language="!(loc.LANG)"
@@ -33,13 +33,16 @@
                  Platform="$(var.Property_Platform)"
                  SummaryCodepage="1252"/>
 
+        <?include CommonProperties.wxi ?>
+        <?include PublicProperties.wxi ?>
+
         <!-- Here comes the file/directory list -->
         <Directory Id="TARGETDIR" Name="SourceDir">
-            <Directory Id="MergeRedirectFolder" FileSource=".">
+            <Directory Id="msm_VBoxApplicationFolder" FileSource=".">
 
                 <?include VBoxMergeCOM32On64.wxi ?>
 
-            </Directory> <!-- MergeRedirectFolder -->
+            </Directory> <!-- msm_VBoxApplicationFolder -->
         </Directory> <!-- TARGETDIR -->
 
     </Module>

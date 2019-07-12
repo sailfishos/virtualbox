@@ -1,13 +1,10 @@
 /* $Id: CocoaEventHelper.mm $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Declarations of utility functions for handling Darwin Cocoa specific event
- * handling tasks
+ * VBox Qt GUI - Declarations of utility functions for handling Darwin Cocoa specific event handling tasks.
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,6 +20,7 @@
 #include "DarwinKeyboard.h"
 
 /* Global includes */
+#import <Cocoa/Cocoa.h>
 #import <AppKit/NSEvent.h>
 #include <Carbon/Carbon.h>
 
@@ -293,5 +291,20 @@ void darwinPrintEvent(const char *pszPrefix, ConstNativeNSEventRef pEvent)
             printf(" Unknown!\n");
             break;
     }
+}
+
+void darwinPostStrippedMouseEvent(ConstNativeNSEventRef pEvent)
+{
+    /* Create and post new stripped event: */
+    NSEvent *pNewEvent = [NSEvent mouseEventWithType:[pEvent type]
+                                            location:[pEvent locationInWindow]
+                                       modifierFlags:0
+                                           timestamp:[pEvent timestamp] // [NSDate timeIntervalSinceReferenceDate] ?
+                                        windowNumber:[pEvent windowNumber]
+                                             context:[pEvent context]
+                                         eventNumber:[pEvent eventNumber]
+                                          clickCount:[pEvent clickCount]
+                                            pressure:[pEvent pressure]];
+    [NSApp postEvent:pNewEvent atStart:YES];
 }
 

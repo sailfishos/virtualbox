@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,12 +15,15 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#define LOG_GROUP LOG_GROUP_MAIN_USBDEVICE
+#include "LoggingNew.h"
+
 #include "USBDeviceImpl.h"
 
 #include "AutoCaller.h"
-#include "Logging.h"
 
 #include <iprt/cpp/utils.h>
+
 
 // constructor / destructor
 /////////////////////////////////////////////////////////////////////////////
@@ -67,17 +70,28 @@ HRESULT OUSBDevice::init(IUSBDevice *aUSBDevice)
     hrc = aUSBDevice->COMGETTER(Revision)(&unconst(mData.revision));
     ComAssertComRCRet(hrc, hrc);
 
-    hrc = aUSBDevice->COMGETTER(Manufacturer)(unconst(mData.manufacturer).asOutParam());
-    ComAssertComRCRet(hrc, hrc);
+    BSTR tmp;
+    BSTR *bptr = &tmp;
 
-    hrc = aUSBDevice->COMGETTER(Product)(unconst(mData.product).asOutParam());
+    hrc = aUSBDevice->COMGETTER(Manufacturer)(bptr);
     ComAssertComRCRet(hrc, hrc);
+    unconst(mData.manufacturer) = Utf8Str(tmp);
 
-    hrc = aUSBDevice->COMGETTER(SerialNumber)(unconst(mData.serialNumber).asOutParam());
+    hrc = aUSBDevice->COMGETTER(Product)(bptr);
     ComAssertComRCRet(hrc, hrc);
+    unconst(mData.product) = Utf8Str(tmp);
 
-    hrc = aUSBDevice->COMGETTER(Address)(unconst(mData.address).asOutParam());
+    hrc = aUSBDevice->COMGETTER(SerialNumber)(bptr);
     ComAssertComRCRet(hrc, hrc);
+    unconst(mData.serialNumber) = Utf8Str(tmp);
+
+    hrc = aUSBDevice->COMGETTER(Address)(bptr);
+    ComAssertComRCRet(hrc, hrc);
+    unconst(mData.address) = Utf8Str(tmp);
+
+    hrc = aUSBDevice->COMGETTER(Backend)(bptr);
+    ComAssertComRCRet(hrc, hrc);
+    unconst(mData.backend) = Utf8Str(tmp);
 
     hrc = aUSBDevice->COMGETTER(Port)(&unconst(mData.port));
     ComAssertComRCRet(hrc, hrc);
@@ -86,6 +100,9 @@ HRESULT OUSBDevice::init(IUSBDevice *aUSBDevice)
     ComAssertComRCRet(hrc, hrc);
 
     hrc = aUSBDevice->COMGETTER(PortVersion)(&unconst(mData.portVersion));
+    ComAssertComRCRet(hrc, hrc);
+
+    hrc = aUSBDevice->COMGETTER(Speed)(&unconst(mData.speed));
     ComAssertComRCRet(hrc, hrc);
 
     hrc = aUSBDevice->COMGETTER(Remote)(&unconst(mData.remote));
@@ -126,6 +143,7 @@ void OUSBDevice::uninit()
     unconst(mData.serialNumber).setNull();
 
     unconst(mData.address).setNull();
+    unconst(mData.backend).setNull();
 
     unconst(mData.port) = 0;
     unconst(mData.version) = 1;
@@ -143,15 +161,10 @@ void OUSBDevice::uninit()
  * @returns COM status code
  * @param   aId   Address of result variable.
  */
-STDMETHODIMP OUSBDevice::COMGETTER(Id)(BSTR *aId)
+HRESULT OUSBDevice::getId(com::Guid &aId)
 {
-    CheckComArgOutPointerValid(aId);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
-    Guid(mData.id).toUtf16().detachTo(aId);
+    aId = mData.id;
 
     return S_OK;
 }
@@ -163,13 +176,8 @@ STDMETHODIMP OUSBDevice::COMGETTER(Id)(BSTR *aId)
  * @returns COM status code
  * @param   aVendorId   Where to store the vendor id.
  */
-STDMETHODIMP OUSBDevice::COMGETTER(VendorId)(USHORT *aVendorId)
+HRESULT OUSBDevice::getVendorId(USHORT *aVendorId)
 {
-    CheckComArgOutPointerValid(aVendorId);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
     *aVendorId = mData.vendorId;
 
@@ -183,13 +191,8 @@ STDMETHODIMP OUSBDevice::COMGETTER(VendorId)(USHORT *aVendorId)
  * @returns COM status code
  * @param   aProductId  Where to store the product id.
  */
-STDMETHODIMP OUSBDevice::COMGETTER(ProductId)(USHORT *aProductId)
+HRESULT OUSBDevice::getProductId(USHORT *aProductId)
 {
-    CheckComArgOutPointerValid(aProductId);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
     *aProductId = mData.productId;
 
@@ -203,13 +206,8 @@ STDMETHODIMP OUSBDevice::COMGETTER(ProductId)(USHORT *aProductId)
  * @returns COM status code
  * @param   aRevision  Where to store the revision BCD.
  */
-STDMETHODIMP OUSBDevice::COMGETTER(Revision)(USHORT *aRevision)
+HRESULT OUSBDevice::getRevision(USHORT *aRevision)
 {
-    CheckComArgOutPointerValid(aRevision);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
     *aRevision = mData.revision;
 
@@ -222,15 +220,10 @@ STDMETHODIMP OUSBDevice::COMGETTER(Revision)(USHORT *aRevision)
  * @returns COM status code
  * @param   aManufacturer     Where to put the return string.
  */
-STDMETHODIMP OUSBDevice::COMGETTER(Manufacturer)(BSTR *aManufacturer)
+HRESULT OUSBDevice::getManufacturer(com::Utf8Str &aManufacturer)
 {
-    CheckComArgOutPointerValid(aManufacturer);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
-    mData.manufacturer.cloneTo(aManufacturer);
+    aManufacturer = mData.manufacturer;
 
     return S_OK;
 }
@@ -242,15 +235,10 @@ STDMETHODIMP OUSBDevice::COMGETTER(Manufacturer)(BSTR *aManufacturer)
  * @returns COM status code
  * @param   aProduct          Where to put the return string.
  */
-STDMETHODIMP OUSBDevice::COMGETTER(Product)(BSTR *aProduct)
+HRESULT OUSBDevice::getProduct(com::Utf8Str &aProduct)
 {
-    CheckComArgOutPointerValid(aProduct);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
-    mData.product.cloneTo(aProduct);
+    aProduct = mData.product;
 
     return S_OK;
 }
@@ -262,15 +250,10 @@ STDMETHODIMP OUSBDevice::COMGETTER(Product)(BSTR *aProduct)
  * @returns COM status code
  * @param   aSerialNumber     Where to put the return string.
  */
-STDMETHODIMP OUSBDevice::COMGETTER(SerialNumber)(BSTR *aSerialNumber)
+HRESULT OUSBDevice::getSerialNumber(com::Utf8Str &aSerialNumber)
 {
-    CheckComArgOutPointerValid(aSerialNumber);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
-    mData.serialNumber.cloneTo(aSerialNumber);
+    aSerialNumber = mData.serialNumber;
 
     return S_OK;
 }
@@ -282,67 +265,74 @@ STDMETHODIMP OUSBDevice::COMGETTER(SerialNumber)(BSTR *aSerialNumber)
  * @returns COM status code
  * @param   aAddress          Where to put the return string.
  */
-STDMETHODIMP OUSBDevice::COMGETTER(Address)(BSTR *aAddress)
+HRESULT OUSBDevice::getAddress(com::Utf8Str &aAddress)
 {
-    CheckComArgOutPointerValid(aAddress);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
-    mData.address.cloneTo(aAddress);
+    aAddress = mData.address;
 
     return S_OK;
 }
 
-STDMETHODIMP OUSBDevice::COMGETTER(Port)(USHORT *aPort)
+HRESULT OUSBDevice::getPort(USHORT *aPort)
 {
-    CheckComArgOutPointerValid(aPort);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
     *aPort = mData.port;
 
     return S_OK;
 }
 
-STDMETHODIMP OUSBDevice::COMGETTER(Version)(USHORT *aVersion)
+HRESULT OUSBDevice::getVersion(USHORT *aVersion)
 {
-    CheckComArgOutPointerValid(aVersion);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
     *aVersion = mData.version;
 
     return S_OK;
 }
 
-STDMETHODIMP OUSBDevice::COMGETTER(PortVersion)(USHORT *aPortVersion)
+HRESULT OUSBDevice::getPortVersion(USHORT *aPortVersion)
 {
-    CheckComArgOutPointerValid(aPortVersion);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* this is const, no need to lock */
     *aPortVersion = mData.portVersion;
 
     return S_OK;
 }
 
-STDMETHODIMP OUSBDevice::COMGETTER(Remote)(BOOL *aRemote)
+HRESULT OUSBDevice::getSpeed(USBConnectionSpeed_T *aSpeed)
 {
-    CheckComArgOutPointerValid(aRemote);
+    /* this is const, no need to lock */
+    *aSpeed = mData.speed;
 
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
+    return S_OK;
+}
 
+HRESULT OUSBDevice::getRemote(BOOL *aRemote)
+{
     /* this is const, no need to lock */
     *aRemote = mData.remote;
+
+    return S_OK;
+}
+
+/**
+ * Returns the device specific backend.
+ *
+ * @returns COM status code
+ * @param   aBackend          Where to put the return string.
+ */
+HRESULT OUSBDevice::getBackend(com::Utf8Str &aBackend)
+{
+    /* this is const, no need to lock */
+    aBackend = mData.backend;
+
+    return S_OK;
+}
+
+HRESULT OUSBDevice::getDeviceInfo(std::vector<com::Utf8Str> &aInfo)
+{
+    /* this is const, no need to lock */
+    aInfo.resize(2);
+    aInfo[0] = mData.manufacturer;
+    aInfo[1] = mData.product;
 
     return S_OK;
 }

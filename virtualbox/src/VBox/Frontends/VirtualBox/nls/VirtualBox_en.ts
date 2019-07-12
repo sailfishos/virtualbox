@@ -1,31 +1,58 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="en">
+<TS version="2.1" language="en">
+<context>
+    <name>UIAddDiskEncryptionPasswordDialog</name>
+    <message numerus="yes">
+        <source>This virtual machine is password protected. Please enter the %n encryption password(s) below.</source>
+        <comment>This text is never used with n == 0. Feel free to drop the %n where possible, we only included it because of problems with Qt Linguist (but the user can see how many passwords are in the list and doesn&apos;t need to be told).</comment>
+        <translation>
+            <numerusform>This virtual machine is password protected. Please enter the encryption password below.</numerusform>
+            <numerusform>This virtual machine is password protected. Please enter the encryption passwords below.</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>&lt;nobr&gt;Used by the following %n hard disk(s):&lt;/nobr&gt;&lt;br&gt;%1</source>
+        <comment>This text is never used with n == 0. Feel free to drop the %n where possible, we only included it because of problems with Qt Linguist (but the user can see how many hard drives are in the tool-tip and doesn&apos;t need to be told).</comment>
+        <translation type="unfinished">
+            <numerusform></numerusform>
+            <numerusform></numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>UIEncryptionDataModel</name>
+    <message numerus="yes">
+        <source>Used by the following %n hard drive(s):&lt;br&gt;%1</source>
+        <comment>This text is never used with n == 0. Feel free to drop the %n where possible, we only included it because of problems with Qt Linguist (but the user can see how many hard drives are in the tool-tip and doesn&apos;t need to be told).</comment>
+        <translation type="obsolete">
+            <numerusform>Used by the following hard drive:&lt;br&gt;%1</numerusform>
+            <numerusform>Used by the following hard drives:&lt;br&gt;%1</numerusform>
+        </translation>
+    </message>
+</context>
 <context>
     <name>UIGChooserItemGroup</name>
     <message numerus="yes">
-        <location filename="../src/selector/graphics/chooser/UIGChooserItemGroup.cpp" line="663"/>
         <source>%n group(s)</source>
         <comment>Group item tool-tip / Group info</comment>
-        <translation>
+        <translation type="vanished">
             <numerusform>%n group</numerusform>
             <numerusform>%n groups</numerusform>
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/selector/graphics/chooser/UIGChooserItemGroup.cpp" line="679"/>
         <source>%n machine(s)</source>
         <comment>Group item tool-tip / Machine info</comment>
-        <translation>
+        <translation type="vanished">
             <numerusform>%n machine</numerusform>
             <numerusform>%n machines</numerusform>
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/selector/graphics/chooser/UIGChooserItemGroup.cpp" line="680"/>
         <source>(%n running)</source>
         <comment>Group item tool-tip / Running machine info</comment>
-        <translation>
+        <translation type="vanished">
             <numerusform>(%n running)</numerusform>
             <numerusform>(%n running)</numerusform>
         </translation>
@@ -49,7 +76,6 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/globals/UIMessageCenter.cpp" line="1576"/>
         <source>&lt;p&gt;The %n following virtual machine(s) are currently in a saved state: &lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;If you continue the runtime state of the exported machine(s) will be discarded. The other machine(s) will not be changed.&lt;/p&gt;</source>
         <comment>This text is never used with n == 0. Feel free to drop the %n where possible, we only included it because of problems with Qt Linguist (but the user can see how many machines are in the list and doesn&apos;t need to be told).</comment>
         <translation>
@@ -59,9 +85,18 @@
     </message>
 </context>
 <context>
+    <name>UITakeSnapshotDialog</name>
+    <message numerus="yes">
+        <source>Warning: You are taking a snapshot of a running machine which has %n immutable image(s) attached to it. As long as you are working from this snapshot the immutable image(s) will not be reset to avoid loss of data.</source>
+        <translation type="unfinished">
+            <numerusform>Warning: You are taking a snapshot of a running machine which has %n immutable image attached to it. As long as you are working from this snapshot the immutable image will not be reset to avoid loss of data.</numerusform>
+            <numerusform>Warning: You are taking a snapshot of a running machine which has %n immutable images attached to it. As long as you are working from this snapshot the immutable images will not be reset to avoid loss of data.</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
     <name>VBoxGlobal</name>
     <message numerus="yes">
-        <location filename="../src/globals/VBoxGlobal.h" line="169"/>
         <source>%n year(s)</source>
         <translation>
             <numerusform>%n year</numerusform>
@@ -69,7 +104,6 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/globals/VBoxGlobal.h" line="174"/>
         <source>%n month(s)</source>
         <translation>
             <numerusform>%n month</numerusform>
@@ -77,7 +111,6 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/globals/VBoxGlobal.h" line="179"/>
         <source>%n day(s)</source>
         <translation>
             <numerusform>%n day</numerusform>
@@ -85,7 +118,6 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/globals/VBoxGlobal.h" line="184"/>
         <source>%n hour(s)</source>
         <translation>
             <numerusform>%n hour</numerusform>
@@ -93,7 +125,6 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/globals/VBoxGlobal.h" line="194"/>
         <source>%n second(s)</source>
         <translation>
             <numerusform>%n second</numerusform>
@@ -101,7 +132,6 @@
         </translation>
     </message>
     <message numerus="yes">
-        <location filename="../src/globals/VBoxGlobal.h" line="189"/>
         <source>%n minute(s)</source>
         <translation>
             <numerusform>%n minute</numerusform>
@@ -112,11 +142,37 @@
 <context>
     <name>VBoxTakeSnapshotDlg</name>
     <message numerus="yes">
-        <location filename="../src/VBoxTakeSnapshotDlg.cpp" line="73"/>
         <source>Warning: You are taking a snapshot of a running machine which has %n immutable image(s) attached to it. As long as you are working from this snapshot the immutable image(s) will not be reset to avoid loss of data.</source>
-        <translation>
+        <translation type="vanished">
             <numerusform>Warning: You are taking a snapshot of a running machine which has %n immutable image attached to it. As long as you are working from this snapshot the immutable image will not be reset to avoid loss of data.</numerusform>
             <numerusform>Warning: You are taking a snapshot of a running machine which has %n immutable images attached to it. As long as you are working from this snapshot the immutable images will not be reset to avoid loss of data.</numerusform>
+        </translation>
+    </message>
+</context>
+<context>
+    <name>UIChooserItemGroup</name>
+    <message numerus="yes">
+        <source>%n group(s)</source>
+        <comment>Group item tool-tip / Group info</comment>
+        <translation type="unfinished">
+            <numerusform>%n group</numerusform>
+            <numerusform>%n groups</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>%n machine(s)</source>
+        <comment>Group item tool-tip / Machine info</comment>
+        <translation type="unfinished">
+            <numerusform>%n machine</numerusform>
+            <numerusform>%n machines</numerusform>
+        </translation>
+    </message>
+    <message numerus="yes">
+        <source>(%n running)</source>
+        <comment>Group item tool-tip / Running machine info</comment>
+        <translation type="unfinished">
+            <numerusform>(%n running)</numerusform>
+            <numerusform>(%n running)</numerusform>
         </translation>
     </message>
 </context>

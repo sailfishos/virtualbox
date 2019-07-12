@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-linux-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/mem.h>
@@ -37,7 +37,7 @@
 #include "r0drv/alloc-r0drv.h"
 
 
-#if defined(RT_ARCH_AMD64) || defined(DOXYGEN_RUNNING)
+#if (defined(RT_ARCH_AMD64) || defined(DOXYGEN_RUNNING)) && !defined(RTMEMALLOC_EXEC_HEAP)
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
 /**
  * Starting with 2.6.23 we can use __get_vm_area and map_vm_area to allocate
@@ -63,9 +63,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 #ifdef RTMEMALLOC_EXEC_VM_AREA
 /**
  * Extended header used for headers marked with RTMEMHDR_FLAG_EXEC_VM_AREA.
@@ -87,14 +87,15 @@ typedef RTMEMLNXHDREX *PRTMEMLNXHDREX;
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef RTMEMALLOC_EXEC_HEAP
 /** The heap. */
 static RTHEAPSIMPLE g_HeapExec = NIL_RTHEAPSIMPLE;
 /** Spinlock protecting the heap. */
 static RTSPINLOCK   g_HeapExecSpinlock = NIL_RTSPINLOCK;
+#endif
 
 
 /**
@@ -103,8 +104,10 @@ static RTSPINLOCK   g_HeapExecSpinlock = NIL_RTSPINLOCK;
  */
 DECLHIDDEN(void) rtR0MemExecCleanup(void)
 {
+#ifdef RTMEMALLOC_EXEC_HEAP
     RTSpinlockDestroy(g_HeapExecSpinlock);
     g_HeapExecSpinlock = NIL_RTSPINLOCK;
+#endif
 }
 
 
@@ -120,11 +123,13 @@ DECLHIDDEN(void) rtR0MemExecCleanup(void)
  * The API only accept one single donation.
  *
  * @returns IPRT status code.
+ * @retval  VERR_NOT_SUPPORTED if the code isn't enabled.
  * @param   pvMemory    Pointer to the memory block.
  * @param   cb          The size of the memory block.
  */
 RTR0DECL(int) RTR0MemExecDonate(void *pvMemory, size_t cb)
 {
+#ifdef RTMEMALLOC_EXEC_HEAP
     int rc;
     AssertReturn(g_HeapExec == NIL_RTHEAPSIMPLE, VERR_WRONG_ORDER);
 
@@ -136,10 +141,13 @@ RTR0DECL(int) RTR0MemExecDonate(void *pvMemory, size_t cb)
             rtR0MemExecCleanup();
     }
     return rc;
+#else
+    RT_NOREF_PV(pvMemory); RT_NOREF_PV(cb);
+    return VERR_NOT_SUPPORTED;
+#endif
 }
 RT_EXPORT_SYMBOL(RTR0MemExecDonate);
 
-#endif /* RTMEMALLOC_EXEC_HEAP */
 
 
 #ifdef RTMEMALLOC_EXEC_VM_AREA
@@ -227,6 +235,7 @@ static PRTMEMHDR rtR0MemAllocExecVmArea(size_t cb)
 DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
 {
     PRTMEMHDR pHdr;
+    IPRT_LINUX_SAVE_EFL_AC();
 
     /*
      * Allocate.
@@ -290,7 +299,10 @@ DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
             pHdr = vmalloc(cb + sizeof(*pHdr));
     }
     if (RT_UNLIKELY(!pHdr))
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VERR_NO_MEMORY;
+    }
 
     /*
      * Initialize.
@@ -301,6 +313,7 @@ DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
     pHdr->cbReq     = cb;
 
     *ppHdr = pHdr;
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -310,6 +323,8 @@ DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
  */
 DECLHIDDEN(void) rtR0MemFree(PRTMEMHDR pHdr)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
+
     pHdr->u32Magic += 1;
     if (pHdr->fFlags & RTMEMHDR_FLAG_KMALLOC)
         kfree(pHdr);
@@ -338,6 +353,8 @@ DECLHIDDEN(void) rtR0MemFree(PRTMEMHDR pHdr)
 #endif
     else
         vfree(pHdr);
+
+    IPRT_LINUX_RESTORE_EFL_AC();
 }
 
 
@@ -376,6 +393,8 @@ RTR0DECL(void *) RTMemContAlloc(PRTCCPHYS pPhys, size_t cb)
     int             cOrder;
     unsigned        cPages;
     struct page    *paPages;
+    void           *pvRet;
+    IPRT_LINUX_SAVE_EFL_AC();
 
     /*
      * validate input.
@@ -427,10 +446,13 @@ RTR0DECL(void *) RTMemContAlloc(PRTCCPHYS pPhys, size_t cb)
 #endif
         }
         *pPhys = page_to_phys(paPages);
-        return phys_to_virt(page_to_phys(paPages));
+        pvRet = phys_to_virt(page_to_phys(paPages));
     }
+    else
+        pvRet = NULL;
 
-    return NULL;
+    IPRT_LINUX_RESTORE_EFL_AC();
+    return pvRet;
 }
 RT_EXPORT_SYMBOL(RTMemContAlloc);
 
@@ -449,6 +471,7 @@ RTR0DECL(void) RTMemContFree(void *pv, size_t cb)
         unsigned        cPages;
         unsigned        iPage;
         struct page    *paPages;
+        IPRT_LINUX_SAVE_EFL_AC();
 
         /* validate */
         AssertMsg(!((uintptr_t)pv & PAGE_OFFSET_MASK), ("pv=%p\n", pv));
@@ -471,6 +494,7 @@ RTR0DECL(void) RTMemContFree(void *pv, size_t cb)
 #endif
         }
         __free_pages(paPages, cOrder);
+        IPRT_LINUX_RESTORE_EFL_AC();
     }
 }
 RT_EXPORT_SYMBOL(RTMemContFree);

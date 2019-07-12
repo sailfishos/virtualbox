@@ -1,5 +1,10 @@
+/* $Id: tstHook.cpp $ */
+/** @file
+ * VBoxHook testcase.
+ */
+
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -10,14 +15,16 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <windows.h>
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
 #include <VBoxHook.h>
 #include <stdio.h>
 
-int main(int argc, char **argv)
+
+int main()
 {
     printf("Enabling global hook\n");
 
@@ -28,5 +35,8 @@ int main(int argc, char **argv)
 
     printf("Disabling global hook\n");
     VBoxHookRemoveWindowTracker();
+    CloseHandle(hEvent);
+
     return 0;
 }
+

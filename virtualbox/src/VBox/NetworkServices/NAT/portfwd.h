@@ -1,10 +1,10 @@
-/* $Id$ */
+/* $Id: portfwd.h $ */
 /** @file
  * NAT Network - port-forwarding rules, definitions and declarations.
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

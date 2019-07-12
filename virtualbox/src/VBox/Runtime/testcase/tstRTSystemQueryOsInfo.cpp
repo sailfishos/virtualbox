@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,20 +24,15 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/system.h>
 
 #include <iprt/assert.h>
 #include <iprt/string.h>
 #include <iprt/test.h>
-
-
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
-static int g_cErrors = 0;
 
 
 int main()

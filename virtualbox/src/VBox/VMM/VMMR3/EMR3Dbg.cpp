@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_EM
 #include <VBox/vmm/em.h>
 #include <VBox/dbg.h>
@@ -67,8 +68,12 @@ static DBGCCMD const g_aCmds[] =
 
 int emR3InitDbg(PVM pVM)
 {
-    int rc = DBGCRegisterCommands(&g_aCmds[0], RT_ELEMENTS(g_aCmds));
+    RT_NOREF_PV(pVM);
+    int rc = VINF_SUCCESS;
+#ifdef VBOX_WITH_DEBUGGER
+    rc = DBGCRegisterCommands(&g_aCmds[0], RT_ELEMENTS(g_aCmds));
     AssertLogRelRC(rc);
+#endif
     return rc;
 }
 

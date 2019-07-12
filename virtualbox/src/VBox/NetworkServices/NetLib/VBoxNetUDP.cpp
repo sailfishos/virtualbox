@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEFAULT
 #include "VBoxNetLib.h"
 #include <iprt/stream.h>
@@ -173,7 +174,7 @@ void *VBoxNetUDPMatch(PINTNETBUF pBuf, unsigned uDstPort, PCRTMAC pDstMac, uint3
     /*
      * We've got a match!
      */
-    *pcb = pUdpHdr->uh_ulen - sizeof(*pUdpHdr);
+    *pcb = RT_N2H_U16(pUdpHdr->uh_ulen) - sizeof(*pUdpHdr);
     return (void *)(pUdpHdr + 1);
 }
 

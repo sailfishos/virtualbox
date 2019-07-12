@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_THREAD
 #include <errno.h>
 #include <pthread.h>
@@ -57,7 +57,11 @@ RTR3DECL(RTTLS) RTTlsAlloc(void)
 RTR3DECL(int) RTTlsAllocEx(PRTTLS piTls, PFNRTTLSDTOR pfnDestructor)
 {
     pthread_key_t iTls = (pthread_key_t)NIL_RTTLS;
+#if defined(__GNUC__) && defined(RT_ARCH_X86)
+    int rc = pthread_key_create(&iTls, (void (*)(void*))pfnDestructor);
+#else
     int rc = pthread_key_create(&iTls, pfnDestructor);
+#endif
     if (!rc)
     {
         *piTls = iTls;

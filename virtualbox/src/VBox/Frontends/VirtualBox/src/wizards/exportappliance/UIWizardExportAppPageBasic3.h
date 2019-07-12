@@ -1,11 +1,10 @@
+/* $Id: UIWizardExportAppPageBasic3.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardExportAppPageBasic3 class declaration
+ * VBox Qt GUI - UIWizardExportAppPageBasic3 class declaration.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,7 +27,7 @@
 /* Forward declarations: */
 class QLabel;
 class QLineEdit;
-class VBoxEmptyFileSelector;
+class UIEmptyFilePathSelector;
 class QComboBox;
 class QCheckBox;
 class QIRichTextLabel;
@@ -81,7 +80,7 @@ protected:
     QLabel *m_pBucketLabel;
     QLineEdit *m_pBucketEditor;
     QLabel *m_pFileSelectorLabel;
-    VBoxEmptyFileSelector *m_pFileSelector;
+    UIEmptyFilePathSelector *m_pFileSelector;
     QLabel *m_pFormatComboBoxLabel;
     QComboBox *m_pFormatComboBox;
     QCheckBox *m_pManifestCheckbox;
@@ -112,7 +111,7 @@ protected:
 private slots:
 
     /* Format combo change handler: */
-    void sltUpdateFormatComboToolTip() { updateFormatComboToolTip(); }
+    void sltHandleFormatComboChange();
 
 private:
 

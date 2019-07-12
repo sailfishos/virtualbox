@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012-2014 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,11 +15,13 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <new> /* For bad_alloc. */
 
+#include <iprt/win/windows.h>
 #include <credentialprovider.h>
 
 #include <iprt/err.h>
@@ -408,22 +410,53 @@ VBoxCredProvProvider::GetFieldDescriptorAt(DWORD dwIndex, CREDENTIAL_PROVIDER_FI
 
         if (pcpFieldDesc)
         {
-            const VBOXCREDPROV_FIELD &field = s_VBoxCredProvFields[dwIndex];
+            const VBOXCREDPROV_FIELD &field = s_VBoxCredProvDefaultFields[dwIndex];
 
             RT_BZERO(pcpFieldDesc, sizeof(CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR));
 
-            pcpFieldDesc->dwFieldID = field.desc.dwFieldID;
-            pcpFieldDesc->cpft      = field.desc.cpft;
-            if (field.desc.pszLabel)
-                hr = SHStrDupW(field.desc.pszLabel, &pcpFieldDesc->pszLabel);
+            pcpFieldDesc->dwFieldID     = field.desc.dwFieldID;
+            pcpFieldDesc->cpft          = field.desc.cpft;
+
+            PCRTUTF16 pcwszField = NULL;
+
+            if (dwIndex != VBOXCREDPROV_FIELDID_PASSWORD) /* Don't ever get any password. Never ever, ever. */
+            {
+                if (m_pCred) /* If we have retrieved credentials, get the actual (current) value. */
+                    pcwszField = m_pCred->getField(dwIndex);
+                else /* Otherwise get the default value. */
+                    pcwszField = field.desc.pszLabel;
+            }
+
+            hr = SHStrDupW(pcwszField ? pcwszField : L"", &pcpFieldDesc->pszLabel);
+
+            VBoxCredProvVerbose(0, "VBoxCredProv::GetFieldDescriptorAt: dwIndex=%ld, pszLabel=%ls, hr=0x%08x\n",
+                                dwIndex,
+#ifdef DEBUG /* Don't show any (sensitive data) in release mode. */
+                                pcwszField ? pcwszField : L"",
+#else
+                                L"XXX",
+#endif
+                                hr);
+
+            pcpFieldDesc->guidFieldType = field.desc.guidFieldType;
         }
         else
             hr = E_OUTOFMEMORY;
 
         if (SUCCEEDED(hr))
+        {
             *ppFieldDescriptor = pcpFieldDesc;
-        else
+        }
+        else if (pcpFieldDesc)
+        {
+            if (pcpFieldDesc->pszLabel)
+            {
+                CoTaskMemFree(pcpFieldDesc->pszLabel);
+                pcpFieldDesc->pszLabel = NULL;
+            }
+
             CoTaskMemFree(pcpFieldDesc);
+        }
     }
     else
         hr = E_INVALIDARG;

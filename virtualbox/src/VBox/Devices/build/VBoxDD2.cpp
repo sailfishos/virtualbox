@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,9 +18,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV
 #include <VBox/vmm/pdm.h>
 #include <VBox/version.h>
@@ -32,13 +32,17 @@
 #include "VBoxDD2.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 const void *g_apvVBoxDDDependencies2[] =
 {
-    (void *)&g_abPcBiosBinary,
-    (void *)&g_abVgaBiosBinary,
+    (void *)&g_abPcBiosBinary386,
+    (void *)&g_abPcBiosBinary286,
+    (void *)&g_abPcBiosBinary8086,
+    (void *)&g_abVgaBiosBinary386,
+    (void *)&g_abVgaBiosBinary286,
+    (void *)&g_abVgaBiosBinary8086,
 #ifdef VBOX_WITH_PXE_ROM
     (void *)&g_abNetBiosBinary,
 #endif
@@ -56,15 +60,8 @@ extern "C" DECLEXPORT(int) VBoxDevicesRegister(PPDMDEVREGCB pCallbacks, uint32_t
 {
     LogFlow(("VBoxDevicesRegister: u32Version=%#x\n", u32Version));
     AssertReleaseMsg(u32Version == VBOX_VERSION, ("u32Version=%#x VBOX_VERSION=%#x\n", u32Version, VBOX_VERSION));
-    int rc;
 
-    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceAPIC);
-    if (RT_FAILURE(rc))
-        return rc;
-    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceIOAPIC);
-    if (RT_FAILURE(rc))
-        return rc;
-    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceLPC);
+    int rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceLPC);
     if (RT_FAILURE(rc))
         return rc;
 

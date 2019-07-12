@@ -7,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,9 +28,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define RTSEMRW_WITHOUT_REMAPPING
 #include <iprt/semaphore.h>
 #include "internal/iprt.h"
@@ -48,9 +48,9 @@
 #include "internal/strict.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /** Internal representation of a Read-Write semaphore for the
  * Generic implementation. */
@@ -158,6 +158,8 @@ RTDECL(int) RTSemRWCreateEx(PRTSEMRW phRWSem, uint32_t fFlags,
                             va_end(va);
                         }
                         RTLockValidatorRecMakeSiblings(&pThis->ValidatorWrite.Core, &pThis->ValidatorRead.Core);
+#else
+                        RT_NOREF_PV(hClass); RT_NOREF_PV(uSubClass); RT_NOREF_PV(pszNameFmt);
 #endif
                         *phRWSem = pThis;
                         return VINF_SUCCESS;
@@ -202,7 +204,7 @@ RTDECL(int) RTSemRWDestroy(RTSEMRW hRWSem)
              * Make it invalid and unusable.
              */
             ASMAtomicWriteU32(&pThis->u32Magic, ~RTSEMRW_MAGIC);
-            pThis->cReads = ~0;
+            pThis->cReads = UINT32_MAX;
 
             /*
              * Do actual cleanup. None of these can now fail.
@@ -256,6 +258,7 @@ RTDECL(uint32_t) RTSemRWSetSubClass(RTSEMRW hRWSem, uint32_t uSubClass)
     RTLockValidatorRecSharedSetSubClass(&pThis->ValidatorRead, uSubClass);
     return RTLockValidatorRecExclSetSubClass(&pThis->ValidatorWrite, uSubClass);
 #else
+    RT_NOREF_PV(hRWSem); RT_NOREF_PV(uSubClass);
     return RTLOCKVAL_SUB_CLASS_INVALID;
 #endif
 }
@@ -373,6 +376,7 @@ DECL_FORCE_INLINE(int) rtSemRWRequestRead(RTSEMRW hRWSem, RTMSINTERVAL cMillies,
             break;
 #else
         RTThreadBlocking(hThreadSelf, RTTHREADSTATE_RW_READ, false);
+        RT_NOREF_PV(pSrcPos);
 #endif
         int rcWait;
         if (fInterruptible)
@@ -662,6 +666,7 @@ DECL_FORCE_INLINE(int) rtSemRWRequestWrite(RTSEMRW hRWSem, RTMSINTERVAL cMillies
             break;
 #else
         RTThreadBlocking(hThreadSelf, RTTHREADSTATE_RW_WRITE, false);
+        RT_NOREF_PV(pSrcPos);
 #endif
         int rcWait;
         if (fInterruptible)

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,14 +24,15 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <Windows.h>
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
 
 #include <iprt/err.h>
+#include <iprt/log.h>
 #include <iprt/assert.h>
-#include <iprt/err.h>
 
 
 RTR3DECL(int)  RTErrConvertFromWin32(unsigned uNativeCode)
@@ -48,7 +49,7 @@ RTR3DECL(int)  RTErrConvertFromWin32(unsigned uNativeCode)
         case ERROR_PATH_NOT_FOUND:          return VERR_PATH_NOT_FOUND;
         case ERROR_TOO_MANY_OPEN_FILES:     return VERR_TOO_MANY_OPEN_FILES;
         case ERROR_ACCESS_DENIED:           return VERR_ACCESS_DENIED;
-        case ERROR_NOACCESS:                return VERR_ACCESS_DENIED;
+        case ERROR_NOACCESS:                return VERR_INVALID_POINTER; /* (STATUS_ACCESS_VIOLATION, STATUS_DATATYPE_MISALIGNMENT, STATUS_DATATYPE_MISALIGNMENT_ERROR) */
 
         case ERROR_INVALID_HANDLE:
         case ERROR_DIRECT_ACCESS_HANDLE:    return VERR_INVALID_HANDLE;
@@ -146,6 +147,7 @@ RTR3DECL(int)  RTErrConvertFromWin32(unsigned uNativeCode)
         case ERROR_TIMEOUT:                 return VERR_TIMEOUT;
 
         case ERROR_INVALID_NAME:
+        case ERROR_BAD_DEVICE:
         case ERROR_BAD_PATHNAME:            return VERR_INVALID_NAME;
 
         case ERROR_NEGATIVE_SEEK:           return VERR_NEGATIVE_SEEK;
@@ -182,13 +184,27 @@ RTR3DECL(int)  RTErrConvertFromWin32(unsigned uNativeCode)
 
         case ERROR_INVALID_EXE_SIGNATURE:   return VERR_INVALID_EXE_SIGNATURE;
         case ERROR_BAD_EXE_FORMAT:          return VERR_BAD_EXE_FORMAT;
-        case ERROR_RESOURCE_DATA_NOT_FOUND: return VERR_NO_DATA; ///@todo fix ERROR_RESOURCE_DATA_NOT_FOUND translation
-        case ERROR_INVALID_ADDRESS:         return VERR_INVALID_POINTER; ///@todo fix ERROR_INVALID_ADDRESS translation - dbghelp returns it on some line number queries.
+        case ERROR_FILE_CORRUPT:            return VERR_BAD_EXE_FORMAT;
+        case ERROR_RESOURCE_DATA_NOT_FOUND: return VERR_NO_DATA; /// @todo fix ERROR_RESOURCE_DATA_NOT_FOUND translation
+        case ERROR_INVALID_ADDRESS:         return VERR_INVALID_POINTER; /// @todo fix ERROR_INVALID_ADDRESS translation - dbghelp returns it on some line number queries.
 
         case ERROR_CANCELLED:               return VERR_CANCELLED;
+        case ERROR_USER_MAPPED_FILE:        return VERR_SHARING_VIOLATION;
         case ERROR_DIRECTORY:               return VERR_NOT_A_DIRECTORY;
 
+        case ERROR_TRUSTED_RELATIONSHIP_FAILURE:
+        case ERROR_TRUSTED_DOMAIN_FAILURE:
+                                            return VERR_AUTHENTICATION_FAILURE;
         case ERROR_LOGON_FAILURE:           return VERR_AUTHENTICATION_FAILURE;
+        case ERROR_PRIVILEGE_NOT_HELD:      return VERR_PRIVILEGE_NOT_HELD;
+
+        case ERROR_PASSWORD_EXPIRED:
+        case ERROR_ACCOUNT_RESTRICTION:
+        case ERROR_PASSWORD_RESTRICTION:
+        case ERROR_ACCOUNT_DISABLED:        return VERR_ACCOUNT_RESTRICTED;
+
+        case ERROR_INVALID_IMAGE_HASH:      return VERR_LDR_IMAGE_HASH;
+
 
         /*
          * Winsocket errors are mostly BSD errno.h wrappers.
@@ -412,10 +428,20 @@ RTR3DECL(int)  RTErrConvertFromWin32(unsigned uNativeCode)
         case ERROR_NOT_A_REPARSE_POINT: return VERR_NOT_SYMLINK;
 
         case NTE_BAD_ALGID:         return VERR_CR_PKIX_UNKNOWN_DIGEST_TYPE;
+
+        case ERROR_SERVICE_DOES_NOT_EXIST: return VERR_NOT_FOUND;
+
+#ifndef STATUS_ELEVATION_REQUIRED
+# define STATUS_ELEVATION_REQUIRED 0xc000042c
+#endif
+        case STATUS_ELEVATION_REQUIRED: return VERR_PRIVILEGE_NOT_HELD;
     }
 
     /* unknown error. */
-#ifndef DEBUG_dmik
+#ifndef IN_SUP_HARDENED_R3
+    AssertLogRelMsgFailed(("Unhandled error %u\n", uNativeCode));
+#else
+    /* hardened main has no LogRel */
     AssertMsgFailed(("Unhandled error %u\n", uNativeCode));
 #endif
     return VERR_UNRESOLVED_ERROR;

@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -56,6 +56,7 @@
 #else
 #define __GNUC_PREREQ__(ma, mi) 0
 #endif
+#undef  __pure2 /* darwin: avoid conflict with system headers when doing syntax checking of the headers */
 #define __pure2
 
 

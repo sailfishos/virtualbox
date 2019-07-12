@@ -1,10 +1,10 @@
-; $Id$
-; @file
+; $Id: VBoxGuestAdditionsVista.nsh $
+;; @file
 ; VBoxGuestAdditionsVista.nsh - Guest Additions installation for Windows Vista/7.
 ;
 
 ;
-; Copyright (C) 2006-2012 Oracle Corporation
+; Copyright (C) 2006-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -32,7 +32,7 @@ Function Vista_CheckForRequirements
   ${If} $0 == "1" ; D3D files are invalid, notify user
     MessageBox MB_ICONSTOP|MB_OKCANCEL $(VBOX_COMPONENT_D3D_INVALID) /SD IDOK IDCANCEL failure
     ; Offer to open up the VBox online manual on how to fix missing/corrupted D3D files
-    MessageBox MB_ICONQUESTION|MB_YESNO $(VBOX_COMPONENT_D3D_INVALID_MANUAL) /SD IDNO IDYES open_handbook_d3d_invalid    
+    MessageBox MB_ICONQUESTION|MB_YESNO $(VBOX_COMPONENT_D3D_INVALID_MANUAL) /SD IDNO IDYES open_handbook_d3d_invalid
   ${EndIf}
   Goto success
 
@@ -66,11 +66,7 @@ FunctionEnd
 
 Function Vista_Prepare
 
-  ${If} $g_bWithVBoxMMR == "true"
-     Call StopVBoxMMR
-  ${Else}
-     Call VBoxMMR_Uninstall
-  ${EndIf}
+  Call VBoxMMR_Uninstall
 
 FunctionEnd
 
@@ -85,18 +81,6 @@ Function Vista_CopyFiles
   ;FILE "$%PATH_OUT%\bin\additions\VBoxNET.inf"
   ;FILE "$%PATH_OUT%\bin\additions\VBoxNET.sys"
 
-!if $%VBOX_WITH_MMR% == "1"
-  ${If} $g_bWithVBoxMMR == "true"
-    !if $%BUILD_TARGET_ARCH% == "amd64"
-      FILE "$%PATH_OUT%\bin\additions\VBoxMMR-x86.exe"
-      FILE "$%PATH_OUT%\bin\additions\VBoxMMRHook-x86.dll"
-    !else
-      FILE "$%PATH_OUT%\bin\additions\VBoxMMR.exe"
-      FILE "$%PATH_OUT%\bin\additions\VBoxMMRHook.dll"
-    !endif
-  ${EndIf}
-!endif
-
 FunctionEnd
 
 Function Vista_InstallFiles
@@ -105,32 +89,6 @@ Function Vista_InstallFiles
 
   SetOutPath "$INSTDIR"
   ; Nothing here yet
-
-!if $%VBOX_WITH_MMR% == "1"
-
-  ${If} $g_bWithVBoxMMR == "true"
-
-    !if $%BUILD_TARGET_ARCH% == "amd64"
-
-      !insertmacro ReplaceDLL "$%PATH_OUT%\bin\additions\VBoxMMR-x86.exe" "$g_strSystemDir\VBoxMMR.exe" "$INSTDIR"
-      !insertmacro ReplaceDLL "$%PATH_OUT%\bin\additions\VBoxMMRHook-x86.dll" "$g_strSysWow64\VBoxMMRHook.dll" "$INSTDIR"
-      AccessControl::GrantOnFile "$g_strSysWow64\VBoxMMRHook.dll" "(BU)" "GenericRead"
-
-    !else
-
-      !insertmacro ReplaceDLL "$%PATH_OUT%\bin\additions\VBoxMMR.exe" "$g_strSystemDir\VBoxMMR.exe" "$INSTDIR"
-      !insertmacro ReplaceDLL "$%PATH_OUT%\bin\additions\VBoxMMRHook.dll" "$g_strSystemDir\VBoxMMRHook.dll" "$INSTDIR"
-      AccessControl::GrantOnFile "$g_strSystemDir\VBoxMMRHook.dll" "(BU)" "GenericRead"
-
-    !endif
-
-    AccessControl::GrantOnFile "$g_strSystemDir\VBoxMMR.exe" "(BU)" "GenericRead"
-
-    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VBoxMMR" '"$SYSDIR\VBoxMMR.exe"'
-
-  ${EndIf}
-
-!endif
 
   Goto done
 
@@ -183,7 +141,7 @@ FunctionEnd
 !macro VBoxMMR_Uninstall un
 Function ${un}VBoxMMR_Uninstall
 
-  ; Remove VBoxMMR even if VBOX_WITH_MMR is not defined
+  ; Remove VBoxMMR always
 
   DetailPrint "Uninstalling VBoxMMR."
   Call ${un}StopVBoxMMR

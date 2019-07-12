@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/isofs.h>
 
 #include <iprt/file.h>
@@ -334,7 +334,12 @@ static int rtIsoFsFindEntry(PRTISOFSFILE pFile, const char *pszFileName,
                     break;
 
                 char *pszName = RTStrAlloc(pCurRecord->name_len + 1);
-                AssertPtr(pszName);
+                if (RT_UNLIKELY(!pszName))
+                {
+                    rc = VERR_NO_STR_MEMORY;
+                    break;
+                }
+
                 Assert(idx + sizeof(RTISOFSDIRRECORD) < cbRead);
                 memcpy(pszName, &abBuffer[idx + sizeof(RTISOFSDIRRECORD)], pCurRecord->name_len);
                 pszName[pCurRecord->name_len] = '\0'; /* Force string termination. */
@@ -384,6 +389,7 @@ static int rtIsoFsFindEntry(PRTISOFSFILE pFile, const char *pszFileName,
                     }
                 }
                 idx += pCurRecord->record_length;
+                RTStrFree(pszName);
             }
         }
     }
@@ -518,12 +524,11 @@ static int rtIsoFsGetDirectoryRecord(PRTISOFSFILE pFile, const char *pszPath,
 }
 
 
-RTR3DECL(int) RTIsoFsGetFileInfo(PRTISOFSFILE pFile, const char *pszPath,
-                                 uint32_t *pcbOffset, size_t *pcbLength)
+RTR3DECL(int) RTIsoFsGetFileInfo(PRTISOFSFILE pFile, const char *pszPath, uint32_t *poffInIso, size_t *pcbLength)
 {
     AssertPtrReturn(pFile, VERR_INVALID_PARAMETER);
     AssertPtrReturn(pszPath, VERR_INVALID_PARAMETER);
-    AssertPtrReturn(pcbOffset, VERR_INVALID_PARAMETER);
+    AssertPtrReturn(poffInIso, VERR_INVALID_PARAMETER);
 
     PRTISOFSDIRRECORD pDirRecord;
     int rc = rtIsoFsGetDirectoryRecord(pFile, pszPath, &pDirRecord);
@@ -538,7 +543,7 @@ RTR3DECL(int) RTIsoFsGetFileInfo(PRTISOFSFILE pFile, const char *pszPath,
                               &pFileRecord);
         if (RT_SUCCESS(rc))
         {
-            *pcbOffset = pFileRecord->extent_location * RTISOFS_SECTOR_SIZE;
+            *poffInIso = pFileRecord->extent_location * RTISOFS_SECTOR_SIZE;
             *pcbLength = pFileRecord->extent_data_length;
             rtIsoFsFreeDirectoryRecord(pFileRecord);
         }
@@ -548,23 +553,22 @@ RTR3DECL(int) RTIsoFsGetFileInfo(PRTISOFSFILE pFile, const char *pszPath,
 }
 
 
-RTR3DECL(int) RTIsoFsExtractFile(PRTISOFSFILE pFile, const char *pszSource,
-                                 const char *pszDest)
+RTR3DECL(int) RTIsoFsExtractFile(PRTISOFSFILE pFile, const char *pszSrcPath, const char *pszDstPath)
 {
     AssertPtrReturn(pFile, VERR_INVALID_PARAMETER);
-    AssertPtrReturn(pszSource, VERR_INVALID_PARAMETER);
-    AssertPtrReturn(pszDest, VERR_INVALID_PARAMETER);
+    AssertPtrReturn(pszSrcPath, VERR_INVALID_PARAMETER);
+    AssertPtrReturn(pszDstPath, VERR_INVALID_PARAMETER);
 
     uint32_t cbOffset;
     size_t cbLength;
-    int rc = RTIsoFsGetFileInfo(pFile, pszSource, &cbOffset, &cbLength);
+    int rc = RTIsoFsGetFileInfo(pFile, pszSrcPath, &cbOffset, &cbLength);
     if (RT_SUCCESS(rc))
     {
         rc = RTFileSeek(pFile->file, cbOffset, RTFILE_SEEK_BEGIN, NULL);
         if (RT_SUCCESS(rc))
         {
             RTFILE fileDest;
-            rc = RTFileOpen(&fileDest, pszDest, RTFILE_O_CREATE | RTFILE_O_WRITE | RTFILE_O_DENY_WRITE);
+            rc = RTFileOpen(&fileDest, pszDstPath, RTFILE_O_CREATE | RTFILE_O_WRITE | RTFILE_O_DENY_WRITE);
             if (RT_SUCCESS(rc))
             {
                 size_t cbToRead, cbRead, cbWritten;

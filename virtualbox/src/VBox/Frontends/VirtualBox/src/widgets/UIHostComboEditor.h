@@ -1,11 +1,10 @@
+/* $Id: UIHostComboEditor.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: UIHostComboEditor class declaration
+ * VBox Qt GUI - VirtualBox Qt extensions: UIHostComboEditor class declaration.
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,8 +19,8 @@
 #define ___UIHostComboEditor_h___
 
 /* Qt includes: */
-#include <QMetaType>
 #include <QLineEdit>
+#include <QMetaType>
 #include <QMap>
 #include <QSet>
 
@@ -29,11 +28,15 @@
 #include "QIWithRetranslateUI.h"
 
 /* Forward declarations: */
-class UIHostComboEditorPrivate;
 class QIToolButton;
-#ifdef Q_WS_WIN
+class UIHostComboEditorPrivate;
+#if defined(VBOX_WS_MAC) || defined(VBOX_WS_WIN)
+class ComboEditorEventFilter;
+#endif /* VBOX_WS_MAC || VBOX_WS_WIN */
+#ifdef VBOX_WS_WIN
 class WinAltGrMonitor;
-#endif /* Q_WS_WIN */
+#endif /* VBOX_WS_WIN */
+
 
 /* Native hot-key namespace to unify
  * all the related hot-key processing stuff: */
@@ -41,12 +44,15 @@ namespace UINativeHotKey
 {
     QString toString(int iKeyCode);
     bool isValidKey(int iKeyCode);
-#ifdef Q_WS_WIN
+    /** Translates a modifier key in host platform
+      * encoding to the corresponding set 1 PC scan code.
+      * @note  Non-modifier keys will return zero. */
+    unsigned modifierToSet1ScanCode(int iKeyCode);
+#if defined(VBOX_WS_WIN)
     int distinguishModifierVKey(int wParam, int lParam);
-#endif /* Q_WS_WIN */
-#ifdef Q_WS_X11
+#elif defined(VBOX_WS_X11)
     void retranslateKeyNames();
-#endif /* Q_WS_X11 */
+#endif /* VBOX_WS_X11 */
 }
 
 /* Host-combo namespace to unify
@@ -58,6 +64,9 @@ namespace UIHostCombo
     QString hostComboCacheKey();
     QString toReadableString(const QString &strKeyCombo);
     QList<int> toKeyCodeList(const QString &strKeyCombo);
+    /** Returns a sequence of the set 1 PC scan codes for all
+      * modifiers contained in the (host platform format) sequence passed. */
+    QList<unsigned> modifiersToScanCodes(const QString &strKeyCombo);
     bool isValidKeyCombo(const QString &strKeyCombo);
 }
 
@@ -143,16 +152,8 @@ public slots:
 
 protected:
 
-#ifdef Q_WS_WIN
-    bool winEvent(MSG *pMsg, long *pResult);
-#endif /* Q_WS_WIN */
-#ifdef Q_WS_X11
-    bool x11Event(XEvent *pEvent);
-#endif /* Q_WS_X11 */
-#ifdef Q_WS_MAC
-    static bool darwinEventHandlerProc(const void *pvCocoaEvent, const void *pvCarbonEvent, void *pvUser);
-    bool darwinKeyboardEvent(const void *pvCocoaEvent, EventRef inEvent);
-#endif /* Q_WS_MAC */
+    /** Qt5: Handles all native events. */
+    bool nativeEvent(const QByteArray &eventType, void *pMessage, long *pResult);
 
     void keyPressEvent(QKeyEvent *pEvent);
     void keyReleaseEvent(QKeyEvent *pEvent);
@@ -175,14 +176,23 @@ private:
     QTimer* m_pReleaseTimer;
     bool m_fStartNewSequence;
 
-#if defined(Q_WS_MAC)
-     /* The current modifier key mask. Used to figure out which modifier
+#if defined(VBOX_WS_MAC) || defined(VBOX_WS_WIN)
+    /** Mac, Win: Holds the native event filter instance. */
+    ComboEditorEventFilter *m_pPrivateEventFilter;
+    /** Mac, Win: Allows the native event filter to
+      * redirect events directly to nativeEvent handler. */
+    friend class ComboEditorEventFilter;
+#endif /* VBOX_WS_MAC || VBOX_WS_WIN */
+
+#if defined(VBOX_WS_MAC)
+    /** Mac: Holds the current modifier key mask. Used to figure out which modifier
       * key was pressed when we get a kEventRawKeyModifiersChanged event. */
-     uint32_t m_uDarwinKeyModifiers;
-#elif defined(Q_WS_WIN)
-    /** Holds the object monitoring key event stream for problematic AltGr events. */
+    uint32_t m_uDarwinKeyModifiers;
+#elif defined(VBOX_WS_WIN)
+    /** Win: Holds the object monitoring key event
+      * stream for problematic AltGr events. */
     WinAltGrMonitor *m_pAltGrMonitor;
-#endif /* Q_WS_WIN */
+#endif /* VBOX_WS_WIN */
 };
 
 #endif /* !___UIHostComboEditor_h___ */

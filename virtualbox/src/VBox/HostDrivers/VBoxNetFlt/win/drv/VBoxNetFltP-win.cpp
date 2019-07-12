@@ -4,7 +4,7 @@
  * Protocol edge
  */
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 #include "VBoxNetFltCmn-win.h"
 
@@ -85,7 +94,7 @@ DECLHIDDEN(NDIS_STATUS) vboxNetFltWinPtDoBinding(PVBOXNETFLTINS pThis, PNDIS_STR
             }
             else
             {
-                LogRel((__FUNCTION__": vboxNetFltWinMpInitializeDevideInstance failed, Status 0x%x\n", Status));
+                LogRelFunc(("vboxNetFltWinMpInitializeDevideInstance failed, Status 0x%x\n", Status));
             }
 
             vboxNetFltWinSetOpState(&pThis->u.s.WinIf.PtState, kVBoxNetDevOpState_Deinitializing);
@@ -95,7 +104,7 @@ DECLHIDDEN(NDIS_STATUS) vboxNetFltWinPtDoBinding(PVBOXNETFLTINS pThis, PNDIS_STR
         }
         else
         {
-            LogRel((__FUNCTION__"NdisOpenAdapter failed, Status (0x%x)", Status));
+            LogRelFunc(("NdisOpenAdapter failed, Status (0x%x)", Status));
         }
 
         vboxNetFltWinSetOpState(&pThis->u.s.WinIf.PtState, kVBoxNetDevOpState_Deinitialized);
@@ -111,7 +120,8 @@ static VOID vboxNetFltWinPtBindAdapter(OUT PNDIS_STATUS pStatus,
         IN PVOID pvSystemSpecific1,
         IN PVOID pvSystemSpecific2)
 {
-    LogFlow(("==>"__FUNCTION__"\n"));
+    LogFlowFuncEnter();
+    RT_NOREF2(hBindContext, pvSystemSpecific2);
 
     NDIS_STATUS Status;
     NDIS_HANDLE hConfig = NULL;
@@ -136,14 +146,15 @@ static VOID vboxNetFltWinPtBindAdapter(OUT PNDIS_STATUS pStatus,
 
     *pStatus = Status;
 
-    LogFlow(("<=="__FUNCTION__": Status 0x%x\n", Status));
+    LogFlowFunc(("LEAVE: Status 0x%x\n", Status));
 }
 
 static VOID vboxNetFltWinPtOpenAdapterComplete(IN NDIS_HANDLE hProtocolBindingContext, IN NDIS_STATUS Status, IN NDIS_STATUS OpenErrorStatus)
 {
-    PVBOXNETFLTINS pNetFlt =(PVBOXNETFLTINS)hProtocolBindingContext;
+    PVBOXNETFLTINS pNetFlt = (PVBOXNETFLTINS)hProtocolBindingContext;
+    RT_NOREF1(OpenErrorStatus);
 
-    LogFlow(("==>"__FUNCTION__": pNetFlt (0x%p), Status (0x%x), OpenErrorStatus(0x%x)\n", pNetFlt, Status, OpenErrorStatus));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p), Status (0x%x), OpenErrorStatus(0x%x)\n", pNetFlt, Status, OpenErrorStatus));
     Assert(pNetFlt->u.s.WinIf.OpenCloseStatus == NDIS_STATUS_SUCCESS);
     Assert(Status == NDIS_STATUS_SUCCESS);
     if (pNetFlt->u.s.WinIf.OpenCloseStatus == NDIS_STATUS_SUCCESS)
@@ -151,12 +162,12 @@ static VOID vboxNetFltWinPtOpenAdapterComplete(IN NDIS_HANDLE hProtocolBindingCo
         pNetFlt->u.s.WinIf.OpenCloseStatus = Status;
         Assert(Status == NDIS_STATUS_SUCCESS);
         if (Status != NDIS_STATUS_SUCCESS)
-            LogRel((__FUNCTION__" : Open Complete status is 0x%x", Status));
+            LogRelFunc(("Open Complete status is 0x%x", Status));
     }
     else
-        LogRel((__FUNCTION__" : Adapter maintained status is 0x%x", pNetFlt->u.s.WinIf.OpenCloseStatus));
+        LogRelFunc(("Adapter maintained status is 0x%x", pNetFlt->u.s.WinIf.OpenCloseStatus));
     NdisSetEvent(&pNetFlt->u.s.WinIf.OpenCloseEvent);
-    LogFlow(("<=="__FUNCTION__": pNetFlt (0x%p), Status (0x%x), OpenErrorStatus(0x%x)\n", pNetFlt, Status, OpenErrorStatus));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p), Status (0x%x), OpenErrorStatus(0x%x)\n", pNetFlt, Status, OpenErrorStatus));
 }
 
 static void vboxNetFltWinPtRequestsWaitComplete(PVBOXNETFLTINS pNetFlt)
@@ -175,12 +186,12 @@ static void vboxNetFltWinPtRequestsWaitComplete(PVBOXNETFLTINS pNetFlt)
     {
         /* mark the request as InProgress before posting it to RequestComplete */
         pNetFlt->u.s.WinIf.StateFlags.fRequestInfo = VBOXNDISREQUEST_INPROGRESS;
-        RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+        RTSpinlockRelease(pNetFlt->hSpinlock);
         vboxNetFltWinPtRequestComplete(pNetFlt, &pNetFlt->u.s.WinIf.PassDownRequest, NDIS_STATUS_FAILURE);
     }
     else
     {
-        RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+        RTSpinlockRelease(pNetFlt->hSpinlock);
     }
 }
 
@@ -190,7 +201,7 @@ DECLHIDDEN(NDIS_STATUS) vboxNetFltWinPtDoUnbinding(PVBOXNETFLTINS pNetFlt, bool 
     uint64_t NanoTS = RTTimeSystemNanoTS();
     int cPPUsage;
 
-    LogFlow(("==>"__FUNCTION__": pNetFlt 0x%p\n", pNetFlt));
+    LogFlowFunc(("ENTER: pNetFlt 0x%p\n", pNetFlt));
 
     Assert(KeGetCurrentIrql() == PASSIVE_LEVEL);
 
@@ -208,7 +219,7 @@ DECLHIDDEN(NDIS_STATUS) vboxNetFltWinPtDoUnbinding(PVBOXNETFLTINS pNetFlt, bool 
         vboxNetFltWinSetOpState(&pNetFlt->u.s.WinIf.MpState, kVBoxNetDevOpState_Deinitializing);
     }
 
-    RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+    RTSpinlockRelease(pNetFlt->hSpinlock);
 
     vboxNetFltWinPtRequestsWaitComplete(pNetFlt);
 
@@ -243,7 +254,7 @@ DECLHIDDEN(NDIS_STATUS) vboxNetFltWinPtDoUnbinding(PVBOXNETFLTINS pNetFlt, bool 
         Assert(vboxNetFltWinGetOpState(&pNetFlt->u.s.WinIf.MpState) == kVBoxNetDevOpState_Deinitialized);
     }
 
-    LogFlow(("<=="__FUNCTION__": pNetFlt 0x%p\n", pNetFlt));
+    LogFlowFunc(("LEAVE: pNetFlt 0x%p\n", pNetFlt));
 
     return Status;
 }
@@ -253,21 +264,22 @@ static VOID vboxNetFltWinPtUnbindAdapter(OUT PNDIS_STATUS pStatus,
         IN NDIS_HANDLE hUnbindContext)
 {
     PVBOXNETFLTINS pNetFlt = (PVBOXNETFLTINS)hContext;
+    RT_NOREF1(hUnbindContext);
 
-    LogFlow(("==>"__FUNCTION__": pNetFlt (0x%p)\n", pNetFlt));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p)\n", pNetFlt));
 
     *pStatus = vboxNetFltWinDetachFromInterface(pNetFlt, true);
     Assert(*pStatus == NDIS_STATUS_SUCCESS);
 
-    LogFlow(("<=="__FUNCTION__": pNetFlt (0x%p)\n", pNetFlt));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p)\n", pNetFlt));
 }
 
 static VOID vboxNetFltWinPtUnloadProtocol()
 {
-    LogFlow(("==>"__FUNCTION__"\n"));
+    LogFlowFuncEnter();
     NDIS_STATUS Status = vboxNetFltWinPtDeregister(&g_VBoxNetFltGlobalsWin.Pt);
-    Assert(Status == NDIS_STATUS_SUCCESS);
-    LogFlow(("<=="__FUNCTION__": PtDeregister Status (0x%x)\n", Status));
+    Assert(Status == NDIS_STATUS_SUCCESS); NOREF(Status);
+    LogFlowFunc(("LEAVE: PtDeregister Status (0x%x)\n", Status));
 }
 
 
@@ -275,7 +287,7 @@ static VOID vboxNetFltWinPtCloseAdapterComplete(IN NDIS_HANDLE ProtocolBindingCo
 {
     PVBOXNETFLTINS pNetFlt = (PVBOXNETFLTINS)ProtocolBindingContext;
 
-    LogFlow(("==>"__FUNCTION__" : pNetFlt (0x%p), Status (0x%x)\n", pNetFlt, Status));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p), Status (0x%x)\n", pNetFlt, Status));
     Assert(pNetFlt->u.s.WinIf.OpenCloseStatus == NDIS_STATUS_SUCCESS);
     Assert(Status == NDIS_STATUS_SUCCESS);
     Assert(pNetFlt->u.s.WinIf.OpenCloseStatus == NDIS_STATUS_SUCCESS);
@@ -284,17 +296,18 @@ static VOID vboxNetFltWinPtCloseAdapterComplete(IN NDIS_HANDLE ProtocolBindingCo
         pNetFlt->u.s.WinIf.OpenCloseStatus = Status;
     }
     NdisSetEvent(&pNetFlt->u.s.WinIf.OpenCloseEvent);
-    LogFlow(("<=="__FUNCTION__" : pNetFlt (0x%p), Status (0x%x)\n", pNetFlt, Status));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p), Status (0x%x)\n", pNetFlt, Status));
 }
 
 static VOID vboxNetFltWinPtResetComplete(IN NDIS_HANDLE hProtocolBindingContext, IN NDIS_STATUS Status)
 {
-    LogFlow(("==>"__FUNCTION__" : pNetFlt 0x%p, Status 0x%x\n", hProtocolBindingContext, Status));
+    RT_NOREF2(hProtocolBindingContext, Status);
+    LogFlowFunc(("ENTER: pNetFlt 0x%p, Status 0x%x\n", hProtocolBindingContext, Status));
     /*
      * should never be here
      */
-    Assert(0);
-    LogFlow(("<=="__FUNCTION__" : pNetFlt 0x%p, Status 0x%x\n", hProtocolBindingContext, Status));
+    AssertFailed();
+    LogFlowFunc(("LEAVE: pNetFlt 0x%p, Status 0x%x\n", hProtocolBindingContext, Status));
 }
 
 static NDIS_STATUS vboxNetFltWinPtHandleQueryInfoComplete(PVBOXNETFLTINS pNetFlt, NDIS_STATUS Status)
@@ -320,7 +333,7 @@ static NDIS_STATUS vboxNetFltWinPtHandleQueryInfoComplete(PVBOXNETFLTINS pNetFlt
                 }
                 else
                 {
-                    Assert(0);
+                    AssertFailed();
                     *pNetFlt->u.s.WinIf.pcPDRBytesNeeded = sizeof(NDIS_PNP_CAPABILITIES);
                     Status = NDIS_STATUS_RESOURCES;
                 }
@@ -347,7 +360,7 @@ static NDIS_STATUS vboxNetFltWinPtHandleQueryInfoComplete(PVBOXNETFLTINS pNetFlt
                 }
                 else
                 {
-                    Assert(0);
+                    AssertFailed();
                     *pNetFlt->u.s.WinIf.pcPDRBytesNeeded = sizeof (ULONG);
                     Status = NDIS_STATUS_RESOURCES;
                 }
@@ -380,7 +393,7 @@ static NDIS_STATUS vboxNetFltWinPtHandleQueryInfoComplete(PVBOXNETFLTINS pNetFlt
                     }
                     else
                     {
-                        Assert(0);
+                        AssertFailed();
                         *pNetFlt->u.s.WinIf.pcPDRBytesNeeded = sizeof (ULONG);
                         Status = NDIS_STATUS_RESOURCES;
                     }
@@ -426,7 +439,7 @@ static NDIS_STATUS vboxNetFltWinPtHandleSetInfoComplete(PVBOXNETFLTINS pNetFlt, 
                             }
                             else
                             {
-                                Assert(0);
+                                AssertFailed();
                                 *pNetFlt->u.s.WinIf.pcPDRBytesNeeded = sizeof (ULONG);
                                 Status = NDIS_STATUS_RESOURCES;
                             }
@@ -447,7 +460,7 @@ static NDIS_STATUS vboxNetFltWinPtHandleSetInfoComplete(PVBOXNETFLTINS pNetFlt, 
                             }
                             else
                             {
-                                Assert(0);
+                                AssertFailed();
                                 *pNetFlt->u.s.WinIf.pcPDRBytesNeeded = sizeof (ULONG);
                                 Status = NDIS_STATUS_RESOURCES;
                             }
@@ -461,7 +474,7 @@ static NDIS_STATUS vboxNetFltWinPtHandleSetInfoComplete(PVBOXNETFLTINS pNetFlt, 
 #ifdef DEBUG_misha
                 else
                 {
-                    Assert(0);
+                    AssertFailed();
                 }
 #endif
             }
@@ -483,9 +496,8 @@ DECLHIDDEN(VOID) vboxNetFltWinPtRequestComplete(NDIS_HANDLE hContext, PNDIS_REQU
 {
     PVBOXNETFLTINS pNetFlt = (PVBOXNETFLTINS)hContext;
     PNDIS_REQUEST pSynchRequest = pNetFlt->u.s.WinIf.pSynchRequest;
-    NDIS_OID Oid = pNetFlt->u.s.WinIf.PassDownRequest.DATA.SET_INFORMATION.Oid;
 
-    LogFlow(("==>"__FUNCTION__" : pNetFlt (0x%p), pNdisRequest (0x%p), Status (0x%x)\n", pNetFlt, pNdisRequest, Status));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p), pNdisRequest (0x%p), Status (0x%x)\n", pNetFlt, pNdisRequest, Status));
 
     if (pSynchRequest == pNdisRequest)
     {
@@ -496,7 +508,7 @@ DECLHIDDEN(VOID) vboxNetFltWinPtRequestComplete(NDIS_HANDLE hContext, PNDIS_REQU
         KeSetEvent(&pNetFlt->u.s.WinIf.hSynchCompletionEvent, 0, FALSE);
         /* 3. return; */
 
-        LogFlow(("<=="__FUNCTION__" : pNetFlt (0x%p), pNdisRequest (0x%p), Status (0x%x)\n", pNetFlt, pNdisRequest, Status));
+        LogFlowFunc(("LEAVE: pNetFlt (0x%p), pNdisRequest (0x%p), Status (0x%x)\n", pNetFlt, pNdisRequest, Status));
         return;
     }
 
@@ -517,18 +529,18 @@ DECLHIDDEN(VOID) vboxNetFltWinPtRequestComplete(NDIS_HANDLE hContext, PNDIS_REQU
           break;
 
       default:
-          Assert(0);
+          AssertFailed();
           break;
     }
 
-    LogFlow(("<=="__FUNCTION__" : pNetFlt (0x%p), pNdisRequest (0x%p), Status (0x%x)\n", pNetFlt, pNdisRequest, Status));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p), pNdisRequest (0x%p), Status (0x%x)\n", pNetFlt, pNdisRequest, Status));
 }
 
 static VOID vboxNetFltWinPtStatus(IN NDIS_HANDLE hProtocolBindingContext, IN NDIS_STATUS GeneralStatus, IN PVOID pvStatusBuffer, IN UINT cbStatusBuffer)
 {
     PVBOXNETFLTINS pNetFlt = (PVBOXNETFLTINS)hProtocolBindingContext;
 
-    LogFlow(("==>"__FUNCTION__" : pNetFlt (0x%p), GeneralStatus (0x%x)\n", pNetFlt, GeneralStatus));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p), GeneralStatus (0x%x)\n", pNetFlt, GeneralStatus));
 
     if (vboxNetFltWinReferenceWinIf(pNetFlt))
     {
@@ -555,7 +567,7 @@ static VOID vboxNetFltWinPtStatus(IN NDIS_HANDLE hProtocolBindingContext, IN NDI
         }
     }
 
-    LogFlow(("<=="__FUNCTION__" : pNetFlt (0x%p), GeneralStatus (0x%x)\n", pNetFlt, GeneralStatus));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p), GeneralStatus (0x%x)\n", pNetFlt, GeneralStatus));
 }
 
 
@@ -563,7 +575,7 @@ static VOID vboxNetFltWinPtStatusComplete(IN NDIS_HANDLE hProtocolBindingContext
 {
     PVBOXNETFLTINS pNetFlt = (PVBOXNETFLTINS)hProtocolBindingContext;
 
-    LogFlow(("==>"__FUNCTION__" : pNetFlt (0x%p)\n", pNetFlt));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p)\n", pNetFlt));
 
     if (vboxNetFltWinReferenceWinIf(pNetFlt))
     {
@@ -572,7 +584,7 @@ static VOID vboxNetFltWinPtStatusComplete(IN NDIS_HANDLE hProtocolBindingContext
         vboxNetFltWinDereferenceWinIf(pNetFlt);
     }
 
-    LogFlow(("<=="__FUNCTION__" : pNetFlt (0x%p)\n", pNetFlt));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p)\n", pNetFlt));
 }
 
 static VOID vboxNetFltWinPtSendComplete(IN NDIS_HANDLE hProtocolBindingContext, IN PNDIS_PACKET pPacket, IN NDIS_STATUS Status)
@@ -581,10 +593,10 @@ static VOID vboxNetFltWinPtSendComplete(IN NDIS_HANDLE hProtocolBindingContext, 
     PVBOXNETFLT_PKTRSVD_PT pSendInfo = (PVBOXNETFLT_PKTRSVD_PT)pPacket->ProtocolReserved;
     PNDIS_PACKET pOrigPacket = pSendInfo->pOrigPacket;
     PVOID pBufToFree = pSendInfo->pBufToFree;
-    LogFlow(("==>"__FUNCTION__": pNetFlt (0x%p), pPacket (0x%p), Status (0x%x)\n", pNetFlt, pPacket, Status));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p), pPacket (0x%p), Status (0x%x)\n", pNetFlt, pPacket, Status));
 
 #if defined(DEBUG_NETFLT_PACKETS) || !defined(VBOX_LOOPBACK_USEFLAGS)
-    /* @todo: for optimization we could check only for netflt-mode packets
+    /** @todo for optimization we could check only for netflt-mode packets
      * do it for all for now */
      vboxNetFltWinLbRemoveSendPacket(pNetFlt, pPacket);
 #endif
@@ -610,7 +622,7 @@ static VOID vboxNetFltWinPtSendComplete(IN NDIS_HANDLE hProtocolBindingContext, 
 
     vboxNetFltWinDereferenceWinIf(pNetFlt);
 
-    LogFlow(("<=="__FUNCTION__": pNetFlt (0x%p), pPacket (0x%p), Status (0x%x)\n", pNetFlt, pPacket, Status));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p), pPacket (0x%p), Status (0x%x)\n", pNetFlt, pPacket, Status));
 }
 
 /**
@@ -670,7 +682,7 @@ static bool vboxNetFltWinPtTransferDataCompleteActive(PVBOXNETFLTINS pNetFltIf, 
             if (vboxNetFltWinIsLoopedBackPacket(pPacket))
             {
                 /* should not be here */
-                Assert(0);
+                AssertFailed();
             }
 #else
             PNDIS_PACKET pLb = vboxNetFltWinLbSearchLoopBack(pNetFltIf, pPacket, false);
@@ -678,7 +690,7 @@ static bool vboxNetFltWinPtTransferDataCompleteActive(PVBOXNETFLTINS pNetFltIf, 
             {
 #ifndef DEBUG_NETFLT_RECV_TRANSFERDATA
                 /* should not be here */
-                Assert(0);
+                AssertFailed();
 #endif
                 if (!vboxNetFltWinLbIsFromIntNet(pLb))
                 {
@@ -721,13 +733,13 @@ static bool vboxNetFltWinPtTransferDataCompleteActive(PVBOXNETFLTINS pNetFltIf, 
                 {
                     break;
                 }
-                Assert(0);
+                AssertFailed();
 # endif
             }
         }
         else
         {
-            Assert(0);
+            AssertFailed();
         }
         /* we are here because of error either in data transfer or in enqueueing the packet */
         vboxNetFltWinFreeSGNdisPacket(pPacket, true);
@@ -744,7 +756,7 @@ static VOID vboxNetFltWinPtTransferDataComplete(IN NDIS_HANDLE hProtocolBindingC
                     IN UINT cbTransferred)
 {
     PVBOXNETFLTINS pNetFlt = (PVBOXNETFLTINS)hProtocolBindingContext;
-    LogFlow(("==>"__FUNCTION__": pNetFlt (0x%p), pPacket (0x%p), Status (0x%x), cbTransfered (%d)\n", pNetFlt, pPacket, Status, cbTransferred));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p), pPacket (0x%p), Status (0x%x), cbTransfered (%d)\n", pNetFlt, pPacket, Status, cbTransferred));
     if (!vboxNetFltWinPtTransferDataCompleteActive(pNetFlt, pPacket, Status))
     {
         if (pNetFlt->u.s.WinIf.hMiniport)
@@ -759,10 +771,10 @@ static VOID vboxNetFltWinPtTransferDataComplete(IN NDIS_HANDLE hProtocolBindingC
     }
     /* else - all processing is done with vboxNetFltWinPtTransferDataCompleteActive already */
 
-    LogFlow(("<=="__FUNCTION__": pNetFlt (0x%p), pPacket (0x%p), Status (0x%x), cbTransfered (%d)\n", pNetFlt, pPacket, Status, cbTransferred));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p), pPacket (0x%p), Status (0x%x), cbTransfered (%d)\n", pNetFlt, pPacket, Status, cbTransferred));
 }
 
-static INT vboxNetFltWinRecvPacketPassThru(PVBOXNETFLTINS pNetFlt, PNDIS_PACKET pPacket, BOOLEAN bForceIndicate)
+static INT vboxNetFltWinRecvPacketPassThru(PVBOXNETFLTINS pNetFlt, PNDIS_PACKET pPacket)
 {
     Assert(KeGetCurrentIrql() == DISPATCH_LEVEL);
 
@@ -833,7 +845,7 @@ static VOID vboxNetFltWinRecvIndicatePassThru(PVBOXNETFLTINS pNetFlt, NDIS_HANDL
                                          cbPacket);
             break;
         default:
-            Assert(FALSE);
+            AssertFailed();
             break;
     }
 }
@@ -872,7 +884,7 @@ static NDIS_STATUS vboxNetFltWinPtReceiveActive(PVBOXNETFLTINS pNetFlt, NDIS_HAN
             Status = vboxNetFltWinAllocSG(cbPacket + cbHeaderBuffer, &pSG);
             if (Status != NDIS_STATUS_SUCCESS)
             {
-                Assert(0);
+                AssertFailed();
                 break;
             }
 
@@ -890,7 +902,7 @@ static NDIS_STATUS vboxNetFltWinPtReceiveActive(PVBOXNETFLTINS pNetFlt, NDIS_HAN
             {
 #ifndef DEBUG_NETFLT_RECV_NOPACKET
                 /* should not be here */
-                Assert(0);
+                AssertFailed();
 #endif
                 if (!vboxNetFltWinLbIsFromIntNet(pLb))
                 {
@@ -960,7 +972,7 @@ static NDIS_STATUS vboxNetFltWinPtReceiveActive(PVBOXNETFLTINS pNetFlt, NDIS_HAN
             Status = vboxNetFltWinQuEnqueuePacket(pNetFlt, pSG, PACKET_SG | PACKET_MINE);
             if (Status != NDIS_STATUS_SUCCESS)
             {
-                Assert(0);
+                AssertFailed();
                 vboxNetFltWinMemFree(pSG);
                 break;
             }
@@ -980,7 +992,7 @@ static NDIS_STATUS vboxNetFltWinPtReceiveActive(PVBOXNETFLTINS pNetFlt, NDIS_HAN
             NdisAllocatePacket(&Status, &pPacket, pNetFlt->u.s.WinIf.hRecvPacketPool);
             if (Status != NDIS_STATUS_SUCCESS)
             {
-                Assert(0);
+                AssertFailed();
                 break;
             }
 
@@ -996,14 +1008,14 @@ static NDIS_STATUS vboxNetFltWinPtReceiveActive(PVBOXNETFLTINS pNetFlt, NDIS_HAN
             Status = vboxNetFltWinMemAlloc((PVOID*)(&pMemBuf), cbBuf);
             if (Status != NDIS_STATUS_SUCCESS)
             {
-                Assert(0);
+                AssertFailed();
                 NdisFreePacket(pPacket);
                 break;
             }
             NdisAllocateBuffer(&Status, &pTransferBuffer, pNetFlt->u.s.WinIf.hRecvBufferPool, pMemBuf + cbHeaderBuffer, cbPacket);
             if (Status != NDIS_STATUS_SUCCESS)
             {
-                Assert(0);
+                AssertFailed();
                 Status = NDIS_STATUS_FAILURE;
                 NdisFreePacket(pPacket);
                 vboxNetFltWinMemFree(pMemBuf);
@@ -1013,7 +1025,7 @@ static NDIS_STATUS vboxNetFltWinPtReceiveActive(PVBOXNETFLTINS pNetFlt, NDIS_HAN
             NdisAllocateBuffer(&Status, &pOrigBuffer, pNetFlt->u.s.WinIf.hRecvBufferPool, pMemBuf, cbBuf);
             if (Status != NDIS_STATUS_SUCCESS)
             {
-                Assert(0);
+                AssertFailed();
                 Status = NDIS_STATUS_FAILURE;
                 NdisFreeBuffer(pTransferBuffer);
                 NdisFreePacket(pPacket);
@@ -1070,7 +1082,7 @@ static NDIS_STATUS vboxNetFltWinPtReceive(IN NDIS_HANDLE hProtocolBindingContext
     bool fWinIfActive = vboxNetFltWinReferenceWinIfNetFlt(pNetFlt, &bNetFltActive);
     const bool bPassThruActive = !bNetFltActive;
 
-    LogFlow(("==>"__FUNCTION__" : pNetFlt (0x%p)\n", pNetFlt));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p)\n", pNetFlt));
 
     if (fWinIfActive)
     {
@@ -1085,7 +1097,7 @@ static NDIS_STATUS vboxNetFltWinPtReceive(IN NDIS_HANDLE hProtocolBindingContext
 # else
                 if (vboxNetFltWinIsLoopedBackPacket(pPacket))
                 {
-                    Assert(0);
+                    AssertFailed();
                     /* nothing else to do here, just return the packet */
                     //NdisReturnPackets(&pPacket, 1);
                     Status = NDIS_STATUS_NOT_ACCEPTED;
@@ -1176,7 +1188,7 @@ static NDIS_STATUS vboxNetFltWinPtReceive(IN NDIS_HANDLE hProtocolBindingContext
 #ifndef VBOX_LOOPBACK_USEFLAGS
                         /* this is a loopback packet, nothing to do here */
 #else
-                        Assert(0);
+                        AssertFailed();
                         /* should not be here */
 #endif
                     }
@@ -1214,7 +1226,7 @@ static NDIS_STATUS vboxNetFltWinPtReceive(IN NDIS_HANDLE hProtocolBindingContext
         Status = NDIS_STATUS_FAILURE;
     }
 
-    LogFlow(("<=="__FUNCTION__" : pNetFlt (0x%p)\n", pNetFlt));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p)\n", pNetFlt));
 
     return Status;
 
@@ -1223,9 +1235,8 @@ static NDIS_STATUS vboxNetFltWinPtReceive(IN NDIS_HANDLE hProtocolBindingContext
 static VOID vboxNetFltWinPtReceiveComplete(NDIS_HANDLE hProtocolBindingContext)
 {
     PVBOXNETFLTINS pNetFlt = (PVBOXNETFLTINS)hProtocolBindingContext;
-    ULONG cPackets = 0;
-    bool bNetFltActive;
-    bool fWinIfActive = vboxNetFltWinReferenceWinIfNetFlt(pNetFlt, &bNetFltActive);
+    bool fNetFltActive;
+    bool fWinIfActive = vboxNetFltWinReferenceWinIfNetFlt(pNetFlt, &fNetFltActive);
     NDIS_HANDLE hMiniport = pNetFlt->u.s.WinIf.hMiniport;
     /* Note: we're using KeGetCurrentProcessorNumber, which is not entirely correct in case
     * we're running on 64bit win7+, which can handle > 64 CPUs, however since KeGetCurrentProcessorNumber
@@ -1234,7 +1245,7 @@ static VOID vboxNetFltWinPtReceiveComplete(NDIS_HANDLE hProtocolBindingContext)
     ULONG iProc = KeGetCurrentProcessorNumber();
     Assert(iProc < RT_ELEMENTS(pNetFlt->u.s.WinIf.abIndicateRxComplete));
 
-    LogFlow(("==>"__FUNCTION__" : pNetFlt (0x%p)\n", pNetFlt));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p)\n", pNetFlt));
 
     if (hMiniport != NULL && pNetFlt->u.s.WinIf.abIndicateRxComplete[iProc])
     {
@@ -1245,7 +1256,7 @@ static VOID vboxNetFltWinPtReceiveComplete(NDIS_HANDLE hProtocolBindingContext)
                 NdisMEthIndicateReceiveComplete(hMiniport);
                 break;
             default:
-                Assert(0);
+                AssertFailed();
                 break;
         }
     }
@@ -1254,18 +1265,14 @@ static VOID vboxNetFltWinPtReceiveComplete(NDIS_HANDLE hProtocolBindingContext)
 
     if (fWinIfActive)
     {
-        if (bNetFltActive)
-        {
+        if (fNetFltActive)
             vboxNetFltWinDereferenceNetFlt(pNetFlt);
-        }
         else
-        {
             vboxNetFltWinDereferenceModePassThru(pNetFlt);
-        }
         vboxNetFltWinDereferenceWinIf(pNetFlt);
     }
 
-    LogFlow(("<=="__FUNCTION__" : pNetFlt (0x%p)\n", pNetFlt));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p)\n", pNetFlt));
 }
 
 static INT vboxNetFltWinPtReceivePacket(NDIS_HANDLE hProtocolBindingContext, PNDIS_PACKET pPacket)
@@ -1276,7 +1283,7 @@ static INT vboxNetFltWinPtReceivePacket(NDIS_HANDLE hProtocolBindingContext, PND
     bool fWinIfActive = vboxNetFltWinReferenceWinIfNetFlt(pNetFlt, &bNetFltActive);
     const bool bPassThruActive = !bNetFltActive;
 
-    LogFlow(("==>"__FUNCTION__" : pNetFlt (0x%p)\n", pNetFlt));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p)\n", pNetFlt));
 
     if (fWinIfActive)
     {
@@ -1285,7 +1292,7 @@ static INT vboxNetFltWinPtReceivePacket(NDIS_HANDLE hProtocolBindingContext, PND
 #ifdef VBOX_LOOPBACK_USEFLAGS
             if (vboxNetFltWinIsLoopedBackPacket(pPacket))
             {
-                Assert(0);
+                AssertFailed();
                 Log(("lb_rp"));
 
                 /* nothing else to do here, just return the packet */
@@ -1307,14 +1314,14 @@ static INT vboxNetFltWinPtReceivePacket(NDIS_HANDLE hProtocolBindingContext, PND
 #ifndef VBOXNETFLT_NO_PACKET_QUEUE
                     NDIS_STATUS fStatus;
 #endif
-                    bool bResources = NDIS_GET_PACKET_STATUS(pPacket) == NDIS_STATUS_RESOURCES;
+                    bool fResources = NDIS_GET_PACKET_STATUS(pPacket) == NDIS_STATUS_RESOURCES; NOREF(fResources);
 
                     VBOXNETFLT_LBVERIFY(pNetFlt, pPacket);
 #ifdef DEBUG_misha
-                    /*TODO: remove this assert.
+                    /** @todo remove this assert.
                      * this is a temporary assert for debugging purposes:
                      * we're probably doing something wrong with the packets if the miniport reports NDIS_STATUS_RESOURCES */
-                    Assert(!bResources);
+                    Assert(!fResources);
 #endif
 
 #ifdef VBOXNETFLT_NO_PACKET_QUEUE
@@ -1326,25 +1333,23 @@ static INT vboxNetFltWinPtReceivePacket(NDIS_HANDLE hProtocolBindingContext, PND
                     }
 
 #else
-                    fStatus = vboxNetFltWinQuEnqueuePacket(pNetFlt, pPacket, bResources ? PACKET_COPY : 0);
+                    fStatus = vboxNetFltWinQuEnqueuePacket(pNetFlt, pPacket, fResources ? PACKET_COPY : 0);
                     if (fStatus == NDIS_STATUS_SUCCESS)
                     {
                         bNetFltActive = false;
                         fWinIfActive = false;
-                        if (bResources)
+                        if (fResources)
                         {
                             cRefCount = 0;
                             //NdisReturnPackets(&pPacket, 1);
                         }
                         else
-                        {
                             cRefCount = 1;
-                        }
                         break;
                     }
                     else
                     {
-                        Assert(0);
+                        AssertFailed();
                     }
 #endif
                 }
@@ -1361,7 +1366,7 @@ static INT vboxNetFltWinPtReceivePacket(NDIS_HANDLE hProtocolBindingContext, PND
 #endif
             }
 
-            cRefCount = vboxNetFltWinRecvPacketPassThru(pNetFlt, pPacket, bNetFltActive);
+            cRefCount = vboxNetFltWinRecvPacketPassThru(pNetFlt, pPacket);
             if (cRefCount)
             {
                 Assert(cRefCount == 1);
@@ -1389,7 +1394,7 @@ static INT vboxNetFltWinPtReceivePacket(NDIS_HANDLE hProtocolBindingContext, PND
         //NdisReturnPackets(&pPacket, 1);
     }
 
-    LogFlow(("<=="__FUNCTION__" : pNetFlt (0x%p), cRefCount (%d)\n", pNetFlt, cRefCount));
+    LogFlowFunc(("LEAVE: pNetFlt (0x%p), cRefCount (%d)\n", pNetFlt, cRefCount));
 
     return cRefCount;
 }
@@ -1400,19 +1405,19 @@ DECLHIDDEN(bool) vboxNetFltWinPtCloseInterface(PVBOXNETFLTINS pNetFlt, PNDIS_STA
 
     if (pNetFlt->u.s.WinIf.StateFlags.fInterfaceClosing)
     {
-        RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
-        Assert(0);
+        RTSpinlockRelease(pNetFlt->hSpinlock);
+        AssertFailed();
         return false;
     }
     if (pNetFlt->u.s.WinIf.hBinding == NULL)
     {
-        RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
-        Assert(0);
+        RTSpinlockRelease(pNetFlt->hSpinlock);
+        AssertFailed();
         return false;
     }
 
     pNetFlt->u.s.WinIf.StateFlags.fInterfaceClosing = TRUE;
-    RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+    RTSpinlockRelease(pNetFlt->hSpinlock);
 
     NdisResetEvent(&pNetFlt->u.s.WinIf.OpenCloseEvent);
     NdisCloseAdapter(pStatus, pNetFlt->u.s.WinIf.hBinding);
@@ -1443,7 +1448,7 @@ static NDIS_STATUS vboxNetFltWinPtPnPSetPower(PVBOXNETFLTINS pNetFlt, NDIS_DEVIC
         {
             pNetFlt->u.s.WinIf.StateFlags.fStandBy = TRUE;
         }
-        RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+        RTSpinlockRelease(pNetFlt->hSpinlock);
         vboxNetFltWinPtRequestsWaitComplete(pNetFlt);
         vboxNetFltWinWaitDereference(&pNetFlt->u.s.WinIf.MpState);
         vboxNetFltWinWaitDereference(&pNetFlt->u.s.WinIf.PtState);
@@ -1468,13 +1473,13 @@ static NDIS_STATUS vboxNetFltWinPtPnPSetPower(PVBOXNETFLTINS pNetFlt, NDIS_DEVIC
         if (pNetFlt->u.s.WinIf.StateFlags.fRequestInfo & VBOXNDISREQUEST_QUEUED)
         {
             pNetFlt->u.s.WinIf.StateFlags.fRequestInfo = VBOXNDISREQUEST_INPROGRESS;
-            RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+            RTSpinlockRelease(pNetFlt->hSpinlock);
 
             vboxNetFltWinMpRequestPost(pNetFlt);
         }
         else
         {
-            RTSpinlockReleaseNoInts(pNetFlt->hSpinlock);
+            RTSpinlockRelease(pNetFlt->hSpinlock);
         }
     }
 
@@ -1486,15 +1491,18 @@ static NDIS_STATUS vboxNetFltWinPtPnPEvent(IN NDIS_HANDLE hProtocolBindingContex
 {
     PVBOXNETFLTINS pNetFlt = (PVBOXNETFLTINS)hProtocolBindingContext;
 
-    LogFlow(("==>"__FUNCTION__": pNetFlt (0x%p), NetEvent (%d)\n", pNetFlt, pNetPnPEvent->NetEvent));
+    LogFlowFunc(("ENTER: pNetFlt (0x%p), NetEvent (%d)\n", pNetFlt, pNetPnPEvent->NetEvent));
 
     switch (pNetPnPEvent->NetEvent)
     {
         case NetEventSetPower:
         {
             NDIS_DEVICE_POWER_STATE enmPowerState = *((PNDIS_DEVICE_POWER_STATE)pNetPnPEvent->Buffer);
-            return vboxNetFltWinPtPnPSetPower(pNetFlt, enmPowerState);
+            NDIS_STATUS rcNdis = vboxNetFltWinPtPnPSetPower(pNetFlt, enmPowerState);
+            LogFlowFunc(("LEAVE: pNetFlt (0x%p), NetEvent (%d), rcNdis=%#x\n", pNetFlt, pNetPnPEvent->NetEvent, rcNdis));
+            return rcNdis;
         }
+
         case NetEventReconfigure:
         {
             if (!pNetFlt)
@@ -1502,11 +1510,12 @@ static NDIS_STATUS vboxNetFltWinPtPnPEvent(IN NDIS_HANDLE hProtocolBindingContex
                 NdisReEnumerateProtocolBindings(g_VBoxNetFltGlobalsWin.Pt.hProtocol);
             }
         }
+        /** @todo r=bird: Is the fall thru intentional?? */
         default:
+            LogFlowFunc(("LEAVE: pNetFlt (0x%p), NetEvent (%d)\n", pNetFlt, pNetPnPEvent->NetEvent));
             return NDIS_STATUS_SUCCESS;
     }
 
-    LogFlow(("<=="__FUNCTION__": pNetFlt (0x%p), NetEvent (%d)\n", pNetFlt, pNetPnPEvent->NetEvent));
 }
 
 #ifdef __cplusplus
@@ -1518,8 +1527,10 @@ static NDIS_STATUS vboxNetFltWinPtPnPEvent(IN NDIS_HANDLE hProtocolBindingContex
 /**
  * register the protocol edge
  */
-DECLHIDDEN(NDIS_STATUS) vboxNetFltWinPtRegister(PVBOXNETFLTGLOBALS_PT pGlobalsPt, PDRIVER_OBJECT pDriverObject, PUNICODE_STRING pRegistryPathStr)
+DECLHIDDEN(NDIS_STATUS) vboxNetFltWinPtRegister(PVBOXNETFLTGLOBALS_PT pGlobalsPt, PDRIVER_OBJECT pDriverObject,
+                                                PUNICODE_STRING pRegistryPathStr)
 {
+    RT_NOREF2(pDriverObject, pRegistryPathStr);
     NDIS_PROTOCOL_CHARACTERISTICS PtChars;
     NDIS_STRING NameStr;
 

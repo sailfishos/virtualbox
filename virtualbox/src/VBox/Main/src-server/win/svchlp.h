@@ -1,10 +1,11 @@
+/* $Id: svchlp.h $ */
 /** @file
  *
  *  Declaration of SVC Helper Process control routines.
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,7 +24,7 @@
 
 #include <VBox/err.h>
 
-#include <windows.h>
+#include <iprt/win/windows.h>
 
 struct SVCHlpMsg
 {

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,10 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define RTMEM_NO_WRAP_TO_EF_APIS /* circular dependency otherwise. */
 #include "the-darwin-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/memobj.h>
@@ -49,9 +50,9 @@
 /*#define USE_VM_MAP_WIRE - may re-enable later when non-mapped allocations are added. */
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The Darwin version of the memory object structure.
  */
@@ -209,6 +210,7 @@ static vm_map_offset_t rtR0MemObjDarwinGetMapMin(vm_map_t pMap)
 #endif /* unused */
 
 #ifdef RT_STRICT
+# if 0 /* unused */
 
 /**
  * Read from a physical page.
@@ -349,11 +351,13 @@ static uint64_t rtR0MemObjDarwinGetPTE(void *pvPage)
     return 0;
 }
 
+# endif /* unused */
 #endif /* RT_STRICT */
 
 DECLHIDDEN(int) rtR0MemObjNativeFree(RTR0MEMOBJ pMem)
 {
     PRTR0MEMOBJDARWIN pMemDarwin = (PRTR0MEMOBJDARWIN)pMem;
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Release the IOMemoryDescriptor or/and IOMemoryMap associated with the object.
@@ -404,10 +408,12 @@ DECLHIDDEN(int) rtR0MemObjNativeFree(RTR0MEMOBJ pMem)
 
         case RTR0MEMOBJTYPE_PHYS_NC:
             AssertMsgFailed(("RTR0MEMOBJTYPE_PHYS_NC\n"));
+            IPRT_DARWIN_RESTORE_EFL_AC();
             return VERR_INTERNAL_ERROR;
 
         case RTR0MEMOBJTYPE_RES_VIRT:
             AssertMsgFailed(("RTR0MEMOBJTYPE_RES_VIRT\n"));
+            IPRT_DARWIN_RESTORE_EFL_AC();
             return VERR_INTERNAL_ERROR;
 
         case RTR0MEMOBJTYPE_MAPPING:
@@ -416,9 +422,11 @@ DECLHIDDEN(int) rtR0MemObjNativeFree(RTR0MEMOBJ pMem)
 
         default:
             AssertMsgFailed(("enmType=%d\n", pMemDarwin->Core.enmType));
+            IPRT_DARWIN_RESTORE_EFL_AC();
             return VERR_INTERNAL_ERROR;
     }
 
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -558,10 +566,10 @@ static int rtR0MemObjNativeAllocWorker(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
                         rc = rtR0MemObjNativeProtect(&pMemDarwin->Core, 0, cb, RTMEM_PROT_READ | RTMEM_PROT_WRITE | RTMEM_PROT_EXEC);
 # ifdef RT_STRICT
                         /* check that the memory is actually mapped. */
-                        RTTHREADPREEMPTSTATE State = RTTHREADPREEMPTSTATE_INITIALIZER;
-                        RTThreadPreemptDisable(&State);
+                        RTTHREADPREEMPTSTATE State2 = RTTHREADPREEMPTSTATE_INITIALIZER;
+                        RTThreadPreemptDisable(&State2);
                         rtR0MemObjDarwinTouchPages(pv, cb);
-                        RTThreadPreemptRestore(&State);
+                        RTThreadPreemptRestore(&State2);
 # endif
 
                         /* Bug 6226: Ignore KERN_PROTECTION_FAILURE on Leopard and older. */
@@ -609,13 +617,20 @@ static int rtR0MemObjNativeAllocWorker(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
 
 DECLHIDDEN(int) rtR0MemObjNativeAllocPage(PPRTR0MEMOBJINTERNAL ppMem, size_t cb, bool fExecutable)
 {
-    return rtR0MemObjNativeAllocWorker(ppMem, cb, fExecutable, false /* fContiguous */,
-                                       0 /* PhysMask */, UINT64_MAX, RTR0MEMOBJTYPE_PAGE);
+    IPRT_DARWIN_SAVE_EFL_AC();
+
+    int rc = rtR0MemObjNativeAllocWorker(ppMem, cb, fExecutable, false /* fContiguous */,
+                                         0 /* PhysMask */, UINT64_MAX, RTR0MEMOBJTYPE_PAGE);
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
+    return rc;
 }
 
 
 DECLHIDDEN(int) rtR0MemObjNativeAllocLow(PPRTR0MEMOBJINTERNAL ppMem, size_t cb, bool fExecutable)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
+
     /*
      * Try IOMallocPhysical/IOMallocAligned first.
      * Then try optimistically without a physical address mask, which will always
@@ -628,12 +643,16 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocLow(PPRTR0MEMOBJINTERNAL ppMem, size_t cb, 
     if (rc == VERR_ADDRESS_TOO_BIG)
         rc = rtR0MemObjNativeAllocWorker(ppMem, cb, fExecutable, false /* fContiguous */,
                                          0 /* PhysMask */, _4G - PAGE_SIZE, RTR0MEMOBJTYPE_LOW);
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 
 
 DECLHIDDEN(int) rtR0MemObjNativeAllocCont(PPRTR0MEMOBJINTERNAL ppMem, size_t cb, bool fExecutable)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
+
     int rc = rtR0MemObjNativeAllocWorker(ppMem, cb, fExecutable, true /* fContiguous */,
                                          ~(uint32_t)PAGE_OFFSET_MASK, _4G - PAGE_SIZE,
                                          RTR0MEMOBJTYPE_CONT);
@@ -646,6 +665,7 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocCont(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
         rc = rtR0MemObjNativeAllocWorker(ppMem, cb + PAGE_SIZE, fExecutable, true /* fContiguous */,
                                          ~(uint32_t)PAGE_OFFSET_MASK, _4G - PAGE_SIZE,
                                          RTR0MEMOBJTYPE_CONT);
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 
@@ -655,6 +675,8 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocPhys(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
     /** @todo alignment */
     if (uAlignment != PAGE_SIZE)
         return VERR_NOT_SUPPORTED;
+
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Translate the PhysHighest address into a mask.
@@ -675,6 +697,8 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocPhys(PPRTR0MEMOBJINTERNAL ppMem, size_t cb,
         rc = rtR0MemObjNativeAllocWorker(ppMem, cb, true /* fExecutable */, true /* fContiguous */,
                                          PhysMask, PhysHighest, RTR0MEMOBJTYPE_PHYS);
     }
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 
@@ -686,6 +710,7 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocPhysNC(PPRTR0MEMOBJINTERNAL ppMem, size_t c
      * object which we populate with pages but without mapping it into any address space.
      * Estimate is 2-3 days.
      */
+    RT_NOREF(ppMem, cb, PhysHighest);
     return VERR_NOT_SUPPORTED;
 }
 
@@ -693,6 +718,7 @@ DECLHIDDEN(int) rtR0MemObjNativeAllocPhysNC(PPRTR0MEMOBJINTERNAL ppMem, size_t c
 DECLHIDDEN(int) rtR0MemObjNativeEnterPhys(PPRTR0MEMOBJINTERNAL ppMem, RTHCPHYS Phys, size_t cb, uint32_t uCachePolicy)
 {
     AssertReturn(uCachePolicy == RTMEM_CACHE_POLICY_DONT_CARE, VERR_NOT_SUPPORTED);
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Create a descriptor for it (the validation is always true on intel macs, but
@@ -724,6 +750,7 @@ DECLHIDDEN(int) rtR0MemObjNativeEnterPhys(PPRTR0MEMOBJINTERNAL ppMem, RTHCPHYS P
                 pMemDarwin->Core.u.Phys.uCachePolicy = uCachePolicy;
                 pMemDarwin->pMemDesc = pMemDesc;
                 *ppMem = &pMemDarwin->Core;
+                IPRT_DARWIN_RESTORE_EFL_AC();
                 return VINF_SUCCESS;
             }
 
@@ -735,6 +762,7 @@ DECLHIDDEN(int) rtR0MemObjNativeEnterPhys(PPRTR0MEMOBJINTERNAL ppMem, RTHCPHYS P
     }
     else
         AssertMsgFailed(("%#llx %llx\n", (unsigned long long)Phys, (unsigned long long)cb));
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 
@@ -753,6 +781,7 @@ DECLHIDDEN(int) rtR0MemObjNativeEnterPhys(PPRTR0MEMOBJINTERNAL ppMem, RTHCPHYS P
  */
 static int rtR0MemObjNativeLock(PPRTR0MEMOBJINTERNAL ppMem, void *pv, size_t cb, uint32_t fAccess, task_t Task)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
     NOREF(fAccess);
 #ifdef USE_VM_MAP_WIRE
     vm_map_t Map = get_task_map(Task);
@@ -777,6 +806,8 @@ static int rtR0MemObjNativeLock(PPRTR0MEMOBJINTERNAL ppMem, void *pv, size_t cb,
         {
             pMemDarwin->Core.u.Lock.R0Process = (RTR0PROCESS)Task;
             *ppMem = &pMemDarwin->Core;
+
+            IPRT_DARWIN_RESTORE_EFL_AC();
             return VINF_SUCCESS;
         }
 
@@ -806,6 +837,8 @@ static int rtR0MemObjNativeLock(PPRTR0MEMOBJINTERNAL ppMem, void *pv, size_t cb,
                 pMemDarwin->Core.u.Lock.R0Process = (RTR0PROCESS)Task;
                 pMemDarwin->pMemDesc = pMemDesc;
                 *ppMem = &pMemDarwin->Core;
+
+                IPRT_DARWIN_RESTORE_EFL_AC();
                 return VINF_SUCCESS;
             }
 
@@ -817,6 +850,7 @@ static int rtR0MemObjNativeLock(PPRTR0MEMOBJINTERNAL ppMem, void *pv, size_t cb,
         pMemDesc->release();
     }
 #endif
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 
@@ -835,12 +869,14 @@ DECLHIDDEN(int) rtR0MemObjNativeLockKernel(PPRTR0MEMOBJINTERNAL ppMem, void *pv,
 
 DECLHIDDEN(int) rtR0MemObjNativeReserveKernel(PPRTR0MEMOBJINTERNAL ppMem, void *pvFixed, size_t cb, size_t uAlignment)
 {
+    RT_NOREF(ppMem, pvFixed, cb, uAlignment);
     return VERR_NOT_SUPPORTED;
 }
 
 
 DECLHIDDEN(int) rtR0MemObjNativeReserveUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR R3PtrFixed, size_t cb, size_t uAlignment, RTR0PROCESS R0Process)
 {
+    RT_NOREF(ppMem, R3PtrFixed, cb, uAlignment, R0Process);
     return VERR_NOT_SUPPORTED;
 }
 
@@ -848,6 +884,7 @@ DECLHIDDEN(int) rtR0MemObjNativeReserveUser(PPRTR0MEMOBJINTERNAL ppMem, RTR3PTR 
 DECLHIDDEN(int) rtR0MemObjNativeMapKernel(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ pMemToMap, void *pvFixed, size_t uAlignment,
                                           unsigned fProt, size_t offSub, size_t cbSub)
 {
+    RT_NOREF(fProt);
     AssertReturn(pvFixed == (void *)-1, VERR_NOT_SUPPORTED);
 
     /*
@@ -855,6 +892,8 @@ DECLHIDDEN(int) rtR0MemObjNativeMapKernel(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ
      */
     if (uAlignment > PAGE_SIZE)
         return VERR_NOT_SUPPORTED;
+
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Must have a memory descriptor that we can map.
@@ -926,6 +965,8 @@ DECLHIDDEN(int) rtR0MemObjNativeMapKernel(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ
                             pMemDarwin->pMemMap = pMemMap;
 //                            pMemDarwin->pMemDesc = pMemDesc;
                             *ppMem = &pMemDarwin->Core;
+
+                            IPRT_DARWIN_RESTORE_EFL_AC();
                             return VINF_SUCCESS;
                         }
 
@@ -946,18 +987,25 @@ DECLHIDDEN(int) rtR0MemObjNativeMapKernel(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ
         else
             rc = VERR_MAP_FAILED;
     }
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 
 
-DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ pMemToMap, RTR3PTR R3PtrFixed, size_t uAlignment, unsigned fProt, RTR0PROCESS R0Process)
+DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ pMemToMap, RTR3PTR R3PtrFixed, size_t uAlignment,
+                                        unsigned fProt, RTR0PROCESS R0Process)
 {
+    RT_NOREF(fProt);
+
     /*
      * Check for unsupported things.
      */
     AssertReturn(R3PtrFixed == (RTR3PTR)-1, VERR_NOT_SUPPORTED);
     if (uAlignment > PAGE_SIZE)
         return VERR_NOT_SUPPORTED;
+
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Must have a memory descriptor.
@@ -993,6 +1041,8 @@ DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ p
                     pMemDarwin->Core.u.Mapping.R0Process = R0Process;
                     pMemDarwin->pMemMap = pMemMap;
                     *ppMem = &pMemDarwin->Core;
+
+                    IPRT_DARWIN_RESTORE_EFL_AC();
                     return VINF_SUCCESS;
                 }
 
@@ -1005,16 +1055,23 @@ DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ p
         else
             rc = VERR_MAP_FAILED;
     }
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 
 
 DECLHIDDEN(int) rtR0MemObjNativeProtect(PRTR0MEMOBJINTERNAL pMem, size_t offSub, size_t cbSub, uint32_t fProt)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
+
     /* Get the map for the object. */
     vm_map_t pVmMap = rtR0MemObjDarwinGetMap(pMem);
     if (!pVmMap)
+    {
+        IPRT_DARWIN_RESTORE_EFL_AC();
         return VERR_NOT_SUPPORTED;
+    }
 
     /*
      * Convert the protection.
@@ -1076,6 +1133,7 @@ DECLHIDDEN(int) rtR0MemObjNativeProtect(PRTR0MEMOBJINTERNAL pMem, size_t offSub,
                    krc2, (void *)pvReal, (void *)cbReal, Info.protection, Info.max_protection,  Info.inheritance,
                    Info.shared, Info.reserved, Info.offset, Info.behavior, Info.user_wired_count);
         }
+        IPRT_DARWIN_RESTORE_EFL_AC();
         return RTErrConvertFromDarwinKern(krc);
     }
 
@@ -1099,6 +1157,7 @@ DECLHIDDEN(int) rtR0MemObjNativeProtect(PRTR0MEMOBJINTERNAL pMem, size_t offSub,
             rtR0MemObjDarwinSniffPages((void const *)Start, cbSub);
     }
 
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -1107,6 +1166,7 @@ DECLHIDDEN(RTHCPHYS) rtR0MemObjNativeGetPagePhysAddr(PRTR0MEMOBJINTERNAL pMem, s
 {
     RTHCPHYS            PhysAddr;
     PRTR0MEMOBJDARWIN   pMemDarwin = (PRTR0MEMOBJDARWIN)pMem;
+    IPRT_DARWIN_SAVE_EFL_AC();
 
 #ifdef USE_VM_MAP_WIRE
     /*
@@ -1149,6 +1209,7 @@ DECLHIDDEN(RTHCPHYS) rtR0MemObjNativeGetPagePhysAddr(PRTR0MEMOBJINTERNAL pMem, s
             PgNo = pmap_find_phys(Pmap, (uintptr_t)pMemDarwin->Core.pv + iPage * PAGE_SIZE);
         }
 
+        IPRT_DARWIN_RESTORE_EFL_AC();
         AssertReturn(PgNo, NIL_RTHCPHYS);
         PhysAddr = (RTHCPHYS)PgNo << PAGE_SHIFT;
         Assert((PhysAddr >> PAGE_SHIFT) == PgNo);
@@ -1172,6 +1233,7 @@ DECLHIDDEN(RTHCPHYS) rtR0MemObjNativeGetPagePhysAddr(PRTR0MEMOBJINTERNAL pMem, s
 #else
         addr64_t Addr = pMemDesc->getPhysicalSegment64(iPage * PAGE_SIZE, NULL);
 #endif
+        IPRT_DARWIN_RESTORE_EFL_AC();
         AssertMsgReturn(Addr, ("iPage=%u\n", iPage), NIL_RTHCPHYS);
         PhysAddr = Addr;
         AssertMsgReturn(PhysAddr == Addr, ("PhysAddr=%RHp Addr=%RX64\n", PhysAddr, (uint64_t)Addr), NIL_RTHCPHYS);

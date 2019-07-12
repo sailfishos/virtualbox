@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_TRPM
 #include <VBox/vmm/trpm.h>
 #include <VBox/vmm/cpum.h>
@@ -45,8 +45,8 @@
  *
  * To uninstall the temporary handler, call this function with pfnHandler set to NULL.
  *
- * @returns VBox status.
- * @param   pVM         Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
  * @param   iTrap       Trap number to install handler [0..255].
  * @param   pfnHandler  Pointer to the handler. Use NULL for uninstalling the handler.
  */
@@ -75,7 +75,7 @@ VMMRCDECL(int) TRPMGCSetTempHandler(PVM pVM, unsigned iTrap, PFNTRPMGCTRAPHANDLE
  * This function will *never* return.
  * It will also reset any traps that are pending.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   rc      The return code for host context.
  */
 VMMRCDECL(void) TRPMGCHyperReturnToHost(PVM pVM, int rc)
@@ -84,36 +84,29 @@ VMMRCDECL(void) TRPMGCHyperReturnToHost(PVM pVM, int rc)
 
     LogFlow(("TRPMGCHyperReturnToHost: rc=%Rrc\n", rc));
     TRPMResetTrap(pVCpu);
-    VMMGCGuestToHost(pVM, rc);
+    VMMRCGuestToHost(pVM, rc);
     AssertReleaseFailed();
 }
 
 
 /**
- * \#PF Virtual Handler callback for Guest write access to the Guest's own current IDT.
- *
- * @returns VBox status code (appropriate for trap handling and GC return).
- * @param   pVM         Pointer to the VM.
- * @param   uErrorCode   CPU Error code.
- * @param   pRegFrame   Trap register frame.
- * @param   pvFault     The fault address (cr2).
- * @param   pvRange     The base address of the handled virtual range.
- * @param   offRange    The offset of the access into this range.
- *                      (If it's a EIP range this is the EIP, if not it's pvFault.)
+ * @callback_method_impl{FNPGMRCVIRTPFHANDLER,
+ * \#PF Virtual Handler callback for Guest write access to the Guest's own current IDT.}
  */
-VMMRCDECL(int) trpmRCGuestIDTWriteHandler(PVM pVM, RTGCUINT uErrorCode, PCPUMCTXCORE pRegFrame, RTGCPTR pvFault, RTGCPTR pvRange, uintptr_t offRange)
+DECLEXPORT(VBOXSTRICTRC) trpmRCGuestIDTWritePfHandler(PVM pVM, PVMCPU pVCpu, RTGCUINT uErrorCode, PCPUMCTXCORE pRegFrame,
+                                                      RTGCPTR pvFault, RTGCPTR pvRange, uintptr_t offRange, void *pvUser)
 {
-    PVMCPU      pVCpu = VMMGetCpu0(pVM);
     uint16_t    cbIDT;
     RTGCPTR     GCPtrIDT    = (RTGCPTR)CPUMGetGuestIDTR(pVCpu, &cbIDT);
 #ifdef VBOX_STRICT
     RTGCPTR     GCPtrIDTEnd = (RTGCPTR)((RTGCUINTPTR)GCPtrIDT + cbIDT + 1);
 #endif
     uint32_t    iGate       = ((RTGCUINTPTR)pvFault - (RTGCUINTPTR)GCPtrIDT)/sizeof(VBOXIDTE);
+    RT_NOREF_PV(offRange); RT_NOREF_PV(pvRange); RT_NOREF_PV(pRegFrame); RT_NOREF_PV(pVM);
 
     AssertMsg(offRange < (uint32_t)cbIDT+1, ("pvFault=%RGv GCPtrIDT=%RGv-%RGv pvRange=%RGv\n", pvFault, GCPtrIDT, GCPtrIDTEnd, pvRange));
     Assert((RTGCPTR)(RTRCUINTPTR)pvRange == GCPtrIDT);
-    NOREF(uErrorCode);
+    NOREF(uErrorCode); NOREF(pvUser);
 
 #if 0
     /* Note! this causes problems in Windows XP as instructions following the update can be dangerous (str eax has been seen) */
@@ -142,7 +135,7 @@ VMMRCDECL(int) trpmRCGuestIDTWriteHandler(PVM pVM, RTGCUINT uErrorCode, PCPUMCTX
     NOREF(iGate);
 #endif
 
-    Log(("trpmRCGuestIDTWriteHandler: eip=%RGv write to gate %x offset %x\n", pRegFrame->eip, iGate, offRange));
+    Log(("trpmRCGuestIDTWritePfHandler: eip=%RGv write to gate %x offset %x\n", pRegFrame->eip, iGate, offRange));
 
     /** @todo Check which IDT entry and keep the update cost low in TRPMR3SyncIDT() and CSAMCheckGates(). */
     VMCPU_FF_SET(pVCpu, VMCPU_FF_TRPM_SYNC_IDT);
@@ -153,22 +146,14 @@ VMMRCDECL(int) trpmRCGuestIDTWriteHandler(PVM pVM, RTGCUINT uErrorCode, PCPUMCTX
 
 
 /**
- * \#PF Virtual Handler callback for Guest write access to the VBox shadow IDT.
- *
- * @returns VBox status code (appropriate for trap handling and GC return).
- * @param   pVM         Pointer to the VM.
- * @param   uErrorCode   CPU Error code.
- * @param   pRegFrame   Trap register frame.
- * @param   pvFault     The fault address (cr2).
- * @param   pvRange     The base address of the handled virtual range.
- * @param   offRange    The offset of the access into this range.
- *                      (If it's a EIP range this is the EIP, if not it's pvFault.)
+ * @callback_method_impl{FNPGMRCVIRTPFHANDLER,
+ * \#PF Virtual Handler callback for Guest write access to the VBox shadow IDT.}
  */
-VMMRCDECL(int) trpmRCShadowIDTWriteHandler(PVM pVM, RTGCUINT uErrorCode, PCPUMCTXCORE pRegFrame, RTGCPTR pvFault, RTGCPTR pvRange, uintptr_t offRange)
+DECLEXPORT(VBOXSTRICTRC) trpmRCShadowIDTWritePfHandler(PVM pVM, PVMCPU pVCpu, RTGCUINT uErrorCode, PCPUMCTXCORE pRegFrame,
+                                                       RTGCPTR pvFault, RTGCPTR pvRange, uintptr_t offRange, void *pvUser)
 {
-    PVMCPU pVCpu = VMMGetCpu0(pVM);
-    LogRel(("FATAL ERROR: trpmRCShadowIDTWriteHandler: eip=%08X pvFault=%RGv pvRange=%08RGv\r\n", pRegFrame->eip, pvFault, pvRange));
-    NOREF(uErrorCode); NOREF(offRange);
+    LogRel(("FATAL ERROR: trpmRCShadowIDTWritePfHandler: eip=%08X pvFault=%RGv pvRange=%08RGv\r\n", pRegFrame->eip, pvFault, pvRange));
+    NOREF(uErrorCode); NOREF(offRange); NOREF(pvUser);
 
     /*
      * If we ever get here, then the guest has *probably* executed an SIDT

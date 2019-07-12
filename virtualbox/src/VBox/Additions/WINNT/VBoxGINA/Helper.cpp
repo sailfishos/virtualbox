@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,7 +15,7 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include <windows.h>
+#include <iprt/win/windows.h>
 
 #include <iprt/semaphore.h>
 #include <iprt/string.h>
@@ -37,7 +37,7 @@ static DWORD g_dwVerbosity = 0;
 /**
  * Displays a verbose message.
  *
- * @param   iLevel      Minimum log level required to display this message.
+ * @param   dwLevel     Minimum log level required to display this message.
  * @param   pszFormat   The message text.
  * @param   ...         Format arguments.
  */
@@ -144,6 +144,7 @@ RTTHREAD gThreadPoller = NIL_RTTHREAD;
  */
 static DECLCALLBACK(int) credentialsPoller(RTTHREAD ThreadSelf, void *pvUser)
 {
+    RT_NOREF(pvUser);
     VBoxGINAVerbose(0, "VBoxGINA::credentialsPoller\n");
 
     do

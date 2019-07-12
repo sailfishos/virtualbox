@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/nt/nt-and-windows.h>
 
 #include <VBox/sup.h>
@@ -40,9 +41,9 @@
 #include "SUPHardenedVerify-win.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define SUPHARNT_COMMENT(a_Blah) /* nothing */
 
 #define VBOX_HARDENED_STUB_WITHOUT_IMPORTS
@@ -59,9 +60,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /**
  * Import function entry.
  */
@@ -91,9 +92,9 @@ typedef struct SUPHNTIMPSYSCALL
     uint32_t               *puApiNo;
     /** Assembly system call routine, type 1.  */
     PFNRT                   pfnType1;
-#ifdef RT_ARCH_X86
     /** Assembly system call routine, type 2.  */
     PFNRT                   pfnType2;
+#ifdef RT_ARCH_X86
     /** The parameter size in bytes for a standard call. */
     uint32_t                cbParams;
 #endif
@@ -170,6 +171,7 @@ typedef SUPHNTIMPDLL *PSUPHNTIMPDLL;
 #define SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86) \
     extern PFNRT    RT_CONCAT(g_pfn, a_Name); \
     extern FNRT     RT_CONCAT(a_Name, _Early);
+#define SUPHARNT_IMPORT_STDCALL_OPTIONAL(a_Name, a_cbParamsX86) SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86)
 
 RT_C_DECLS_BEGIN
 #include "import-template-ntdll.h"
@@ -183,6 +185,7 @@ RT_C_DECLS_END
 #undef SUPHARNT_IMPORT_STDCALL_EARLY
 #undef SUPHARNT_IMPORT_STDCALL_EARLY_OPTIONAL
 #undef SUPHARNT_IMPORT_STDCALL
+#undef SUPHARNT_IMPORT_STDCALL_OPTIONAL
 #define SUPHARNT_IMPORT_SYSCALL(a_Name, a_cbParamsX86) \
     { #a_Name, &RT_CONCAT(g_pfn, a_Name), NULL, false },
 #define SUPHARNT_IMPORT_STDCALL_EARLY(a_Name, a_cbParamsX86) \
@@ -191,6 +194,8 @@ RT_C_DECLS_END
     { #a_Name, &RT_CONCAT(g_pfn, a_Name), NULL, true },
 #define SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86) \
     { #a_Name, &RT_CONCAT(g_pfn, a_Name), RT_CONCAT(a_Name,_Early), false },
+#define SUPHARNT_IMPORT_STDCALL_OPTIONAL(a_Name, a_cbParamsX86) \
+    { #a_Name, &RT_CONCAT(g_pfn, a_Name), RT_CONCAT(a_Name,_Early), true },
 static const SUPHNTIMPFUNC g_aSupNtImpNtDllFunctions[] =
 {
 #include "import-template-ntdll.h"
@@ -207,20 +212,22 @@ static const SUPHNTIMPFUNC g_aSupNtImpKernel32Functions[] =
  * Syscalls in ntdll.
  */
 #undef SUPHARNT_IMPORT_SYSCALL
-#undef SUPHARNT_IMPORT_STDCALL
 #undef SUPHARNT_IMPORT_STDCALL_EARLY
 #undef SUPHARNT_IMPORT_STDCALL_EARLY_OPTIONAL
+#undef SUPHARNT_IMPORT_STDCALL
+#undef SUPHARNT_IMPORT_STDCALL_OPTIONAL
 #ifdef RT_ARCH_AMD64
 # define SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86) \
     { NULL, NULL },
 # define SUPHARNT_IMPORT_SYSCALL(a_Name, a_cbParamsX86) \
-    { &RT_CONCAT(g_uApiNo, a_Name), &RT_CONCAT(a_Name, _SyscallType1) },
+    { &RT_CONCAT(g_uApiNo, a_Name), &RT_CONCAT(a_Name, _SyscallType1), &RT_CONCAT(a_Name, _SyscallType2) },
 #elif defined(RT_ARCH_X86)
 # define SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86) \
     { NULL, NULL, NULL, 0 },
 # define SUPHARNT_IMPORT_SYSCALL(a_Name, a_cbParamsX86) \
     { &RT_CONCAT(g_uApiNo, a_Name), &RT_CONCAT(a_Name,_SyscallType1), &RT_CONCAT(a_Name, _SyscallType2), a_cbParamsX86 },
 #endif
+#define SUPHARNT_IMPORT_STDCALL_OPTIONAL(a_Name, a_cbParamsX86)       SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86)
 #define SUPHARNT_IMPORT_STDCALL_EARLY(a_Name, a_cbParamsX86)          SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86)
 #define SUPHARNT_IMPORT_STDCALL_EARLY_OPTIONAL(a_Name, a_cbParamsX86) SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86)
 static const SUPHNTIMPSYSCALL g_aSupNtImpNtDllSyscalls[] =
@@ -449,14 +456,27 @@ static void supR3HardenedDirectSyscall(PSUPHNTIMPDLL pDll, PCSUPHNTIMPFUNC pImpo
      * Parse the code and extract the API call number.
      */
 #ifdef RT_ARCH_AMD64
-    /* Pattern #1: XP64/W2K3-64 thru Windows 8.1
-       0:000> u ntdll!NtCreateSection
-       ntdll!NtCreateSection:
-       00000000`779f1750 4c8bd1          mov     r10,rcx
-       00000000`779f1753 b847000000      mov     eax,47h
-       00000000`779f1758 0f05            syscall
-       00000000`779f175a c3              ret
-       00000000`779f175b 0f1f440000      nop     dword ptr [rax+rax] */
+    /* Pattern #1: XP64/W2K3-64 thru Windows 10 build 10240.
+            0:000> u ntdll!NtCreateSection
+            ntdll!NtCreateSection:
+            00000000`779f1750 4c8bd1          mov     r10,rcx
+            00000000`779f1753 b847000000      mov     eax,47h
+            00000000`779f1758 0f05            syscall
+            00000000`779f175a c3              ret
+            00000000`779f175b 0f1f440000      nop     dword ptr [rax+rax]
+
+       Pattern #2: Windows 10 build 10525+.
+            0:000> u ntdll_7ffc26300000!NtCreateSection
+            ntdll_7ffc26300000!ZwCreateSection:
+            00007ffc`263943e0 4c8bd1          mov     r10,rcx
+            00007ffc`263943e3 b84a000000      mov     eax,4Ah
+            00007ffc`263943e8 f604250803fe7f01 test    byte ptr [SharedUserData+0x308 (00000000`7ffe0308)],1
+            00007ffc`263943f0 7503            jne     ntdll_7ffc26300000!ZwCreateSection+0x15 (00007ffc`263943f5)
+            00007ffc`263943f2 0f05            syscall
+            00007ffc`263943f4 c3              ret
+            00007ffc`263943f5 cd2e            int     2Eh
+            00007ffc`263943f7 c3              ret
+       */
     if (   pbFunction[ 0] == 0x4c /* mov r10, rcx */
         && pbFunction[ 1] == 0x8b
         && pbFunction[ 2] == 0xd1
@@ -464,14 +484,37 @@ static void supR3HardenedDirectSyscall(PSUPHNTIMPDLL pDll, PCSUPHNTIMPFUNC pImpo
         //&& pbFunction[ 4] == 0xZZ
         //&& pbFunction[ 5] == 0xYY
         && pbFunction[ 6] == 0x00
-        && pbFunction[ 7] == 0x00
-        && pbFunction[ 8] == 0x0f /* syscall */
-        && pbFunction[ 9] == 0x05
-        && pbFunction[10] == 0xc3 /* ret */ )
+        && pbFunction[ 7] == 0x00)
     {
-        *pSyscall->puApiNo = RT_MAKE_U16(pbFunction[4], pbFunction[5]);
-        *pImport->ppfnImport = pSyscall->pfnType1;
-        return;
+        if (   pbFunction[ 8] == 0x0f /* syscall */
+            && pbFunction[ 9] == 0x05
+            && pbFunction[10] == 0xc3 /* ret */ )
+        {
+            *pSyscall->puApiNo = RT_MAKE_U16(pbFunction[4], pbFunction[5]);
+            *pImport->ppfnImport = pSyscall->pfnType1;
+            return;
+        }
+        if (   pbFunction[ 8] == 0xf6 /* test   byte ptr [SharedUserData+0x308 (00000000`7ffe0308)],1 */
+            && pbFunction[ 9] == 0x04
+            && pbFunction[10] == 0x25
+            && pbFunction[11] == 0x08
+            && pbFunction[12] == 0x03
+            && pbFunction[13] == 0xfe
+            && pbFunction[14] == 0x7f
+            && pbFunction[15] == 0x01
+            && pbFunction[16] == 0x75 /* jnz +3 */
+            && pbFunction[17] == 0x03
+            && pbFunction[18] == 0x0f /* syscall*/
+            && pbFunction[19] == 0x05
+            && pbFunction[20] == 0xc3 /* ret */
+            && pbFunction[21] == 0xcd /* int 2eh */
+            && pbFunction[22] == 0x2e
+            && pbFunction[23] == 0xc3 /* ret */ )
+        {
+            *pSyscall->puApiNo = RT_MAKE_U16(pbFunction[4], pbFunction[5]);
+            *pImport->ppfnImport = pSyscall->pfnType2;
+            return;
+        }
     }
 #else
     /* Pattern #1: XP thru Windows 7
@@ -544,7 +587,7 @@ static void supR3HardenedDirectSyscall(PSUPHNTIMPDLL pDll, PCSUPHNTIMPFUNC pImpo
     volatile uint8_t abCopy[16];
     memcpy((void *)&abCopy[0], pbFunction, sizeof(abCopy));
     SUPHNTIMP_ERROR(fReportErrors, 17, "supR3HardenedWinInitImports", kSupInitOp_Misc, rc,
-                    "%ls: supHardNtLdrCacheOpen failed: '%s': %.16Rhxs",
+                    "%ls: failed to parse syscall: '%s': %.16Rhxs",
                     pDll->pwszName, pImport->pszName, &abCopy[0]);
 }
 
@@ -557,19 +600,22 @@ static void supR3HardenedDirectSyscall(PSUPHNTIMPDLL pDll, PCSUPHNTIMPFUNC pImpo
  *
  * @param   fReportErrors       Whether we've got the machinery for reporting
  *                              errors going already.
+ * @param   pErrInfo            Buffer for gathering additional error info. This
+ *                              is mainly to avoid consuming lots of stacks with
+ *                              RTERRINFOSTATIC structures.
  */
-DECLHIDDEN(void) supR3HardenedWinInitSyscalls(bool fReportErrors)
+DECLHIDDEN(void) supR3HardenedWinInitSyscalls(bool fReportErrors, PRTERRINFO pErrInfo)
 {
     for (uint32_t iDll = 0; iDll < RT_ELEMENTS(g_aSupNtImpDlls); iDll++)
         if (g_aSupNtImpDlls[iDll].paSyscalls)
         {
             PSUPHNTLDRCACHEENTRY pLdrEntry;
-            int rc = supHardNtLdrCacheOpen(g_aSupNtImpDlls[iDll].pszName, &pLdrEntry);
+            int rc = supHardNtLdrCacheOpen(g_aSupNtImpDlls[iDll].pszName, &pLdrEntry, pErrInfo);
             if (RT_SUCCESS(rc))
             {
                 uint8_t *pbBits;
-                rc = supHardNtLdrCacheEntryGetBits(pLdrEntry, &pbBits, (uintptr_t)g_aSupNtImpDlls[iDll].pbImageBase, NULL, NULL,
-                                                   NULL /*pErrInfo*/);
+                rc = supHardNtLdrCacheEntryGetBits(pLdrEntry, &pbBits, (uintptr_t)g_aSupNtImpDlls[iDll].pbImageBase,
+                                                   NULL, NULL, pErrInfo);
                 if (RT_SUCCESS(rc))
                 {
                     for (uint32_t i = 0; i < g_aSupNtImpDlls[iDll].cImports; i++)
@@ -578,11 +624,13 @@ DECLHIDDEN(void) supR3HardenedWinInitSyscalls(bool fReportErrors)
                 }
                 else
                     SUPHNTIMP_ERROR(fReportErrors, 20, "supR3HardenedWinInitImports", kSupInitOp_Misc, rc,
-                                    "%ls: supHardNtLdrCacheEntryGetBits failed: %Rrc '%s'.", g_aSupNtImpDlls[iDll].pwszName, rc);
+                                    "%ls: supHardNtLdrCacheEntryGetBits failed: %Rrc %s",
+                                    g_aSupNtImpDlls[iDll].pwszName, rc, pErrInfo ? pErrInfo->pszMsg : "");
             }
             else
                 SUPHNTIMP_ERROR(fReportErrors, 21, "supR3HardenedWinInitImports", kSupInitOp_Misc, rc,
-                                "%ls: supHardNtLdrCacheOpen failed: %Rrc '%s'.", g_aSupNtImpDlls[iDll].pwszName, rc);
+                                "%ls: supHardNtLdrCacheOpen failed: %Rrc %s",
+                                g_aSupNtImpDlls[iDll].pwszName, rc, pErrInfo ? pErrInfo->pszMsg : "");
         }
 }
 
@@ -592,7 +640,10 @@ DECLHIDDEN(void) supR3HardenedWinInitSyscalls(bool fReportErrors)
  *
  * We must not permanently modify any global data here.
  *
- * @param   uNtDllAddr          The address of the NTDLL.
+ * @param   uNtDllAddr                  The address of the NTDLL.
+ * @param   ppfnNtWaitForSingleObject   Where to store the NtWaitForSingleObject
+ *                                      address.
+ * @param   ppfnNtSetEvent              Where to store the NtSetEvent address.
  */
 DECLHIDDEN(void) supR3HardenedWinGetVeryEarlyImports(uintptr_t uNtDllAddr,
                                                      PFNNTWAITFORSINGLEOBJECT *ppfnNtWaitForSingleObject,
@@ -616,12 +667,12 @@ DECLHIDDEN(void) supR3HardenedWinGetVeryEarlyImports(uintptr_t uNtDllAddr,
     };
 
     for (uint32_t i = 0; i < RT_ELEMENTS(aImports); i++)
-        {
-            const char *pszForwarder = supR3HardenedResolveImport(&g_aSupNtImpDlls[0], &aImports[i], false);
-            if (pszForwarder)
-                SUPHNTIMP_ERROR(false, 31, "supR3HardenedWinGetVeryEarlyImports", kSupInitOp_Misc, VERR_MODULE_NOT_FOUND,
-                                "ntdll: Failed to resolve forwarder '%s'.", pszForwarder);
-        }
+    {
+        const char *pszForwarder = supR3HardenedResolveImport(&g_aSupNtImpDlls[0], &aImports[i], false);
+        if (pszForwarder)
+            SUPHNTIMP_ERROR(false, 31, "supR3HardenedWinGetVeryEarlyImports", kSupInitOp_Misc, VERR_MODULE_NOT_FOUND,
+                            "ntdll: Failed to resolve forwarder '%s'.", pszForwarder);
+    }
 
     /*
      * Restore the NtDll entry.
@@ -654,7 +705,7 @@ DECLHIDDEN(void) supR3HardenedWinInitImportsEarly(uintptr_t uNtDllAddr)
             *g_aSupNtImpDlls[0].paImports[i].ppfnImport = g_aSupNtImpDlls[0].paImports[i].pfnEarlyDummy;
 
     /*
-     * Pointer the other imports at the early init stubs.
+     * Point the other imports at the early init stubs.
      */
     for (uint32_t iDll = 1; iDll < RT_ELEMENTS(g_aSupNtImpDlls); iDll++)
         for (uint32_t i = 0; i < g_aSupNtImpDlls[iDll].cImports; i++)
@@ -676,6 +727,8 @@ DECLHIDDEN(void) supR3HardenedWinInitImportsEarly(uintptr_t uNtDllAddr)
  */
 DECLHIDDEN(void) supR3HardenedWinInitImports(void)
 {
+    RTERRINFOSTATIC ErrInfo;
+
     /*
      * Find the DLLs we will be needing first (forwarders).
      */
@@ -713,7 +766,7 @@ DECLHIDDEN(void) supR3HardenedWinInitImports(void)
     /*
      * Do system calls directly.
      */
-    supR3HardenedWinInitSyscalls(false);
+    supR3HardenedWinInitSyscalls(false, RTErrInfoInitStatic(&ErrInfo));
 
     /*
      * Use the on disk image to avoid export table patching.  Currently
@@ -723,12 +776,12 @@ DECLHIDDEN(void) supR3HardenedWinInitImports(void)
         if (g_aSupNtImpDlls[iDll].cPatchedExports > 0)
         {
             PSUPHNTLDRCACHEENTRY pLdrEntry;
-            int rc = supHardNtLdrCacheOpen(g_aSupNtImpDlls[iDll].pszName, &pLdrEntry);
+            int rc = supHardNtLdrCacheOpen(g_aSupNtImpDlls[iDll].pszName, &pLdrEntry, RTErrInfoInitStatic(&ErrInfo));
             if (RT_SUCCESS(rc))
             {
                 uint8_t *pbBits;
                 rc = supHardNtLdrCacheEntryGetBits(pLdrEntry, &pbBits, (uintptr_t)g_aSupNtImpDlls[iDll].pbImageBase, NULL, NULL,
-                                                   NULL /*pErrInfo*/);
+                                                   RTErrInfoInitStatic(&ErrInfo));
                 if (RT_SUCCESS(rc))
                     for (uint32_t i = 0; i < g_aSupNtImpDlls[iDll].cImports; i++)
                     {
@@ -760,6 +813,8 @@ DECLHIDDEN(void) supR3HardenedWinInitImports(void)
  */
 DECLHIDDEN(PFNRT) supR3HardenedWinGetRealDllSymbol(const char *pszDll, const char *pszProcedure)
 {
+    RTERRINFOSTATIC ErrInfo;
+
     /*
      * Look the DLL up in the import DLL table.
      */
@@ -768,12 +823,12 @@ DECLHIDDEN(PFNRT) supR3HardenedWinGetRealDllSymbol(const char *pszDll, const cha
         {
 
             PSUPHNTLDRCACHEENTRY pLdrEntry;
-            int rc = supHardNtLdrCacheOpen(g_aSupNtImpDlls[iDll].pszName, &pLdrEntry);
+            int rc = supHardNtLdrCacheOpen(g_aSupNtImpDlls[iDll].pszName, &pLdrEntry, RTErrInfoInitStatic(&ErrInfo));
             if (RT_SUCCESS(rc))
             {
                 uint8_t *pbBits;
                 rc = supHardNtLdrCacheEntryGetBits(pLdrEntry, &pbBits, (uintptr_t)g_aSupNtImpDlls[iDll].pbImageBase, NULL, NULL,
-                                                   NULL /*pErrInfo*/);
+                                                   RTErrInfoInitStatic(&ErrInfo));
                 if (RT_SUCCESS(rc))
                 {
                     RTLDRADDR uValue;
@@ -784,12 +839,12 @@ DECLHIDDEN(PFNRT) supR3HardenedWinGetRealDllSymbol(const char *pszDll, const cha
                     SUP_DPRINTF(("supR3HardenedWinGetRealDllSymbol: Error getting %s in %s -> %Rrc\n", pszProcedure, pszDll, rc));
                 }
                 else
-                    SUP_DPRINTF(("supR3HardenedWinGetRealDllSymbol: supHardNtLdrCacheEntryAllocBits failed on %s: %Rrc\n",
-                                 pszDll, rc));
+                    SUP_DPRINTF(("supR3HardenedWinGetRealDllSymbol: supHardNtLdrCacheEntryAllocBits failed on %s: %Rrc %s\n",
+                                 pszDll, rc, ErrInfo.Core.pszMsg));
             }
             else
-                SUP_DPRINTF(("supR3HardenedWinGetRealDllSymbol: supHardNtLdrCacheOpen failed on %s: %Rrc\n",
-                             pszDll, rc));
+                SUP_DPRINTF(("supR3HardenedWinGetRealDllSymbol: supHardNtLdrCacheOpen failed on %s: %Rrc %s\n",
+                             pszDll, rc, ErrInfo.Core.pszMsg));
 
             /* Complications, just call GetProcAddress. */
             if (g_enmSupR3HardenedMainState >= SUPR3HARDENEDMAINSTATE_WIN_IMPORTS_RESOLVED)
@@ -798,6 +853,6 @@ DECLHIDDEN(PFNRT) supR3HardenedWinGetRealDllSymbol(const char *pszDll, const cha
         }
 
     supR3HardenedFatal("supR3HardenedWinGetRealDllSymbol: Unknown DLL %s (proc: %s)\n", pszDll, pszProcedure);
-    return NULL;
+    /* not reached */
 }
 

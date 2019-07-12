@@ -1,12 +1,12 @@
 /* $Id: tstDarwinKeyboard.cpp $ */
 /** @file
- * Common GUI Library - Testcase - Darwin Keyboard routines.
+ * VBox Qt GUI Testcase - Common GUI Library - Darwin Keyboard routines.
  *
  * @todo Move this up somewhere so that the two SDL GUIs can use parts of this code too (-HID crap).
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,16 +18,23 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <iprt/initterm.h>
-#include <iprt/stream.h>
-#include <iprt/string.h>
-#include <iprt/time.h>
-#include <iprt/assert.h>
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
-#include "DarwinKeyboard.h"
+# include <iprt/initterm.h>
+# include <iprt/stream.h>
+# include <iprt/string.h>
+# include <iprt/time.h>
+# include <iprt/assert.h>
+
+# include "DarwinKeyboard.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 int main(int argc, char **argv)
 {

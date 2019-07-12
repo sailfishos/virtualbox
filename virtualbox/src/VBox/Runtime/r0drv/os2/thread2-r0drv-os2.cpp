@@ -28,9 +28,10 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-os2-kernel.h"
 
 #include <iprt/thread.h>
@@ -62,6 +63,11 @@ DECLHIDDEN(int) rtThreadNativeAdopt(PRTTHREADINT pThread)
 {
     NOREF(pThread);
     return VERR_NOT_IMPLEMENTED;
+}
+
+DECLHIDDEN(void) rtThreadNativeWaitKludge(PRTTHREADINT pThread)
+{
+    NOREF(pThread);
 }
 
 

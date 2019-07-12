@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,10 +25,10 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <Windows.h>
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
 
 #include <iprt/pipe.h>
 #include "internal/iprt.h"
@@ -47,16 +47,16 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The pipe buffer size we prefer. */
 #define RTPIPE_NT_SIZE      _64K
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct RTPIPEINTERNAL
 {
     /** Magic value (RTPIPE_MAGIC). */
@@ -126,17 +126,17 @@ typedef struct _FILE_PIPE_LOCAL_INFORMATION {
      ULONG NamedPipeEnd;
 } FILE_PIPE_LOCAL_INFORMATION, *PFILE_PIPE_LOCAL_INFORMATION;
 
-#define FILE_PIPE_DISCONNECTED_STATE    0x00000001
-#define FILE_PIPE_LISTENING_STATE       0x00000002
-#define FILE_PIPE_CONNECTED_STATE       0x00000003
-#define FILE_PIPE_CLOSING_STATE         0x00000004
+#define FILE_PIPE_DISCONNECTED_STATE    0x00000001U
+#define FILE_PIPE_LISTENING_STATE       0x00000002U
+#define FILE_PIPE_CONNECTED_STATE       0x00000003U
+#define FILE_PIPE_CLOSING_STATE         0x00000004U
 
-#define FILE_PIPE_INBOUND               0x00000000
-#define FILE_PIPE_OUTBOUND              0x00000001
-#define FILE_PIPE_FULL_DUPLEX           0x00000002
+#define FILE_PIPE_INBOUND               0x00000000U
+#define FILE_PIPE_OUTBOUND              0x00000001U
+#define FILE_PIPE_FULL_DUPLEX           0x00000002U
 
-#define FILE_PIPE_CLIENT_END            0x00000000
-#define FILE_PIPE_SERVER_END            0x00000001
+#define FILE_PIPE_CLIENT_END            0x00000000U
+#define FILE_PIPE_SERVER_END            0x00000001U
 
 extern "C" NTSYSAPI NTSTATUS WINAPI NtQueryInformationFile(HANDLE, PIO_STATUS_BLOCK, PVOID, LONG, FILE_INFORMATION_CLASS);
 
@@ -148,7 +148,7 @@ extern "C" NTSYSAPI NTSTATUS WINAPI NtQueryInformationFile(HANDLE, PIO_STATUS_BL
  * @param   pThis               The pipe.
  * @param   pInfo               The info structure.
  */
-static bool rtPipeQueryInfo(RTPIPEINTERNAL *pThis, FILE_PIPE_LOCAL_INFORMATION *pInfo)
+static bool rtPipeQueryNtInfo(RTPIPEINTERNAL *pThis, FILE_PIPE_LOCAL_INFORMATION *pInfo)
 {
     IO_STATUS_BLOCK Ios;
     RT_ZERO(Ios);
@@ -458,7 +458,7 @@ RTDECL(int)  RTPipeFromNative(PRTPIPE phPipe, RTHCINTPTR hNativePipe, uint32_t f
     AssertReturn(cInstances <= 1, VERR_INVALID_HANDLE);
 
     /*
-     * Looks kind of OK, create a handle so we can try rtPipeQueryInfo on it
+     * Looks kind of OK, create a handle so we can try rtPipeQueryNtInfo on it
      * and see if we need to duplicate it to make that call work.
      */
     RTPIPEINTERNAL *pThis = (RTPIPEINTERNAL *)RTMemAllocZ(sizeof(RTPIPEINTERNAL));
@@ -486,7 +486,7 @@ RTDECL(int)  RTPipeFromNative(PRTPIPE phPipe, RTHCINTPTR hNativePipe, uint32_t f
 
             HANDLE  hNative2 = INVALID_HANDLE_VALUE;
             FILE_PIPE_LOCAL_INFORMATION Info;
-            if (rtPipeQueryInfo(pThis, &Info))
+            if (rtPipeQueryNtInfo(pThis, &Info))
                 rc = VINF_SUCCESS;
             else
             {
@@ -497,7 +497,7 @@ RTDECL(int)  RTPipeFromNative(PRTPIPE phPipe, RTHCINTPTR hNativePipe, uint32_t f
                                     0 /*dwOptions*/))
                 {
                     pThis->hPipe = hNative2;
-                    if (rtPipeQueryInfo(pThis, &Info))
+                    if (rtPipeQueryNtInfo(pThis, &Info))
                         rc = VINF_SUCCESS;
                     else
                     {
@@ -517,10 +517,11 @@ RTDECL(int)  RTPipeFromNative(PRTPIPE phPipe, RTHCINTPTR hNativePipe, uint32_t f
                            || Info.NamedPipeState == FILE_PIPE_CLOSING_STATE
                            || Info.NamedPipeState == FILE_PIPE_DISCONNECTED_STATE,
                            VERR_INVALID_HANDLE);
-                AssertStmt(   Info.NamedPipeConfiguration
-                           == (   Info.NamedPipeEnd == FILE_PIPE_SERVER_END
-                               ? (pThis->fRead ? FILE_PIPE_INBOUND  : FILE_PIPE_OUTBOUND)
-                               : (pThis->fRead ? FILE_PIPE_OUTBOUND : FILE_PIPE_INBOUND) ),
+                AssertStmt(      Info.NamedPipeConfiguration
+                              == (   Info.NamedPipeEnd == FILE_PIPE_SERVER_END
+                                  ? (pThis->fRead ? FILE_PIPE_INBOUND  : FILE_PIPE_OUTBOUND)
+                                  : (pThis->fRead ? FILE_PIPE_OUTBOUND : FILE_PIPE_INBOUND) )
+                           || Info.NamedPipeConfiguration == FILE_PIPE_FULL_DUPLEX,
                            VERR_INVALID_HANDLE);
                 if (   RT_SUCCESS(rc)
                     && hNative2 == INVALID_HANDLE_VALUE
@@ -536,6 +537,7 @@ RTDECL(int)  RTPipeFromNative(PRTPIPE phPipe, RTHCINTPTR hNativePipe, uint32_t f
                     /*
                      * Ok, we're good!
                      */
+/** @todo This is bogus for standard handles! */
                     if (hNative2 != INVALID_HANDLE_VALUE)
                         CloseHandle(hNative);
                     *phPipe = pThis;
@@ -744,7 +746,7 @@ RTDECL(int) RTPipeWrite(RTPIPE hPipe, const void *pvBuf, size_t cbToWrite, size_
                 FILE_PIPE_LOCAL_INFORMATION Info;
                 if (   !pThis->fPromisedWritable
                     && cbToWrite > 0
-                    && rtPipeQueryInfo(pThis, &Info))
+                    && rtPipeQueryNtInfo(pThis, &Info))
                 {
                     if (Info.NamedPipeState == FILE_PIPE_CLOSING_STATE)
                         rc = VERR_BROKEN_PIPE;
@@ -794,7 +796,7 @@ RTDECL(int) RTPipeWrite(RTPIPE hPipe, const void *pvBuf, size_t cbToWrite, size_
                     if (WriteFile(pThis->hPipe, pThis->pbBounceBuf, (DWORD)pThis->cbBounceBufUsed,
                                   &cbWritten, &pThis->Overlapped))
                     {
-                        *pcbWritten = cbWritten;
+                        *pcbWritten = RT_MIN(cbWritten, cbToWrite); /* paranoia^3 */
                         rc = VINF_SUCCESS;
                     }
                     else if (GetLastError() == ERROR_IO_PENDING)
@@ -855,7 +857,7 @@ RTDECL(int) RTPipeWriteBlocking(RTPIPE hPipe, const void *pvBuf, size_t cbToWrit
                     Assert(pThis->fIOPending);
                     HANDLE hEvent = pThis->Overlapped.hEvent;
                     RTCritSectLeave(&pThis->CritSect);
-                    WaitForSingleObject(pThis->Overlapped.hEvent, INFINITE);
+                    WaitForSingleObject(hEvent, INFINITE);
                     RTCritSectEnter(&pThis->CritSect);
                 }
             }
@@ -876,9 +878,8 @@ RTDECL(int) RTPipeWriteBlocking(RTPIPE hPipe, const void *pvBuf, size_t cbToWrit
                     RTCritSectLeave(&pThis->CritSect);
 
                     DWORD cbWritten = 0;
-                    if (WriteFile(pThis->hPipe, pvBuf,
-                                  cbToWrite <= ~(DWORD)0 ? (DWORD)cbToWrite : ~(DWORD)0,
-                                  &cbWritten, &pThis->Overlapped))
+                    DWORD const cbToWriteInThisIteration = cbToWrite <= ~(DWORD)0 ? (DWORD)cbToWrite : ~(DWORD)0;
+                    if (WriteFile(pThis->hPipe, pvBuf, cbToWriteInThisIteration, &cbWritten, &pThis->Overlapped))
                         rc = VINF_SUCCESS;
                     else if (GetLastError() == ERROR_IO_PENDING)
                     {
@@ -899,6 +900,8 @@ RTDECL(int) RTPipeWriteBlocking(RTPIPE hPipe, const void *pvBuf, size_t cbToWrit
                         break;
 
                     /* advance */
+                    if (cbWritten > cbToWriteInThisIteration) /* paranoia^3 */
+                        cbWritten = cbToWriteInThisIteration;
                     pvBuf           = (char const *)pvBuf + cbWritten;
                     cbTotalWritten += cbWritten;
                     cbToWrite      -= cbWritten;
@@ -925,9 +928,7 @@ RTDECL(int) RTPipeWriteBlocking(RTPIPE hPipe, const void *pvBuf, size_t cbToWrit
     }
     return rc;
 
-#if 1
-    return VERR_NOT_IMPLEMENTED;
-#else
+#if 0 /** @todo r=bird: What's this? */
     int rc = rtPipeTryBlocking(pThis);
     if (RT_SUCCESS(rc))
     {
@@ -1049,7 +1050,7 @@ RTDECL(int) RTPipeSelectOne(RTPIPE hPipe, RTMSINTERVAL cMillies)
             else
             {
                 FILE_PIPE_LOCAL_INFORMATION Info;
-                if (rtPipeQueryInfo(pThis, &Info))
+                if (rtPipeQueryNtInfo(pThis, &Info))
                 {
                     /* Check for broken pipe. */
                     if (Info.NamedPipeState == FILE_PIPE_CLOSING_STATE)
@@ -1170,6 +1171,29 @@ RTDECL(int) RTPipeQueryReadable(RTPIPE hPipe, size_t *pcbReadable)
 }
 
 
+RTDECL(int) RTPipeQueryInfo(RTPIPE hPipe, PRTFSOBJINFO pObjInfo, RTFSOBJATTRADD enmAddAttr)
+{
+    RTPIPEINTERNAL *pThis = hPipe;
+    AssertPtrReturn(pThis, 0);
+    AssertReturn(pThis->u32Magic == RTPIPE_MAGIC, 0);
+
+    int rc = RTCritSectEnter(&pThis->CritSect);
+    AssertRCReturn(rc, 0);
+
+    rtPipeFakeQueryInfo(pObjInfo, enmAddAttr, pThis->fRead);
+
+    FILE_PIPE_LOCAL_INFORMATION Info;
+    if (rtPipeQueryNtInfo(pThis, &Info))
+    {
+        pObjInfo->cbAllocated = pThis->fRead ? Info.InboundQuota : Info.OutboundQuota;
+        pObjInfo->cbObject    = pThis->fRead ? Info.ReadDataAvailable : Info.WriteQuotaAvailable;
+    }
+
+    RTCritSectLeave(&pThis->CritSect);
+    return VINF_SUCCESS;
+}
+
+
 int rtPipePollGetHandle(RTPIPE hPipe, uint32_t fEvents, PRTHCINTPTR phNative)
 {
     RTPIPEINTERNAL *pThis = hPipe;
@@ -1230,7 +1254,7 @@ static uint32_t rtPipePollCheck(RTPIPEINTERNAL *pThis, uint32_t fEvents)
             && !fRetEvents)
         {
             FILE_PIPE_LOCAL_INFORMATION Info;
-            if (rtPipeQueryInfo(pThis, &Info))
+            if (rtPipeQueryNtInfo(pThis, &Info))
             {
                 /* Check for broken pipe. */
                 if (Info.NamedPipeState == FILE_PIPE_CLOSING_STATE)
@@ -1282,6 +1306,7 @@ uint32_t rtPipePollStart(RTPIPE hPipe, RTPOLLSET hPollSet, uint32_t fEvents, boo
     RTPIPEINTERNAL *pThis = hPipe;
     AssertPtrReturn(pThis, UINT32_MAX);
     AssertReturn(pThis->u32Magic == RTPIPE_MAGIC, UINT32_MAX);
+    RT_NOREF_PV(fFinalEntry);
 
     int rc = RTCritSectEnter(&pThis->CritSect);
     AssertRCReturn(rc, UINT32_MAX);
@@ -1362,6 +1387,8 @@ uint32_t rtPipePollDone(RTPIPE hPipe, uint32_t fEvents, bool fFinalEntry, bool f
     RTPIPEINTERNAL *pThis = hPipe;
     AssertPtrReturn(pThis, 0);
     AssertReturn(pThis->u32Magic == RTPIPE_MAGIC, 0);
+    RT_NOREF_PV(fFinalEntry);
+    RT_NOREF_PV(fHarvestEvents);
 
     int rc = RTCritSectEnter(&pThis->CritSect);
     AssertRCReturn(rc, 0);

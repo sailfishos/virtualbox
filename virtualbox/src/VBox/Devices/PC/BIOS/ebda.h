@@ -1,5 +1,10 @@
+/* $Id: ebda.h $ */
+/** @file
+ * PC BIOS - ???
+ */
+
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,6 +41,15 @@
  *  License along with this library; if not, write to the Free Software
  *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
  *
+ */
+
+/*
+ * Oracle LGPL Disclaimer: For the avoidance of doubt, except that if any license choice
+ * other than GPL or LGPL is available it will apply instead, Oracle elects to use only
+ * the Lesser General Public License version 2.1 (LGPLv2) at this time for any software where
+ * a choice of LGPL license versions is made available with the language indicating
+ * that LGPLv2 or any later version may be used, or where a choice of which version
+ * of the LGPL is applied is otherwise unspecified.
  */
 
 
@@ -192,7 +206,7 @@ typedef struct {
     uint16_t    blksize;      /* Disk block size. */
     chs_t       lchs;         /* Logical CHS geometry. */
     chs_t       pchs;         /* Physical CHS geometry. */
-    uint32_t    sectors;      /* Total sector count. */
+    uint64_t    sectors;      /* Total sector count. */
 } disk_dev_t;
 
 /* A structure for passing disk request information around. This structure
@@ -200,7 +214,7 @@ typedef struct {
  * one such structure is sufficient.
  */
 typedef struct {
-    uint32_t    lba;                /* Starting LBA. */
+    uint64_t    lba;                /* Starting LBA. */
     void __far  *buffer;            /* Read/write data buffer pointer. */
     uint8_t     dev_id;             /* Device ID; index into devices array. */
     uint16_t    nsect;              /* Number of sectors to be transferred. */
@@ -317,7 +331,7 @@ int __fastcall scsi_write_sectors(bio_dsk_t __far *bios_dsk);
 int __fastcall ahci_read_sectors(bio_dsk_t __far *bios_dsk);
 int __fastcall ahci_write_sectors(bio_dsk_t __far *bios_dsk);
 
-extern void set_geom_lba(chs_t __far *lgeo, uint32_t nsectors);
+extern void set_geom_lba(chs_t __far *lgeo, uint64_t nsectors);
 
 // @todo: put this elsewhere (and change/eliminate?)
 #define SET_DISK_RET_STATUS(status) write_byte(0x0040, 0x0074, status)

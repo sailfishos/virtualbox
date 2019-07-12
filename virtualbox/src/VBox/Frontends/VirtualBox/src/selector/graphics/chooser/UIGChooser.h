@@ -1,11 +1,10 @@
+/* $Id: UIGChooser.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGChooser class declaration
+ * VBox Qt GUI - UIGChooser class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,6 +27,8 @@
 /* Forward declartions: */
 class UIVMItem;
 class QVBoxLayout;
+class UISelectorWindow;
+class UIActionPool;
 class UIGChooserModel;
 class UIGChooserView;
 class QStatusBar;
@@ -55,17 +56,24 @@ signals:
 public:
 
     /* Constructor/destructor: */
-    UIGChooser(QWidget *pParent);
+    UIGChooser(UISelectorWindow *pParent);
     ~UIGChooser();
+
+    /** Returns the selector-window reference. */
+    UISelectorWindow* selector() const { return m_pSelectorWindow; }
+    /** Returns the action-pool reference. */
+    UIActionPool* actionPool() const;
+
+    /** Return the Chooser-model instance. */
+    UIGChooserModel *model() const { return m_pChooserModel; }
+    /** Return the Chooser-view instance. */
+    UIGChooserView *view() const { return m_pChooserView; }
 
     /* API: Current-item stuff: */
     UIVMItem* currentItem() const;
     QList<UIVMItem*> currentItems() const;
     bool isSingleGroupSelected() const;
     bool isAllItemsOfOneGroupSelected() const;
-
-    /* API: Status-bar stuff: */
-    void setStatusBar(QStatusBar *pStatusBar);
 
     /* API: Group-saving stuff: */
     bool isGroupSavingInProgress() const;
@@ -83,11 +91,13 @@ private:
     /* Helper: Cleanup stuff: */
     void save();
 
+    /** Holds the selector-window reference. */
+    UISelectorWindow* m_pSelectorWindow;
+
     /* Variables: */
     QVBoxLayout *m_pMainLayout;
     UIGChooserModel *m_pChooserModel;
     UIGChooserView *m_pChooserView;
-    QStatusBar *m_pStatusBar;
 };
 
 #endif /* __UIGChooser_h__ */

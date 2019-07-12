@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,11 +24,12 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
-#include <Windows.h>
+#include <iprt/win/windows.h>
 #include <WinUser.h>
 
 #include "internal-r3-win.h"
@@ -38,9 +39,9 @@
 #include <iprt/ctype.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * These are the PRODUCT_* defines found in the Vista Platform SDK and returned
@@ -214,9 +215,13 @@ static int rtSystemWinQueryOSVersion(RTSYSOSINFO enmInfo, char *pszInfo, size_t 
                 }
                 case kRTWinOSType_2008:         strcpy(szTmp, "Windows 2008"); break;
                 case kRTWinOSType_7:            strcpy(szTmp, "Windows 7"); break;
+                case kRTWinOSType_2008R2:       strcpy(szTmp, "Windows 2008 R2"); break;
                 case kRTWinOSType_8:            strcpy(szTmp, "Windows 8"); break;
+                case kRTWinOSType_2012:         strcpy(szTmp, "Windows 2012"); break;
                 case kRTWinOSType_81:           strcpy(szTmp, "Windows 8.1"); break;
+                case kRTWinOSType_2012R2:       strcpy(szTmp, "Windows 2012 R2"); break;
                 case kRTWinOSType_10:           strcpy(szTmp, "Windows 10"); break;
+                case kRTWinOSType_2016:         strcpy(szTmp, "Windows 2016"); break;
 
                 case kRTWinOSType_NT_UNKNOWN:
                     RTStrPrintf(szTmp, sizeof(szTmp), "Unknown NT v%u.%u",

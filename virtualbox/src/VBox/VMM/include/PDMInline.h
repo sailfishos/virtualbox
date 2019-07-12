@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -22,7 +22,7 @@
  * Calculates the next IRQ tag.
  *
  * @returns IRQ tag.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   idTracer            The ID of the source device.
  */
 DECLINLINE(uint32_t) pdmCalcIrqTag(PVM pVM, uint32_t idTracer)

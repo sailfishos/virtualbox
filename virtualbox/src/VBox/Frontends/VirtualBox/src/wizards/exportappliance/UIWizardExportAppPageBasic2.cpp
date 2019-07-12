@@ -1,12 +1,10 @@
 /* $Id: UIWizardExportAppPageBasic2.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardExportAppPageBasic2 class implementation
+ * VBox Qt GUI - UIWizardExportAppPageBasic2 class implementation.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,15 +15,22 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QVBoxLayout>
-#include <QGroupBox>
-#include <QRadioButton>
+# include <QVBoxLayout>
+# include <QGroupBox>
+# include <QRadioButton>
 
 /* Local includes: */
-#include "UIWizardExportAppPageBasic2.h"
-#include "UIWizardExportApp.h"
-#include "QIRichTextLabel.h"
+# include "UIWizardExportAppPageBasic2.h"
+# include "UIWizardExportApp.h"
+# include "QIRichTextLabel.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardExportAppPage2::UIWizardExportAppPage2()
 {
@@ -33,17 +38,8 @@ UIWizardExportAppPage2::UIWizardExportAppPage2()
 
 void UIWizardExportAppPage2::chooseDefaultStorageType()
 {
-    /* Select default storage type: */
-#if 0
-    /* Load storage-type from GUI extra data: */
-    bool ok;
-    StorageType storageType = StorageType(vboxGlobal().virtualBox().GetExtraData(GUI_Export_StorageType).toInt(&ok));
-    if (ok)
-        setStorageType(storageType);
-#else
     /* Just select first of types: */
     setStorageType(Filesystem);
-#endif
 }
 
 StorageType UIWizardExportAppPage2::storageType() const

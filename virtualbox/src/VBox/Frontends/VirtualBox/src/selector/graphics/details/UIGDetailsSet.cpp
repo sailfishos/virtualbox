@@ -1,12 +1,10 @@
 /* $Id: UIGDetailsSet.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGDetailsSet class implementation
+ * VBox Qt GUI - UIGDetailsSet class implementation.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,23 +15,30 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* GUI includes: */
-#include "UIGDetailsSet.h"
-#include "UIGDetailsModel.h"
-#include "UIGDetailsElements.h"
-#include "UIVMItem.h"
-#include "UIConverter.h"
-#include "UIVirtualBoxEventHandler.h"
-#include "VBoxGlobal.h"
+# include "UIGDetailsSet.h"
+# include "UIGDetailsModel.h"
+# include "UIGDetailsElements.h"
+# include "UIVMItem.h"
+# include "UIVirtualBoxEventHandler.h"
+# include "VBoxGlobal.h"
 
 /* COM includes: */
-#include "CUSBController.h"
-#include "CUSBDeviceFilters.h"
+# include "CUSBController.h"
+# include "CUSBDeviceFilters.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIGDetailsSet::UIGDetailsSet(UIGDetailsItem *pParent)
     : UIGDetailsItem(pParent)
-    , m_fElementNameHoverable(false)
+    , m_pMachineItem(0)
     , m_fHasDetails(false)
+    , m_configurationAccessLevel(ConfigurationAccessLevel_Null)
     , m_fFullSet(true)
     , m_pBuildStep(0)
     , m_iLastStepNumber(-1)
@@ -57,12 +62,12 @@ UIGDetailsSet::~UIGDetailsSet()
     parentItem()->removeItem(this);
 }
 
-void UIGDetailsSet::buildSet(UIVMItem *pMachineItem, bool fFullSet, const QStringList &settings)
+void UIGDetailsSet::buildSet(UIVMItem *pMachineItem, bool fFullSet, const QMap<DetailsElementType, bool> &settings)
 {
     /* Remember passed arguments: */
-    m_machine = pMachineItem->machine();
-    m_fElementNameHoverable = pMachineItem->reconfigurable();
-    m_fHasDetails = pMachineItem->hasDetails();
+    m_pMachineItem = pMachineItem;
+    m_machine = m_pMachineItem->machine();
+    m_fHasDetails = m_pMachineItem->hasDetails();
     m_fFullSet = fFullSet;
     m_settings = settings;
 
@@ -98,12 +103,7 @@ void UIGDetailsSet::buildSet(UIVMItem *pMachineItem, bool fFullSet, const QStrin
     /* Fetch USB controller restrictions: */
     const CUSBDeviceFilters &filters = m_machine.GetUSBDeviceFilters();
     if (filters.isNull() || !m_machine.GetUSBProxyAvailable())
-    {
-        QString strElementTypeOpened = gpConverter->toInternalString(DetailsElementType_USB);
-        QString strElementTypeClosed = strElementTypeOpened + "Closed";
-        m_settings.removeAll(strElementTypeOpened);
-        m_settings.removeAll(strElementTypeClosed);
-    }
+        m_settings.remove(DetailsElementType_USB);
 
     /* Start building set: */
     rebuildSet();
@@ -124,12 +124,10 @@ void UIGDetailsSet::sltBuildStep(QString strStepId, int iStepNumber)
     {
         /* Load details settings: */
         DetailsElementType elementType = (DetailsElementType)iStepNumber;
-        QString strElementTypeOpened = gpConverter->toInternalString(elementType);
-        QString strElementTypeClosed = strElementTypeOpened + "Closed";
         /* Should the element be visible? */
-        bool fVisible = m_settings.contains(strElementTypeOpened) || m_settings.contains(strElementTypeClosed);
+        bool fVisible = m_settings.contains(elementType);
         /* Should the element be opened? */
-        bool fOpen = m_settings.contains(strElementTypeOpened);
+        bool fOpen = fVisible && m_settings[elementType];
 
         /* Check if element is present already: */
         UIGDetailsElement *pElement = element(elementType);
@@ -222,6 +220,11 @@ void UIGDetailsSet::sltUpdateAppearance()
     rebuildSet();
 }
 
+QString UIGDetailsSet::description() const
+{
+    return tr("Contains the details of virtual machine '%1'").arg(m_pMachineItem->name());
+}
+
 QVariant UIGDetailsSet::data(int iKey) const
 {
     /* Provide other members with required data: */
@@ -229,7 +232,7 @@ QVariant UIGDetailsSet::data(int iKey) const
     {
         /* Layout hints: */
         case SetData_Margin: return 0;
-        case SetData_Spacing: return 3;
+        case SetData_Spacing: return QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize) / 5;
         /* Default: */
         default: break;
     }
@@ -345,6 +348,7 @@ void UIGDetailsSet::prepareConnections()
     connect(gVBoxEvents, SIGNAL(sigSnapshotTake(QString, QString)), this, SLOT(sltMachineAttributesChange(QString)));
     connect(gVBoxEvents, SIGNAL(sigSnapshotDelete(QString, QString)), this, SLOT(sltMachineAttributesChange(QString)));
     connect(gVBoxEvents, SIGNAL(sigSnapshotChange(QString, QString)), this, SLOT(sltMachineAttributesChange(QString)));
+    connect(gVBoxEvents, SIGNAL(sigSnapshotRestore(QString, QString)), this, SLOT(sltMachineAttributesChange(QString)));
 
     /* Meidum-enumeration connections: */
     connect(&vboxGlobal(), SIGNAL(sigMediumEnumerationStarted()), this, SLOT(sltUpdateAppearance()));
@@ -380,11 +384,9 @@ int UIGDetailsSet::minimumWidthHint() const
             case DetailsElementType_Audio:
             case DetailsElementType_Network:
             case DetailsElementType_Serial:
-#ifdef VBOX_WITH_PARALLEL_PORTS
-            case DetailsElementType_Parallel:
-#endif /* VBOX_WITH_PARALLEL_PORTS */
             case DetailsElementType_USB:
             case DetailsElementType_SF:
+            case DetailsElementType_UI:
             case DetailsElementType_Description:
             {
                 iMinimumWidthHint = qMax(iMinimumWidthHint, pItem->minimumWidthHint());
@@ -400,6 +402,7 @@ int UIGDetailsSet::minimumWidthHint() const
                 iMinimumWidthHint = qMax(iMinimumWidthHint, iFirstColumnWidth + iSpacing + pItem->minimumWidthHint());
                 break;
             }
+            case DetailsElementType_Invalid: AssertFailed(); break; /* Shut up, MSC! */
         }
     }
 
@@ -439,11 +442,9 @@ int UIGDetailsSet::minimumHeightHint() const
             case DetailsElementType_Audio:
             case DetailsElementType_Network:
             case DetailsElementType_Serial:
-#ifdef VBOX_WITH_PARALLEL_PORTS
-            case DetailsElementType_Parallel:
-#endif /* VBOX_WITH_PARALLEL_PORTS */
             case DetailsElementType_USB:
             case DetailsElementType_SF:
+            case DetailsElementType_UI:
             case DetailsElementType_Description:
             {
                 iMinimumHeightHint += (pItem->minimumHeightHint() + iSpacing);
@@ -454,6 +455,7 @@ int UIGDetailsSet::minimumHeightHint() const
                 iMinimumHeightHint = qMax(iMinimumHeightHint, pItem->minimumHeightHint() + iSpacing);
                 break;
             }
+            case DetailsElementType_Invalid: AssertFailed(); break; /* Shut up, MSC! */
         }
     }
 
@@ -493,11 +495,9 @@ void UIGDetailsSet::updateLayout()
             case DetailsElementType_Audio:
             case DetailsElementType_Network:
             case DetailsElementType_Serial:
-#ifdef VBOX_WITH_PARALLEL_PORTS
-            case DetailsElementType_Parallel:
-#endif /* VBOX_WITH_PARALLEL_PORTS */
             case DetailsElementType_USB:
             case DetailsElementType_SF:
+            case DetailsElementType_UI:
             case DetailsElementType_Description:
             {
                 /* Move element: */
@@ -514,8 +514,6 @@ void UIGDetailsSet::updateLayout()
                 {
                     /* Resize element to required width: */
                     pElement->resize(iWidth, pElement->geometry().height());
-                    /* Update minimum-height-hint: */
-                    pElement->updateMinimumTextHeight();
                 }
                 /* Acquire required height: */
                 int iHeight = pElement->minimumHeightHint();
@@ -546,6 +544,7 @@ void UIGDetailsSet::updateLayout()
                 iVerticalIndent = qMax(iVerticalIndent, iHeight + iSpacing);
                 break;
             }
+            case DetailsElementType_Invalid: AssertFailed(); break; /* Shut up, MSC! */
         }
     }
 }
@@ -555,6 +554,9 @@ void UIGDetailsSet::rebuildSet()
     /* Make sure we have details: */
     if (!m_fHasDetails)
         return;
+
+    /* Recache properties: */
+    m_configurationAccessLevel = m_pMachineItem->configurationAccessLevel();
 
     /* Cleanup build-step: */
     delete m_pBuildStep;
@@ -580,12 +582,11 @@ UIGDetailsElement* UIGDetailsSet::createElement(DetailsElementType elementType, 
         case DetailsElementType_Audio:       return new UIGDetailsElementAudio(this, fOpen);
         case DetailsElementType_Network:     return new UIGDetailsElementNetwork(this, fOpen);
         case DetailsElementType_Serial:      return new UIGDetailsElementSerial(this, fOpen);
-#ifdef VBOX_WITH_PARALLEL_PORTS
-        case DetailsElementType_Parallel:    return new UIGDetailsElementParallel(this, fOpen);
-#endif /* VBOX_WITH_PARALLEL_PORTS */
         case DetailsElementType_USB:         return new UIGDetailsElementUSB(this, fOpen);
         case DetailsElementType_SF:          return new UIGDetailsElementSF(this, fOpen);
+        case DetailsElementType_UI:          return new UIGDetailsElementUI(this, fOpen);
         case DetailsElementType_Description: return new UIGDetailsElementDescription(this, fOpen);
+        case DetailsElementType_Invalid:     AssertFailed(); break; /* Shut up, MSC! */
     }
     return 0;
 }

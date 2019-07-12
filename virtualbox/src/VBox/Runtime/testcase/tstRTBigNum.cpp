@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/bignum.h>
 #include <iprt/uint128.h>
 
@@ -40,9 +41,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTTEST g_hTest;
 
 
@@ -107,7 +108,7 @@ static RTBIGNUM g_Ten;
 static RTBIGNUM g_FourtyTwo;
 
 static uint8_t const g_abMinus1[] = { 0xff, 0xff, 0xff, 0xff,  0xff, 0xff, 0xff, 0xff };
-static int64_t  g_iBitMinus1 = -1;
+//static int64_t  g_iBitMinus1 = -1;
 static RTBIGNUM g_Minus1;
 
 
@@ -855,6 +856,7 @@ static void testModulo(void)
         RTTESTI_CHECK_RC(RTBigNumModulo(&Result, &g_LargeNegative, &g_LargeNegativePluss1), VINF_SUCCESS);
         RTTESTI_CHECK(RTBigNumCompareWithS64(&Result, -1) == 0);
 
+        RTTESTI_CHECK_RC(RTBigNumDestroy(&Tmp), VINF_SUCCESS);
         RTTESTI_CHECK_RC(RTBigNumDestroy(&Result), VINF_SUCCESS);
     }
 }
@@ -1034,6 +1036,7 @@ static void testModExp(void)
     RTTESTI_CHECK_RC_RETV(RTBigNumInitZero(&Result, 0), VINF_SUCCESS);
     RTTESTI_CHECK_RC(RTBigNumModExp(&Result, &g_Signature, &g_PubKeyExp, &g_PubKeyMod), VINF_SUCCESS);
     RTTESTI_CHECK(RTBigNumCompare(&Result, &g_SignatureDecrypted) == 0);
+    RTTESTI_CHECK_RC(RTBigNumDestroy(&Result), VINF_SUCCESS);
 }
 
 
@@ -1172,6 +1175,8 @@ static void testBenchmarks(bool fOnlyModExp)
     RTTESTI_CHECK_RC(rc, VINF_SUCCESS);
     RTTestIValue("RTBigNumModulo", uElapsed / cRounds, RTTESTUNIT_NS_PER_CALL);
 
+    RTBigNumDestroy(&Decrypted);
+
 #if 1
     /* Compare with OpenSSL BN. */
     BIGNUM *pObnProduct = BN_new();
@@ -1206,6 +1211,8 @@ static void testBenchmarks(bool fOnlyModExp)
     RTTESTI_CHECK_RC(rc, VINF_SUCCESS);
     RTTestIValue("RTBigNumMultiply", uElapsed / cRounds, RTTESTUNIT_NS_PER_CALL);
 
+    RTBigNumDestroy(&Product);
+
 #if 1
     /* Compare with OpenSSL BN. */
     rc = 1;
@@ -1219,6 +1226,14 @@ static void testBenchmarks(bool fOnlyModExp)
     uElapsed = RTTimeNanoTS() - uStartTS;
     RTTESTI_CHECK_RC(rc, 1);
     RTTestIValue("BN_mul", uElapsed / cRounds, RTTESTUNIT_NS_PER_CALL);
+
+    BN_free(pObnPubKeyExp);
+    BN_free(pObnPubKeyMod);
+    BN_free(pObnSignature);
+    BN_free(pObnSignatureDecrypted);
+    BN_free(pObnResult);
+    BN_free(pObnProduct);
+    BN_CTX_free(pObnCtx);
 #endif
 
 }
@@ -1445,6 +1460,11 @@ static void testUInt128Multiplication(void)
             RTUINT128_INIT_C(0x3000000000000000, 0x0000000000000000),
             RTUINT128_INIT_C(0x3000000000000000, 0x0000000000000000)
         },
+        {
+            RTUINT128_INIT_C(0x0000000000000000, 0x6816816816816817),
+            RTUINT128_INIT_C(0x0000000000000000, 0x0000000000a0280a),
+            RTUINT128_INIT_C(0x0000000000411e58, 0x7627627627b1a8e6)
+        },
     };
     for (uint32_t i = 0; i < RT_ELEMENTS(s_aTests); i++)
     {
@@ -1613,6 +1633,8 @@ static void testUInt128Division(void)
 
 int main(int argc, char **argv)
 {
+    RT_NOREF_PV(argv);
+
     RTEXITCODE rcExit = RTTestInitAndCreate("tstRTBigNum", &g_hTest);
     if (rcExit != RTEXITCODE_SUCCESS)
         return rcExit;

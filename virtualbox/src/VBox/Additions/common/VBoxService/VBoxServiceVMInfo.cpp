@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,20 +15,51 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+/** @page pg_vgsvc_vminfo VBoxService - VM Information
+ *
+ * The VM Information subservice provides heaps of useful information about the
+ * VM via guest properties.
+ *
+ * Guest properties is a limited database maintained by the HGCM GuestProperties
+ * service in cooperation with the Main API (VBoxSVC).  Properties have a name
+ * (ours are path like), a string value, and a nanosecond timestamp (unix
+ * epoch).  The timestamp lets the user see how recent the information is.  As
+ * an laternative to polling on changes, it is also possible to wait on changes
+ * via the Main API or VBoxManage on the host side and VBoxControl in the guest.
+ *
+ * The namespace "/VirtualBox/" is reserved for value provided by VirtualBox.
+ * This service provides all the information under "/VirtualBox/GuestInfo/".
+ *
+ *
+ * @section sec_vgsvc_vminfo_beacons    Beacons
+ *
+ * The subservice does not write properties unless there are changes.  So, in
+ * order for the host side to know that information is up to date despite an
+ * oldish timestamp we define a couple of values that are always updated and can
+ * reliably used to figure how old the information actually is.
+ *
+ * For the networking part "/VirtualBox/GuestInfo/Net/Count" is the value to
+ * watch out for.
+ *
+ * For the login part, it's possible that we intended to use
+ * "/VirtualBox/GuestInfo/OS/LoggedInUsers" for this, however it is not defined
+ * correctly and current does NOT work as a beacon.
+ *
+ */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RT_OS_WINDOWS
 # ifdef TARGET_NT4 /* HACK ALERT! PMIB_IPSTATS undefined if 0x0400 with newer SDKs. */
 #  undef _WIN32_WINNT
 #  define _WIN32_WINNT 0x0500
 # endif
-# include <winsock2.h>
-# include <iphlpapi.h>
-# include <ws2tcpip.h>
-# include <windows.h>
+# include <iprt/win/winsock2.h>
+# include <iprt/win/iphlpapi.h>
+# include <iprt/win/ws2tcpip.h>
+# include <iprt/win/windows.h>
 # include <Ntsecapi.h>
 #else
 # define __STDC_LIMIT_MACROS
@@ -41,13 +72,16 @@
 # include <pwd.h> /* getpwuid */
 # include <unistd.h>
 # if !defined(RT_OS_OS2) && !defined(RT_OS_FREEBSD) && !defined(RT_OS_HAIKU)
-#  include <utmpx.h> /* @todo FreeBSD 9 should have this. */
+#  include <utmpx.h> /** @todo FreeBSD 9 should have this. */
+# endif
+# ifdef RT_OS_OS2
+#  include <net/if_dl.h>
 # endif
 # ifdef RT_OS_SOLARIS
 #  include <sys/sockio.h>
 #  include <net/if_arp.h>
 # endif
-# if defined(RT_OS_DARWIN) || defined(RT_OS_FREEBSD)
+# if defined(RT_OS_DARWIN) || defined(RT_OS_FREEBSD) || defined(RT_OS_NETBSD)
 #  include <ifaddrs.h> /* getifaddrs, freeifaddrs */
 #  include <net/if_dl.h> /* LLADDR */
 #  include <netdb.h> /* getnameinfo */
@@ -85,9 +119,9 @@ typedef struct VBOXSERVICELACLIENTINFO
 } VBOXSERVICELACLIENTINFO, *PVBOXSERVICELACLIENTINFO;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The vminfo interval (milliseconds). */
 static uint32_t                 g_cMsVMInfoInterval = 0;
 /** The semaphore we're blocking on. */
@@ -115,21 +149,22 @@ static VBOXSERVICELACLIENTINFO  g_LAClientInfo;
 uint32_t                        g_uVMInfoUserIdleThresholdMS = 5 * 1000;
 
 
-/*******************************************************************************
-*   Defines                                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defines                                                                                                                      *
+*********************************************************************************************************************************/
 static const char *g_pszLAActiveClient = "/VirtualBox/HostInfo/VRDP/ActiveClient";
 
 #ifdef VBOX_WITH_DBUS
-/** ConsoleKit defines (taken from 0.4.5). */
-#define CK_NAME      "org.freedesktop.ConsoleKit"
-#define CK_PATH      "/org/freedesktop/ConsoleKit"
-#define CK_INTERFACE "org.freedesktop.ConsoleKit"
-
-#define CK_MANAGER_PATH      "/org/freedesktop/ConsoleKit/Manager"
-#define CK_MANAGER_INTERFACE "org.freedesktop.ConsoleKit.Manager"
-#define CK_SEAT_INTERFACE    "org.freedesktop.ConsoleKit.Seat"
-#define CK_SESSION_INTERFACE "org.freedesktop.ConsoleKit.Session"
+/** @name ConsoleKit defines (taken from 0.4.5).
+ * @{ */
+# define CK_NAME                "org.freedesktop.ConsoleKit"
+# define CK_PATH                "/org/freedesktop/ConsoleKit"
+# define CK_INTERFACE           "org.freedesktop.ConsoleKit"
+# define CK_MANAGER_PATH        "/org/freedesktop/ConsoleKit/Manager"
+# define CK_MANAGER_INTERFACE   "org.freedesktop.ConsoleKit.Manager"
+# define CK_SEAT_INTERFACE      "org.freedesktop.ConsoleKit.Seat"
+# define CK_SESSION_INTERFACE   "org.freedesktop.ConsoleKit.Session"
+/** @} */
 #endif
 
 
@@ -140,7 +175,7 @@ static const char *g_pszLAActiveClient = "/VirtualBox/HostInfo/VRDP/ActiveClient
  *
  * @return  IPRT status code.
  */
-int VBoxServiceVMInfoSignal(void)
+int VGSvcVMInfoSignal(void)
 {
     /* Trigger a re-enumeration of all logged-in users by unblocking
      * the multi event semaphore of the VMInfo thread. */
@@ -151,15 +186,19 @@ int VBoxServiceVMInfoSignal(void)
 }
 
 
-/** @copydoc VBOXSERVICE::pfnPreInit */
-static DECLCALLBACK(int) VBoxServiceVMInfoPreInit(void)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnPreInit}
+ */
+static DECLCALLBACK(int) vbsvcVMInfoPreInit(void)
 {
     return VINF_SUCCESS;
 }
 
 
-/** @copydoc VBOXSERVICE::pfnOption */
-static DECLCALLBACK(int) VBoxServiceVMInfoOption(const char **ppszShort, int argc, char **argv, int *pi)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnOption}
+ */
+static DECLCALLBACK(int) vbsvcVMInfoOption(const char **ppszShort, int argc, char **argv, int *pi)
 {
     /** @todo Use RTGetOpt here. */
 
@@ -167,17 +206,17 @@ static DECLCALLBACK(int) VBoxServiceVMInfoOption(const char **ppszShort, int arg
     if (ppszShort)
         /* no short options */;
     else if (!strcmp(argv[*pi], "--vminfo-interval"))
-        rc = VBoxServiceArgUInt32(argc, argv, "", pi,
-                                  &g_cMsVMInfoInterval, 1, UINT32_MAX - 1);
+        rc = VGSvcArgUInt32(argc, argv, "", pi, &g_cMsVMInfoInterval, 1, UINT32_MAX - 1);
     else if (!strcmp(argv[*pi], "--vminfo-user-idle-threshold"))
-        rc = VBoxServiceArgUInt32(argc, argv, "", pi,
-                                  &g_uVMInfoUserIdleThresholdMS, 1, UINT32_MAX - 1);
+        rc = VGSvcArgUInt32(argc, argv, "", pi, &g_uVMInfoUserIdleThresholdMS, 1, UINT32_MAX - 1);
     return rc;
 }
 
 
-/** @copydoc VBOXSERVICE::pfnInit */
-static DECLCALLBACK(int) VBoxServiceVMInfoInit(void)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnInit}
+ */
+static DECLCALLBACK(int) vbsvcVMInfoInit(void)
 {
     /*
      * If not specified, find the right interval default.
@@ -202,56 +241,58 @@ static DECLCALLBACK(int) VBoxServiceVMInfoInit(void)
 
     rc = VbglR3GuestPropConnect(&g_uVMInfoGuestPropSvcClientID);
     if (RT_SUCCESS(rc))
-        VBoxServiceVerbose(3, "Property Service Client ID: %#x\n", g_uVMInfoGuestPropSvcClientID);
+        VGSvcVerbose(3, "Property Service Client ID: %#x\n", g_uVMInfoGuestPropSvcClientID);
     else
     {
         /* If the service was not found, we disable this service without
            causing VBoxService to fail. */
         if (rc == VERR_HGCM_SERVICE_NOT_FOUND) /* Host service is not available. */
         {
-            VBoxServiceVerbose(0, "Guest property service is not available, disabling the service\n");
+            VGSvcVerbose(0, "Guest property service is not available, disabling the service\n");
             rc = VERR_SERVICE_DISABLED;
         }
         else
-            VBoxServiceError("Failed to connect to the guest property service! Error: %Rrc\n", rc);
+            VGSvcError("Failed to connect to the guest property service! Error: %Rrc\n", rc);
         RTSemEventMultiDestroy(g_hVMInfoEvent);
         g_hVMInfoEvent = NIL_RTSEMEVENTMULTI;
     }
 
     if (RT_SUCCESS(rc))
     {
-        VBoxServicePropCacheCreate(&g_VMInfoPropCache, g_uVMInfoGuestPropSvcClientID);
+        VGSvcPropCacheCreate(&g_VMInfoPropCache, g_uVMInfoGuestPropSvcClientID);
 
         /*
          * Declare some guest properties with flags and reset values.
          */
-        int rc2 = VBoxServicePropCacheUpdateEntry(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsersList,
-                                                  VBOXSERVICEPROPCACHEFLAG_TEMPORARY | VBOXSERVICEPROPCACHEFLAG_TRANSIENT, NULL /* Delete on exit */);
+        int rc2 = VGSvcPropCacheUpdateEntry(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsersList,
+                                            VGSVCPROPCACHE_FLAGS_TEMPORARY | VGSVCPROPCACHE_FLAGS_TRANSIENT,
+                                            NULL /* Delete on exit */);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to init property cache value \"%s\", rc=%Rrc\n", g_pszPropCacheValLoggedInUsersList, rc2);
+            VGSvcError("Failed to init property cache value '%s', rc=%Rrc\n", g_pszPropCacheValLoggedInUsersList, rc2);
 
-        rc2 = VBoxServicePropCacheUpdateEntry(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsers,
-                                              VBOXSERVICEPROPCACHEFLAG_TEMPORARY | VBOXSERVICEPROPCACHEFLAG_TRANSIENT, "0");
+        rc2 = VGSvcPropCacheUpdateEntry(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsers,
+                                        VGSVCPROPCACHE_FLAGS_TEMPORARY | VGSVCPROPCACHE_FLAGS_TRANSIENT, "0");
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to init property cache value \"%s\", rc=%Rrc\n", g_pszPropCacheValLoggedInUsers, rc2);
+            VGSvcError("Failed to init property cache value '%s', rc=%Rrc\n", g_pszPropCacheValLoggedInUsers, rc2);
 
-        rc2 = VBoxServicePropCacheUpdateEntry(&g_VMInfoPropCache, g_pszPropCacheValNoLoggedInUsers,
-                                              VBOXSERVICEPROPCACHEFLAG_TEMPORARY | VBOXSERVICEPROPCACHEFLAG_TRANSIENT, "true");
+        rc2 = VGSvcPropCacheUpdateEntry(&g_VMInfoPropCache, g_pszPropCacheValNoLoggedInUsers,
+                                        VGSVCPROPCACHE_FLAGS_TEMPORARY | VGSVCPROPCACHE_FLAGS_TRANSIENT, "true");
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to init property cache value \"%s\", rc=%Rrc\n", g_pszPropCacheValNoLoggedInUsers, rc2);
+            VGSvcError("Failed to init property cache value '%s', rc=%Rrc\n", g_pszPropCacheValNoLoggedInUsers, rc2);
 
-        rc2 = VBoxServicePropCacheUpdateEntry(&g_VMInfoPropCache, g_pszPropCacheValNetCount,
-                                              VBOXSERVICEPROPCACHEFLAG_TEMPORARY | VBOXSERVICEPROPCACHEFLAG_ALWAYS_UPDATE, NULL /* Delete on exit */);
+        rc2 = VGSvcPropCacheUpdateEntry(&g_VMInfoPropCache, g_pszPropCacheValNetCount,
+                                        VGSVCPROPCACHE_FLAGS_TEMPORARY | VGSVCPROPCACHE_FLAGS_ALWAYS_UPDATE,
+                                        NULL /* Delete on exit */);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to init property cache value \"%s\", rc=%Rrc\n", g_pszPropCacheValNetCount, rc2);
+            VGSvcError("Failed to init property cache value '%s', rc=%Rrc\n", g_pszPropCacheValNetCount, rc2);
 
         /*
          * Get configuration guest properties from the host.
          * Note: All properties should have sensible defaults in case the lookup here fails.
          */
         char *pszValue;
-        rc2 = VBoxServiceReadHostProp(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--vminfo-user-idle-threshold", true /* Read only */,
-                                      &pszValue, NULL /* Flags */, NULL /* Timestamp */);
+        rc2 = VGSvcReadHostProp(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--vminfo-user-idle-threshold",
+                                true /* Read only */, &pszValue, NULL /* Flags */, NULL /* Timestamp */);
         if (RT_SUCCESS(rc2))
         {
             AssertPtr(pszValue);
@@ -272,8 +313,7 @@ static DECLCALLBACK(int) VBoxServiceVMInfoInit(void)
  * @param   ppszValue               Where to store value of property.
  * @param   puTimestamp             Timestamp of property to retrieve. Optional.
  */
-static int vboxServiceGetLAClientValue(uint32_t uClientID, const char *pszProperty,
-                                       char **ppszValue, uint64_t *puTimestamp)
+static int vgsvcGetLAClientValue(uint32_t uClientID, const char *pszProperty, char **ppszValue, uint64_t *puTimestamp)
 {
     AssertReturn(uClientID, VERR_INVALID_PARAMETER);
     AssertPtrReturn(pszProperty, VERR_INVALID_POINTER);
@@ -281,11 +321,12 @@ static int vboxServiceGetLAClientValue(uint32_t uClientID, const char *pszProper
     int rc;
 
     char pszClientPath[255];
+/** @todo r=bird: Another pointless RTStrPrintf test with wrong status code to boot. */
     if (RTStrPrintf(pszClientPath, sizeof(pszClientPath),
                     "/VirtualBox/HostInfo/VRDP/Client/%RU32/%s", uClientID, pszProperty))
     {
-        rc = VBoxServiceReadHostProp(g_uVMInfoGuestPropSvcClientID, pszClientPath, true /* Read only */,
-                                     ppszValue, NULL /* Flags */, puTimestamp);
+        rc = VGSvcReadHostProp(g_uVMInfoGuestPropSvcClientID, pszClientPath, true /* Read only */,
+                               ppszValue, NULL /* Flags */, puTimestamp);
     }
     else
         rc = VERR_NO_MEMORY;
@@ -302,32 +343,29 @@ static int vboxServiceGetLAClientValue(uint32_t uClientID, const char *pszProper
  * @param   uClientID               Client ID to retrieve information for.
  * @param   pClient                 Pointer where to store the client information.
  */
-static int vboxServiceGetLAClientInfo(uint32_t uClientID, PVBOXSERVICELACLIENTINFO pClient)
+static int vgsvcGetLAClientInfo(uint32_t uClientID, PVBOXSERVICELACLIENTINFO pClient)
 {
     AssertReturn(uClientID, VERR_INVALID_PARAMETER);
     AssertPtrReturn(pClient, VERR_INVALID_POINTER);
 
-    int rc = vboxServiceGetLAClientValue(uClientID, "Name", &pClient->pszName,
+    int rc = vgsvcGetLAClientValue(uClientID, "Name", &pClient->pszName,
                                          NULL /* Timestamp */);
     if (RT_SUCCESS(rc))
     {
         char *pszAttach;
-        rc = vboxServiceGetLAClientValue(uClientID, "Attach", &pszAttach,
-                                         &pClient->uAttachedTS);
+        rc = vgsvcGetLAClientValue(uClientID, "Attach", &pszAttach, &pClient->uAttachedTS);
         if (RT_SUCCESS(rc))
         {
             AssertPtr(pszAttach);
-            pClient->fAttached = !RTStrICmp(pszAttach, "1") ? true : false;
+            pClient->fAttached = RTStrICmp(pszAttach, "1") == 0;
 
             RTStrFree(pszAttach);
         }
     }
     if (RT_SUCCESS(rc))
-        rc = vboxServiceGetLAClientValue(uClientID, "Location", &pClient->pszLocation,
-                                         NULL /* Timestamp */);
+        rc = vgsvcGetLAClientValue(uClientID, "Location", &pClient->pszLocation, NULL /* Timestamp */);
     if (RT_SUCCESS(rc))
-        rc = vboxServiceGetLAClientValue(uClientID, "Domain", &pClient->pszDomain,
-                                         NULL /* Timestamp */);
+        rc = vgsvcGetLAClientValue(uClientID, "Domain", &pClient->pszDomain, NULL /* Timestamp */);
     if (RT_SUCCESS(rc))
         pClient->uID = uClientID;
 
@@ -340,7 +378,7 @@ static int vboxServiceGetLAClientInfo(uint32_t uClientID, PVBOXSERVICELACLIENTIN
  *
  * @param   pClient                 Pointer to client information structure to free.
  */
-static void vboxServiceFreeLAClientInfo(PVBOXSERVICELACLIENTINFO pClient)
+static void vgsvcFreeLAClientInfo(PVBOXSERVICELACLIENTINFO pClient)
 {
     if (pClient)
     {
@@ -374,8 +412,8 @@ static void vboxServiceFreeLAClientInfo(PVBOXSERVICELACLIENTINFO pClient)
  * @param   pszValueFormat          Guest property value to set. Pass NULL for deleting
  *                                  the property.
  */
-int vboxServiceUserUpdateF(PVBOXSERVICEVEPROPCACHE pCache, const char *pszUser, const char *pszDomain,
-                           const char *pszKey, const char *pszValueFormat, ...)
+int VGSvcUserUpdateF(PVBOXSERVICEVEPROPCACHE pCache, const char *pszUser, const char *pszDomain,
+                     const char *pszKey, const char *pszValueFormat, ...)
 {
     AssertPtrReturn(pCache, VERR_INVALID_POINTER);
     AssertPtrReturn(pszUser, VERR_INVALID_POINTER);
@@ -388,11 +426,14 @@ int vboxServiceUserUpdateF(PVBOXSERVICEVEPROPCACHE pCache, const char *pszUser, 
     char *pszName;
     if (pszDomain)
     {
+/** @todo r=bird: RTStrAPrintf returns -1, not zero on failure!   */
         if (!RTStrAPrintf(&pszName, "%s%s@%s/%s", g_pszPropCacheValUser, pszUser, pszDomain, pszKey))
             rc = VERR_NO_MEMORY;
     }
     else
     {
+/** @todo r=bird: RTStrAPrintf returns -1, not zero on failure! You got it
+ *        right 5 lines further down... */
         if (!RTStrAPrintf(&pszName, "%s%s/%s", g_pszPropCacheValUser, pszUser, pszKey))
             rc = VERR_NO_MEMORY;
     }
@@ -412,13 +453,13 @@ int vboxServiceUserUpdateF(PVBOXSERVICEVEPROPCACHE pCache, const char *pszUser, 
     }
 
     if (RT_SUCCESS(rc))
-        rc = VBoxServicePropCacheUpdate(pCache, pszName, pszValue);
-    if (rc == VINF_SUCCESS) /* VBoxServicePropCacheUpdate will also return VINF_NO_CHANGE. */
+        rc = VGSvcPropCacheUpdate(pCache, pszName, pszValue);
+    if (rc == VINF_SUCCESS) /* VGSvcPropCacheUpdate will also return VINF_NO_CHANGE. */
     {
         /** @todo Combine updating flags w/ updating the actual value. */
-        rc = VBoxServicePropCacheUpdateEntry(pCache, pszName,
-                                             VBOXSERVICEPROPCACHEFLAG_TEMPORARY | VBOXSERVICEPROPCACHEFLAG_TRANSIENT,
-                                             NULL /* Delete on exit */);
+        rc = VGSvcPropCacheUpdateEntry(pCache, pszName,
+                                       VGSVCPROPCACHE_FLAGS_TEMPORARY | VGSVCPROPCACHE_FLAGS_TRANSIENT,
+                                       NULL /* Delete on exit */);
     }
 
     RTStrFree(pszValue);
@@ -432,27 +473,27 @@ int vboxServiceUserUpdateF(PVBOXSERVICEVEPROPCACHE pCache, const char *pszUser, 
  *
  * Errors are ignored.
  */
-static void vboxserviceVMInfoWriteFixedProperties(void)
+static void vgsvcVMInfoWriteFixedProperties(void)
 {
     /*
      * First get OS information that won't change.
      */
     char szInfo[256];
     int rc = RTSystemQueryOSInfo(RTSYSOSINFO_PRODUCT, szInfo, sizeof(szInfo));
-    VBoxServiceWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestInfo/OS/Product",
-                          "%s", RT_FAILURE(rc) ? "" : szInfo);
+    VGSvcWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestInfo/OS/Product",
+                    "%s", RT_FAILURE(rc) ? "" : szInfo);
 
     rc = RTSystemQueryOSInfo(RTSYSOSINFO_RELEASE, szInfo, sizeof(szInfo));
-    VBoxServiceWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestInfo/OS/Release",
-                          "%s", RT_FAILURE(rc) ? "" : szInfo);
+    VGSvcWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestInfo/OS/Release",
+                    "%s", RT_FAILURE(rc) ? "" : szInfo);
 
     rc = RTSystemQueryOSInfo(RTSYSOSINFO_VERSION, szInfo, sizeof(szInfo));
-    VBoxServiceWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestInfo/OS/Version",
-                          "%s", RT_FAILURE(rc) ? "" : szInfo);
+    VGSvcWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestInfo/OS/Version",
+                    "%s", RT_FAILURE(rc) ? "" : szInfo);
 
     rc = RTSystemQueryOSInfo(RTSYSOSINFO_SERVICE_PACK, szInfo, sizeof(szInfo));
-    VBoxServiceWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestInfo/OS/ServicePack",
-                          "%s", RT_FAILURE(rc) ? "" : szInfo);
+    VGSvcWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestInfo/OS/ServicePack",
+                    "%s", RT_FAILURE(rc) ? "" : szInfo);
 
     /*
      * Retrieve version information about Guest Additions and installed files (components).
@@ -461,12 +502,12 @@ static void vboxserviceVMInfoWriteFixedProperties(void)
     char *pszAddVerExt;
     char *pszAddRev;
     rc = VbglR3GetAdditionsVersion(&pszAddVer, &pszAddVerExt, &pszAddRev);
-    VBoxServiceWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/Version",
-                          "%s", RT_FAILURE(rc) ? "" : pszAddVer);
-    VBoxServiceWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/VersionExt",
-                          "%s", RT_FAILURE(rc) ? "" : pszAddVerExt);
-    VBoxServiceWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/Revision",
-                          "%s", RT_FAILURE(rc) ? "" : pszAddRev);
+    VGSvcWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/Version",
+                    "%s", RT_FAILURE(rc) ? "" : pszAddVer);
+    VGSvcWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/VersionExt",
+                    "%s", RT_FAILURE(rc) ? "" : pszAddVerExt);
+    VGSvcWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/Revision",
+                    "%s", RT_FAILURE(rc) ? "" : pszAddRev);
     if (RT_SUCCESS(rc))
     {
         RTStrFree(pszAddVer);
@@ -480,46 +521,43 @@ static void vboxserviceVMInfoWriteFixedProperties(void)
      */
     char *pszInstDir;
     rc = VbglR3GetAdditionsInstallationPath(&pszInstDir);
-    VBoxServiceWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/InstallDir",
-                          "%s", RT_FAILURE(rc) ? "" :  pszInstDir);
+    VGSvcWritePropF(g_uVMInfoGuestPropSvcClientID, "/VirtualBox/GuestAdd/InstallDir",
+                    "%s", RT_FAILURE(rc) ? "" :  pszInstDir);
     if (RT_SUCCESS(rc))
         RTStrFree(pszInstDir);
 
-    VBoxServiceWinGetComponentVersions(g_uVMInfoGuestPropSvcClientID);
+    VGSvcVMInfoWinGetComponentVersions(g_uVMInfoGuestPropSvcClientID);
 #endif
 }
+
 
 #if defined(VBOX_WITH_DBUS) && defined(RT_OS_LINUX) /* Not yet for Solaris/FreeBSB. */
 /*
  * Simple wrapper to work around compiler-specific va_list madness.
  */
-static dbus_bool_t vboxService_dbus_message_get_args(DBusMessage *message,
-                                                     DBusError   *error,
-                                                     int first_arg_type,
-                                                     ...)
+static dbus_bool_t vboxService_dbus_message_get_args(DBusMessage *message, DBusError *error, int first_arg_type, ...)
 {
     va_list va;
     va_start(va, first_arg_type);
-    dbus_bool_t ret = dbus_message_get_args_valist(message, error,
-                                                   first_arg_type, va);
+    dbus_bool_t ret = dbus_message_get_args_valist(message, error, first_arg_type, va);
     va_end(va);
     return ret;
 }
 #endif
 
+
 /**
  * Provide information about active users.
  */
-static int vboxserviceVMInfoWriteUsers(void)
+static int vgsvcVMInfoWriteUsers(void)
 {
-    int rc = VINF_SUCCESS;
+    int rc;
     char *pszUserList = NULL;
     uint32_t cUsersInList = 0;
 
 #ifdef RT_OS_WINDOWS
 # ifndef TARGET_NT4
-    rc = VBoxServiceVMInfoWinWriteUsers(&g_VMInfoPropCache,
-                                        &pszUserList, &cUsersInList);
+    rc = VGSvcVMInfoWinWriteUsers(&g_VMInfoPropCache, &pszUserList, &cUsersInList);
 # else
     rc = VERR_NOT_IMPLEMENTED;
 # endif
@@ -545,7 +583,9 @@ static int vboxserviceVMInfoWriteUsers(void)
 
     /* Allocate a first array to hold 32 users max. */
     char **papszUsers = (char **)RTMemAllocZ(cListSize * sizeof(char *));
-    if (papszUsers == NULL)
+    if (papszUsers)
+        rc = VINF_SUCCESS;
+    else
         rc = VERR_NO_MEMORY;
 
     /* Process all entries in the utmp file.
@@ -554,17 +594,16 @@ static int vboxserviceVMInfoWriteUsers(void)
            && RT_SUCCESS(rc))
     {
 # ifdef RT_OS_DARWIN /* No ut_user->ut_session on Darwin */
-        VBoxServiceVerbose(4, "Found entry \"%s\" (type: %d, PID: %RU32)\n",
-                           ut_user->ut_user, ut_user->ut_type, ut_user->ut_pid);
+        VGSvcVerbose(4, "Found entry '%s' (type: %d, PID: %RU32)\n", ut_user->ut_user, ut_user->ut_type, ut_user->ut_pid);
 # else
-        VBoxServiceVerbose(4, "Found entry \"%s\" (type: %d, PID: %RU32, session: %RU32)\n",
-                           ut_user->ut_user, ut_user->ut_type, ut_user->ut_pid, ut_user->ut_session);
+        VGSvcVerbose(4, "Found entry '%s' (type: %d, PID: %RU32, session: %RU32)\n",
+                     ut_user->ut_user, ut_user->ut_type, ut_user->ut_pid, ut_user->ut_session);
 # endif
         if (cUsersInList > cListSize)
         {
             cListSize += 32;
             void *pvNew = RTMemRealloc(papszUsers, cListSize * sizeof(char*));
-            AssertPtrBreakStmt(pvNew, cListSize -= 32);
+            AssertBreakStmt(pvNew, cListSize -= 32);
             papszUsers = (char **)pvNew;
         }
 
@@ -578,8 +617,7 @@ static int vboxserviceVMInfoWriteUsers(void)
 
             if (!fFound)
             {
-                VBoxServiceVerbose(4, "Adding user \"%s\" (type: %d) to list\n",
-                                   ut_user->ut_user, ut_user->ut_type);
+                VGSvcVerbose(4, "Adding user '%s' (type: %d) to list\n", ut_user->ut_user, ut_user->ut_type);
 
                 rc = RTStrDupEx(&papszUsers[cUsersInList], (const char *)ut_user->ut_user);
                 if (RT_FAILURE(rc))
@@ -598,7 +636,7 @@ static int vboxserviceVMInfoWriteUsers(void)
     if (RT_SUCCESS(rc2))
     {
         /* Handle desktop sessions using ConsoleKit. */
-        VBoxServiceVerbose(4, "Checking ConsoleKit sessions ...\n");
+        VGSvcVerbose(4, "Checking ConsoleKit sessions ...\n");
         fHaveLibDbus = true;
         dbus_error_init(&dbErr);
         pConnection = dbus_bus_get(DBUS_BUS_SYSTEM, &dbErr);
@@ -608,12 +646,13 @@ static int vboxserviceVMInfoWriteUsers(void)
         && !dbus_error_is_set(&dbErr))
     {
         /* Get all available sessions. */
+/** @todo r=bird: What's the point of hardcoding things here when we've taken the pain of defining CK_XXX constants at the top of the file (or vice versa)? */
         DBusMessage *pMsgSessions = dbus_message_new_method_call("org.freedesktop.ConsoleKit",
                                                                  "/org/freedesktop/ConsoleKit/Manager",
                                                                  "org.freedesktop.ConsoleKit.Manager",
                                                                  "GetSessions");
         if (   pMsgSessions
-            && (dbus_message_get_type(pMsgSessions) == DBUS_MESSAGE_TYPE_METHOD_CALL))
+            && dbus_message_get_type(pMsgSessions) == DBUS_MESSAGE_TYPE_METHOD_CALL)
         {
             DBusMessage *pReplySessions = dbus_connection_send_with_reply_and_block(pConnection,
                                                                                     pMsgSessions, 30 * 1000 /* 30s timeout */,
@@ -621,19 +660,19 @@ static int vboxserviceVMInfoWriteUsers(void)
             if (   pReplySessions
                 && !dbus_error_is_set(&dbErr))
             {
-                char **ppszSessions; int cSessions;
-                if (   (dbus_message_get_type(pMsgSessions) == DBUS_MESSAGE_TYPE_METHOD_CALL)
+                char **ppszSessions;
+                int cSessions;
+                if (   dbus_message_get_type(pMsgSessions) == DBUS_MESSAGE_TYPE_METHOD_CALL
                     && vboxService_dbus_message_get_args(pReplySessions, &dbErr, DBUS_TYPE_ARRAY,
                                                          DBUS_TYPE_OBJECT_PATH, &ppszSessions, &cSessions,
                                                          DBUS_TYPE_INVALID /* Termination */))
                 {
-                    VBoxServiceVerbose(4, "ConsoleKit: retrieved %RU16 session(s)\n", cSessions);
+                    VGSvcVerbose(4, "ConsoleKit: retrieved %RU16 session(s)\n", cSessions);
 
                     char **ppszCurSession = ppszSessions;
-                    for (ppszCurSession;
-                         ppszCurSession && *ppszCurSession; ppszCurSession++)
+                    for (ppszCurSession; ppszCurSession && *ppszCurSession; ppszCurSession++)
                     {
-                        VBoxServiceVerbose(4, "ConsoleKit: processing session '%s' ...\n", *ppszCurSession);
+                        VGSvcVerbose(4, "ConsoleKit: processing session '%s' ...\n", *ppszCurSession);
 
                         /* Only respect active sessions .*/
                         bool fActive = false;
@@ -645,7 +684,8 @@ static int vboxserviceVMInfoWriteUsers(void)
                             && dbus_message_get_type(pMsgSessionActive) == DBUS_MESSAGE_TYPE_METHOD_CALL)
                         {
                             DBusMessage *pReplySessionActive = dbus_connection_send_with_reply_and_block(pConnection,
-                                                                                                         pMsgSessionActive, 30 * 1000 /* 30s timeout */,
+                                                                                                         pMsgSessionActive,
+                                                                                                         30 * 1000 /*sec*/,
                                                                                                          &dbErr);
                             if (   pReplySessionActive
                                 && !dbus_error_is_set(&dbErr))
@@ -668,7 +708,7 @@ static int vboxserviceVMInfoWriteUsers(void)
                                 dbus_message_unref(pMsgSessionActive);
                         }
 
-                        VBoxServiceVerbose(4, "ConsoleKit: session '%s' is %s\n",
+                        VGSvcVerbose(4, "ConsoleKit: session '%s' is %s\n",
                                            *ppszCurSession, fActive ? "active" : "not active");
 
                         /* *ppszCurSession now contains the object path
@@ -682,7 +722,8 @@ static int vboxserviceVMInfoWriteUsers(void)
                             && dbus_message_get_type(pMsgUnixUser) == DBUS_MESSAGE_TYPE_METHOD_CALL)
                         {
                             DBusMessage *pReplyUnixUser = dbus_connection_send_with_reply_and_block(pConnection,
-                                                                                                    pMsgUnixUser, 30 * 1000 /* 30s timeout */,
+                                                                                                    pMsgUnixUser,
+                                                                                                    30 * 1000 /* 30s timeout */,
                                                                                                     &dbErr);
                             if (   pReplyUnixUser
                                 && !dbus_error_is_set(&dbErr))
@@ -703,29 +744,31 @@ static int vboxserviceVMInfoWriteUsers(void)
                                     setpwent();
                                     struct passwd *ppwEntry = getpwuid(uid);
                                     if (   ppwEntry
-                                        && ppwEntry->pw_uid >= uid_min /* Only respect users, not daemons etc. */
                                         && ppwEntry->pw_name)
                                     {
-                                        VBoxServiceVerbose(4, "ConsoleKit: session '%s' -> %s (uid: %RU32)\n",
-                                                           *ppszCurSession, ppwEntry->pw_name, uid);
-
-                                        bool fFound = false;
-                                        for (uint32_t i = 0; i < cUsersInList && !fFound; i++)
-                                            fFound = strcmp(papszUsers[i], ppwEntry->pw_name) == 0;
-
-                                        if (!fFound)
+                                        if (ppwEntry->pw_uid >= uid_min /* Only respect users, not daemons etc. */)
                                         {
-                                            VBoxServiceVerbose(4, "ConsoleKit: adding user \"%s\" to list\n",
-                                                               ppwEntry->pw_name);
+                                            VGSvcVerbose(4, "ConsoleKit: session '%s' -> %s (uid: %RU32)\n",
+                                                         *ppszCurSession, ppwEntry->pw_name, uid);
 
-                                            rc = RTStrDupEx(&papszUsers[cUsersInList], (const char *)ppwEntry->pw_name);
-                                            if (RT_FAILURE(rc))
-                                                break;
-                                            cUsersInList++;
+                                            bool fFound = false;
+                                            for (uint32_t i = 0; i < cUsersInList && !fFound; i++)
+                                                fFound = strcmp(papszUsers[i], ppwEntry->pw_name) == 0;
+
+                                            if (!fFound)
+                                            {
+                                                VGSvcVerbose(4, "ConsoleKit: adding user '%s' to list\n", ppwEntry->pw_name);
+
+                                                rc = RTStrDupEx(&papszUsers[cUsersInList], (const char *)ppwEntry->pw_name);
+                                                if (RT_FAILURE(rc))
+                                                    break;
+                                                cUsersInList++;
+                                            }
                                         }
+                                        /* else silently ignore the user */
                                     }
                                     else
-                                        VBoxServiceError("ConsoleKit: unable to lookup user name for uid=%RU32\n", uid);
+                                        VGSvcError("ConsoleKit: unable to lookup user name for uid=%RU32\n", uid);
                                 }
                                 else
                                     AssertMsgFailed(("ConsoleKit: GetUnixUser returned a wrong argument type\n"));
@@ -734,15 +777,15 @@ static int vboxserviceVMInfoWriteUsers(void)
                             if (pReplyUnixUser)
                                 dbus_message_unref(pReplyUnixUser);
                         }
-                        else
+                        else if (fActive) /* don't bitch about inactive users */
                         {
                             static int s_iBitchedAboutConsoleKit = 0;
                             if (s_iBitchedAboutConsoleKit < 1)
                             {
                                 s_iBitchedAboutConsoleKit++;
-                                VBoxServiceError("ConsoleKit: unable to retrieve user for session '%s' (msg type=%d): %s\n",
-                                                 *ppszCurSession, dbus_message_get_type(pMsgUnixUser),
-                                                 dbus_error_is_set(&dbErr) ? dbErr.message : "No error information available");
+                                VGSvcError("ConsoleKit: unable to retrieve user for session '%s' (msg type=%d): %s\n",
+                                           *ppszCurSession, dbus_message_get_type(pMsgUnixUser),
+                                           dbus_error_is_set(&dbErr) ? dbErr.message : "No error information available");
                             }
                         }
 
@@ -753,11 +796,9 @@ static int vboxserviceVMInfoWriteUsers(void)
                     dbus_free_string_array(ppszSessions);
                 }
                 else
-                {
-                    VBoxServiceError("ConsoleKit: unable to retrieve session parameters (msg type=%d): %s\n",
-                                     dbus_message_get_type(pMsgSessions),
-                                     dbus_error_is_set(&dbErr) ? dbErr.message : "No error information available");
-                }
+                    VGSvcError("ConsoleKit: unable to retrieve session parameters (msg type=%d): %s\n",
+                               dbus_message_get_type(pMsgSessions),
+                               dbus_error_is_set(&dbErr) ? dbErr.message : "No error information available");
                 dbus_message_unref(pReplySessions);
             }
 
@@ -773,9 +814,9 @@ static int vboxserviceVMInfoWriteUsers(void)
             if (s_iBitchedAboutConsoleKit < 3)
             {
                 s_iBitchedAboutConsoleKit++;
-                VBoxServiceError("Unable to invoke ConsoleKit (%d/3) -- maybe not installed / used? Error: %s\n",
-                                 s_iBitchedAboutConsoleKit,
-                                 dbus_error_is_set(&dbErr) ? dbErr.message : "No error information available");
+                VGSvcError("Unable to invoke ConsoleKit (%d/3) -- maybe not installed / used? Error: %s\n",
+                           s_iBitchedAboutConsoleKit,
+                           dbus_error_is_set(&dbErr) ? dbErr.message : "No error information available");
             }
         }
 
@@ -788,8 +829,8 @@ static int vboxserviceVMInfoWriteUsers(void)
         if (s_iBitchedAboutDBus < 3)
         {
             s_iBitchedAboutDBus++;
-            VBoxServiceError("Unable to connect to system D-Bus (%d/3): %s\n", s_iBitchedAboutDBus,
-                             fHaveLibDbus && dbus_error_is_set(&dbErr) ? dbErr.message : "D-Bus not installed");
+            VGSvcError("Unable to connect to system D-Bus (%d/3): %s\n", s_iBitchedAboutDBus,
+                       fHaveLibDbus && dbus_error_is_set(&dbErr) ? dbErr.message : "D-Bus not installed");
         }
     }
 
@@ -804,10 +845,8 @@ static int vboxserviceVMInfoWriteUsers(void)
     /* Calc the string length. */
     size_t cchUserList = 0;
     if (RT_SUCCESS(rc))
-    {
         for (uint32_t i = 0; i < cUsersInList; i++)
             cchUserList += (i != 0) + strlen(papszUsers[i]);
-    }
 
     /* Build the user list. */
     if (cchUserList > 0)
@@ -839,18 +878,20 @@ static int vboxserviceVMInfoWriteUsers(void)
 
     Assert(RT_FAILURE(rc) || cUsersInList == 0 || (pszUserList && *pszUserList));
 
-    /* If the user enumeration above failed, reset the user count to 0 except
+    /*
+     * If the user enumeration above failed, reset the user count to 0 except
      * we didn't have enough memory anymore. In that case we want to preserve
      * the previous user count in order to not confuse third party tools which
-     * rely on that count. */
+     * rely on that count.
+     */
     if (RT_FAILURE(rc))
     {
         if (rc == VERR_NO_MEMORY)
         {
             static int s_iVMInfoBitchedOOM = 0;
             if (s_iVMInfoBitchedOOM++ < 3)
-                VBoxServiceVerbose(0, "Warning: Not enough memory available to enumerate users! Keeping old value (%RU32)\n",
-                                   g_cVMInfoLoggedInUsers);
+                VGSvcVerbose(0, "Warning: Not enough memory available to enumerate users! Keeping old value (%RU32)\n",
+                             g_cVMInfoLoggedInUsers);
             cUsersInList = g_cVMInfoLoggedInUsers;
         }
         else
@@ -859,32 +900,32 @@ static int vboxserviceVMInfoWriteUsers(void)
     else /* Preserve logged in users count. */
         g_cVMInfoLoggedInUsers = cUsersInList;
 
-    VBoxServiceVerbose(4, "cUsersInList=%RU32, pszUserList=%s, rc=%Rrc\n",
-                       cUsersInList, pszUserList ? pszUserList : "<NULL>", rc);
+    VGSvcVerbose(4, "cUsersInList=%RU32, pszUserList=%s, rc=%Rrc\n", cUsersInList, pszUserList ? pszUserList : "<NULL>", rc);
 
     if (pszUserList)
     {
         AssertMsg(cUsersInList, ("pszUserList contains users whereas cUsersInList is 0\n"));
-        rc = VBoxServicePropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsersList, "%s", pszUserList);
+        rc = VGSvcPropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsersList, "%s", pszUserList);
     }
     else
-        rc = VBoxServicePropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsersList, NULL);
+        rc = VGSvcPropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsersList, NULL);
     if (RT_FAILURE(rc))
-        VBoxServiceError("Error writing logged in users list, rc=%Rrc\n", rc);
+        VGSvcError("Error writing logged in users list, rc=%Rrc\n", rc);
 
-    rc = VBoxServicePropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsers, "%RU32", cUsersInList);
+    rc = VGSvcPropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValLoggedInUsers, "%RU32", cUsersInList);
     if (RT_FAILURE(rc))
-        VBoxServiceError("Error writing logged in users count, rc=%Rrc\n", rc);
+        VGSvcError("Error writing logged in users count, rc=%Rrc\n", rc);
 
-    rc = VBoxServicePropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValNoLoggedInUsers,
-                                    cUsersInList == 0 ? "true" : "false");
+/** @todo r=bird: What's this 'beacon' nonsense here?  It's _not_ defined with
+ *        the VGSVCPROPCACHE_FLAGS_ALWAYS_UPDATE flag set!!  */
+    rc = VGSvcPropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValNoLoggedInUsers, cUsersInList == 0 ? "true" : "false");
     if (RT_FAILURE(rc))
-        VBoxServiceError("Error writing no logged in users beacon, rc=%Rrc\n", rc);
+        VGSvcError("Error writing no logged in users beacon, rc=%Rrc\n", rc);
 
     if (pszUserList)
         RTStrFree(pszUserList);
 
-    VBoxServiceVerbose(4, "Writing users returned with rc=%Rrc\n", rc);
+    VGSvcVerbose(4, "Writing users returned with rc=%Rrc\n", rc);
     return rc;
 }
 
@@ -892,11 +933,10 @@ static int vboxserviceVMInfoWriteUsers(void)
 /**
  * Provide information about the guest network.
  */
-static int vboxserviceVMInfoWriteNetwork(void)
+static int vgsvcVMInfoWriteNetwork(void)
 {
-    int rc = VINF_SUCCESS;
-    uint32_t  cIfacesReport = 0;
-    char szPropPath[256];
+    uint32_t    cIfsReported = 0;
+    char        szPropPath[256];
 
 #ifdef RT_OS_WINDOWS
     IP_ADAPTER_INFO *pAdpInfo = NULL;
@@ -906,7 +946,7 @@ static int vboxserviceVMInfoWriteNetwork(void)
     pAdpInfo = (IP_ADAPTER_INFO *)RTMemAlloc(cbAdpInfo);
     if (!pAdpInfo)
     {
-        VBoxServiceError("VMInfo/Network: Failed to allocate IP_ADAPTER_INFO\n");
+        VGSvcError("VMInfo/Network: Failed to allocate IP_ADAPTER_INFO\n");
         return VERR_NO_MEMORY;
     }
     DWORD dwRet = GetAdaptersInfo(pAdpInfo, &cbAdpInfo);
@@ -921,7 +961,7 @@ static int vboxserviceVMInfoWriteNetwork(void)
     }
     else if (dwRet == ERROR_NO_DATA)
     {
-        VBoxServiceVerbose(3, "VMInfo/Network: No network adapters available\n");
+        VGSvcVerbose(3, "VMInfo/Network: No network adapters available\n");
 
         /* If no network adapters available / present in the
          * system we pretend success to not bail out too early. */
@@ -932,7 +972,7 @@ static int vboxserviceVMInfoWriteNetwork(void)
     {
         if (pAdpInfo)
             RTMemFree(pAdpInfo);
-        VBoxServiceError("VMInfo/Network: Failed to get adapter info: Error %d\n", dwRet);
+        VGSvcError("VMInfo/Network: Failed to get adapter info: Error %d\n", dwRet);
         return RTErrConvertFromWin32(dwRet);
     }
 # endif /* !TARGET_NT4 */
@@ -945,60 +985,79 @@ static int vboxserviceVMInfoWriteNetwork(void)
          * on NT4 due to start up when not connected shares dialogs pop up. */
         if (WSAENETDOWN == wsaErr)
         {
-            VBoxServiceVerbose(0, "VMInfo/Network: Network is not up yet.\n");
+            VGSvcVerbose(0, "VMInfo/Network: Network is not up yet.\n");
             wsaErr = VINF_SUCCESS;
         }
         else
-            VBoxServiceError("VMInfo/Network: Failed to get a socket: Error %d\n", wsaErr);
+            VGSvcError("VMInfo/Network: Failed to get a socket: Error %d\n", wsaErr);
         if (pAdpInfo)
             RTMemFree(pAdpInfo);
         return RTErrConvertFromWin32(wsaErr);
     }
 
-    INTERFACE_INFO InterfaceList[20] = {0};
-    unsigned long nBytesReturned = 0;
-    if (WSAIoctl(sd,
-                 SIO_GET_INTERFACE_LIST,
-                 0,
-                 0,
-                 &InterfaceList,
-                 sizeof(InterfaceList),
-                 &nBytesReturned,
-                 0,
-                 0) ==  SOCKET_ERROR)
+    INTERFACE_INFO aInterfaces[20] = {0};
+    DWORD cbReturned = 0;
+# ifdef TARGET_NT4
+    /* Workaround for uninitialized variable used in memcpy in GetTcpipInterfaceList
+       (NT4SP1 at least).  It seems to be happy enough with garbages, no failure
+       returns so far, so we just need to prevent it from crashing by filling the
+       stack with valid pointer values prior to the API call. */
+    _asm
     {
-        VBoxServiceError("VMInfo/Network: Failed to WSAIoctl() on socket: Error: %d\n", WSAGetLastError());
+        mov     edx, edi
+        lea     eax, aInterfaces
+        mov     [esp - 0x1000], eax
+        mov     [esp - 0x2000], eax
+        mov     ecx, 0x2000/4 - 1
+        cld
+        lea     edi, [esp - 0x2000]
+        rep stosd
+        mov     edi, edx
+    }
+# endif
+    if (   WSAIoctl(sd,
+                    SIO_GET_INTERFACE_LIST,
+                    NULL,                /* pvInBuffer */
+                    0,                   /* cbInBuffer */
+                    &aInterfaces[0],     /* pvOutBuffer */
+                    sizeof(aInterfaces), /* cbOutBuffer */
+                    &cbReturned,
+                    NULL,                /* pOverlapped */
+                    NULL)                /* pCompletionRoutine */
+        == SOCKET_ERROR)
+    {
+        VGSvcError("VMInfo/Network: Failed to WSAIoctl() on socket: Error: %d\n", WSAGetLastError());
         if (pAdpInfo)
             RTMemFree(pAdpInfo);
         return RTErrConvertFromWin32(WSAGetLastError());
     }
-    int cIfacesSystem = nBytesReturned / sizeof(INTERFACE_INFO);
+    int cIfacesSystem = cbReturned / sizeof(INTERFACE_INFO);
 
     /** @todo Use GetAdaptersInfo() and GetAdapterAddresses (IPv4 + IPv6) for more information. */
     for (int i = 0; i < cIfacesSystem; ++i)
     {
         sockaddr_in *pAddress;
         u_long nFlags = 0;
-        if (InterfaceList[i].iiFlags & IFF_LOOPBACK) /* Skip loopback device. */
+        if (aInterfaces[i].iiFlags & IFF_LOOPBACK) /* Skip loopback device. */
             continue;
-        nFlags = InterfaceList[i].iiFlags;
-        pAddress = (sockaddr_in *)&(InterfaceList[i].iiAddress);
+        nFlags = aInterfaces[i].iiFlags;
+        pAddress = (sockaddr_in *)&(aInterfaces[i].iiAddress);
         Assert(pAddress);
         char szIp[32];
         RTStrPrintf(szIp, sizeof(szIp), "%s", inet_ntoa(pAddress->sin_addr));
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/IP", cIfacesReport);
-        VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szIp);
+        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/IP", cIfsReported);
+        VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szIp);
 
-        pAddress = (sockaddr_in *) & (InterfaceList[i].iiBroadcastAddress);
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Broadcast", cIfacesReport);
-        VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
+        pAddress = (sockaddr_in *) & (aInterfaces[i].iiBroadcastAddress);
+        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Broadcast", cIfsReported);
+        VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
 
-        pAddress = (sockaddr_in *)&(InterfaceList[i].iiNetmask);
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Netmask", cIfacesReport);
-        VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
+        pAddress = (sockaddr_in *)&(aInterfaces[i].iiNetmask);
+        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Netmask", cIfsReported);
+        VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
 
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/Status", cIfacesReport);
-        VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, nFlags & IFF_UP ? "Up" : "Down");
+        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/Status", cIfsReported);
+        VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, nFlags & IFF_UP ? "Up" : "Down");
 
 # ifndef TARGET_NT4
         IP_ADAPTER_INFO *pAdp;
@@ -1006,39 +1065,38 @@ static int vboxserviceVMInfoWriteNetwork(void)
             if (!strcmp(pAdp->IpAddressList.IpAddress.String, szIp))
                 break;
 
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/MAC", cIfacesReport);
+        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/MAC", cIfsReported);
         if (pAdp)
         {
             char szMac[32];
             RTStrPrintf(szMac, sizeof(szMac), "%02X%02X%02X%02X%02X%02X",
                         pAdp->Address[0], pAdp->Address[1], pAdp->Address[2],
                         pAdp->Address[3], pAdp->Address[4], pAdp->Address[5]);
-            VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szMac);
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szMac);
         }
         else
-            VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, NULL);
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, NULL);
 # endif /* !TARGET_NT4 */
 
-        cIfacesReport++;
+        cIfsReported++;
     }
     if (pAdpInfo)
         RTMemFree(pAdpInfo);
-    if (sd >= 0)
-        closesocket(sd);
+    closesocket(sd);
 
 #elif defined(RT_OS_HAIKU)
     /** @todo Haiku: implement network info. retreival */
     return VERR_NOT_IMPLEMENTED;
 
-#elif defined(RT_OS_DARWIN) || defined(RT_OS_FREEBSD)
+#elif defined(RT_OS_DARWIN) || defined(RT_OS_FREEBSD) || defined(RT_OS_NETBSD)
     struct ifaddrs *pIfHead = NULL;
 
     /* Get all available interfaces */
-    rc = getifaddrs(&pIfHead);
+    int rc = getifaddrs(&pIfHead);
     if (rc < 0)
     {
         rc = RTErrConvertFromErrno(errno);
-        VBoxServiceError("VMInfo/Network: Failed to get all interfaces: Error %Rrc\n");
+        VGSvcError("VMInfo/Network: Failed to get all interfaces: Error %Rrc\n");
         return rc;
     }
 
@@ -1047,8 +1105,8 @@ static int vboxserviceVMInfoWriteNetwork(void)
     {
         /*
          * Only AF_INET and no loopback interfaces
-         * @todo: IPv6 interfaces
          */
+        /** @todo IPv6 interfaces */
         if (   pIfCurr->ifa_addr->sa_family == AF_INET
             && !(pIfCurr->ifa_flags & IFF_LOOPBACK))
         {
@@ -1057,20 +1115,20 @@ static int vboxserviceVMInfoWriteNetwork(void)
             memset(szInetAddr, 0, NI_MAXHOST);
             getnameinfo(pIfCurr->ifa_addr, sizeof(struct sockaddr_in),
                         szInetAddr, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
-            RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/IP", cIfacesReport);
-            VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szInetAddr);
+            RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/IP", cIfsReported);
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szInetAddr);
 
             memset(szInetAddr, 0, NI_MAXHOST);
             getnameinfo(pIfCurr->ifa_broadaddr, sizeof(struct sockaddr_in),
                         szInetAddr, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
-            RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Broadcast", cIfacesReport);
-            VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szInetAddr);
+            RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Broadcast", cIfsReported);
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szInetAddr);
 
             memset(szInetAddr, 0, NI_MAXHOST);
             getnameinfo(pIfCurr->ifa_netmask, sizeof(struct sockaddr_in),
                         szInetAddr, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
-            RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Netmask", cIfacesReport);
-            VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szInetAddr);
+            RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Netmask", cIfsReported);
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szInetAddr);
 
             /* Search for the AF_LINK interface of the current AF_INET one and get the mac. */
             for (struct ifaddrs *pIfLinkCurr = pIfHead; pIfLinkCurr; pIfLinkCurr = pIfLinkCurr->ifa_next)
@@ -1086,16 +1144,16 @@ static int vboxserviceVMInfoWriteNetwork(void)
                     pu8Mac = (uint8_t *)LLADDR(pLinkAddress);
                     RTStrPrintf(szMac, sizeof(szMac), "%02X%02X%02X%02X%02X%02X",
                                 pu8Mac[0], pu8Mac[1], pu8Mac[2], pu8Mac[3],  pu8Mac[4], pu8Mac[5]);
-                    RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/MAC", cIfacesReport);
-                    VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szMac);
+                    RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/MAC", cIfsReported);
+                    VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szMac);
                     break;
                 }
             }
 
-            RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/Status", cIfacesReport);
-            VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, pIfCurr->ifa_flags & IFF_UP ? "Up" : "Down");
+            RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/Status", cIfsReported);
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, pIfCurr->ifa_flags & IFF_UP ? "Up" : "Down");
 
-            cIfacesReport++;
+            cIfsReported++;
         }
     }
 
@@ -1103,138 +1161,238 @@ static int vboxserviceVMInfoWriteNetwork(void)
     freeifaddrs(pIfHead);
 
 #else /* !RT_OS_WINDOWS && !RT_OS_FREEBSD */
+    /*
+     * Use SIOCGIFCONF to get a list of interface/protocol configurations.
+     *
+     * See "UNIX Network Programming Volume 1" by W. R. Stevens, section 17.6
+     * for details on this ioctl.
+     */
     int sd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sd < 0)
     {
-        rc = RTErrConvertFromErrno(errno);
-        VBoxServiceError("VMInfo/Network: Failed to get a socket: Error %Rrc\n", rc);
+        int rc = RTErrConvertFromErrno(errno);
+        VGSvcError("VMInfo/Network: Failed to get a socket: Error %Rrc\n", rc);
         return rc;
     }
 
-    ifconf ifcfg;
-    char buffer[1024] = {0};
-    ifcfg.ifc_len = sizeof(buffer);
-    ifcfg.ifc_buf = buffer;
-    if (ioctl(sd, SIOCGIFCONF, &ifcfg) < 0)
+    /* Call SIOCGIFCONF with the right sized buffer (remember the size). */
+    static int      s_cbBuf = 256; // 1024
+    int             cbBuf   = s_cbBuf;
+    char           *pchBuf;
+    struct ifconf   IfConf;
+    int rc = VINF_SUCCESS;
+    for (;;)
+    {
+        pchBuf = (char *)RTMemTmpAllocZ(cbBuf);
+        if (!pchBuf)
+        {
+            rc = VERR_NO_TMP_MEMORY;
+            break;
+        }
+
+        IfConf.ifc_len = cbBuf;
+        IfConf.ifc_buf = pchBuf;
+        if (ioctl(sd, SIOCGIFCONF, &IfConf) >= 0)
+        {
+            /* Hard to anticipate how space an address might possibly take, so
+               making some generous assumptions here to avoid performing the
+               query twice with different buffer sizes. */
+            if (IfConf.ifc_len + 128 < cbBuf)
+                break;
+        }
+        else if (errno != EOVERFLOW)
+        {
+            rc = RTErrConvertFromErrno(errno);
+            break;
+        }
+
+        /* grow the buffer */
+        s_cbBuf = cbBuf *= 2;
+        RTMemFree(pchBuf);
+    }
+    if (RT_FAILURE(rc))
     {
         close(sd);
-        rc = RTErrConvertFromErrno(errno);
-        VBoxServiceError("VMInfo/Network: Failed to ioctl(SIOCGIFCONF) on socket: Error %Rrc\n", rc);
+        RTMemTmpFree(pchBuf);
+        VGSvcError("VMInfo/Network: Error doing SIOCGIFCONF (cbBuf=%d): %Rrc\n", cbBuf, rc);
         return rc;
     }
 
-    ifreq* ifrequest = ifcfg.ifc_req;
-    int cIfacesSystem = ifcfg.ifc_len / sizeof(ifreq);
-
-    for (int i = 0; i < cIfacesSystem; ++i)
+    /*
+     * Iterate the interface/protocol configurations.
+     *
+     * Note! The current code naively assumes one IPv4 address per interface.
+     *       This means that guest assigning more than one address to an
+     *       interface will get multiple entries for one physical interface.
+     */
+# ifdef RT_OS_OS2
+    struct ifreq   *pPrevLinkAddr = NULL;
+# endif
+    struct ifreq   *pCur   = IfConf.ifc_req;
+    size_t          cbLeft = IfConf.ifc_len;
+    while (cbLeft >= sizeof(*pCur))
     {
-        sockaddr_in *pAddress;
-        if (ioctl(sd, SIOCGIFFLAGS, &ifrequest[i]) < 0)
-        {
-            rc = RTErrConvertFromErrno(errno);
-            VBoxServiceError("VMInfo/Network: Failed to ioctl(SIOCGIFFLAGS) on socket: Error %Rrc\n", rc);
-            break;
-        }
-        if (ifrequest[i].ifr_flags & IFF_LOOPBACK) /* Skip the loopback device. */
-            continue;
+# if defined(RT_OS_SOLARIS) || defined(RT_OS_LINUX)
+        /* These two do not provide the sa_len member but only support address
+         * families which do not need extra bytes on the end. */
+#  define SA_LEN(pAddr) sizeof(struct sockaddr)
+# elif !defined(SA_LEN)
+#  define SA_LEN(pAddr) (pAddr)->sa_len
+# endif
+        /* Figure the size of the current request. */
+        size_t cbCur = RT_UOFFSETOF(struct ifreq, ifr_addr)
+                     + SA_LEN(&pCur->ifr_addr);
+        cbCur = RT_MAX(cbCur, sizeof(struct ifreq));
+# if defined(RT_OS_SOLARIS) || defined(RT_OS_LINUX)
+        Assert(pCur->ifr_addr.sa_family == AF_INET);
+# endif
+        AssertBreak(cbCur <= cbLeft);
 
-        bool fIfUp = !!(ifrequest[i].ifr_flags & IFF_UP);
-        pAddress = ((sockaddr_in *)&ifrequest[i].ifr_addr);
-        Assert(pAddress);
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/IP", cIfacesReport);
-        VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
-
-        if (ioctl(sd, SIOCGIFBRDADDR, &ifrequest[i]) < 0)
-        {
-            rc = RTErrConvertFromErrno(errno);
-            VBoxServiceError("VMInfo/Network: Failed to ioctl(SIOCGIFBRDADDR) on socket: Error %Rrc\n", rc);
-            break;
-        }
-        pAddress = (sockaddr_in *)&ifrequest[i].ifr_broadaddr;
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Broadcast", cIfacesReport);
-        VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
-
-        if (ioctl(sd, SIOCGIFNETMASK, &ifrequest[i]) < 0)
-        {
-            rc = RTErrConvertFromErrno(errno);
-            VBoxServiceError("VMInfo/Network: Failed to ioctl(SIOCGIFNETMASK) on socket: Error %Rrc\n", rc);
-            break;
-        }
-# if defined(RT_OS_OS2) || defined(RT_OS_SOLARIS)
-        pAddress = (sockaddr_in *)&ifrequest[i].ifr_addr;
-# else
-        pAddress = (sockaddr_in *)&ifrequest[i].ifr_netmask;
+# ifdef RT_OS_OS2
+        /* On OS/2 we get the MAC address in the AF_LINK that the BSD 4.4 stack
+           emits.  We boldly ASSUME these always comes first. */
+        if (   pCur->ifr_addr.sa_family == AF_LINK
+            && ((struct sockaddr_dl *)&pCur->ifr_addr)->sdl_alen == 6)
+            pPrevLinkAddr = pCur;
 # endif
 
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/V4/Netmask", cIfacesReport);
-        VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
-
-# if defined(RT_OS_SOLARIS)
-        /*
-         * "ifreq" is obsolete on Solaris. We use the recommended "lifreq".
-         * We might fail if the interface has not been assigned an IP address.
-         * That doesn't matter; as long as it's plumbed we can pick it up.
-         * But, if it has not acquired an IP address we cannot obtain it's MAC
-         * address this way, so we just use all zeros there.
-         */
-        RTMAC IfMac;
-        RT_ZERO(IfMac);
-        struct lifreq IfReq;
-        RT_ZERO(IfReq);
-        AssertCompile(sizeof(IfReq.lifr_name) >= sizeof(ifrequest[i].ifr_name));
-        strncpy(IfReq.lifr_name, ifrequest[i].ifr_name, sizeof(ifrequest[i].ifr_name));
-        if (ioctl(sd, SIOCGLIFADDR, &IfReq) >= 0)
-        {
-            struct arpreq ArpReq;
-            RT_ZERO(ArpReq);
-            memcpy(&ArpReq.arp_pa, &IfReq.lifr_addr, sizeof(struct sockaddr_in));
-
-            if (ioctl(sd, SIOCGARP, &ArpReq) >= 0)
-                memcpy(&IfMac, ArpReq.arp_ha.sa_data, sizeof(IfMac));
-            else
-            {
-                rc = RTErrConvertFromErrno(errno);
-                VBoxServiceError("VMInfo/Network: failed to ioctl(SIOCGARP) on socket: Error %Rrc\n", rc);
-                break;
-            }
-        }
+        /* Skip it if it's not the kind of address we're looking for. */
+        struct ifreq IfReqTmp;
+        bool         fIfUp = false;
+        bool         fSkip = false;
+        if (pCur->ifr_addr.sa_family != AF_INET)
+            fSkip = true;
         else
         {
-            VBoxServiceVerbose(2, "VMInfo/Network: Interface %d has no assigned IP address, skipping ...\n", i);
-            continue;
+            /* Get the interface flags so we can detect loopback and check if it's up. */
+            IfReqTmp = *pCur;
+            if (ioctl(sd, SIOCGIFFLAGS, &IfReqTmp) < 0)
+            {
+                rc = RTErrConvertFromErrno(errno);
+                VGSvcError("VMInfo/Network: Failed to ioctl(SIOCGIFFLAGS,%s) on socket: Error %Rrc\n", pCur->ifr_name, rc);
+                break;
+            }
+            fIfUp = !!(IfReqTmp.ifr_flags & IFF_UP);
+            if (IfReqTmp.ifr_flags & IFF_LOOPBACK) /* Skip the loopback device. */
+                fSkip = true;
         }
-# else
-#  ifndef RT_OS_OS2 /** @todo port this to OS/2 */
-        if (ioctl(sd, SIOCGIFHWADDR, &ifrequest[i]) < 0)
+        if (!fSkip)
         {
-            rc = RTErrConvertFromErrno(errno);
-            VBoxServiceError("VMInfo/Network: Failed to ioctl(SIOCGIFHWADDR) on socket: Error %Rrc\n", rc);
-            break;
-        }
-#  endif
+            size_t offSubProp = RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32", cIfsReported);
+
+            sockaddr_in *pAddress = (sockaddr_in *)&pCur->ifr_addr;
+            strcpy(&szPropPath[offSubProp], "/V4/IP");
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
+
+            /* Get the broadcast address. */
+            IfReqTmp = *pCur;
+            if (ioctl(sd, SIOCGIFBRDADDR, &IfReqTmp) < 0)
+            {
+                rc = RTErrConvertFromErrno(errno);
+                VGSvcError("VMInfo/Network: Failed to ioctl(SIOCGIFBRDADDR) on socket: Error %Rrc\n", rc);
+                break;
+            }
+            pAddress = (sockaddr_in *)&IfReqTmp.ifr_broadaddr;
+            strcpy(&szPropPath[offSubProp], "/V4/Broadcast");
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
+
+            /* Get the net mask. */
+            IfReqTmp = *pCur;
+            if (ioctl(sd, SIOCGIFNETMASK, &IfReqTmp) < 0)
+            {
+                rc = RTErrConvertFromErrno(errno);
+                VGSvcError("VMInfo/Network: Failed to ioctl(SIOCGIFNETMASK) on socket: Error %Rrc\n", rc);
+                break;
+            }
+# if defined(RT_OS_OS2) || defined(RT_OS_SOLARIS)
+            pAddress = (sockaddr_in *)&IfReqTmp.ifr_addr;
+# else
+            pAddress = (sockaddr_in *)&IfReqTmp.ifr_netmask;
 # endif
+            strcpy(&szPropPath[offSubProp], "/V4/Netmask");
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", inet_ntoa(pAddress->sin_addr));
 
-# ifndef RT_OS_OS2 /** @todo port this to OS/2 */
-        char szMac[32];
-#  if defined(RT_OS_SOLARIS)
-        uint8_t *pu8Mac = IfMac.au8;
-#  else
-        uint8_t *pu8Mac = (uint8_t*)&ifrequest[i].ifr_hwaddr.sa_data[0];        /* @todo see above */
-#  endif
-        RTStrPrintf(szMac, sizeof(szMac), "%02X%02X%02X%02X%02X%02X",
-                    pu8Mac[0], pu8Mac[1], pu8Mac[2], pu8Mac[3],  pu8Mac[4], pu8Mac[5]);
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/MAC", cIfacesReport);
-        VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%s", szMac);
-# endif /* !OS/2*/
+# if defined(RT_OS_SOLARIS)
+            /*
+             * "ifreq" is obsolete on Solaris. We use the recommended "lifreq".
+             * We might fail if the interface has not been assigned an IP address.
+             * That doesn't matter; as long as it's plumbed we can pick it up.
+             * But, if it has not acquired an IP address we cannot obtain it's MAC
+             * address this way, so we just use all zeros there.
+             */
+            RTMAC           IfMac;
+            struct lifreq   IfReq;
+            RT_ZERO(IfReq);
+            AssertCompile(sizeof(IfReq.lifr_name) >= sizeof(pCur->ifr_name));
+            strncpy(IfReq.lifr_name, pCur->ifr_name, sizeof(pCur->ifr_name));
+            if (ioctl(sd, SIOCGLIFADDR, &IfReq) >= 0)
+            {
+                struct arpreq ArpReq;
+                RT_ZERO(ArpReq);
+                memcpy(&ArpReq.arp_pa, &IfReq.lifr_addr, sizeof(struct sockaddr_in));
 
-        RTStrPrintf(szPropPath, sizeof(szPropPath), "/VirtualBox/GuestInfo/Net/%RU32/Status", cIfacesReport);
-        VBoxServicePropCacheUpdate(&g_VMInfoPropCache, szPropPath, fIfUp ? "Up" : "Down");
-        cIfacesReport++;
-    } /* For all interfaces */
+                if (ioctl(sd, SIOCGARP, &ArpReq) >= 0)
+                    memcpy(&IfMac, ArpReq.arp_ha.sa_data, sizeof(IfMac));
+                else
+                {
+                    rc = RTErrConvertFromErrno(errno);
+                    VGSvcError("VMInfo/Network: failed to ioctl(SIOCGARP) on socket: Error %Rrc\n", rc);
+                    break;
+                }
+            }
+            else
+            {
+                VGSvcVerbose(2, "VMInfo/Network: Interface '%s' has no assigned IP address, skipping ...\n", pCur->ifr_name);
+                continue;
+            }
+# elif defined(RT_OS_OS2)
+            RTMAC   IfMac;
+            if (   pPrevLinkAddr
+                && strncmp(pCur->ifr_name, pPrevLinkAddr->ifr_name, sizeof(pCur->ifr_name)) == 0)
+            {
+                struct sockaddr_dl *pDlAddr = (struct sockaddr_dl *)&pPrevLinkAddr->ifr_addr;
+                IfMac = *(PRTMAC)&pDlAddr->sdl_data[pDlAddr->sdl_nlen];
+            }
+            else
+                RT_ZERO(IfMac);
+#else
+            if (ioctl(sd, SIOCGIFHWADDR, &IfReqTmp) < 0)
+            {
+                rc = RTErrConvertFromErrno(errno);
+                VGSvcError("VMInfo/Network: Failed to ioctl(SIOCGIFHWADDR) on socket: Error %Rrc\n", rc);
+                break;
+            }
+            RTMAC IfMac = *(PRTMAC)&IfReqTmp.ifr_hwaddr.sa_data[0];
+# endif
+            strcpy(&szPropPath[offSubProp], "/MAC");
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%02X%02X%02X%02X%02X%02X",
+                                       IfMac.au8[0], IfMac.au8[1], IfMac.au8[2], IfMac.au8[3], IfMac.au8[4], IfMac.au8[5]);
 
+            strcpy(&szPropPath[offSubProp], "/Status");
+            VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, fIfUp ? "Up" : "Down");
+
+            /* The name. */
+            int rc2 = RTStrValidateEncodingEx(pCur->ifr_name, sizeof(pCur->ifr_name), 0);
+            if (RT_SUCCESS(rc2))
+            {
+                strcpy(&szPropPath[offSubProp], "/Name");
+                VGSvcPropCacheUpdate(&g_VMInfoPropCache, szPropPath, "%.*s", sizeof(pCur->ifr_name), pCur->ifr_name);
+            }
+
+            cIfsReported++;
+        }
+
+        /*
+         * Next interface/protocol configuration.
+         */
+        pCur = (struct ifreq *)((uintptr_t)pCur + cbCur);
+        cbLeft -= cbCur;
+    }
+
+    RTMemTmpFree(pchBuf);
     close(sd);
     if (RT_FAILURE(rc))
-        VBoxServiceError("VMInfo/Network: Network enumeration for interface %RU32 failed with error %Rrc\n", cIfacesReport, rc);
+        VGSvcError("VMInfo/Network: Network enumeration for interface %RU32 failed with error %Rrc\n", cIfsReported, rc);
 
 #endif /* !RT_OS_WINDOWS */
 
@@ -1245,26 +1403,26 @@ static int vboxserviceVMInfoWriteNetwork(void)
      */
 
     /* Get former count. */
-    uint32_t cIfacesReportOld;
-    rc = VBoxServiceReadPropUInt32(g_uVMInfoGuestPropSvcClientID, g_pszPropCacheValNetCount, &cIfacesReportOld,
-                                   0 /* Min */, UINT32_MAX /* Max */);
+    uint32_t cIfsReportedOld;
+    rc = VGSvcReadPropUInt32(g_uVMInfoGuestPropSvcClientID, g_pszPropCacheValNetCount, &cIfsReportedOld,
+                             0 /* Min */, UINT32_MAX /* Max */);
     if (   RT_SUCCESS(rc)
-        && cIfacesReportOld > cIfacesReport) /* Are some ifaces not around anymore? */
+        && cIfsReportedOld > cIfsReported) /* Are some ifaces not around anymore? */
     {
-        VBoxServiceVerbose(3, "VMInfo/Network: Stale interface data detected (%RU32 old vs. %RU32 current)\n",
-                           cIfacesReportOld, cIfacesReport);
+        VGSvcVerbose(3, "VMInfo/Network: Stale interface data detected (%RU32 old vs. %RU32 current)\n",
+                     cIfsReportedOld, cIfsReported);
 
-        uint32_t uIfaceDeleteIdx = cIfacesReport;
+        uint32_t uIfaceDeleteIdx = cIfsReported;
         do
         {
-            VBoxServiceVerbose(3, "VMInfo/Network: Deleting stale data of interface %d ...\n", uIfaceDeleteIdx);
-            rc = VBoxServicePropCacheUpdateByPath(&g_VMInfoPropCache, NULL /* Value, delete */, 0 /* Flags */, "/VirtualBox/GuestInfo/Net/%RU32", uIfaceDeleteIdx++);
+            VGSvcVerbose(3, "VMInfo/Network: Deleting stale data of interface %d ...\n", uIfaceDeleteIdx);
+            rc = VGSvcPropCacheUpdateByPath(&g_VMInfoPropCache, NULL /* Value, delete */, 0 /* Flags */, "/VirtualBox/GuestInfo/Net/%RU32", uIfaceDeleteIdx++);
         } while (RT_SUCCESS(rc));
     }
     else if (   RT_FAILURE(rc)
              && rc != VERR_NOT_FOUND)
     {
-        VBoxServiceError("VMInfo/Network: Failed retrieving old network interfaces count with error %Rrc\n", rc);
+        VGSvcError("VMInfo/Network: Failed retrieving old network interfaces count with error %Rrc\n", rc);
     }
 #endif
 
@@ -1273,16 +1431,17 @@ static int vboxserviceVMInfoWriteNetwork(void)
      * does not change. If this property is missing, the host assumes that all other GuestInfo
      * properties are no longer valid.
      */
-    VBoxServicePropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValNetCount, "%RU32",
-                               cIfacesReport);
+    VGSvcPropCacheUpdate(&g_VMInfoPropCache, g_pszPropCacheValNetCount, "%RU32", cIfsReported);
 
     /* Don't fail here; just report everything we got. */
     return VINF_SUCCESS;
 }
 
 
-/** @copydoc VBOXSERVICE::pfnWorker */
-DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnWorker}
+ */
+static DECLCALLBACK(int) vbsvcVMInfoWorker(bool volatile *pfShutdown)
 {
     int rc;
 
@@ -1296,24 +1455,24 @@ DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
     /* Required for network information (must be called per thread). */
     WSADATA wsaData;
     if (WSAStartup(MAKEWORD(2, 2), &wsaData))
-        VBoxServiceError("VMInfo/Network: WSAStartup failed! Error: %Rrc\n", RTErrConvertFromWin32(WSAGetLastError()));
+        VGSvcError("VMInfo/Network: WSAStartup failed! Error: %Rrc\n", RTErrConvertFromWin32(WSAGetLastError()));
 #endif /* RT_OS_WINDOWS */
 
     /*
      * Write the fixed properties first.
      */
-    vboxserviceVMInfoWriteFixedProperties();
+    vgsvcVMInfoWriteFixedProperties();
 
     /*
      * Now enter the loop retrieving runtime data continuously.
      */
     for (;;)
     {
-        rc = vboxserviceVMInfoWriteUsers();
+        rc = vgsvcVMInfoWriteUsers();
         if (RT_FAILURE(rc))
             break;
 
-        rc = vboxserviceVMInfoWriteNetwork();
+        rc = vgsvcVMInfoWriteNetwork();
         if (RT_FAILURE(rc))
             break;
 
@@ -1325,7 +1484,7 @@ DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
 
         /* Check for new connection. */
         char *pszLAClientID = NULL;
-        int rc2 = VBoxServiceReadHostProp(g_uVMInfoGuestPropSvcClientID, g_pszLAActiveClient, true /* Read only */,
+        int rc2 = VGSvcReadHostProp(g_uVMInfoGuestPropSvcClientID, g_pszLAActiveClient, true /* Read only */,
                                           &pszLAClientID, NULL /* Flags */, NULL /* Timestamp */);
         if (RT_SUCCESS(rc2))
         {
@@ -1337,25 +1496,25 @@ DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
 
                 /* Peek at "Attach" value to figure out if hotdesking happened. */
                 char *pszAttach = NULL;
-                rc2 = vboxServiceGetLAClientValue(uLAClientID, "Attach", &pszAttach,
+                rc2 = vgsvcGetLAClientValue(uLAClientID, "Attach", &pszAttach,
                                                  &uLAClientAttachedTS);
 
                 if (   RT_SUCCESS(rc2)
                     && (   !g_LAClientAttachedTS
                         || (g_LAClientAttachedTS != uLAClientAttachedTS)))
                 {
-                    vboxServiceFreeLAClientInfo(&g_LAClientInfo);
+                    vgsvcFreeLAClientInfo(&g_LAClientInfo);
 
                     /* Note: There is a race between setting the guest properties by the host and getting them by
                      *       the guest. */
-                    rc2 = vboxServiceGetLAClientInfo(uLAClientID, &g_LAClientInfo);
+                    rc2 = vgsvcGetLAClientInfo(uLAClientID, &g_LAClientInfo);
                     if (RT_SUCCESS(rc2))
                     {
-                        VBoxServiceVerbose(1, "VRDP: Hotdesk client %s with ID=%RU32, Name=%s, Domain=%s\n",
-                                           /* If g_LAClientAttachedTS is 0 this means there already was an active
-                                            * hotdesk session when VBoxService started. */
-                                           !g_LAClientAttachedTS ? "already active" : g_LAClientInfo.fAttached ? "connected" : "disconnected",
-                                           uLAClientID, g_LAClientInfo.pszName, g_LAClientInfo.pszDomain);
+                        VGSvcVerbose(1, "VRDP: Hotdesk client %s with ID=%RU32, Name=%s, Domain=%s\n",
+                                     /* If g_LAClientAttachedTS is 0 this means there already was an active
+                                      * hotdesk session when VBoxService started. */
+                                     !g_LAClientAttachedTS ? "already active" : g_LAClientInfo.fAttached ? "connected" : "disconnected",
+                                     uLAClientID, g_LAClientInfo.pszName, g_LAClientInfo.pszDomain);
 
                         g_LAClientAttachedTS = g_LAClientInfo.uAttachedTS;
 
@@ -1369,20 +1528,19 @@ DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
                         if (s_iBitchedAboutLAClientInfo < 10)
                         {
                             s_iBitchedAboutLAClientInfo++;
-                            VBoxServiceError("Error getting active location awareness client info, rc=%Rrc\n", rc2);
+                            VGSvcError("Error getting active location awareness client info, rc=%Rrc\n", rc2);
                         }
                     }
                 }
                 else if (RT_FAILURE(rc2))
-                     VBoxServiceError("Error getting attached value of location awareness client %RU32, rc=%Rrc\n",
-                                      uLAClientID, rc2);
+                     VGSvcError("Error getting attached value of location awareness client %RU32, rc=%Rrc\n", uLAClientID, rc2);
                 if (pszAttach)
                     RTStrFree(pszAttach);
             }
             else
             {
-                VBoxServiceVerbose(1, "VRDP: UTTSC disconnected from VRDP server\n");
-                vboxServiceFreeLAClientInfo(&g_LAClientInfo);
+                VGSvcVerbose(1, "VRDP: UTTSC disconnected from VRDP server\n");
+                vgsvcFreeLAClientInfo(&g_LAClientInfo);
             }
 
             RTStrFree(pszLAClientID);
@@ -1394,11 +1552,11 @@ DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
                 && s_iBitchedAboutLAClient < 3)
             {
                 s_iBitchedAboutLAClient++;
-                VBoxServiceError("VRDP: Querying connected location awareness client failed with rc=%Rrc\n", rc2);
+                VGSvcError("VRDP: Querying connected location awareness client failed with rc=%Rrc\n", rc2);
             }
         }
 
-        VBoxServiceVerbose(3, "VRDP: Handling location awareness done\n");
+        VGSvcVerbose(3, "VRDP: Handling location awareness done\n");
 
         /*
          * Flush all properties if we were restored.
@@ -1407,9 +1565,9 @@ DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
         VbglR3GetSessionId(&idNewSession);
         if (idNewSession != g_idVMInfoSession)
         {
-            VBoxServiceVerbose(3, "The VM session ID changed, flushing all properties\n");
-            vboxserviceVMInfoWriteFixedProperties();
-            VBoxServicePropCacheFlush(&g_VMInfoPropCache);
+            VGSvcVerbose(3, "The VM session ID changed, flushing all properties\n");
+            vgsvcVMInfoWriteFixedProperties();
+            VGSvcPropCacheFlush(&g_VMInfoPropCache);
             g_idVMInfoSession = idNewSession;
         }
 
@@ -1427,7 +1585,7 @@ DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
             break;
         if (rc2 != VERR_TIMEOUT && RT_FAILURE(rc2))
         {
-            VBoxServiceError("RTSemEventMultiWait failed; rc2=%Rrc\n", rc2);
+            VGSvcError("RTSemEventMultiWait failed; rc2=%Rrc\n", rc2);
             rc = rc2;
             break;
         }
@@ -1436,7 +1594,7 @@ DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
             /* Reset event semaphore if it got triggered. */
             rc2 = RTSemEventMultiReset(g_hVMInfoEvent);
             if (RT_FAILURE(rc2))
-                rc2 = VBoxServiceError("RTSemEventMultiReset failed; rc2=%Rrc\n", rc2);
+                rc2 = VGSvcError("RTSemEventMultiReset failed; rc2=%Rrc\n", rc2);
         }
     }
 
@@ -1448,15 +1606,19 @@ DECLCALLBACK(int) VBoxServiceVMInfoWorker(bool volatile *pfShutdown)
 }
 
 
-/** @copydoc VBOXSERVICE::pfnStop */
-static DECLCALLBACK(void) VBoxServiceVMInfoStop(void)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnStop}
+ */
+static DECLCALLBACK(void) vbsvcVMInfoStop(void)
 {
     RTSemEventMultiSignal(g_hVMInfoEvent);
 }
 
 
-/** @copydoc VBOXSERVICE::pfnTerm */
-static DECLCALLBACK(void) VBoxServiceVMInfoTerm(void)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnTerm}
+ */
+static DECLCALLBACK(void) vbsvcVMInfoTerm(void)
 {
     if (g_hVMInfoEvent != NIL_RTSEMEVENTMULTI)
     {
@@ -1476,15 +1638,15 @@ static DECLCALLBACK(void) VBoxServiceVMInfoTerm(void)
         int rc = VbglR3GuestPropDelSet(g_uVMInfoGuestPropSvcClientID, &apszPat[0], RT_ELEMENTS(apszPat));
 
         /* Destroy LA client info. */
-        vboxServiceFreeLAClientInfo(&g_LAClientInfo);
+        vgsvcFreeLAClientInfo(&g_LAClientInfo);
 
         /* Destroy property cache. */
-        VBoxServicePropCacheDestroy(&g_VMInfoPropCache);
+        VGSvcPropCacheDestroy(&g_VMInfoPropCache);
 
         /* Disconnect from guest properties service. */
         rc = VbglR3GuestPropDisconnect(g_uVMInfoGuestPropSvcClientID);
         if (RT_FAILURE(rc))
-            VBoxServiceError("Failed to disconnect from guest property service! Error: %Rrc\n", rc);
+            VGSvcError("Failed to disconnect from guest property service! Error: %Rrc\n", rc);
         g_uVMInfoGuestPropSvcClientID = 0;
 
         RTSemEventMultiDestroy(g_hVMInfoEvent);
@@ -1514,11 +1676,11 @@ VBOXSERVICE g_VMInfo =
     "                            is 5000 (5 seconds).\n"
     ,
     /* methods */
-    VBoxServiceVMInfoPreInit,
-    VBoxServiceVMInfoOption,
-    VBoxServiceVMInfoInit,
-    VBoxServiceVMInfoWorker,
-    VBoxServiceVMInfoStop,
-    VBoxServiceVMInfoTerm
+    vbsvcVMInfoPreInit,
+    vbsvcVMInfoOption,
+    vbsvcVMInfoInit,
+    vbsvcVMInfoWorker,
+    vbsvcVMInfoStop,
+    vbsvcVMInfoTerm
 };
 

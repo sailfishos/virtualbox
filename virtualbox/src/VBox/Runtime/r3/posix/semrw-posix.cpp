@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/semaphore.h>
 #include "internal/iprt.h"
 
@@ -46,9 +47,9 @@
 #include "internal/strict.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @todo move this to r3/posix/something.h. */
 #ifdef RT_OS_SOLARIS
 # define ATOMIC_GET_PTHREAD_T(ppvVar, pThread) ASMAtomicReadSize(ppvVar, pThread)
@@ -60,9 +61,9 @@ AssertCompileSize(pthread_t, sizeof(void *));
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Posix internal representation of a read-write semaphore. */
 struct RTSEMRWINTERNAL
 {
@@ -111,46 +112,43 @@ RTDECL(int) RTSemRWCreateEx(PRTSEMRW phRWSem, uint32_t fFlags,
         /*
          * Create the rwlock.
          */
-        pthread_rwlockattr_t Attr;
-        rc = pthread_rwlockattr_init(&Attr);
+        rc = pthread_rwlock_init(&pThis->RWLock, NULL);
         if (!rc)
         {
-            rc = pthread_rwlock_init(&pThis->RWLock, &Attr);
-            if (!rc)
-            {
-                pThis->u32Magic     = RTSEMRW_MAGIC;
-                pThis->cReaders     = 0;
-                pThis->cWrites      = 0;
-                pThis->cWriterReads = 0;
-                pThis->Writer       = (pthread_t)-1;
+            pThis->u32Magic     = RTSEMRW_MAGIC;
+            pThis->cReaders     = 0;
+            pThis->cWrites      = 0;
+            pThis->cWriterReads = 0;
+            pThis->Writer       = (pthread_t)-1;
 #ifdef RTSEMRW_STRICT
-                bool const fLVEnabled = !(fFlags & RTSEMRW_FLAGS_NO_LOCK_VAL);
-                if (!pszNameFmt)
-                {
-                    static uint32_t volatile s_iSemRWAnon = 0;
-                    uint32_t i = ASMAtomicIncU32(&s_iSemRWAnon) - 1;
-                    RTLockValidatorRecExclInit(&pThis->ValidatorWrite, hClass, uSubClass, pThis,
-                                               fLVEnabled, "RTSemRW-%u", i);
-                    RTLockValidatorRecSharedInit(&pThis->ValidatorRead, hClass, uSubClass, pThis,
-                                                 false /*fSignaller*/, fLVEnabled, "RTSemRW-%u", i);
-                }
-                else
-                {
-                    va_list va;
-                    va_start(va, pszNameFmt);
-                    RTLockValidatorRecExclInitV(&pThis->ValidatorWrite, hClass, uSubClass, pThis,
-                                                fLVEnabled, pszNameFmt, va);
-                    va_end(va);
-                    va_start(va, pszNameFmt);
-                    RTLockValidatorRecSharedInitV(&pThis->ValidatorRead, hClass, uSubClass, pThis,
-                                                  false /*fSignaller*/, fLVEnabled, pszNameFmt, va);
-                    va_end(va);
-                }
-                RTLockValidatorRecMakeSiblings(&pThis->ValidatorWrite.Core, &pThis->ValidatorRead.Core);
-#endif
-                *phRWSem = pThis;
-                return VINF_SUCCESS;
+            bool const fLVEnabled = !(fFlags & RTSEMRW_FLAGS_NO_LOCK_VAL);
+            if (!pszNameFmt)
+            {
+                static uint32_t volatile s_iSemRWAnon = 0;
+                uint32_t i = ASMAtomicIncU32(&s_iSemRWAnon) - 1;
+                RTLockValidatorRecExclInit(&pThis->ValidatorWrite, hClass, uSubClass, pThis,
+                                           fLVEnabled, "RTSemRW-%u", i);
+                RTLockValidatorRecSharedInit(&pThis->ValidatorRead, hClass, uSubClass, pThis,
+                                             false /*fSignaller*/, fLVEnabled, "RTSemRW-%u", i);
             }
+            else
+            {
+                va_list va;
+                va_start(va, pszNameFmt);
+                RTLockValidatorRecExclInitV(&pThis->ValidatorWrite, hClass, uSubClass, pThis,
+                                            fLVEnabled, pszNameFmt, va);
+                va_end(va);
+                va_start(va, pszNameFmt);
+                RTLockValidatorRecSharedInitV(&pThis->ValidatorRead, hClass, uSubClass, pThis,
+                                              false /*fSignaller*/, fLVEnabled, pszNameFmt, va);
+                va_end(va);
+            }
+            RTLockValidatorRecMakeSiblings(&pThis->ValidatorWrite.Core, &pThis->ValidatorRead.Core);
+#else
+            RT_NOREF_PV(hClass); RT_NOREF_PV(uSubClass); RT_NOREF_PV(pszNameFmt);
+#endif
+            *phRWSem = pThis;
+            return VINF_SUCCESS;
         }
 
         rc = RTErrConvertFromErrno(rc);
@@ -218,6 +216,7 @@ RTDECL(uint32_t) RTSemRWSetSubClass(RTSEMRW hRWSem, uint32_t uSubClass)
     RTLockValidatorRecSharedSetSubClass(&pThis->ValidatorRead, uSubClass);
     return RTLockValidatorRecExclSetSubClass(&pThis->ValidatorWrite, uSubClass);
 #else
+    RT_NOREF_PV(hRWSem); RT_NOREF_PV(uSubClass);
     return RTLOCKVAL_SUB_CLASS_INVALID;
 #endif
 }
@@ -267,6 +266,7 @@ DECL_FORCE_INLINE(int) rtSemRWRequestRead(RTSEMRW hRWSem, RTMSINTERVAL cMillies,
 #else
         hThreadSelf = RTThreadSelf();
         RTThreadBlocking(hThreadSelf, RTTHREADSTATE_RW_READ, true);
+        RT_NOREF_PV(pSrcPos);
 #endif
     }
 
@@ -462,6 +462,7 @@ DECL_FORCE_INLINE(int) rtSemRWRequestWrite(RTSEMRW hRWSem, RTMSINTERVAL cMillies
 #else
         hThreadSelf = RTThreadSelf();
         RTThreadBlocking(hThreadSelf, RTTHREADSTATE_RW_WRITE, true);
+        RT_NOREF_PV(pSrcPos);
 #endif
     }
 

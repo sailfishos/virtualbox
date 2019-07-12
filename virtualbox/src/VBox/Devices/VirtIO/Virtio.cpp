@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_VIRTIO
 
 #include <iprt/param.h>
@@ -27,7 +27,7 @@
 #include "Virtio.h"
 
 #define INSTANCE(pState) pState->szInstance
-#define IFACE_TO_STATE(pIface, ifaceName) ((VPCISTATE *)((char*)pIface - RT_OFFSETOF(VPCISTATE, ifaceName)))
+#define IFACE_TO_STATE(pIface, ifaceName) ((VPCISTATE *)((char*)(pIface) - RT_UOFFSETOF(VPCISTATE, ifaceName)))
 
 #ifdef LOG_ENABLED
 # define QUEUENAME(s, q) (q->pcszName)
@@ -57,7 +57,7 @@ static void vqueueInit(PVQUEUE pQueue, uint32_t uPageNumber)
     pQueue->VRing.addrAvail       = pQueue->VRing.addrDescriptors
         + sizeof(VRINGDESC) * pQueue->VRing.uSize;
     pQueue->VRing.addrUsed        = RT_ALIGN(
-        pQueue->VRing.addrAvail + RT_OFFSETOF(VRINGAVAIL, auRing[pQueue->VRing.uSize]),
+        pQueue->VRing.addrAvail + RT_UOFFSETOF_DYN(VRINGAVAIL, auRing[pQueue->VRing.uSize]),
         PAGE_SIZE); /* The used ring must start from the next page. */
     pQueue->uNextAvailIndex       = 0;
     pQueue->uNextUsedIndex        = 0;
@@ -80,7 +80,7 @@ uint16_t vringReadAvail(PVPCISTATE pState, PVRING pVRing, uint32_t uIndex)
     uint16_t tmp;
 
     PDMDevHlpPhysRead(pState->CTX_SUFF(pDevIns),
-                      pVRing->addrAvail + RT_OFFSETOF(VRINGAVAIL, auRing[uIndex % pVRing->uSize]),
+                      pVRing->addrAvail + RT_UOFFSETOF_DYN(VRINGAVAIL, auRing[uIndex % pVRing->uSize]),
                       &tmp, sizeof(tmp));
     return tmp;
 }
@@ -90,7 +90,7 @@ uint16_t vringReadAvailFlags(PVPCISTATE pState, PVRING pVRing)
     uint16_t tmp;
 
     PDMDevHlpPhysRead(pState->CTX_SUFF(pDevIns),
-                      pVRing->addrAvail + RT_OFFSETOF(VRINGAVAIL, uFlags),
+                      pVRing->addrAvail + RT_UOFFSETOF(VRINGAVAIL, uFlags),
                       &tmp, sizeof(tmp));
     return tmp;
 }
@@ -100,7 +100,7 @@ void vringSetNotification(PVPCISTATE pState, PVRING pVRing, bool fEnabled)
     uint16_t tmp;
 
     PDMDevHlpPhysRead(pState->CTX_SUFF(pDevIns),
-                      pVRing->addrUsed + RT_OFFSETOF(VRINGUSED, uFlags),
+                      pVRing->addrUsed + RT_UOFFSETOF(VRINGUSED, uFlags),
                       &tmp, sizeof(tmp));
 
     if (fEnabled)
@@ -109,7 +109,7 @@ void vringSetNotification(PVPCISTATE pState, PVRING pVRing, bool fEnabled)
         tmp |= VRINGUSED_F_NO_NOTIFY;
 
     PDMDevHlpPCIPhysWrite(pState->CTX_SUFF(pDevIns),
-                          pVRing->addrUsed + RT_OFFSETOF(VRINGUSED, uFlags),
+                          pVRing->addrUsed + RT_UOFFSETOF(VRINGUSED, uFlags),
                           &tmp, sizeof(tmp));
 }
 
@@ -143,6 +143,29 @@ bool vqueueGet(PVPCISTATE pState, PVQUEUE pQueue, PVQUEUEELEM pElem, bool fRemov
     {
         VQUEUESEG *pSeg;
 
+        /*
+         * Malicious guests may try to trick us into writing beyond aSegsIn or
+         * aSegsOut boundaries by linking several descriptors into a loop. We
+         * cannot possibly get a sequence of linked descriptors exceeding the
+         * total number of descriptors in the ring (see @bugref{8620}).
+         */
+        if (pElem->nIn + pElem->nOut >= VRING_MAX_SIZE)
+        {
+            static volatile uint32_t s_cMessages  = 0;
+            static volatile uint32_t s_cThreshold = 1;
+            if (ASMAtomicIncU32(&s_cMessages) == ASMAtomicReadU32(&s_cThreshold))
+            {
+                LogRel(("%s: too many linked descriptors; check if the guest arranges descriptors in a loop.\n",
+                        INSTANCE(pState)));
+                if (ASMAtomicReadU32(&s_cMessages) != 1)
+                    LogRel(("%s: (the above error has occured %u times so far)\n",
+                            INSTANCE(pState), ASMAtomicReadU32(&s_cMessages)));
+                ASMAtomicWriteU32(&s_cThreshold, ASMAtomicReadU32(&s_cThreshold) * 10);
+            }
+            break;
+        }
+        RT_UNTRUSTED_VALIDATED_FENCE();
+
         vringReadDesc(pState, &pQueue->VRing, idx, &desc);
         if (desc.u16Flags & VRINGDESC_F_WRITE)
         {
@@ -173,7 +196,7 @@ uint16_t vringReadUsedIndex(PVPCISTATE pState, PVRING pVRing)
 {
     uint16_t tmp;
     PDMDevHlpPhysRead(pState->CTX_SUFF(pDevIns),
-                      pVRing->addrUsed + RT_OFFSETOF(VRINGUSED, uIndex),
+                      pVRing->addrUsed + RT_UOFFSETOF(VRINGUSED, uIndex),
                       &tmp, sizeof(tmp));
     return tmp;
 }
@@ -181,7 +204,7 @@ uint16_t vringReadUsedIndex(PVPCISTATE pState, PVRING pVRing)
 void vringWriteUsedIndex(PVPCISTATE pState, PVRING pVRing, uint16_t u16Value)
 {
     PDMDevHlpPCIPhysWrite(pState->CTX_SUFF(pDevIns),
-                          pVRing->addrUsed + RT_OFFSETOF(VRINGUSED, uIndex),
+                          pVRing->addrUsed + RT_UOFFSETOF(VRINGUSED, uIndex),
                           &u16Value, sizeof(u16Value));
 }
 
@@ -192,35 +215,70 @@ void vringWriteUsedElem(PVPCISTATE pState, PVRING pVRing, uint32_t uIndex, uint3
     elem.uId = uId;
     elem.uLen = uLen;
     PDMDevHlpPCIPhysWrite(pState->CTX_SUFF(pDevIns),
-                          pVRing->addrUsed + RT_OFFSETOF(VRINGUSED, aRing[uIndex % pVRing->uSize]),
+                          pVRing->addrUsed + RT_UOFFSETOF_DYN(VRINGUSED, aRing[uIndex % pVRing->uSize]),
                           &elem, sizeof(elem));
 }
 
-void vqueuePut(PVPCISTATE pState, PVQUEUE pQueue, PVQUEUEELEM pElem, uint32_t uLen, uint32_t uReserved)
-{
-    unsigned int i, uOffset, cbReserved = uReserved;
 
-    Log2(("%s vqueuePut: %s desc_idx=%u acb=%u\n", INSTANCE(pState),
-          QUEUENAME(pState, pQueue), pElem->uIndex, uLen));
-    for (i = uOffset = 0; i < pElem->nIn && uOffset < uLen - uReserved; i++)
+void vqueuePut(PVPCISTATE pState, PVQUEUE pQueue,
+               PVQUEUEELEM pElem, uint32_t uTotalLen, uint32_t uReserved)
+{
+    Log2(("%s vqueuePut: %s"
+          " desc_idx=%u acb=%u (%u)\n",
+          INSTANCE(pState), QUEUENAME(pState, pQueue),
+          pElem->uIndex, uTotalLen, uReserved));
+
+    Assert(uReserved < uTotalLen);
+
+    uint32_t cbLen = uTotalLen - uReserved;
+    uint32_t cbSkip = uReserved;
+
+    for (unsigned i = 0; i < pElem->nIn && cbLen > 0; ++i)
     {
-        uint32_t cbSegLen = RT_MIN(uLen - cbReserved - uOffset, pElem->aSegsIn[i].cb - cbReserved);
-        if (pElem->aSegsIn[i].pv)
+        if (cbSkip >= pElem->aSegsIn[i].cb) /* segment completely skipped? */
         {
-            Log2(("%s vqueuePut: %s used_idx=%u seg=%u addr=%p pv=%p cb=%u acb=%u\n", INSTANCE(pState),
-                  QUEUENAME(pState, pQueue), pQueue->uNextUsedIndex, i, pElem->aSegsIn[i].addr, pElem->aSegsIn[i].pv, pElem->aSegsIn[i].cb, cbSegLen));
-            PDMDevHlpPCIPhysWrite(pState->CTX_SUFF(pDevIns), pElem->aSegsIn[i].addr + cbReserved,
-                                  pElem->aSegsIn[i].pv, cbSegLen);
-            cbReserved = 0;
+            cbSkip -= pElem->aSegsIn[i].cb;
+            continue;
         }
-        uOffset += cbSegLen;
+
+        uint32_t cbSegLen = pElem->aSegsIn[i].cb - cbSkip;
+        if (cbSegLen > cbLen)   /* last segment only partially used? */
+            cbSegLen = cbLen;
+
+        /*
+         * XXX: We should assert pv != NULL, but we need to check and
+         * fix all callers first.
+         */
+        if (pElem->aSegsIn[i].pv != NULL)
+        {
+            Log2(("%s vqueuePut: %s"
+                  " used_idx=%u seg=%u addr=%p pv=%p cb=%u acb=%u\n",
+                  INSTANCE(pState), QUEUENAME(pState, pQueue),
+                  pQueue->uNextUsedIndex, i,
+                  (void *)pElem->aSegsIn[i].addr, pElem->aSegsIn[i].pv,
+                  pElem->aSegsIn[i].cb, cbSegLen));
+
+            PDMDevHlpPCIPhysWrite(pState->CTX_SUFF(pDevIns),
+                                  pElem->aSegsIn[i].addr + cbSkip,
+                                  pElem->aSegsIn[i].pv,
+                                  cbSegLen);
+        }
+
+        cbSkip = 0;
+        cbLen -= cbSegLen;
     }
 
-    Assert((uReserved + uOffset) == uLen || pElem->nIn == 0);
-    Log2(("%s vqueuePut: %s used_idx=%u guest_used_idx=%u id=%u len=%u\n", INSTANCE(pState),
-          QUEUENAME(pState, pQueue), pQueue->uNextUsedIndex, vringReadUsedIndex(pState, &pQueue->VRing), pElem->uIndex, uLen));
-    vringWriteUsedElem(pState, &pQueue->VRing, pQueue->uNextUsedIndex++, pElem->uIndex, uLen);
+    Log2(("%s vqueuePut: %s"
+          " used_idx=%u guest_used_idx=%u id=%u len=%u\n",
+          INSTANCE(pState), QUEUENAME(pState, pQueue),
+          pQueue->uNextUsedIndex, vringReadUsedIndex(pState, &pQueue->VRing),
+          pElem->uIndex, uTotalLen));
+
+    vringWriteUsedElem(pState, &pQueue->VRing,
+                       pQueue->uNextUsedIndex++,
+                       pElem->uIndex, uTotalLen);
 }
+
 
 void vqueueNotify(PVPCISTATE pState, PVQUEUE pQueue)
 {
@@ -271,6 +329,7 @@ void vpciReset(PVPCISTATE pState)
  */
 int vpciRaiseInterrupt(VPCISTATE *pState, int rcBusy, uint8_t u8IntCause)
 {
+    RT_NOREF_PV(rcBusy);
     // int rc = vpciCsEnter(pState, rcBusy);
     // if (RT_UNLIKELY(rc != VINF_SUCCESS))
     //     return rc;
@@ -326,6 +385,7 @@ int vpciIOPortIn(PPDMDEVINS         pDevIns,
     VPCISTATE  *pState = PDMINS_2_DATA(pDevIns, VPCISTATE *);
     int         rc     = VINF_SUCCESS;
     STAM_PROFILE_ADV_START(&pState->CTXSUFF(StatIORead), a);
+    RT_NOREF_PV(pvUser);
 
     /*
      * We probably do not need to enter critical section when reading registers
@@ -424,6 +484,7 @@ int vpciIOPortOut(PPDMDEVINS                pDevIns,
     int         rc     = VINF_SUCCESS;
     bool        fHasBecomeReady;
     STAM_PROFILE_ADV_START(&pState->CTXSUFF(StatIOWrite), a);
+    RT_NOREF_PV(pvUser);
 
     Port -= pState->IOPortBase;
     Log3(("%s virtioIOPortOut: At %RTiop out          %0*x\n", INSTANCE(pState), Port, cb*2, u32));
@@ -431,26 +492,36 @@ int vpciIOPortOut(PPDMDEVINS                pDevIns,
     switch (Port)
     {
         case VPCI_GUEST_FEATURES:
-            /* Check if the guest negotiates properly, fall back to basics if it does not. */
-            if (VPCI_F_BAD_FEATURE & u32)
+        {
+            const uint32_t uHostFeatures = vpciGetHostFeatures(pState, pCallbacks->pfnGetHostFeatures);
+
+            if (RT_LIKELY((u32 & ~uHostFeatures) == 0))
             {
-                Log(("%s WARNING! Guest failed to negotiate properly (guest=%x)\n",
-                     INSTANCE(pState), u32));
-                pState->uGuestFeatures = pCallbacks->pfnGetHostMinimalFeatures(pState);
-            }
-            /* The guest may potentially desire features we don't support! */
-            else if (~vpciGetHostFeatures(pState, pCallbacks->pfnGetHostFeatures) & u32)
-            {
-                Log(("%s Guest asked for features host does not support! (host=%x guest=%x)\n",
-                     INSTANCE(pState),
-                     vpciGetHostFeatures(pState, pCallbacks->pfnGetHostFeatures), u32));
-                pState->uGuestFeatures =
-                    vpciGetHostFeatures(pState, pCallbacks->pfnGetHostFeatures);
+                pState->uGuestFeatures = u32;
             }
             else
-                pState->uGuestFeatures = u32;
+            {
+                /*
+                 * Guest requests features we don't advertise.  Stick
+                 * to the minimum if negotiation looks completely
+                 * botched, otherwise restrict to advertised features.
+                 */
+                if (u32 & VPCI_F_BAD_FEATURE)
+                {
+                    Log(("%s WARNING! Guest failed to negotiate properly (guest=%x)\n",
+                         INSTANCE(pState), u32));
+                    pState->uGuestFeatures = pCallbacks->pfnGetHostMinimalFeatures(pState);
+                }
+                else
+                {
+                    Log(("%s Guest asked for features host does not support! (host=%x guest=%x)\n",
+                         INSTANCE(pState), uHostFeatures, u32));
+                    pState->uGuestFeatures = u32 & uHostFeatures;
+                }
+            }
             pCallbacks->pfnSetHostFeatures(pState, pState->uGuestFeatures);
             break;
+        }
 
         case VPCI_QUEUE_PFN:
             /*
@@ -480,6 +551,8 @@ int vpciIOPortOut(PPDMDEVINS                pDevIns,
             Assert(cb == 2);
             u32 &= 0xFFFF;
             if (u32 < pState->nQueues)
+            {
+                RT_UNTRUSTED_VALIDATED_FENCE();
                 if (pState->Queues[u32].VRing.addrDescriptors)
                 {
                     // rc = vpciCsEnter(pState, VERR_SEM_BUSY);
@@ -492,6 +565,7 @@ int vpciIOPortOut(PPDMDEVINS                pDevIns,
                 else
                     Log(("%s The queue (#%d) being notified has not been initialized.\n",
                          INSTANCE(pState), u32));
+            }
             else
                 Log(("%s Invalid queue number (%d)\n", INSTANCE(pState), u32));
 #else
@@ -508,7 +582,16 @@ int vpciIOPortOut(PPDMDEVINS                pDevIns,
             if (u32 == 0)
                 rc = pCallbacks->pfnReset(pState);
             else if (fHasBecomeReady)
+            {
+                /* Older hypervisors were lax and did not enforce bus mastering. Older guests
+                 * (Linux prior to 2.6.34, NetBSD 6.x) were lazy and did not enable bus mastering.
+                 * We automagically enable bus mastering on driver initialization to make existing
+                 * drivers work.
+                 */
+                PDMPciDevSetCommand(&pState->pciDevice, PDMPciDevGetCommand(&pState->pciDevice) | PCI_COMMAND_BUSMASTER);
+
                 pCallbacks->pfnReady(pState);
+            }
             break;
 
         default:
@@ -593,32 +676,8 @@ void vpciSetReadLed(PVPCISTATE pState, bool fOn)
         pState->led.Actual.s.fReading = fOn;
 }
 
-/**
- * Sets 8-bit register in PCI configuration space.
- * @param   refPciDev   The PCI device.
- * @param   uOffset     The register offset.
- * @param   u16Value    The value to store in the register.
- * @thread  EMT
- */
-DECLINLINE(void) vpciCfgSetU8(PCIDEVICE& refPciDev, uint32_t uOffset, uint8_t u8Value)
-{
-    Assert(uOffset < sizeof(refPciDev.config));
-    refPciDev.config[uOffset] = u8Value;
-}
 
-/**
- * Sets 16-bit register in PCI configuration space.
- * @param   refPciDev   The PCI device.
- * @param   uOffset     The register offset.
- * @param   u16Value    The value to store in the register.
- * @thread  EMT
- */
-DECLINLINE(void) vpciCfgSetU16(PCIDEVICE& refPciDev, uint32_t uOffset, uint16_t u16Value)
-{
-    Assert(uOffset+sizeof(u16Value) <= sizeof(refPciDev.config));
-    *(uint16_t*)&refPciDev.config[uOffset] = u16Value;
-}
-
+#if 0 /* unused */
 /**
  * Sets 32-bit register in PCI configuration space.
  * @param   refPciDev   The PCI device.
@@ -626,11 +685,12 @@ DECLINLINE(void) vpciCfgSetU16(PCIDEVICE& refPciDev, uint32_t uOffset, uint16_t 
  * @param   u32Value    The value to store in the register.
  * @thread  EMT
  */
-DECLINLINE(void) vpciCfgSetU32(PCIDEVICE& refPciDev, uint32_t uOffset, uint32_t u32Value)
+DECLINLINE(void) vpciCfgSetU32(PDMPCIDEV& refPciDev, uint32_t uOffset, uint32_t u32Value)
 {
     Assert(uOffset+sizeof(u32Value) <= sizeof(refPciDev.config));
     *(uint32_t*)&refPciDev.config[uOffset] = u32Value;
 }
+#endif /* unused */
 
 
 #ifdef DEBUG
@@ -742,6 +802,11 @@ int vpciLoadExec(PVPCISTATE pState, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t
         }
         else
             pState->nQueues = nQueues;
+        AssertLogRelMsgReturn(pState->nQueues <= VIRTIO_MAX_NQUEUES, ("%#x\n", pState->nQueues), VERR_SSM_LOAD_CONFIG_MISMATCH);
+        AssertLogRelMsgReturn(pState->uQueueSelector < pState->nQueues || (pState->nQueues == 0 && pState->uQueueSelector),
+                              ("uQueueSelector=%u nQueues=%u\n", pState->uQueueSelector, pState->nQueues),
+                              VERR_SSM_LOAD_CONFIG_MISMATCH);
+
         for (unsigned i = 0; i < pState->nQueues; i++)
         {
             rc = SSMR3GetU16(pSSM, &pState->Queues[i].VRing.uSize);
@@ -768,51 +833,53 @@ int vpciLoadExec(PVPCISTATE pState, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t
  * Set PCI configuration space registers.
  *
  * @param   pci          Reference to PCI device structure.
- * @param   uSubsystemId PCI Subsystem Id
+ * @param   uDeviceId    VirtiO Device Id
  * @param   uClass       Class of PCI device (network, etc)
  * @thread  EMT
  */
-static DECLCALLBACK(void) vpciConfigure(PCIDEVICE& pci,
-                                        uint16_t uSubsystemId,
+static DECLCALLBACK(void) vpciConfigure(PDMPCIDEV& pci,
+                                        uint16_t uDeviceId,
                                         uint16_t uClass)
 {
     /* Configure PCI Device, assume 32-bit mode ******************************/
     PCIDevSetVendorId(&pci, DEVICE_PCI_VENDOR_ID);
-    PCIDevSetDeviceId(&pci, DEVICE_PCI_DEVICE_ID);
-    vpciCfgSetU16(pci, VBOX_PCI_SUBSYSTEM_VENDOR_ID, DEVICE_PCI_SUBSYSTEM_VENDOR_ID);
-    vpciCfgSetU16(pci, VBOX_PCI_SUBSYSTEM_ID, uSubsystemId);
+    PCIDevSetDeviceId(&pci, DEVICE_PCI_BASE_ID + uDeviceId);
+    PDMPciDevSetWord(&pci,  VBOX_PCI_SUBSYSTEM_VENDOR_ID, DEVICE_PCI_SUBSYSTEM_VENDOR_ID);
+    PDMPciDevSetWord(&pci,  VBOX_PCI_SUBSYSTEM_ID, DEVICE_PCI_SUBSYSTEM_BASE_ID + uDeviceId);
 
     /* ABI version, must be equal 0 as of 2.6.30 kernel. */
-    vpciCfgSetU8( pci, VBOX_PCI_REVISION_ID,          0x00);
+    PDMPciDevSetByte(&pci,  VBOX_PCI_REVISION_ID,          0x00);
     /* Ethernet adapter */
-    vpciCfgSetU8( pci, VBOX_PCI_CLASS_PROG,           0x00);
-    vpciCfgSetU16(pci, VBOX_PCI_CLASS_DEVICE,       uClass);
+    PDMPciDevSetByte(&pci,  VBOX_PCI_CLASS_PROG,           0x00);
+    PDMPciDevSetWord(&pci,  VBOX_PCI_CLASS_DEVICE,         uClass);
     /* Interrupt Pin: INTA# */
-    vpciCfgSetU8( pci, VBOX_PCI_INTERRUPT_PIN,        0x01);
+    PDMPciDevSetByte(&pci,  VBOX_PCI_INTERRUPT_PIN,        0x01);
 
 #ifdef VBOX_WITH_MSI_DEVICES
-    PCIDevSetCapabilityList     (&pci, 0x80);
-    PCIDevSetStatus             (&pci, VBOX_PCI_STATUS_CAP_LIST);
+    PCIDevSetCapabilityList(&pci, 0x80);
+    PCIDevSetStatus( &pci,  VBOX_PCI_STATUS_CAP_LIST);
 #endif
 }
 
+#ifdef VBOX_WITH_STATISTICS
 /* WARNING! This function must never be used in multithreaded context! */
 static const char *vpciCounter(const char *pszDevFmt,
                                const char *pszCounter)
 {
-    static char g_szCounterName[80];
+    static char s_szCounterName[80];
 
-    RTStrPrintf(g_szCounterName, sizeof(g_szCounterName),
+    RTStrPrintf(s_szCounterName, sizeof(s_szCounterName),
                 "/Devices/%s/%s", pszDevFmt, pszCounter);
 
-    return g_szCounterName;
+    return s_szCounterName;
 }
+#endif
 
-// TODO: header
-DECLCALLBACK(int) vpciConstruct(PPDMDEVINS pDevIns, VPCISTATE *pState,
-                                int iInstance, const char *pcszNameFmt,
-                                uint16_t uSubsystemId, uint16_t uClass,
-                                uint32_t nQueues)
+/// @todo header
+int vpciConstruct(PPDMDEVINS pDevIns, VPCISTATE *pState,
+                  int iInstance, const char *pcszNameFmt,
+                  uint16_t uDeviceId, uint16_t uClass,
+                  uint32_t nQueues)
 {
     /* Init handles and log related stuff. */
     RTStrPrintf(pState->szInstance, sizeof(pState->szInstance),
@@ -831,7 +898,7 @@ DECLCALLBACK(int) vpciConstruct(PPDMDEVINS pDevIns, VPCISTATE *pState,
         return rc;
 
     /* Set PCI config registers */
-    vpciConfigure(pState->pciDevice, uSubsystemId, uClass);
+    vpciConfigure(pState->pciDevice, uDeviceId, uClass);
     /* Register PCI device */
     rc = PDMDevHlpPCIRegister(pDevIns, &pState->pciDevice);
     if (RT_FAILURE(rc))
@@ -882,7 +949,7 @@ DECLCALLBACK(int) vpciConstruct(PPDMDEVINS pDevIns, VPCISTATE *pState,
  *
  * We need to free non-VM resources only.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pState      The device state structure.
  */
 int vpciDestruct(VPCISTATE* pState)
@@ -913,8 +980,9 @@ int vpciDestruct(VPCISTATE* pState)
  */
 void vpciRelocate(PPDMDEVINS pDevIns, RTGCINTPTR offDelta)
 {
-    VPCISTATE* pState = PDMINS_2_DATA(pDevIns, VPCISTATE*);
-    pState->pDevInsRC     = PDMDEVINS_2_RCPTR(pDevIns);
+    RT_NOREF(offDelta);
+    VPCISTATE *pState = PDMINS_2_DATA(pDevIns, VPCISTATE*);
+    pState->pDevInsRC = PDMDEVINS_2_RCPTR(pDevIns);
     // TBD
 }
 
@@ -950,3 +1018,4 @@ PVQUEUE vpciAddQueue(VPCISTATE* pState, unsigned uSize, PFNVPCIQUEUECALLBACK pfn
 #endif /* IN_RING3 */
 
 #endif /* VBOX_DEVICE_STRUCT_TESTCASE */
+

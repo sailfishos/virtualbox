@@ -2,8 +2,9 @@
 /** @file
  * VBoxUsbDev.cpp - USB device.
  */
+
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -12,12 +13,32 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
+
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "VBoxUsbCmn.h"
 #include <iprt/assert.h>
 #include <VBox/log.h>
 
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define VBOXUSB_MEMTAG 'bUBV'
+
+
 
 DECLHIDDEN(PVOID) vboxUsbMemAlloc(SIZE_T cbBytes)
 {
@@ -96,6 +117,7 @@ static NTSTATUS vboxUsbDdiAddDevice(PDRIVER_OBJECT pDriverObject,
 
 static VOID vboxUsbDdiUnload(PDRIVER_OBJECT pDriverObject)
 {
+    RT_NOREF1(pDriverObject);
     LogRel(("VBoxUsb::DriverUnload. Built Date (%s) Time (%s)\n", __DATE__, __TIME__));
     VBoxDrvToolStrFree(&g_VBoxUsbGlobals.RegPath);
 
@@ -160,11 +182,13 @@ static NTSTATUS vboxUsbDispatchCreate(IN PDEVICE_OBJECT pDeviceObject, IN PIRP p
 static NTSTATUS vboxUsbDispatchClose(IN PDEVICE_OBJECT pDeviceObject, IN PIRP pIrp)
 {
     PVBOXUSBDEV_EXT pDevExt = (PVBOXUSBDEV_EXT)pDeviceObject->DeviceExtension;
+    NTSTATUS Status = STATUS_SUCCESS;
+#ifdef VBOX_STRICT
     PIO_STACK_LOCATION pSl = IoGetCurrentIrpStackLocation(pIrp);
     PFILE_OBJECT pFObj = pSl->FileObject;
-    NTSTATUS Status = STATUS_SUCCESS;
     Assert(pFObj);
     Assert(!pFObj->FileName.Length);
+#endif
     Status = vboxUsbRtClose(pDevExt, pIrp);
     if (NT_SUCCESS(Status))
     {
@@ -181,26 +205,15 @@ static NTSTATUS vboxUsbDispatchClose(IN PDEVICE_OBJECT pDeviceObject, IN PIRP pI
 static NTSTATUS vboxUsbDispatchDeviceControl(IN PDEVICE_OBJECT pDeviceObject, IN PIRP pIrp)
 {
     PVBOXUSBDEV_EXT pDevExt = (PVBOXUSBDEV_EXT)pDeviceObject->DeviceExtension;
-    NTSTATUS Status = STATUS_INVALID_HANDLE;
     if (vboxUsbDdiStateRetainIfStarted(pDevExt))
-    {
         return vboxUsbRtDispatch(pDevExt, pIrp);
-    }
-    else
-    {
-        Status = STATUS_INVALID_DEVICE_STATE;
-    }
-
-    Status = VBoxDrvToolIoComplete(pIrp, Status, 0);
-    return Status;
+    return VBoxDrvToolIoComplete(pIrp, STATUS_INVALID_DEVICE_STATE, 0);
 }
 
 static NTSTATUS vboxUsbDispatchCleanup(IN PDEVICE_OBJECT pDeviceObject, IN PIRP pIrp)
 {
-    PVBOXUSBDEV_EXT pDevExt = (PVBOXUSBDEV_EXT)pDeviceObject->DeviceExtension;
-    NTSTATUS Status = STATUS_SUCCESS;
-    Status = VBoxDrvToolIoComplete(pIrp, Status, 0);
-    return Status;
+    RT_NOREF1(pDeviceObject);
+    return VBoxDrvToolIoComplete(pIrp, STATUS_SUCCESS, 0);
 }
 
 static NTSTATUS vboxUsbDevAccessDeviedDispatchStub(IN PDEVICE_OBJECT pDeviceObject, IN PIRP pIrp)
@@ -212,8 +225,7 @@ static NTSTATUS vboxUsbDevAccessDeviedDispatchStub(IN PDEVICE_OBJECT pDeviceObje
         return STATUS_DELETE_PENDING;
     }
 
-    NTSTATUS Status = STATUS_ACCESS_DENIED;
-    Status = VBoxDrvToolIoComplete(pIrp, Status, 0);
+    NTSTATUS Status = VBoxDrvToolIoComplete(pIrp, STATUS_ACCESS_DENIED, 0);
 
     vboxUsbDdiStateRelease(pDevExt);
 
@@ -298,17 +310,17 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT pDriverObject, IN PUNICODE_STRING pRegist
     return Status;
 }
 
-#ifdef DEBUG
+#ifdef VBOX_STRICT
 DECLHIDDEN(VOID) vboxUsbPnPStateGbgChange(ENMVBOXUSB_PNPSTATE enmOldState, ENMVBOXUSB_PNPSTATE enmNewState)
 {
     /* *ensure the state change is valid */
     switch (enmNewState)
     {
         case ENMVBOXUSB_PNPSTATE_STARTED:
-            Assert(enmOldState == ENMVBOXUSB_PNPSTATE_START_PENDING
-                    || ENMVBOXUSB_PNPSTATE_REMOVE_PENDING
-                    || ENMVBOXUSB_PNPSTATE_STOPPED
-                    || ENMVBOXUSB_PNPSTATE_STOP_PENDING);
+            Assert(   enmOldState == ENMVBOXUSB_PNPSTATE_START_PENDING
+                   || enmOldState == ENMVBOXUSB_PNPSTATE_REMOVE_PENDING
+                   || enmOldState == ENMVBOXUSB_PNPSTATE_STOPPED
+                   || enmOldState == ENMVBOXUSB_PNPSTATE_STOP_PENDING);
             break;
         case ENMVBOXUSB_PNPSTATE_STOP_PENDING:
             Assert(enmOldState == ENMVBOXUSB_PNPSTATE_STARTED);
@@ -323,11 +335,11 @@ DECLHIDDEN(VOID) vboxUsbPnPStateGbgChange(ENMVBOXUSB_PNPSTATE enmOldState, ENMVB
             Assert(enmOldState == ENMVBOXUSB_PNPSTATE_STARTED);
             break;
         case ENMVBOXUSB_PNPSTATE_REMOVED:
-            Assert(enmOldState == ENMVBOXUSB_PNPSTATE_REMOVE_PENDING
-                    || enmOldState == ENMVBOXUSB_PNPSTATE_SURPRISE_REMOVED);
+            Assert(   enmOldState == ENMVBOXUSB_PNPSTATE_REMOVE_PENDING
+                   || enmOldState == ENMVBOXUSB_PNPSTATE_SURPRISE_REMOVED);
             break;
         default:
-            AssertBreakpoint();
+            AssertFailed();
             break;
     }
 

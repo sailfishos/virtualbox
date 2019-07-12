@@ -1,11 +1,10 @@
 /* $Id: VBoxDispMpInternal.h $ */
-
 /** @file
  * VBoxVideo Display external interface config
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,7 +18,7 @@
 #ifndef ___VBoxDispMpInternal_h__
 #define ___VBoxDispMpInternal_h__
 
-#include <windows.h>
+#include <iprt/win/windows.h>
 
 #if 0
 HRESULT vboxDispMpInternalInit();

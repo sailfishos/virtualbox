@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/rand.h>
 #include "internal/iprt.h"
 
@@ -186,7 +187,7 @@ static DECLCALLBACK(int) rtRandParkMillerRestoreState(PRTRANDINT pThis, char con
 }
 
 
-RTDECL(int) RTRandAdvCreateParkMiller(PRTRAND phRand) RT_NO_THROW
+RTDECL(int) RTRandAdvCreateParkMiller(PRTRAND phRand) RT_NO_THROW_DEF
 {
     PRTRANDINT pThis = (PRTRANDINT)RTMemAlloc(sizeof(*pThis));
     if (!pThis)

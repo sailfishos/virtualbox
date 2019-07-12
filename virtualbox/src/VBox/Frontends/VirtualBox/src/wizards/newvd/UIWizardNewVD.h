@@ -1,11 +1,10 @@
+/* $Id: UIWizardNewVD.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardNewVD class declaration
+ * VBox Qt GUI - UIWizardNewVD class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -51,7 +50,7 @@ public:
     UIWizardNewVD(QWidget *pParent,
                   const QString &strDefaultName, const QString &strDefaultPath,
                   qulonglong uDefaultSize,
-                  UIWizardMode mode = UIWizardMode_Auto);
+                  WizardMode mode = WizardMode_Auto);
 
     /* Pages related stuff: */
     void prepare();

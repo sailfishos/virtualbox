@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -55,9 +55,10 @@
  * compatibility between older hosts and to manage guest session on the host.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef LOG_GROUP
  #undef LOG_GROUP
 #endif
@@ -81,7 +82,6 @@
 #include <string>
 #include <list>
 
-#include "gctrl.h"
 
 namespace guestControl {
 
@@ -281,8 +281,7 @@ typedef struct HostCommand
      *
      * @return  IPRT status code.
      * @param   paDstParms              Array of parameters of HGCM request to fill the data into.
-     * @param   cPDstarms               Number of parameters the HGCM request can handle.
-     * @param   pSrcBuf                 Parameter buffer to assign.
+     * @param   cDstParms               Number of parameters the HGCM request can handle.
      */
     int CopyTo(VBOXHGCMSVCPARM paDstParms[], uint32_t cDstParms) const
     {
@@ -552,7 +551,7 @@ typedef struct ClientState
             mHostCmdList.push_back(pHostCmd);
             pHostCmd->AddRef();
         }
-        catch (std::bad_alloc)
+        catch (std::bad_alloc &)
         {
             rc = VERR_NO_MEMORY;
         }
@@ -594,6 +593,9 @@ typedef struct ClientState
         return fWant;
     }
 
+    /**
+     * Set to inidicate that a client call (GUEST_MSG_WAIT) is pending.
+     */
     int SetPending(const ClientConnection *pConnection)
     {
         AssertPtrReturn(pConnection, VERR_INVALID_POINTER);
@@ -685,7 +687,7 @@ typedef struct ClientState
         LogFlowFunc(("[Client %RU32] Tried pHostCmd=%p for %RU32 times, (last result=%Rrc, fRemove=%RTbool)\n",
                      mID, pHostCmd, mHostCmdTries, mHostCmdRc, fRemove));
 
-        if (RT_SUCCESS(rc))
+        if (RT_SUCCESS(rc)) /** @todo r=bird: confusing statement+state, rc hasn't been touched since the top and is always VINF_SUCCESS. */
             rc = mHostCmdRc;
 
         if (fRemove)
@@ -700,7 +702,7 @@ typedef struct ClientState
                     break;
                 }
 
-                curItem++;
+                ++curItem;
             }
         }
 
@@ -790,8 +792,8 @@ typedef struct ClientState
         return rc;
     }
 
-    int SendReply(const ClientConnection *pConnection,
-                        HostCommand      *pHostCmd)
+    int SendReply(ClientConnection const *pConnection,
+                  HostCommand            *pHostCmd)
     {
         AssertPtrReturn(pConnection, VERR_INVALID_POINTER);
         AssertPtrReturn(pHostCmd, VERR_INVALID_POINTER);
@@ -853,28 +855,27 @@ typedef struct ClientState
     uint32_t mFilterValue;
     /** Host command list to process. */
     HostCmdList mHostCmdList;
-    /** Last (most recent) rc after handling the
-     *  host command. */
+    /** Last (most recent) rc after handling the host command. */
     int mHostCmdRc;
-    /** How many times the host service has tried to deliver this
-     *  command to the according client. */
+    /** How many GUEST_MSG_WAIT calls the client has issued to retrieve one command.
+     *
+     * This is used as a heuristic to remove a message that the client appears not
+     * to be able to successfully retrieve.  */
     uint32_t mHostCmdTries;
     /** Timestamp (us) of last host command processed. */
     uint64_t mHostCmdTS;
-    /**
-     * Flag indicating whether the client currently is pending.
-     * This means the client waits for a new host command to reply
-     * and won't return from the waiting call until a new host
-     * command is available.
+    /** Flag indicating whether a client call (GUEST_MSG_WAIT) currently is pending.
+     *
+     * This means the client waits for a new host command to reply and won't return
+     * from the waiting call until a new host command is available.
      */
     bool mIsPending;
-    /**
-     * This is necessary for being compatible with older
-     * Guest Additions. In case there are commands which only
-     * have two (2) parameters and therefore would fit into the
-     * GUEST_MSG_WAIT reply immediately, we now can make sure
-     * that the client first gets back the GUEST_MSG_WAIT results
-     * first.
+    /** Number of times we've peeked at a pending message.
+     *
+     * This is necessary for being compatible with older Guest Additions.  In case
+     * there are commands which only have two (2) parameters and therefore would fit
+     * into the GUEST_MSG_WAIT reply immediately, we now can make sure that the
+     * client first gets back the GUEST_MSG_WAIT results first.
      */
     uint32_t mPeekCount;
     /** The client's pending connection. */
@@ -918,10 +919,10 @@ public:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnUnload
+     * @interface_method_impl{VBOXHGCMSVCFNTABLE,pfnUnload}
      * Simply deletes the service object
      */
-    static DECLCALLBACK(int) svcUnload (void *pvService)
+    static DECLCALLBACK(int) svcUnload(void *pvService)
     {
         AssertLogRelReturn(VALID_PTR(pvService), VERR_INVALID_PARAMETER);
         SELF *pSelf = reinterpret_cast<SELF *>(pvService);
@@ -933,12 +934,12 @@ public:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnConnect
+     * @interface_method_impl{VBOXHGCMSVCFNTABLE,pfnConnect}
      * Stub implementation of pfnConnect and pfnDisconnect.
      */
-    static DECLCALLBACK(int) svcConnect (void *pvService,
-                                         uint32_t u32ClientID,
-                                         void *pvClient)
+    static DECLCALLBACK(int) svcConnect(void *pvService,
+                                        uint32_t u32ClientID,
+                                        void *pvClient)
     {
         AssertLogRelReturn(VALID_PTR(pvService), VERR_INVALID_PARAMETER);
         SELF *pSelf = reinterpret_cast<SELF *>(pvService);
@@ -947,12 +948,12 @@ public:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnConnect
+     * @interface_method_impl{VBOXHGCMSVCFNTABLE,pfnConnect}
      * Stub implementation of pfnConnect and pfnDisconnect.
      */
-    static DECLCALLBACK(int) svcDisconnect (void *pvService,
-                                            uint32_t u32ClientID,
-                                            void *pvClient)
+    static DECLCALLBACK(int) svcDisconnect(void *pvService,
+                                           uint32_t u32ClientID,
+                                           void *pvClient)
     {
         AssertLogRelReturn(VALID_PTR(pvService), VERR_INVALID_PARAMETER);
         SELF *pSelf = reinterpret_cast<SELF *>(pvService);
@@ -961,16 +962,16 @@ public:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnCall
+     * @interface_method_impl{VBOXHGCMSVCFNTABLE,pfnCall}
      * Wraps to the call member function
      */
-    static DECLCALLBACK(void) svcCall (void * pvService,
-                                       VBOXHGCMCALLHANDLE callHandle,
-                                       uint32_t u32ClientID,
-                                       void *pvClient,
-                                       uint32_t u32Function,
-                                       uint32_t cParms,
-                                       VBOXHGCMSVCPARM paParms[])
+    static DECLCALLBACK(void) svcCall(void * pvService,
+                                      VBOXHGCMCALLHANDLE callHandle,
+                                      uint32_t u32ClientID,
+                                      void *pvClient,
+                                      uint32_t u32Function,
+                                      uint32_t cParms,
+                                      VBOXHGCMSVCPARM paParms[])
     {
         AssertLogRelReturnVoid(VALID_PTR(pvService));
         SELF *pSelf = reinterpret_cast<SELF *>(pvService);
@@ -979,13 +980,13 @@ public:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnHostCall
+     * @interface_method_impl{VBOXHGCMSVCFNTABLE,pfnHostCall}
      * Wraps to the hostCall member function
      */
-    static DECLCALLBACK(int) svcHostCall (void *pvService,
-                                          uint32_t u32Function,
-                                          uint32_t cParms,
-                                          VBOXHGCMSVCPARM paParms[])
+    static DECLCALLBACK(int) svcHostCall(void *pvService,
+                                         uint32_t u32Function,
+                                         uint32_t cParms,
+                                         VBOXHGCMSVCPARM paParms[])
     {
         AssertLogRelReturn(VALID_PTR(pvService), VERR_INVALID_PARAMETER);
         SELF *pSelf = reinterpret_cast<SELF *>(pvService);
@@ -994,12 +995,12 @@ public:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnRegisterExtension
+     * @interface_method_impl{VBOXHGCMSVCFNTABLE,pfnRegisterExtension}
      * Installs a host callback for notifications of property changes.
      */
-    static DECLCALLBACK(int) svcRegisterExtension (void *pvService,
-                                                   PFNHGCMSVCEXT pfnExtension,
-                                                   void *pvExtension)
+    static DECLCALLBACK(int) svcRegisterExtension(void *pvService,
+                                                  PFNHGCMSVCEXT pfnExtension,
+                                                  void *pvExtension)
     {
         AssertLogRelReturn(VALID_PTR(pvService), VERR_INVALID_PARAMETER);
         SELF *pSelf = reinterpret_cast<SELF *>(pvService);
@@ -1026,6 +1027,8 @@ private:
     int hostCall(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVCPARM paParms[]);
     int sessionClose(uint32_t u32ClientID, VBOXHGCMCALLHANDLE callHandle, uint32_t cParms, VBOXHGCMSVCPARM paParms[]);
     int uninit(void);
+
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(Service);
 };
 
 /**
@@ -1037,6 +1040,7 @@ private:
  */
 int Service::clientConnect(uint32_t u32ClientID, void *pvClient)
 {
+    RT_NOREF1(pvClient);
     LogFlowFunc(("[Client %RU32] Connected\n", u32ClientID));
 #ifdef VBOX_STRICT
     ClientStateMapIterConst it = mClientStateMap.find(u32ClientID);
@@ -1064,6 +1068,7 @@ int Service::clientConnect(uint32_t u32ClientID, void *pvClient)
  */
 int Service::clientDisconnect(uint32_t u32ClientID, void *pvClient)
 {
+    RT_NOREF1(pvClient);
     LogFlowFunc(("[Client %RU32] Disconnected (%zu clients total)\n",
                  u32ClientID, mClientStateMap.size()));
 
@@ -1074,7 +1079,7 @@ int Service::clientDisconnect(uint32_t u32ClientID, void *pvClient)
 
     ClientStateMapIter itClientState = mClientStateMap.find(u32ClientID);
     AssertMsg(itClientState != mClientStateMap.end(),
-              ("Clients ID=%RU32 not found in client list when it should be there\n", u32ClientID));
+              ("Client ID=%RU32 not found in client list when it should be there\n", u32ClientID));
 
     if (itClientState != mClientStateMap.end())
     {
@@ -1083,7 +1088,7 @@ int Service::clientDisconnect(uint32_t u32ClientID, void *pvClient)
         mClientStateMap.erase(itClientState);
     }
 
-    bool fAllClientsDisconnected = mClientStateMap.size() == 0;
+    bool fAllClientsDisconnected = mClientStateMap.empty();
     if (fAllClientsDisconnected)
     {
         LogFlowFunc(("All clients disconnected, cancelling all host commands ...\n"));
@@ -1145,7 +1150,13 @@ int Service::clientGetCommand(uint32_t u32ClientID, VBOXHGCMCALLHANDLE callHandl
     AssertMsg(itClientState != mClientStateMap.end(), ("Client with ID=%RU32 not found when it should be present\n",
                                                        u32ClientID));
     if (itClientState == mClientStateMap.end())
-        return VERR_NOT_FOUND; /* Should never happen. */
+    {
+        /* Should never happen. Complete the call on the guest side though. */
+        AssertPtr(mpHelpers);
+        mpHelpers->pfnCallComplete(callHandle, VERR_NOT_FOUND);
+
+        return VERR_NOT_FOUND;
+    }
 
     ClientState &clientState = itClientState->second;
 
@@ -1161,6 +1172,8 @@ int Service::clientGetCommand(uint32_t u32ClientID, VBOXHGCMCALLHANDLE callHandl
 int Service::clientSetMsgFilterSet(uint32_t u32ClientID, VBOXHGCMCALLHANDLE callHandle,
                                    uint32_t cParms, VBOXHGCMSVCPARM paParms[])
 {
+    RT_NOREF1(callHandle);
+
     /*
      * Lookup client in our list so that we can assign the context ID of
      * a command to that client.
@@ -1174,28 +1187,34 @@ int Service::clientSetMsgFilterSet(uint32_t u32ClientID, VBOXHGCMCALLHANDLE call
     if (cParms != 4)
         return VERR_INVALID_PARAMETER;
 
-    uint32_t uValue, uMaskAdd, uMaskRemove;
+    uint32_t uValue;
     int rc = paParms[0].getUInt32(&uValue);
     if (RT_SUCCESS(rc))
-        rc = paParms[1].getUInt32(&uMaskAdd);
-    if (RT_SUCCESS(rc))
-        rc = paParms[2].getUInt32(&uMaskRemove);
-    /** @todo paParm[3] (flags) not used yet. */
-    if (RT_SUCCESS(rc))
     {
-        ClientState &clientState = itClientState->second;
+        uint32_t uMaskAdd;
+        rc = paParms[1].getUInt32(&uMaskAdd);
+        if (RT_SUCCESS(rc))
+        {
+            uint32_t uMaskRemove;
+            rc = paParms[2].getUInt32(&uMaskRemove);
+            /** @todo paParm[3] (flags) not used yet. */
+            if (RT_SUCCESS(rc))
+            {
+                ClientState &clientState = itClientState->second;
 
-        clientState.mFlags |= CLIENTSTATE_FLAG_CONTEXTFILTER;
-        if (uMaskAdd)
-            clientState.mFilterMask |= uMaskAdd;
-        if (uMaskRemove)
-            clientState.mFilterMask &= ~uMaskRemove;
+                clientState.mFlags |= CLIENTSTATE_FLAG_CONTEXTFILTER;
+                if (uMaskAdd)
+                    clientState.mFilterMask |= uMaskAdd;
+                if (uMaskRemove)
+                    clientState.mFilterMask &= ~uMaskRemove;
 
-        clientState.mFilterValue = uValue;
+                clientState.mFilterValue = uValue;
 
-        LogFlowFunc(("[Client %RU32] Setting message filterMask=0x%x, filterVal=%RU32 set (flags=0x%x, maskAdd=0x%x, maskRemove=0x%x)\n",
-                     u32ClientID, clientState.mFilterMask, clientState.mFilterValue,
-                     clientState.mFlags, uMaskAdd, uMaskRemove));
+                LogFlowFunc(("[Client %RU32] Setting message filterMask=0x%x, filterVal=%RU32 set (flags=0x%x, maskAdd=0x%x, maskRemove=0x%x)\n",
+                             u32ClientID, clientState.mFilterMask, clientState.mFilterValue,
+                             clientState.mFlags, uMaskAdd, uMaskRemove));
+            }
+        }
     }
 
     return rc;
@@ -1204,6 +1223,8 @@ int Service::clientSetMsgFilterSet(uint32_t u32ClientID, VBOXHGCMCALLHANDLE call
 int Service::clientSetMsgFilterUnset(uint32_t u32ClientID, VBOXHGCMCALLHANDLE callHandle,
                                      uint32_t cParms, VBOXHGCMSVCPARM paParms[])
 {
+    RT_NOREF2(callHandle, paParms);
+
     /*
      * Lookup client in our list so that we can assign the context ID of
      * a command to that client.
@@ -1230,6 +1251,8 @@ int Service::clientSetMsgFilterUnset(uint32_t u32ClientID, VBOXHGCMCALLHANDLE ca
 int Service::clientSkipMsg(uint32_t u32ClientID, VBOXHGCMCALLHANDLE callHandle,
                            uint32_t cParms, VBOXHGCMSVCPARM paParms[])
 {
+    RT_NOREF2(callHandle, paParms);
+
     /*
      * Lookup client in our list so that we can assign the context ID of
      * a command to that client.
@@ -1332,7 +1355,7 @@ int Service::hostProcessCommand(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVC
      * waiting for a response from the guest side in case VBoxService on
      * the guest is not running/system is messed up somehow.
      */
-    if (mClientStateMap.size() == 0)
+    if (mClientStateMap.empty())
         return VERR_NOT_FOUND;
 
     int rc;
@@ -1345,7 +1368,7 @@ int Service::hostProcessCommand(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVC
         if (RT_SUCCESS(rc))
             /* rc = */ RTListAppend(&mHostCmdList, &pHostCmd->Node);
     }
-    catch (std::bad_alloc)
+    catch (std::bad_alloc &)
     {
         rc = VERR_NO_MEMORY;
     }
@@ -1383,7 +1406,7 @@ int Service::hostProcessCommand(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVC
 #endif
             }
 
-            itClientState++;
+            ++itClientState;
         }
 
 #ifdef DEBUG
@@ -1395,8 +1418,8 @@ int Service::hostProcessCommand(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVC
 }
 
 /**
- * Handle an HGCM service call.
- * @copydoc VBOXHGCMSVCFNTABLE::pfnCall
+ * @interface_method_impl{VBOXHGCMSVCFNTABLE,pfnCall}
+ *
  * @note    All functions which do not involve an unreasonable delay will be
  *          handled synchronously.  If needed, we will add a request handler
  *          thread in future for those which do.
@@ -1489,7 +1512,7 @@ void Service::call(VBOXHGCMCALLHANDLE callHandle, uint32_t u32ClientID,
             }
         }
     }
-    catch (std::bad_alloc)
+    catch (std::bad_alloc &)
     {
         rc = VERR_NO_MEMORY;
     }
@@ -1497,7 +1520,7 @@ void Service::call(VBOXHGCMCALLHANDLE callHandle, uint32_t u32ClientID,
 
 /**
  * Service call handler for the host.
- * @copydoc VBOXHGCMSVCFNTABLE::pfnHostCall
+ * @interface_method_impl{VBOXHGCMSVCFNTABLE,pfnHostCall}
  * @thread  hgcm
  */
 int Service::hostCall(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVCPARM paParms[])
@@ -1522,7 +1545,7 @@ int Service::hostCall(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVCPARM paPar
                     if (RT_FAILURE(rc2))
                         LogFlowFunc(("Cancelling waiting for client ID=%RU32 failed with rc=%Rrc",
                                      itClientState->first, rc2));
-                    itClientState++;
+                    ++itClientState;
                 }
                 rc = VINF_SUCCESS;
                 break;
@@ -1533,7 +1556,7 @@ int Service::hostCall(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVCPARM paPar
                 break;
         }
     }
-    catch (std::bad_alloc)
+    catch (std::bad_alloc &)
     {
         rc = VERR_NO_MEMORY;
     }
@@ -1552,6 +1575,7 @@ int Service::hostCall(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVCPARM paPar
  */
 int Service::sessionClose(uint32_t u32ClientID, VBOXHGCMCALLHANDLE callHandle, uint32_t cParms, VBOXHGCMSVCPARM paParms[])
 {
+    RT_NOREF2(u32ClientID, callHandle);
     if (cParms < 2)
         return VERR_INVALID_PARAMETER;
 
@@ -1566,11 +1590,11 @@ int Service::sessionClose(uint32_t u32ClientID, VBOXHGCMCALLHANDLE callHandle, u
         rc = hostProcessCommand(HOST_SESSION_CLOSE, cParms, paParms);
 
     LogFlowFunc(("Closing guest session ID=%RU32 (from client ID=%RU32) returned with rc=%Rrc\n",
-                 uSessionID, u32ClientID, rc));
+                 uSessionID, u32ClientID, rc)); NOREF(uSessionID);
     return rc;
 }
 
-int Service::uninit()
+int Service::uninit(void)
 {
     return VINF_SUCCESS;
 }
@@ -1603,14 +1627,19 @@ extern "C" DECLCALLBACK(DECLEXPORT(int)) VBoxHGCMSvcLoad(VBOXHGCMSVCFNTABLE *pTa
         }
         else
         {
-            std::auto_ptr<Service> apService;
+            Service *pService = NULL;
             /* No exceptions may propagate outside. */
-            try {
-                apService = std::auto_ptr<Service>(new Service(pTable->pHelpers));
-            } catch (int rcThrown) {
+            try
+            {
+                pService = new Service(pTable->pHelpers);
+            }
+            catch (int rcThrown)
+            {
                 rc = rcThrown;
-            } catch (...) {
-                rc = VERR_UNRESOLVED_ERROR;
+            }
+            catch(std::bad_alloc &)
+            {
+                rc = VERR_NO_MEMORY;
             }
 
             if (RT_SUCCESS(rc))
@@ -1632,7 +1661,15 @@ extern "C" DECLCALLBACK(DECLEXPORT(int)) VBoxHGCMSvcLoad(VBOXHGCMSVCFNTABLE *pTa
                 pTable->pfnRegisterExtension  = Service::svcRegisterExtension;
 
                 /* Service specific initialization. */
-                pTable->pvService = apService.release();
+                pTable->pvService = pService;
+            }
+            else
+            {
+                if (pService)
+                {
+                    delete pService;
+                    pService = NULL;
+                }
             }
         }
     }

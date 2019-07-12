@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2010-2014 Oracle Corporation
+# Copyright (C) 2010-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
 # Foundation, in version 2 as it comes in the "COPYING" file of the
 # VirtualBox OSE distribution. VirtualBox OSE is distributed in the
 # hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+#
+# The contents of this file may alternatively be used under the terms
+# of the Common Development and Distribution License Version 1.0
+# (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+# VirtualBox OSE distribution, in which case the provisions of the
+# CDDL are applicable instead of those of the GPL.
+#
+# You may elect to license modified versions of this file under the
+# terms and conditions of either the GPL or the CDDL or both.
 #
 
 if test -n "$Path" -a -z "$PATH"; then
@@ -34,7 +43,7 @@ set +e
 #
 # Query the status of the drivers.
 #
-for drv in VBoxNetAdp VBoxNetFlt VBoxUSBMon VBoxUSB VBoxDrv;
+for drv in VBoxNetAdp VBoxNetAdp6 VBoxNetFlt VBoxNetLwf VBoxUSBMon VBoxUSB VBoxDrv;
 do
     if sc query $drv > /dev/null; then
         STATE=`sc query $drv \
@@ -43,9 +52,9 @@ do
                          -e 's/^ *//g' \
                          -e 's/ *$//g' \
               `
-        echo "load.sh: $drv - $STATE"
+        echo "loadall.sh: $drv - $STATE"
     else
-        echo "load.sh: $drv - not configured, probably."
+        echo "loadall.sh: $drv - not configured, probably."
     fi
 done
 
@@ -55,7 +64,7 @@ set -x
 #
 # Invoke the uninstallers.
 #
-for uninst in NetAdpUninstall.exe NetFltUninstall.exe USBUninstall.exe SUPUninstall.exe;
+for uninst in NetAdpUninstall.exe NetAdp6Uninstall.exe USBUninstall.exe NetFltUninstall.exe NetLwfUninstall.exe SUPUninstall.exe;
 do
     if test -f ${MY_DIR}/$uninst; then
         ${MY_DIR}/$uninst
@@ -66,7 +75,19 @@ done
 # Invoke the installers.
 #
 if test "$1" != "-u" -a "$1" != "--uninstall"; then
-    for inst in SUPInstall.exe USBInstall.exe NetFltInstall.exe ; #NetAdpInstall.exe; - busted
+    INSTALLERS="SUPInstall.exe USBInstall.exe";
+    VER=`cmd.exe /c ver`
+    VER=`echo "$VER" | kmk_sed -e 's/^.*\[[^0-9]* \(.*\)\]/\1/' -e '/^$/d`
+    case "$VER" in
+        6.*|10.*|11.*|12.*)
+            INSTALLERS="$INSTALLERS NetLwfInstall.exe"; #NetAdp6Install.exe - also busted?
+            ;;
+        *)
+            INSTALLERS="$INSTALLERS NetFltInstall.exe"; #NetAdpInstall.exe; - busted
+            ;;
+    esac
+
+    for inst in $INSTALLERS;
     do
         if test -f ${MY_DIR}/$inst; then
             ${MY_DIR}/$inst
@@ -74,6 +95,6 @@ if test "$1" != "-u" -a "$1" != "--uninstall"; then
     done
 fi
 
-echo "load.sh: Successfully installed all drivers"
+echo "loadall.sh: Successfully installed all drivers"
 exit 0
 

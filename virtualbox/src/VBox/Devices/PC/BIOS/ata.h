@@ -1,5 +1,10 @@
+/* $Id: ata.h $ */
+/** @file
+ * PC BIOS - ???
+ */
+
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,6 +43,15 @@
  *
  */
 
+/*
+ * Oracle LGPL Disclaimer: For the avoidance of doubt, except that if any license choice
+ * other than GPL or LGPL is available it will apply instead, Oracle elects to use only
+ * the Lesser General Public License version 2.1 (LGPLv2) at this time for any software where
+ * a choice of LGPL license versions is made available with the language indicating
+ * that LGPLv2 or any later version may be used, or where a choice of which version
+ * of the LGPL is applied is otherwise unspecified.
+ */
+
 
 #define ATA_DATA_NO      0x00
 #define ATA_DATA_IN      0x01
@@ -49,7 +63,9 @@
 
 #define ATA_MODE_NONE    0x00
 #define ATA_MODE_PIO16   0x00
-#define ATA_MODE_PIO32   0x01
+#if VBOX_BIOS_CPU >= 80386
+# define ATA_MODE_PIO32  0x01
+#endif
 #define ATA_MODE_ISADMA  0x02
 #define ATA_MODE_PCIDMA  0x03
 #define ATA_MODE_USEIRQ  0x10

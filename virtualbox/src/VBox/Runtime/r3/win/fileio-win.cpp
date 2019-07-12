@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,30 +25,34 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DIR
 #ifndef _WIN32_WINNT
 # define _WIN32_WINNT 0x0500
 #endif
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
 #include <iprt/file.h>
-#include <iprt/path.h>
+
+#include <iprt/asm.h>
 #include <iprt/assert.h>
+#include <iprt/path.h>
 #include <iprt/string.h>
 #include <iprt/err.h>
+#include <iprt/ldr.h>
 #include <iprt/log.h>
 #include "internal/file.h"
 #include "internal/fs.h"
 #include "internal/path.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
-
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
+typedef BOOL WINAPI FNVERIFYCONSOLEIOHANDLE(HANDLE);
+typedef FNVERIFYCONSOLEIOHANDLE *PFNVERIFYCONSOLEIOHANDLE; /* No, nobody fell on the keyboard, really! */
 
 /**
  * This is wrapper around the ugly SetFilePointer api.
@@ -208,6 +212,13 @@ RTR3DECL(int) RTFileOpen(PRTFILE pFile, const char *pszFilename, uint64_t fOpen)
                             ? FILE_GENERIC_READ | (FILE_GENERIC_WRITE & ~FILE_WRITE_DATA)
                             : FILE_GENERIC_READ | FILE_GENERIC_WRITE;
             break;
+        case RTFILE_O_ATTR_ONLY:
+            if (fOpen & RTFILE_O_ACCESS_ATTR_MASK)
+            {
+                dwDesiredAccess = 0;
+                break;
+            }
+            RT_FALL_THRU();
         default:
             AssertMsgFailed(("Impossible fOpen=%#llx\n", fOpen));
             return VERR_INVALID_PARAMETER;
@@ -243,7 +254,7 @@ RTR3DECL(int) RTFileOpen(PRTFILE pFile, const char *pszFilename, uint64_t fOpen)
         case RTFILE_O_DENY_WRITE:                               dwShareMode = FILE_SHARE_READ; break;
         case RTFILE_O_DENY_READWRITE:                           dwShareMode = 0; break;
 
-        case RTFILE_O_DENY_NOT_DELETE | RTFILE_O_DENY_NONE:     dwShareMode = FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE; break;
+        case RTFILE_O_DENY_NOT_DELETE:                          dwShareMode = FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE; break;
         case RTFILE_O_DENY_NOT_DELETE | RTFILE_O_DENY_READ:     dwShareMode = FILE_SHARE_DELETE | FILE_SHARE_WRITE; break;
         case RTFILE_O_DENY_NOT_DELETE | RTFILE_O_DENY_WRITE:    dwShareMode = FILE_SHARE_DELETE | FILE_SHARE_READ; break;
         case RTFILE_O_DENY_NOT_DELETE | RTFILE_O_DENY_READWRITE:dwShareMode = FILE_SHARE_DELETE; break;
@@ -278,55 +289,55 @@ RTR3DECL(int) RTFileOpen(PRTFILE pFile, const char *pszFilename, uint64_t fOpen)
      * Open/Create the file.
      */
     PRTUTF16 pwszFilename;
-    rc = RTStrToUtf16(pszFilename, &pwszFilename);
-    if (RT_FAILURE(rc))
-        return rc;
-
-    HANDLE hFile = CreateFileW(pwszFilename,
-                               dwDesiredAccess,
-                               dwShareMode,
-                               pSecurityAttributes,
-                               dwCreationDisposition,
-                               dwFlagsAndAttributes,
-                               NULL);
-    if (hFile != INVALID_HANDLE_VALUE)
+    rc = RTPathWinFromUtf8(&pwszFilename, pszFilename, 0 /*fFlags*/);
+    if (RT_SUCCESS(rc))
     {
-        bool fCreated = dwCreationDisposition == CREATE_ALWAYS
-                     || dwCreationDisposition == CREATE_NEW
-                     || (dwCreationDisposition == OPEN_ALWAYS && GetLastError() == 0);
+        HANDLE hFile = CreateFileW(pwszFilename,
+                                   dwDesiredAccess,
+                                   dwShareMode,
+                                   pSecurityAttributes,
+                                   dwCreationDisposition,
+                                   dwFlagsAndAttributes,
+                                   NULL);
+        if (hFile != INVALID_HANDLE_VALUE)
+        {
+            bool fCreated = dwCreationDisposition == CREATE_ALWAYS
+                         || dwCreationDisposition == CREATE_NEW
+                         || (dwCreationDisposition == OPEN_ALWAYS && GetLastError() == 0);
 
-        /*
-         * Turn off indexing of directory through Windows Indexing Service.
-         */
-        if (    fCreated
-            &&  (fOpen & RTFILE_O_NOT_CONTENT_INDEXED))
-        {
-            if (!SetFileAttributesW(pwszFilename, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED))
-                rc = RTErrConvertFromWin32(GetLastError());
-        }
-        /*
-         * Do we need to truncate the file?
-         */
-        else if (    !fCreated
-                 &&     (fOpen & (RTFILE_O_TRUNCATE | RTFILE_O_ACTION_MASK))
-                     == (RTFILE_O_TRUNCATE | RTFILE_O_OPEN_CREATE))
-        {
-            if (!SetEndOfFile(hFile))
-                rc = RTErrConvertFromWin32(GetLastError());
-        }
-        if (RT_SUCCESS(rc))
-        {
-            *pFile = (RTFILE)hFile;
-            Assert((HANDLE)*pFile == hFile);
-            RTUtf16Free(pwszFilename);
-            return VINF_SUCCESS;
-        }
+            /*
+             * Turn off indexing of directory through Windows Indexing Service.
+             */
+            if (    fCreated
+                &&  (fOpen & RTFILE_O_NOT_CONTENT_INDEXED))
+            {
+                if (!SetFileAttributesW(pwszFilename, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED))
+                    rc = RTErrConvertFromWin32(GetLastError());
+            }
+            /*
+             * Do we need to truncate the file?
+             */
+            else if (    !fCreated
+                     &&     (fOpen & (RTFILE_O_TRUNCATE | RTFILE_O_ACTION_MASK))
+                         == (RTFILE_O_TRUNCATE | RTFILE_O_OPEN_CREATE))
+            {
+                if (!SetEndOfFile(hFile))
+                    rc = RTErrConvertFromWin32(GetLastError());
+            }
+            if (RT_SUCCESS(rc))
+            {
+                *pFile = (RTFILE)hFile;
+                Assert((HANDLE)*pFile == hFile);
+                RTPathWinFree(pwszFilename);
+                return VINF_SUCCESS;
+            }
 
-        CloseHandle(hFile);
+            CloseHandle(hFile);
+        }
+        else
+            rc = RTErrConvertFromWin32(GetLastError());
+        RTPathWinFree(pwszFilename);
     }
-    else
-        rc = RTErrConvertFromWin32(GetLastError());
-    RTUtf16Free(pwszFilename);
     return rc;
 }
 
@@ -484,7 +495,7 @@ RTR3DECL(int)  RTFileWrite(RTFILE hFile, const void *pvBuf, size_t cbToWrite, si
 {
     if (cbToWrite <= 0)
         return VINF_SUCCESS;
-    ULONG cbToWriteAdj = (ULONG)cbToWrite;
+    ULONG const cbToWriteAdj = (ULONG)cbToWrite;
     AssertReturn(cbToWriteAdj == cbToWrite, VERR_NUMBER_TOO_BIG);
 
     ULONG cbWritten = 0;
@@ -492,11 +503,11 @@ RTR3DECL(int)  RTFileWrite(RTFILE hFile, const void *pvBuf, size_t cbToWrite, si
     {
         if (pcbWritten)
             /* Caller can handle partial writes. */
-            *pcbWritten = cbWritten;
+            *pcbWritten = RT_MIN(cbWritten, cbToWriteAdj); /* paranoia^3 */
         else
         {
             /* Caller expects everything to be written. */
-            while (cbToWriteAdj > cbWritten)
+            while (cbWritten < cbToWriteAdj)
             {
                 ULONG cbWrittenPart = 0;
                 if (!WriteFile((HANDLE)RTFileToNative(hFile), (char*)pvBuf + cbWritten,
@@ -531,7 +542,7 @@ RTR3DECL(int)  RTFileWrite(RTFILE hFile, const void *pvBuf, size_t cbToWrite, si
             cbChunk = RT_ALIGN_32(cbChunk, 256);
 
         cbWritten = 0;
-        while (cbToWriteAdj > cbWritten)
+        while (cbWritten < cbToWriteAdj)
         {
             ULONG cbToWrite     = RT_MIN(cbChunk, cbToWriteAdj - cbWritten);
             ULONG cbWrittenPart = 0;
@@ -558,7 +569,7 @@ RTR3DECL(int)  RTFileWrite(RTFILE hFile, const void *pvBuf, size_t cbToWrite, si
                write out everything. */
             if (pcbWritten)
             {
-                *pcbWritten = cbWritten;
+                *pcbWritten = RT_MIN(cbWritten, cbToWriteAdj); /* paranoia^3 */
                 break;
             }
             if (cbWrittenPart == 0)
@@ -688,6 +699,7 @@ RTR3DECL(int) RTFileGetMaxSizeEx(RTFILE hFile, PRTFOFF pcbMax)
      * back on NtQueryVolumeInformationFile(,,,, FileFsAttributeInformation)
      * else where, and check for known file system names. (For LAN shares we'll
      * have to figure out the remote file system.) */
+    RT_NOREF_PV(hFile); RT_NOREF_PV(pcbMax);
     return VERR_NOT_IMPLEMENTED;
 }
 
@@ -708,6 +720,9 @@ RTR3DECL(bool) RTFileIsValid(RTFILE hFile)
             case FILE_TYPE_UNKNOWN:
                 if (GetLastError() == NO_ERROR)
                     return true;
+                break;
+
+            default:
                 break;
         }
     }
@@ -820,14 +835,47 @@ RTR3DECL(int) RTFileQueryInfo(RTFILE hFile, PRTFSOBJINFO pObjInfo, RTFSOBJATTRAD
     /*
      * Query file info.
      */
+    HANDLE hHandle = (HANDLE)RTFileToNative(hFile);
+
     BY_HANDLE_FILE_INFORMATION Data;
-    if (!GetFileInformationByHandle((HANDLE)RTFileToNative(hFile), &Data))
+    if (!GetFileInformationByHandle(hHandle, &Data))
     {
+        /*
+         * Console I/O handles make trouble here.  On older windows versions they
+         * end up with ERROR_INVALID_HANDLE when handed to the above API, while on
+         * more recent ones they cause different errors to appear.
+         *
+         * Thus, we must ignore the latter and doubly verify invalid handle claims.
+         * We use the undocumented VerifyConsoleIoHandle to do this, falling back on
+         * GetFileType should it not be there.
+         */
         DWORD dwErr = GetLastError();
-        /* Only return if we *really* don't have a valid handle value,
-         * everything else is fine here ... */
-        if (dwErr != ERROR_INVALID_HANDLE)
+        if (dwErr == ERROR_INVALID_HANDLE)
+        {
+            static PFNVERIFYCONSOLEIOHANDLE s_pfnVerifyConsoleIoHandle = NULL;
+            static bool volatile            s_fInitialized = false;
+            PFNVERIFYCONSOLEIOHANDLE        pfnVerifyConsoleIoHandle;
+            if (s_fInitialized)
+                pfnVerifyConsoleIoHandle = s_pfnVerifyConsoleIoHandle;
+            else
+            {
+                pfnVerifyConsoleIoHandle = (PFNVERIFYCONSOLEIOHANDLE)RTLdrGetSystemSymbol("kernel32.dll", "VerifyConsoleIoHandle");
+                ASMAtomicWriteBool(&s_fInitialized, true);
+            }
+            if (   pfnVerifyConsoleIoHandle
+                ? !pfnVerifyConsoleIoHandle(hHandle)
+                : GetFileType(hHandle) == FILE_TYPE_UNKNOWN && GetLastError() != NO_ERROR)
+                return VERR_INVALID_HANDLE;
+        }
+        /*
+         * On Windows 10 and (hopefully) 8.1 we get ERROR_INVALID_FUNCTION with console I/O
+         * handles.  We must ignore these just like the above invalid handle error.
+         */
+        else if (dwErr != ERROR_INVALID_FUNCTION)
             return RTErrConvertFromWin32(dwErr);
+
+        RT_ZERO(Data);
+        Data.dwFileAttributes = RTFS_DOS_NT_DEVICE;
     }
 
     /*
@@ -843,7 +891,8 @@ RTR3DECL(int) RTFileQueryInfo(RTFILE hFile, PRTFSOBJINFO pObjInfo, RTFSOBJATTRAD
     RTTimeSpecSetNtTime(&pObjInfo->ModificationTime,  *(uint64_t *)&Data.ftLastWriteTime);
     pObjInfo->ChangeTime  = pObjInfo->ModificationTime;
 
-    pObjInfo->Attr.fMode  = rtFsModeFromDos((Data.dwFileAttributes << RTFS_DOS_SHIFT) & RTFS_DOS_MASK_NT, "", 0);
+    pObjInfo->Attr.fMode  = rtFsModeFromDos((Data.dwFileAttributes << RTFS_DOS_SHIFT) & RTFS_DOS_MASK_NT, "", 0,
+                                            RTFSMODE_SYMLINK_REPARSE_TAG /* (symlink or not, doesn't usually matter here) */);
 
     /*
      * Requested attributes (we cannot provide anything actually).
@@ -859,8 +908,8 @@ RTR3DECL(int) RTFileQueryInfo(RTFILE hFile, PRTFSOBJINFO pObjInfo, RTFSOBJATTRAD
             pObjInfo->Attr.u.Unix.uid             = ~0U;
             pObjInfo->Attr.u.Unix.gid             = ~0U;
             pObjInfo->Attr.u.Unix.cHardlinks      = Data.nNumberOfLinks ? Data.nNumberOfLinks : 1;
-            pObjInfo->Attr.u.Unix.INodeIdDevice   = 0; /** @todo Use the volume serial number (see GetFileInformationByHandle). */
-            pObjInfo->Attr.u.Unix.INodeId         = 0; /** @todo Use the fileid (see GetFileInformationByHandle). */
+            pObjInfo->Attr.u.Unix.INodeIdDevice   = Data.dwVolumeSerialNumber;
+            pObjInfo->Attr.u.Unix.INodeId         = RT_MAKE_U64(Data.nFileIndexLow, Data.nFileIndexHigh);
             pObjInfo->Attr.u.Unix.fFlags          = 0;
             pObjInfo->Attr.u.Unix.GenerationId    = 0;
             pObjInfo->Attr.u.Unix.Device          = 0;
@@ -895,6 +944,8 @@ RTR3DECL(int) RTFileQueryInfo(RTFILE hFile, PRTFSOBJINFO pObjInfo, RTFSOBJATTRAD
 RTR3DECL(int) RTFileSetTimes(RTFILE hFile, PCRTTIMESPEC pAccessTime, PCRTTIMESPEC pModificationTime,
                              PCRTTIMESPEC pChangeTime, PCRTTIMESPEC pBirthTime)
 {
+    RT_NOREF_PV(pChangeTime); /* Not exposed thru the windows API we're using. */
+
     if (!pAccessTime && !pModificationTime && !pBirthTime)
         return VINF_SUCCESS;    /* NOP */
 
@@ -925,6 +976,7 @@ RTR3DECL(int) RTFileSetTimes(RTFILE hFile, PCRTTIMESPEC pAccessTime, PCRTTIMESPE
 }
 
 
+#if 0 /* RTFileSetMode is implemented by RTFileSetMode-r3-nt.cpp */
 /* This comes from a source file with a different set of system headers (DDK)
  * so it can't be declared in a common header, like internal/file.h.
  */
@@ -951,26 +1003,21 @@ RTR3DECL(int) RTFileSetMode(RTFILE hFile, RTFMODE fMode)
     }
     return VINF_SUCCESS;
 }
+#endif
 
 
-RTR3DECL(int) RTFileQueryFsSizes(RTFILE hFile, PRTFOFF pcbTotal, RTFOFF *pcbFree,
-                                 uint32_t *pcbBlock, uint32_t *pcbSector)
-{
-    /** @todo implement this using NtQueryVolumeInformationFile(hFile,,,,
-     *        FileFsSizeInformation). */
-    return VERR_NOT_SUPPORTED;
-}
+/* RTFileQueryFsSizes is implemented by ../nt/RTFileQueryFsSizes-nt.cpp */
 
 
 RTR3DECL(int)  RTFileDelete(const char *pszFilename)
 {
     PRTUTF16 pwszFilename;
-    int rc = RTStrToUtf16(pszFilename, &pwszFilename);
+    int rc = RTPathWinFromUtf8(&pwszFilename, pszFilename, 0 /*fFlags*/);
     if (RT_SUCCESS(rc))
     {
         if (!DeleteFileW(pwszFilename))
             rc = RTErrConvertFromWin32(GetLastError());
-        RTUtf16Free(pwszFilename);
+        RTPathWinFree(pwszFilename);
     }
 
     return rc;

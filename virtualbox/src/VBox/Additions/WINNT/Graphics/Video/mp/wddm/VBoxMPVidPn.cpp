@@ -1,11 +1,10 @@
 /* $Id: VBoxMPVidPn.cpp $ */
-
 /** @file
  * VBox WDDM Miniport driver
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,6 +18,9 @@
 #include "VBoxMPWddm.h"
 #include "VBoxMPVidPn.h"
 #include "common/VBoxMPCommon.h"
+
+
+static NTSTATUS vboxVidPnCheckMonitorModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32Target, const CR_SORTARRAY *pSupportedTargetModes = NULL);
 
 static D3DDDIFORMAT vboxWddmCalcPixelFormat(const VIDEO_MODE_INFORMATION *pInfo)
 {
@@ -127,13 +129,26 @@ static NTSTATUS vboxVidPnPopulateVideoSignalInfo(D3DKMDT_VIDEO_SIGNAL_INFO *pVsi
     pVsi->VideoStandard  = D3DKMDT_VSS_OTHER;
     pVsi->ActiveSize.cx = pResolution->cx;
     pVsi->ActiveSize.cy = pResolution->cy;
-    pVsi->VSyncFreq.Numerator = VSync * 1000;
-    pVsi->VSyncFreq.Denominator = 1000;
-    pVsi->TotalSize.cx = pVsi->ActiveSize.cx;// + VBOXVDPN_C_DISPLAY_HBLANK_SIZE;
-    pVsi->TotalSize.cy = pVsi->ActiveSize.cy;// + VBOXVDPN_C_DISPLAY_VBLANK_SIZE;
-    pVsi->PixelRate = pVsi->TotalSize.cx * pVsi->TotalSize.cy * VSync;
-    pVsi->HSyncFreq.Numerator = (UINT)((pVsi->PixelRate / pVsi->TotalSize.cy) * 1000);
-    pVsi->HSyncFreq.Denominator = 1000;
+    pVsi->TotalSize = pVsi->ActiveSize;
+    if (VBOXWDDM_IS_DISPLAYONLY())
+    {
+        /* VSYNC is not implemented in display-only mode (#8228).
+         * In this case Windows checks that frequencies are not specified.
+         */
+        pVsi->VSyncFreq.Numerator = D3DKMDT_FREQUENCY_NOTSPECIFIED;
+        pVsi->VSyncFreq.Denominator = D3DKMDT_FREQUENCY_NOTSPECIFIED;
+        pVsi->PixelRate = D3DKMDT_FREQUENCY_NOTSPECIFIED;
+        pVsi->HSyncFreq.Numerator = D3DKMDT_FREQUENCY_NOTSPECIFIED;
+        pVsi->HSyncFreq.Denominator = D3DKMDT_FREQUENCY_NOTSPECIFIED;
+    }
+    else
+    {
+        pVsi->VSyncFreq.Numerator = VSync * 1000;
+        pVsi->VSyncFreq.Denominator = 1000;
+        pVsi->PixelRate = pVsi->TotalSize.cx * pVsi->TotalSize.cy * VSync;
+        pVsi->HSyncFreq.Numerator = (UINT)((pVsi->PixelRate / pVsi->TotalSize.cy) * 1000);
+        pVsi->HSyncFreq.Denominator = 1000;
+    }
     pVsi->ScanLineOrdering = D3DDDI_VSSLO_PROGRESSIVE;
 
     return Status;
@@ -167,10 +182,8 @@ BOOLEAN vboxVidPnMatchVideoSignal(const D3DKMDT_VIDEO_SIGNAL_INFO *pVsi1, const 
     return TRUE;
 }
 
-static void vboxVidPnPopulateSourceModeInfo(D3DKMDT_VIDPN_SOURCE_MODE *pNewVidPnSourceModeInfo,
-        const RTRECTSIZE *pSize)
+static void vboxVidPnPopulateSourceModeInfo(D3DKMDT_VIDPN_SOURCE_MODE *pNewVidPnSourceModeInfo, const RTRECTSIZE *pSize)
 {
-    NTSTATUS Status = STATUS_SUCCESS;
     /* this is a graphics mode */
     pNewVidPnSourceModeInfo->Type = D3DKMDT_RMT_GRAPHICS;
     pNewVidPnSourceModeInfo->Format.Graphics.PrimSurfSize.cx = pSize->cx;
@@ -186,8 +199,7 @@ static void vboxVidPnPopulateSourceModeInfo(D3DKMDT_VIDPN_SOURCE_MODE *pNewVidPn
         pNewVidPnSourceModeInfo->Format.Graphics.PixelValueAccessMode = D3DKMDT_PVAM_DIRECT;
 }
 
-static void vboxVidPnPopulateMonitorModeInfo(D3DKMDT_MONITOR_SOURCE_MODE *pMonitorSourceMode,
-        const RTRECTSIZE *pResolution)
+static void vboxVidPnPopulateMonitorModeInfo(D3DKMDT_MONITOR_SOURCE_MODE *pMonitorSourceMode, const RTRECTSIZE *pResolution)
 {
     vboxVidPnPopulateVideoSignalInfo(&pMonitorSourceMode->VideoSignalInfo, pResolution, 60 /* ULONG VSync */);
     pMonitorSourceMode->ColorBasis = D3DKMDT_CB_SRGB;
@@ -207,6 +219,7 @@ static NTSTATUS vboxVidPnPopulateTargetModeInfo(D3DKMDT_VIDPN_TARGET_MODE *pNewV
 
 void VBoxVidPnStTargetCleanup(PVBOXWDDM_SOURCE paSources, uint32_t cScreens, PVBOXWDDM_TARGET pTarget)
 {
+    RT_NOREF(cScreens);
     if (pTarget->VidPnSourceId == D3DDDI_ID_UNINITIALIZED)
         return;
 
@@ -235,6 +248,10 @@ void VBoxVidPnStSourceTargetAdd(PVBOXWDDM_SOURCE paSources, uint32_t cScreens, P
     ASMBitSet(pSource->aTargetMap, pTarget->u32Id);
     pSource->cTargets++;
     pTarget->VidPnSourceId = pSource->AllocData.SurfDesc.VidPnSourceId;
+
+    pTarget->fBlankedByPowerOff = RT_BOOL(pSource->bBlankedByPowerOff);
+    LOG(("src %d and tgt %d are now blank %d",
+        pSource->AllocData.SurfDesc.VidPnSourceId, pTarget->u32Id, pTarget->fBlankedByPowerOff));
 
     pTarget->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_TOPOLOGY;
     pSource->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_TOPOLOGY;
@@ -350,6 +367,19 @@ void VBoxVidPnTargetsCopy(VBOXWDDM_TARGET *pDst, const VBOXWDDM_TARGET *pSrc, ui
         VBoxVidPnTargetCopy(&pDst[i], &pSrc[i]);
 }
 
+void VBoxDumpSourceTargetArrays(VBOXWDDM_SOURCE *paSources, VBOXWDDM_TARGET *paTargets, uint32_t cScreens)
+{
+    RT_NOREF(paSources, paTargets, cScreens);
+
+    for (uint32_t i = 0; i < cScreens; i++)
+    {
+        LOG_EXACT(("source [%d] Sync 0x%x, cTgt %d, TgtMap0 0x%x, TgtRep %d, blanked %d\n",
+            i, paSources[i].u8SyncState, paSources[i].cTargets, paSources[i].aTargetMap[0], paSources[i].fTargetsReported, paSources[i].bBlankedByPowerOff));
+
+        LOG_EXACT(("target [%d] Sync 0x%x, VidPnSourceId %d, blanked %d\n",
+            i, paTargets[i].u8SyncState, paTargets[i].VidPnSourceId, paTargets[i].fBlankedByPowerOff));
+    }
+}
 
 static D3DKMDT_ENUMCOFUNCMODALITY_PIVOT_TYPE vboxVidPnCofuncModalityCurrentPathPivot(D3DKMDT_ENUMCOFUNCMODALITY_PIVOT_TYPE enmPivot,
                     const DXGK_ENUM_PIVOT *pPivot,
@@ -422,12 +452,12 @@ NTSTATUS vboxVidPnQueryPinnedTargetMode(D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_
         Assert(pPinnedVidPnTargetModeInfo);
         pSize->cx = pPinnedVidPnTargetModeInfo->VideoSignalInfo.ActiveSize.cx;
         pSize->cy = pPinnedVidPnTargetModeInfo->VideoSignalInfo.ActiveSize.cy;
-        NTSTATUS tmpStatus = pCurVidPnTargetModeSetInterface->pfnReleaseModeInfo(hCurVidPnTargetModeSet, pPinnedVidPnTargetModeInfo);
-        Assert(NT_SUCCESS(tmpStatus));
+        NTSTATUS rcNt2 = pCurVidPnTargetModeSetInterface->pfnReleaseModeInfo(hCurVidPnTargetModeSet, pPinnedVidPnTargetModeInfo);
+        AssertNtStatus(rcNt2);
     }
 
-    NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hCurVidPnTargetModeSet);
-    Assert(tmpStatus == STATUS_SUCCESS);
+    NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hCurVidPnTargetModeSet);
+    AssertNtStatusSuccess(rcNt2);
 
     return Status;
 }
@@ -465,12 +495,12 @@ NTSTATUS vboxVidPnQueryPinnedSourceMode(D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_
         Assert(pPinnedVidPnSourceModeInfo);
         pSize->cx = pPinnedVidPnSourceModeInfo->Format.Graphics.VisibleRegionSize.cx;
         pSize->cy = pPinnedVidPnSourceModeInfo->Format.Graphics.VisibleRegionSize.cy;
-        NTSTATUS tmpStatus = pCurVidPnSourceModeSetInterface->pfnReleaseModeInfo(hCurVidPnSourceModeSet, pPinnedVidPnSourceModeInfo);
-        Assert(NT_SUCCESS(tmpStatus));
+        NTSTATUS rcNt2 = pCurVidPnSourceModeSetInterface->pfnReleaseModeInfo(hCurVidPnSourceModeSet, pPinnedVidPnSourceModeInfo);
+        AssertNtStatus(rcNt2);
     }
 
-    NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hCurVidPnSourceModeSet);
-    Assert(tmpStatus == STATUS_SUCCESS);
+    NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hCurVidPnSourceModeSet);
+    AssertNtStatusSuccess(rcNt2);
 
     return Status;
 }
@@ -524,11 +554,12 @@ static NTSTATUS vboxVidPnSourceModeSetFromArray(D3DKMDT_HVIDPNSOURCEMODESET hVid
         Status = pVidPnModeSetInterface->pfnAddMode(hVidPnModeSet, pVidPnModeInfo);
         if (!NT_SUCCESS(Status))
         {
-            WARN(("pfnAddMode failed, Status 0x%x", Status));
+            WARN(("pfnAddMode (%d x %d) failed, Status 0x%x", size.cx, size.cy, Status));
             VBoxVidPnDumpSourceMode("SourceMode: ", pVidPnModeInfo, "\n");
-            NTSTATUS tmpStatus = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
-            Assert(tmpStatus == STATUS_SUCCESS);
-            return Status;
+            NTSTATUS rcNt2 = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
+            AssertNtStatusSuccess(rcNt2);
+            // Continue adding modes into modeset even if a mode was rejected
+            continue;
         }
     }
 
@@ -584,11 +615,12 @@ static NTSTATUS vboxVidPnTargetModeSetFromArray(D3DKMDT_HVIDPNTARGETMODESET hVid
         Status = pVidPnModeSetInterface->pfnAddMode(hVidPnModeSet, pVidPnModeInfo);
         if (!NT_SUCCESS(Status))
         {
-            WARN(("pfnAddMode failed, Status 0x%x", Status));
+            WARN(("pfnAddMode (%d x %d) failed, Status 0x%x", size.cx, size.cy, Status));
             VBoxVidPnDumpTargetMode("TargetMode: ", pVidPnModeInfo, "\n");
-            NTSTATUS tmpStatus = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
-            Assert(tmpStatus == STATUS_SUCCESS);
-            return Status;
+            NTSTATUS rcNt2 = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
+            AssertNtStatusSuccess(rcNt2);
+            // Continue adding modes into modeset even if a mode was rejected
+            continue;
         }
     }
 
@@ -644,11 +676,14 @@ static NTSTATUS vboxVidPnMonitorModeSetFromArray(D3DKMDT_HMONITORSOURCEMODESET h
         Status = pVidPnModeSetInterface->pfnAddMode(hVidPnModeSet, pVidPnModeInfo);
         if (!NT_SUCCESS(Status))
         {
-            WARN(("pfnAddMode failed, Status 0x%x", Status));
-            NTSTATUS tmpStatus = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
-            Assert(tmpStatus == STATUS_SUCCESS);
-            return Status;
+            WARN(("pfnAddMode (%d x %d) failed, Status 0x%x", size.cx, size.cy, Status));
+            NTSTATUS rcNt2 = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
+            AssertNtStatusSuccess(rcNt2);
+            // Continue adding modes into modeset even if a mode was rejected
+            continue;
         }
+
+        LOGF(("mode (%d x %d) added to monitor modeset", size.cx, size.cy));
     }
 
     return STATUS_SUCCESS;
@@ -694,8 +729,8 @@ static NTSTATUS vboxVidPnCollectInfoForPathTarget(PVBOXMP_DEVEXT pDevExt,
             CrSaCleanup(&Arr);
         }
 
-        NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hVidPnModeSet);
-        Assert(tmpStatus == STATUS_SUCCESS);
+        NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hVidPnModeSet);
+        AssertNtStatusSuccess(rcNt2);
 
         if (!NT_SUCCESS(Status))
         {
@@ -814,8 +849,10 @@ static NTSTATUS vboxVidPnApplyInfoForPathTarget(PVBOXMP_DEVEXT pDevExt,
         D3DKMDT_ENUMCOFUNCMODALITY_PIVOT_TYPE enmCurPivot,
         uint32_t *aAdjustedModeMap,
         const CR_SORTARRAY *aModes,
-        D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId)
+        D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId,
+        D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId)
 {
+    RT_NOREF(aAdjustedModeMap, VidPnSourceId);
     Assert(ASMBitTest(aAdjustedModeMap, VidPnTargetId));
 
     if (enmCurPivot == D3DKMDT_EPT_VIDPNTARGET)
@@ -853,8 +890,8 @@ static NTSTATUS vboxVidPnApplyInfoForPathTarget(PVBOXMP_DEVEXT pDevExt,
         WARN(("vboxVidPnTargetModeSetFromArray failed Status(0x%x)", Status));
         vboxVidPnDumpVidPn("\nVidPn: ---------\n", pDevExt, hVidPn, pVidPnInterface, "\n------\n");
         VBoxVidPnDumpMonitorModeSet("MonModeSet: --------\n", pDevExt, VidPnTargetId, "\n------\n");
-        NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hVidPnModeSet);
-        Assert(tmpStatus == STATUS_SUCCESS);
+        NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hVidPnModeSet);
+        AssertNtStatusSuccess(rcNt2);
         return Status;
     }
 
@@ -864,8 +901,16 @@ static NTSTATUS vboxVidPnApplyInfoForPathTarget(PVBOXMP_DEVEXT pDevExt,
         WARN(("\n\n!!!!!!!\n\n pfnAssignTargetModeSet failed, Status(0x%x)", Status));
         vboxVidPnDumpVidPn("\nVidPn: ---------\n", pDevExt, hVidPn, pVidPnInterface, "\n------\n");
         VBoxVidPnDumpMonitorModeSet("MonModeSet: --------\n", pDevExt, VidPnTargetId, "\n------\n");
-        NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hVidPnModeSet);
-        Assert(tmpStatus == STATUS_SUCCESS);
+        NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hVidPnModeSet);
+        AssertNtStatusSuccess(rcNt2);
+        return Status;
+    }
+
+    Status = vboxVidPnCheckMonitorModes(pDevExt, VidPnTargetId, &aModes[VidPnTargetId]);
+
+    if (!NT_SUCCESS(Status))
+    {
+        WARN(("vboxVidPnCheckMonitorModes failed, Status(0x%x)", Status));
         return Status;
     }
 
@@ -880,6 +925,7 @@ static NTSTATUS vboxVidPnApplyInfoForPathSource(PVBOXMP_DEVEXT pDevExt,
         const CR_SORTARRAY *aModes,
         D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId)
 {
+    RT_NOREF(aAdjustedModeMap);
     Assert(ASMBitTest(aAdjustedModeMap, VidPnTargetId));
 
     if (enmCurPivot == D3DKMDT_EPT_VIDPNSOURCE)
@@ -917,8 +963,8 @@ static NTSTATUS vboxVidPnApplyInfoForPathSource(PVBOXMP_DEVEXT pDevExt,
         WARN(("vboxVidPnSourceModeSetFromArray failed Status(0x%x)", Status));
         vboxVidPnDumpVidPn("\nVidPn: ---------\n", pDevExt, hVidPn, pVidPnInterface, "\n------\n");
         VBoxVidPnDumpMonitorModeSet("MonModeSet: --------\n", pDevExt, VidPnTargetId, "\n------\n");
-        NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hVidPnModeSet);
-        Assert(tmpStatus == STATUS_SUCCESS);
+        NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hVidPnModeSet);
+        AssertNtStatusSuccess(rcNt2);
         return Status;
     }
 
@@ -928,8 +974,8 @@ static NTSTATUS vboxVidPnApplyInfoForPathSource(PVBOXMP_DEVEXT pDevExt,
         WARN(("\n\n!!!!!!!\n\n pfnAssignSourceModeSet failed, Status(0x%x)", Status));
         vboxVidPnDumpVidPn("\nVidPn: ---------\n", pDevExt, hVidPn, pVidPnInterface, "\n------\n");
         VBoxVidPnDumpMonitorModeSet("MonModeSet: --------\n", pDevExt, VidPnTargetId, "\n------\n");
-        NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hVidPnModeSet);
-        Assert(tmpStatus == STATUS_SUCCESS);
+        NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hVidPnModeSet);
+        AssertNtStatusSuccess(rcNt2);
         return Status;
     }
 
@@ -976,8 +1022,8 @@ static NTSTATUS vboxVidPnCollectInfoForPathSource(PVBOXMP_DEVEXT pDevExt,
             CrSaCleanup(&Arr);
         }
 
-        NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hVidPnModeSet);
-        Assert(tmpStatus == STATUS_SUCCESS);
+        NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hVidPnModeSet);
+        AssertNtStatusSuccess(rcNt2);
 
         if (!NT_SUCCESS(Status))
         {
@@ -1096,7 +1142,7 @@ static NTSTATUS vboxVidPnCollectInfoForPathSource(PVBOXMP_DEVEXT pDevExt,
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS vboxVidPnCheckMonitorModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32Target)
+static NTSTATUS vboxVidPnCheckMonitorModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32Target, const CR_SORTARRAY *pSupportedModes)
 {
     NTSTATUS Status;
     CONST DXGK_MONITOR_INTERFACE *pMonitorInterface;
@@ -1110,7 +1156,11 @@ static NTSTATUS vboxVidPnCheckMonitorModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32T
     D3DKMDT_HMONITORSOURCEMODESET hVidPnModeSet;
     CONST DXGK_MONITORSOURCEMODESET_INTERFACE *pVidPnModeSetInterface;
 
-    const CR_SORTARRAY *pSupportedModes = VBoxWddmVModesGet(pDevExt, u32Target);
+    if (!pSupportedModes)
+    {
+        pSupportedModes = VBoxWddmVModesGet(pDevExt, u32Target);
+    }
+
     CR_SORTARRAY DiffModes;
     int rc = CrSaInit(&DiffModes, CrSaGetSize(pSupportedModes));
     if (!RT_SUCCESS(rc))
@@ -1151,6 +1201,7 @@ static NTSTATUS vboxVidPnCheckMonitorModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32T
         size.cx = pVidPnModeInfo->VideoSignalInfo.ActiveSize.cx;
         size.cy = pVidPnModeInfo->VideoSignalInfo.ActiveSize.cy;
         CrSaRemove(&DiffModes, CR_RSIZE2U64(size));
+        LOGF(("mode (%d x %d) is already in monitor modeset\n", size.cx, size.cy));
     }
 
     VBoxVidPnMonitorModeIterTerm(&Iter);
@@ -1162,6 +1213,8 @@ static NTSTATUS vboxVidPnCheckMonitorModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32T
         goto done;
     }
 
+    LOGF(("Adding %d additional modes to monitor modeset\n", CrSaGetSize(&DiffModes)));
+
     Status = vboxVidPnMonitorModeSetFromArray(hVidPnModeSet, pVidPnModeSetInterface, &DiffModes);
     if (!NT_SUCCESS(Status))
     {
@@ -1170,9 +1223,9 @@ static NTSTATUS vboxVidPnCheckMonitorModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32T
     }
 
 done:
-    NTSTATUS tmpStatus = pMonitorInterface->pfnReleaseMonitorSourceModeSet(pDevExt->u.primary.DxgkInterface.DeviceHandle, hVidPnModeSet);
-    if (!NT_SUCCESS(tmpStatus))
-        WARN(("pfnReleaseMonitorSourceModeSet failed tmpStatus(0x%x)", tmpStatus));
+    NTSTATUS rcNt2 = pMonitorInterface->pfnReleaseMonitorSourceModeSet(pDevExt->u.primary.DxgkInterface.DeviceHandle, hVidPnModeSet);
+    if (!NT_SUCCESS(rcNt2))
+        WARN(("pfnReleaseMonitorSourceModeSet failed rcNt2(0x%x)", rcNt2));
 
     CrSaCleanup(&DiffModes);
 
@@ -1218,7 +1271,7 @@ static NTSTATUS vboxVidPnPathAdd(D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_INTERFA
     pNewVidPnPresentPathInfo->VisibleFromActiveTLOffset.cy = 0;
     pNewVidPnPresentPathInfo->VisibleFromActiveBROffset.cx = 0;
     pNewVidPnPresentPathInfo->VisibleFromActiveBROffset.cy = 0;
-    pNewVidPnPresentPathInfo->VidPnTargetColorBasis = D3DKMDT_CB_SRGB; /* @todo: how does it matters? */
+    pNewVidPnPresentPathInfo->VidPnTargetColorBasis = D3DKMDT_CB_SRGB; /** @todo how does it matters? */
     pNewVidPnPresentPathInfo->VidPnTargetColorCoeffDynamicRanges.FirstChannel =  8;
     pNewVidPnPresentPathInfo->VidPnTargetColorCoeffDynamicRanges.SecondChannel =  8;
     pNewVidPnPresentPathInfo->VidPnTargetColorCoeffDynamicRanges.ThirdChannel =  8;
@@ -1236,8 +1289,8 @@ static NTSTATUS vboxVidPnPathAdd(D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_INTERFA
     if (!NT_SUCCESS(Status))
     {
         AssertFailed();
-        NTSTATUS tmpStatus = pVidPnTopologyInterface->pfnReleasePathInfo(hVidPnTopology, pNewVidPnPresentPathInfo);
-        Assert(NT_SUCCESS(tmpStatus));
+        NTSTATUS rcNt2 = pVidPnTopologyInterface->pfnReleasePathInfo(hVidPnTopology, pNewVidPnPresentPathInfo);
+        AssertNtStatus(rcNt2);
     }
 
     LOG(("Recommended Path (%d->%d)", VidPnSourceId, VidPnTargetId));
@@ -1262,6 +1315,8 @@ NTSTATUS VBoxVidPnRecommendMonitorModes(PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRE
 
 NTSTATUS VBoxVidPnUpdateModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32TargetId, const RTRECTSIZE *pSize)
 {
+    LOGF(("ENTER u32TargetId(%d) mode(%d x %d)", u32TargetId, pSize->cx, pSize->cy));
+
     if (u32TargetId >= (uint32_t)VBoxCommonFromDeviceExt(pDevExt)->cDisplays)
     {
         WARN(("invalid target id"));
@@ -1269,6 +1324,8 @@ NTSTATUS VBoxVidPnUpdateModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32TargetId, cons
     }
 
     int rc = VBoxWddmVModesAdd(pDevExt, u32TargetId, pSize, TRUE);
+    LOGF(("VBoxWddmVModesAdd returned (%d)", rc));
+
     if (RT_FAILURE(rc))
     {
         WARN(("VBoxWddmVModesAdd failed %d", rc));
@@ -1279,17 +1336,29 @@ NTSTATUS VBoxVidPnUpdateModes(PVBOXMP_DEVEXT pDevExt, uint32_t u32TargetId, cons
     {
         /* mode was already in list, just return */
         Assert(CrSaContains(VBoxWddmVModesGet(pDevExt, u32TargetId), CR_RSIZE2U64(*pSize)));
+        LOGF(("LEAVE mode was already in modeset, just return"));
         return STATUS_SUCCESS;
     }
 
+#ifdef VBOX_WDDM_REPLUG_ON_MODE_CHANGE
+    /* The VBOXESC_UPDATEMODES is a hint for VBoxVideoW8.sys to use new display mode as soon as VidPn
+     * manager will ask for it.
+     * Probably, some new interface is required to plug/unplug displays by calling
+     * VBoxWddmChildStatusReportReconnected.
+     * But it is a bad idea to mix sending a display mode hint and (un)plug displays in VBOXESC_UPDATEMODES.
+     */
+
     /* modes have changed, need to replug */
     NTSTATUS Status = VBoxWddmChildStatusReportReconnected(pDevExt, u32TargetId);
+    LOG(("VBoxWddmChildStatusReportReconnected returned (%d)", Status));
     if (!NT_SUCCESS(Status))
     {
         WARN(("VBoxWddmChildStatusReportReconnected failed Status(%#x)", Status));
         return Status;
     }
+#endif
 
+    LOGF(("LEAVE u32TargetId(%d)", u32TargetId));
     return STATUS_SUCCESS;
 }
 
@@ -1321,7 +1390,7 @@ NTSTATUS VBoxVidPnRecommendFunctional(PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPN hVi
             return STATUS_INVALID_PARAMETER;
         }
 
-        if (!pDevExt->fComplexTopologiesEnabled && iSource != i)
+        if (!pDevExt->fComplexTopologiesEnabled && iSource != (int32_t)i)
         {
             WARN(("complex topologies not supported!"));
             return STATUS_INVALID_PARAMETER;
@@ -1406,15 +1475,15 @@ NTSTATUS VBoxVidPnRecommendFunctional(PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPN hVi
 
                     if (pVidPnModeInfo)
                     {
-                        NTSTATUS tmpStatus = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
-                        Assert(tmpStatus == STATUS_SUCCESS);
+                        NTSTATUS rcNt2 = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
+                        AssertNtStatusSuccess(rcNt2);
                     }
                 }
                 else
                     WARN(("pfnCreateNewTargetModeSet failed %#x", Status));
 
-                NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hVidPnModeSet);
-                Assert(tmpStatus == STATUS_SUCCESS);
+                NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseTargetModeSet(hVidPn, hVidPnModeSet);
+                AssertNtStatusSuccess(rcNt2);
             }
             else
                 WARN(("pfnCreateNewTargetModeSet failed %#x", Status));
@@ -1470,15 +1539,15 @@ NTSTATUS VBoxVidPnRecommendFunctional(PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPN hVi
 
                         if (pVidPnModeInfo)
                         {
-                            NTSTATUS tmpStatus = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
-                            Assert(tmpStatus == STATUS_SUCCESS);
+                            NTSTATUS rcNt2 = pVidPnModeSetInterface->pfnReleaseModeInfo(hVidPnModeSet, pVidPnModeInfo);
+                            AssertNtStatusSuccess(rcNt2);
                         }
                     }
                     else
                         WARN(("pfnCreateNewSourceModeSet failed %#x", Status));
 
-                    NTSTATUS tmpStatus = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hVidPnModeSet);
-                    Assert(tmpStatus == STATUS_SUCCESS);
+                    NTSTATUS rcNt2 = pVidPnInterface->pfnReleaseSourceModeSet(hVidPn, hVidPnModeSet);
+                    AssertNtStatusSuccess(rcNt2);
                 }
                 else
                     WARN(("pfnCreateNewSourceModeSet failed %#x", Status));
@@ -1619,6 +1688,14 @@ static BOOLEAN vboxVidPnIsPathSupported(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_VI
 
 NTSTATUS VBoxVidPnIsSupported(PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPN hVidPn, BOOLEAN *pfSupported)
 {
+    /* According Microsoft Docs we must return pfSupported = TRUE here if hVidPn is NULL, as
+     * the display adapter can always be configured to display nothing. */
+    if (hVidPn == NULL)
+    {
+        *pfSupported = TRUE;
+        return STATUS_SUCCESS;
+    }
+
     *pfSupported = FALSE;
 
     const DXGK_VIDPN_INTERFACE* pVidPnInterface = NULL;
@@ -1720,8 +1797,8 @@ NTSTATUS VBoxVidPnCofuncModality(PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPN hVidPn, 
     }
 
 #ifdef VBOXWDDM_DEBUG_VIDPN
-    vboxVidPnDumpCofuncModalityArg(">>>>MODALITY Args: ", pEnumCofuncModalityArg, "\n");
-    vboxVidPnDumpVidPn(">>>>MODALITY VidPN (IN) : >>>>\n", pDevExt, pEnumCofuncModalityArg->hConstrainingVidPn, pVidPnInterface, "<<<<<<<<<<<<<<<<<<<<\n");
+    vboxVidPnDumpCofuncModalityArg(">>>>MODALITY Args: ", enmPivot, pPivot, "\n");
+    vboxVidPnDumpVidPn(">>>>MODALITY VidPN (IN) : >>>>\n", pDevExt, hVidPn, pVidPnInterface, "<<<<<<<<<<<<<<<<<<<<\n");
 #endif
 
     D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology;
@@ -1968,7 +2045,7 @@ NTSTATUS vboxVidPnEnumSourceModes(D3DKMDT_HVIDPNSOURCEMODESET hNewVidPnSourceMod
             if (!pfnCallback(hNewVidPnSourceModeSet, pVidPnSourceModeSetInterface,
                     pNewVidPnSourceModeInfo, pContext))
             {
-                Assert(Status == STATUS_SUCCESS);
+                AssertNtStatusSuccess(Status);
                 if (Status == STATUS_SUCCESS)
                     pVidPnSourceModeSetInterface->pfnReleaseModeInfo(hNewVidPnSourceModeSet, pNextVidPnSourceModeInfo);
                 else if (Status == STATUS_GRAPHICS_NO_MORE_ELEMENTS_IN_DATASET)
@@ -2023,7 +2100,7 @@ NTSTATUS vboxVidPnEnumTargetModes(D3DKMDT_HVIDPNTARGETMODESET hNewVidPnTargetMod
             if (!pfnCallback(hNewVidPnTargetModeSet, pVidPnTargetModeSetInterface,
                     pNewVidPnTargetModeInfo, pContext))
             {
-                Assert(Status == STATUS_SUCCESS);
+                AssertNtStatusSuccess(Status);
                 if (Status == STATUS_SUCCESS)
                     pVidPnTargetModeSetInterface->pfnReleaseModeInfo(hNewVidPnTargetModeSet, pNextVidPnTargetModeInfo);
                 else if (Status == STATUS_GRAPHICS_NO_MORE_ELEMENTS_IN_DATASET)
@@ -2076,7 +2153,7 @@ NTSTATUS vboxVidPnEnumTargetsForSource(PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPNTOP
         {
             D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId;
             Status = pVidPnTopologyInterface->pfnEnumPathTargetsFromSource(hVidPnTopology, VidPnSourceId, i, &VidPnTargetId);
-            Assert(Status == STATUS_SUCCESS);
+            AssertNtStatusSuccess(Status);
             if (Status == STATUS_SUCCESS)
             {
                 if (!pfnCallback(pDevExt, hVidPnTopology, pVidPnTopologyInterface, VidPnSourceId, VidPnTargetId, cTgtPaths, pContext))
@@ -2143,9 +2220,11 @@ NTSTATUS vboxVidPnEnumPaths(D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology, const DXGK_VI
     return Status;
 }
 
-NTSTATUS vboxVidPnSetupSourceInfo(PVBOXMP_DEVEXT pDevExt, CONST D3DKMDT_VIDPN_SOURCE_MODE* pVidPnSourceModeInfo, PVBOXWDDM_ALLOCATION pAllocation,
-        D3DDDI_VIDEO_PRESENT_SOURCE_ID  VidPnSourceId, VBOXWDDM_SOURCE *paSources)
+NTSTATUS vboxVidPnSetupSourceInfo(PVBOXMP_DEVEXT pDevExt, CONST D3DKMDT_VIDPN_SOURCE_MODE* pVidPnSourceModeInfo,
+                                  PVBOXWDDM_ALLOCATION pAllocation, D3DDDI_VIDEO_PRESENT_SOURCE_ID  VidPnSourceId,
+                                  VBOXWDDM_SOURCE *paSources)
 {
+    RT_NOREF(pDevExt);
     PVBOXWDDM_SOURCE pSource = &paSources[VidPnSourceId];
     /* pVidPnSourceModeInfo could be null if STATUS_GRAPHICS_MODE_NOT_PINNED,
      * see VBoxVidPnCommitSourceModeForSrcId */
@@ -2234,20 +2313,24 @@ typedef struct VBOXVIDPNCOMMITTARGETMODE
     VBOXWDDM_TARGET *paTargets;
 } VBOXVIDPNCOMMITTARGETMODE;
 
-DECLCALLBACK(BOOLEAN) vboxVidPnCommitTargetModeEnum(PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology, const DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface,
-        CONST D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId, SIZE_T cTgtPaths, PVOID pContext)
+DECLCALLBACK(BOOLEAN) vboxVidPnCommitTargetModeEnum(PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology,
+                                                    const DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface,
+                                                    CONST D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId,
+                                                    D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId, SIZE_T cTgtPaths,
+                                                    PVOID pContext)
 {
+    RT_NOREF(hVidPnTopology, pVidPnTopologyInterface, cTgtPaths);
     VBOXVIDPNCOMMITTARGETMODE *pInfo = (VBOXVIDPNCOMMITTARGETMODE*)pContext;
     Assert(cTgtPaths <= (SIZE_T)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
     D3DKMDT_HVIDPNTARGETMODESET hVidPnTargetModeSet;
     CONST DXGK_VIDPNTARGETMODESET_INTERFACE* pVidPnTargetModeSetInterface;
     NTSTATUS Status = pInfo->pVidPnInterface->pfnAcquireTargetModeSet(pInfo->hVidPn, VidPnTargetId, &hVidPnTargetModeSet, &pVidPnTargetModeSetInterface);
-    Assert(Status == STATUS_SUCCESS);
+    AssertNtStatusSuccess(Status);
     if (Status == STATUS_SUCCESS)
     {
         CONST D3DKMDT_VIDPN_TARGET_MODE* pPinnedVidPnTargetModeInfo;
         Status = pVidPnTargetModeSetInterface->pfnAcquirePinnedModeInfo(hVidPnTargetModeSet, &pPinnedVidPnTargetModeInfo);
-        Assert(Status == STATUS_SUCCESS);
+        AssertNtStatusSuccess(Status);
         if (Status == STATUS_SUCCESS)
         {
             VBOXWDDM_SOURCE *pSource = &pInfo->paSources[VidPnSourceId];
@@ -2275,12 +2358,26 @@ DECLCALLBACK(BOOLEAN) vboxVidPnCommitTargetModeEnum(PVBOXMP_DEVEXT pDevExt, D3DK
 
 NTSTATUS VBoxVidPnCommitSourceModeForSrcId(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hDesiredVidPn, const DXGK_VIDPN_INTERFACE* pVidPnInterface,
         PVBOXWDDM_ALLOCATION pAllocation,
-        D3DDDI_VIDEO_PRESENT_SOURCE_ID  VidPnSourceId, VBOXWDDM_SOURCE *paSources, VBOXWDDM_TARGET *paTargets)
+        D3DDDI_VIDEO_PRESENT_SOURCE_ID  VidPnSourceId, VBOXWDDM_SOURCE *paSources, VBOXWDDM_TARGET *paTargets, BOOLEAN bPathPowerTransition)
 {
     D3DKMDT_HVIDPNSOURCEMODESET hCurVidPnSourceModeSet;
     const DXGK_VIDPNSOURCEMODESET_INTERFACE *pCurVidPnSourceModeSetInterface;
 
     PVBOXWDDM_SOURCE pSource = &paSources[VidPnSourceId];
+    NTSTATUS Status;
+
+    if (bPathPowerTransition)
+    {
+        RTRECTSIZE PinnedModeSize;
+        bool bHasPinnedMode;
+
+        Status = vboxVidPnQueryPinnedSourceMode(hDesiredVidPn, pVidPnInterface, VidPnSourceId, &PinnedModeSize);
+        bHasPinnedMode = Status == STATUS_SUCCESS && PinnedModeSize.cx > 0 && PinnedModeSize.cy > 0;
+        pSource->bBlankedByPowerOff = !bHasPinnedMode;
+
+        LOG(("Path power transition: srcId %d goes blank %d", VidPnSourceId, pSource->bBlankedByPowerOff));
+    }
+
     VBOXWDDM_TARGET_ITER Iter;
     VBoxVidPnStTIterInit(pSource, paTargets, (uint32_t)VBoxCommonFromDeviceExt(pDevExt)->cDisplays, &Iter);
     for (PVBOXWDDM_TARGET pTarget = VBoxVidPnStTIterNext(&Iter);
@@ -2290,16 +2387,17 @@ NTSTATUS VBoxVidPnCommitSourceModeForSrcId(PVBOXMP_DEVEXT pDevExt, const D3DKMDT
         Assert(pTarget->VidPnSourceId == pSource->AllocData.SurfDesc.VidPnSourceId);
         pTarget->Size.cx = 0;
         pTarget->Size.cy = 0;
+        pTarget->fBlankedByPowerOff = RT_BOOL(pSource->bBlankedByPowerOff);
         pTarget->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_ALL;
     }
 
     VBoxVidPnStSourceCleanup(paSources, VidPnSourceId, paTargets, (uint32_t)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
 
-    NTSTATUS Status = pVidPnInterface->pfnAcquireSourceModeSet(hDesiredVidPn,
+    Status = pVidPnInterface->pfnAcquireSourceModeSet(hDesiredVidPn,
                 VidPnSourceId,
                 &hCurVidPnSourceModeSet,
                 &pCurVidPnSourceModeSetInterface);
-    Assert(Status == STATUS_SUCCESS);
+    AssertNtStatusSuccess(Status);
     if (Status == STATUS_SUCCESS)
     {
         CONST D3DKMDT_VIDPN_SOURCE_MODE* pPinnedVidPnSourceModeInfo;
@@ -2309,13 +2407,13 @@ NTSTATUS VBoxVidPnCommitSourceModeForSrcId(PVBOXMP_DEVEXT pDevExt, const D3DKMDT
         {
             Assert(pPinnedVidPnSourceModeInfo);
             Status = vboxVidPnCommitSourceMode(pDevExt, pPinnedVidPnSourceModeInfo, pAllocation, VidPnSourceId, paSources);
-            Assert(Status == STATUS_SUCCESS);
+            AssertNtStatusSuccess(Status);
             if (Status == STATUS_SUCCESS)
             {
                 D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology;
                 CONST DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface;
                 Status = pVidPnInterface->pfnGetTopology(hDesiredVidPn, &hVidPnTopology, &pVidPnTopologyInterface);
-                Assert(Status == STATUS_SUCCESS);
+                AssertNtStatusSuccess(Status);
                 if (Status == STATUS_SUCCESS)
                 {
                     VBOXVIDPNCOMMITTARGETMODE TgtModeInfo = {0};
@@ -2331,7 +2429,7 @@ NTSTATUS VBoxVidPnCommitSourceModeForSrcId(PVBOXMP_DEVEXT pDevExt, const D3DKMDT
                     if (Status == STATUS_SUCCESS)
                     {
                         Status = TgtModeInfo.Status;
-                        Assert(Status == STATUS_SUCCESS);
+                        AssertNtStatusSuccess(Status);
                     }
                     else if (Status == STATUS_GRAPHICS_SOURCE_NOT_IN_TOPOLOGY)
                     {
@@ -2351,7 +2449,7 @@ NTSTATUS VBoxVidPnCommitSourceModeForSrcId(PVBOXMP_DEVEXT pDevExt, const D3DKMDT
         else if (Status == STATUS_GRAPHICS_MODE_NOT_PINNED)
         {
             Status = vboxVidPnCommitSourceMode(pDevExt, NULL, pAllocation, VidPnSourceId, paSources);
-            Assert(Status == STATUS_SUCCESS);
+            AssertNtStatusSuccess(Status);
         }
         else
             WARN(("pfnAcquirePinnedModeInfo failed Status(0x%x)", Status));
@@ -2404,7 +2502,7 @@ NTSTATUS VBoxVidPnCommitAll(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hDesire
     while ((pPath = VBoxVidPnPathIterNext(&PathIter)) != NULL)
     {
         Status = VBoxVidPnCommitSourceModeForSrcId(pDevExt, hDesiredVidPn, pVidPnInterface, pAllocation,
-                    pPath->VidPnSourceId, paSources, paTargets);
+                    pPath->VidPnSourceId, paSources, paTargets, FALSE);
         if (Status != STATUS_SUCCESS)
         {
             WARN(("VBoxVidPnCommitSourceModeForSrcId failed Status(0x%x)", Status));
@@ -2861,9 +2959,9 @@ NTSTATUS VBoxVidPnDumpMonitorModeSet(const char *pPrefix, PVBOXMP_DEVEXT pDevExt
         WARN(("iter status failed %#x", Status));
     }
 
-    NTSTATUS tmpStatus = pMonitorInterface->pfnReleaseMonitorSourceModeSet(pDevExt->u.primary.DxgkInterface.DeviceHandle, hVidPnModeSet);
-    if (!NT_SUCCESS(tmpStatus))
-        WARN(("pfnReleaseMonitorSourceModeSet failed tmpStatus(0x%x)", tmpStatus));
+    NTSTATUS rcNt2 = pMonitorInterface->pfnReleaseMonitorSourceModeSet(pDevExt->u.primary.DxgkInterface.DeviceHandle, hVidPnModeSet);
+    if (!NT_SUCCESS(rcNt2))
+        WARN(("pfnReleaseMonitorSourceModeSet failed rcNt2(0x%x)", rcNt2));
 
     LOGREL_EXACT(("%s", pSuffix));
 
@@ -2879,7 +2977,7 @@ void vboxVidPnDumpPinnedSourceMode(const D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN
                         VidPnSourceId,
                         &hCurVidPnSourceModeSet,
                         &pCurVidPnSourceModeSetInterface);
-    Assert(Status == STATUS_SUCCESS);
+    AssertNtStatusSuccess(Status);
     if (Status == STATUS_SUCCESS)
     {
         CONST D3DKMDT_VIDPN_SOURCE_MODE* pPinnedVidPnSourceModeInfo;
@@ -2908,16 +3006,21 @@ void vboxVidPnDumpPinnedSourceMode(const D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN
 }
 
 
-DECLCALLBACK(BOOLEAN) vboxVidPnDumpSourceModeSetEnum(D3DKMDT_HVIDPNSOURCEMODESET hNewVidPnSourceModeSet, const DXGK_VIDPNSOURCEMODESET_INTERFACE *pVidPnSourceModeSetInterface,
-        const D3DKMDT_VIDPN_SOURCE_MODE *pNewVidPnSourceModeInfo, PVOID pContext)
+DECLCALLBACK(BOOLEAN) vboxVidPnDumpSourceModeSetEnum(D3DKMDT_HVIDPNSOURCEMODESET hNewVidPnSourceModeSet,
+                                                     const DXGK_VIDPNSOURCEMODESET_INTERFACE *pVidPnSourceModeSetInterface,
+                                                     const D3DKMDT_VIDPN_SOURCE_MODE *pNewVidPnSourceModeInfo, PVOID pContext)
 {
+
+    RT_NOREF(hNewVidPnSourceModeSet, pVidPnSourceModeSetInterface, pNewVidPnSourceModeInfo, pContext);
     VBoxVidPnDumpSourceMode("SourceMode: ", pNewVidPnSourceModeInfo, "\n");
     return TRUE;
 }
 
-void vboxVidPnDumpSourceModeSet(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_INTERFACE* pVidPnInterface, D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId)
+void vboxVidPnDumpSourceModeSet(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_INTERFACE* pVidPnInterface,
+                                D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId)
 {
-    LOGREL_EXACT(("  >>>+++SourceMode Set for Source(%d)+++\n", VidPnSourceId));
+    RT_NOREF(pDevExt);
+    LOGREL_EXACT(("\n  >>>+++SourceMode Set for Source(%d)+++\n", VidPnSourceId));
     D3DKMDT_HVIDPNSOURCEMODESET hCurVidPnSourceModeSet;
     const DXGK_VIDPNSOURCEMODESET_INTERFACE *pCurVidPnSourceModeSetInterface;
 
@@ -2925,13 +3028,13 @@ void vboxVidPnDumpSourceModeSet(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hVi
                         VidPnSourceId,
                         &hCurVidPnSourceModeSet,
                         &pCurVidPnSourceModeSetInterface);
-    Assert(Status == STATUS_SUCCESS);
+    AssertNtStatusSuccess(Status);
     if (Status == STATUS_SUCCESS)
     {
 
         Status = vboxVidPnEnumSourceModes(hCurVidPnSourceModeSet, pCurVidPnSourceModeSetInterface,
                 vboxVidPnDumpSourceModeSetEnum, NULL);
-        Assert(Status == STATUS_SUCCESS);
+        AssertNtStatusSuccess(Status);
         if (Status != STATUS_SUCCESS)
         {
             LOGREL_EXACT(("ERROR enumerating Source Modes(0x%x)\n", Status));
@@ -2946,16 +3049,20 @@ void vboxVidPnDumpSourceModeSet(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hVi
     LOGREL_EXACT(("  <<<+++End Of SourceMode Set for Source(%d)+++", VidPnSourceId));
 }
 
-DECLCALLBACK(BOOLEAN) vboxVidPnDumpTargetModeSetEnum(D3DKMDT_HVIDPNTARGETMODESET hNewVidPnTargetModeSet, const DXGK_VIDPNTARGETMODESET_INTERFACE *pVidPnTargetModeSetInterface,
-        const D3DKMDT_VIDPN_TARGET_MODE *pNewVidPnTargetModeInfo, PVOID pContext)
+DECLCALLBACK(BOOLEAN) vboxVidPnDumpTargetModeSetEnum(D3DKMDT_HVIDPNTARGETMODESET hNewVidPnTargetModeSet,
+                                                     const DXGK_VIDPNTARGETMODESET_INTERFACE *pVidPnTargetModeSetInterface,
+                                                     const D3DKMDT_VIDPN_TARGET_MODE *pNewVidPnTargetModeInfo, PVOID pContext)
 {
+    RT_NOREF(hNewVidPnTargetModeSet, pVidPnTargetModeSetInterface, pNewVidPnTargetModeInfo, pContext);
     VBoxVidPnDumpTargetMode("TargetMode: ", pNewVidPnTargetModeInfo, "\n");
     return TRUE;
 }
 
-void vboxVidPnDumpTargetModeSet(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_INTERFACE* pVidPnInterface, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId)
+void vboxVidPnDumpTargetModeSet(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_INTERFACE* pVidPnInterface,
+                                D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId)
 {
-    LOGREL_EXACT(("  >>>---TargetMode Set for Target(%d)---\n", VidPnTargetId));
+    RT_NOREF(pDevExt);
+    LOGREL_EXACT(("\n  >>>---TargetMode Set for Target(%d)---\n", VidPnTargetId));
     D3DKMDT_HVIDPNTARGETMODESET hCurVidPnTargetModeSet;
     const DXGK_VIDPNTARGETMODESET_INTERFACE *pCurVidPnTargetModeSetInterface;
 
@@ -2963,13 +3070,13 @@ void vboxVidPnDumpTargetModeSet(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hVi
                         VidPnTargetId,
                         &hCurVidPnTargetModeSet,
                         &pCurVidPnTargetModeSetInterface);
-    Assert(Status == STATUS_SUCCESS);
+    AssertNtStatusSuccess(Status);
     if (Status == STATUS_SUCCESS)
     {
 
         Status = vboxVidPnEnumTargetModes(hCurVidPnTargetModeSet, pCurVidPnTargetModeSetInterface,
                 vboxVidPnDumpTargetModeSetEnum, NULL);
-        Assert(Status == STATUS_SUCCESS);
+        AssertNtStatusSuccess(Status);
         if (Status != STATUS_SUCCESS)
         {
             LOGREL_EXACT(("ERROR enumerating Target Modes(0x%x)\n", Status));
@@ -2994,7 +3101,7 @@ void vboxVidPnDumpPinnedTargetMode(const D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN
                         VidPnTargetId,
                         &hCurVidPnTargetModeSet,
                         &pCurVidPnTargetModeSetInterface);
-    Assert(Status == STATUS_SUCCESS);
+    AssertNtStatusSuccess(Status);
     if (Status == STATUS_SUCCESS)
     {
         CONST D3DKMDT_VIDPN_TARGET_MODE* pPinnedVidPnTargetModeInfo;
@@ -3028,10 +3135,10 @@ void VBoxVidPnDumpCofuncModalityInfo(const char *pPrefix, D3DKMDT_ENUMCOFUNCMODA
             pPivot->VidPnSourceId, pPivot->VidPnTargetId, pSuffix));
 }
 
-void vboxVidPnDumpCofuncModalityArg(const char *pPrefix, CONST DXGKARG_ENUMVIDPNCOFUNCMODALITY* CONST  pEnumCofuncModalityArg, const char *pSuffix)
+void vboxVidPnDumpCofuncModalityArg(const char *pPrefix, D3DKMDT_ENUMCOFUNCMODALITY_PIVOT_TYPE enmPivot, const DXGK_ENUM_PIVOT *pPivot, const char *pSuffix)
 {
-    LOGREL_EXACT(("%sPivotType(%s), SourceId(0x%x), TargetId(0x%x),%s", pPrefix, vboxVidPnDumpStrCFMPivotType(pEnumCofuncModalityArg->EnumPivotType),
-            pEnumCofuncModalityArg->EnumPivot.VidPnSourceId, pEnumCofuncModalityArg->EnumPivot.VidPnTargetId, pSuffix));
+    LOGREL_EXACT(("%sPivotType(%s), SourceId(0x%x), TargetId(0x%x),%s", pPrefix, vboxVidPnDumpStrCFMPivotType(enmPivot),
+            pPivot->VidPnSourceId, pPivot->VidPnTargetId, pSuffix));
 }
 
 void vboxVidPnDumpPath(const D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_INTERFACE* pVidPnInterface, const D3DKMDT_VIDPN_PRESENT_PATH *pVidPnPresentPathInfo)
@@ -3084,12 +3191,12 @@ void vboxVidPnDumpVidPn(const char * pPrefix, PVBOXMP_DEVEXT pDevExt, D3DKMDT_HV
     D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology;
     const DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface;
     NTSTATUS Status = pVidPnInterface->pfnGetTopology(hVidPn, &hVidPnTopology, &pVidPnTopologyInterface);
-    Assert(Status == STATUS_SUCCESS);
+    AssertNtStatusSuccess(Status);
     if (Status == STATUS_SUCCESS)
     {
         Status = vboxVidPnEnumPaths(hVidPnTopology, pVidPnTopologyInterface,
                                         vboxVidPnDumpPathEnum, &CbData);
-        Assert(Status == STATUS_SUCCESS);
+        AssertNtStatusSuccess(Status);
     }
 
     for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)

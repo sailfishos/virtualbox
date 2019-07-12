@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -207,7 +207,7 @@ typedef struct PDMSRVHLP
      * Creates a timer.
      *
      * @returns VBox status.
-     * @param   pVM             The VM to create the timer in.
+     * @param   pVM             The cross context VM structure.
      * @param   pSrvIns         Service instance.
      * @param   enmClock        The clock to use on this timer.
      * @param   pfnCallback     Callback function.
@@ -284,7 +284,7 @@ typedef struct PDMSRVINS
 #define PDM_SRVINS_VERSION                      PDM_VERSION_MAKE(0xdffe, 1, 0)
 
 /** Converts a pointer to the PDMSRVINS::IBase to a pointer to PDMSRVINS. */
-#define PDMIBASE_2_PDMSRV(pInterface) ( (PPDMSRVINS)((char *)(pInterface) - RT_OFFSETOF(PDMSRVINS, IBase)) )
+#define PDMIBASE_2_PDMSRV(pInterface) ( (PPDMSRVINS)((char *)(pInterface) - RT_UOFFSETOF(PDMSRVINS, IBase)) )
 
 
 

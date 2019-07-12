@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,23 +13,24 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-/*
- * Deal with conflicts first.
- * PVM - BSD mess, that FreeBSD has correct a long time ago.
- * iprt/types.h before sys/param.h - prevents UINT32_C and friends.
- */
-#include <iprt/types.h>
-#include <sys/param.h>
-#undef PVM
 
-#include <IOKit/IOLib.h> /* Assert as function */
-
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_NET_FLT_DRV
+#include "../../../Runtime/r0drv/darwin/the-darwin-kernel.h"
+
 #include <VBox/log.h>
 #include <VBox/err.h>
 #include <VBox/intnetinline.h>
@@ -51,6 +52,7 @@
 #include <sys/conf.h>
 #include <sys/errno.h>
 #include <sys/ioccom.h>
+#include <sys/filio.h>
 #include <sys/malloc.h>
 #include <sys/proc.h>
 #include <sys/socket.h>
@@ -61,15 +63,24 @@ RT_C_DECLS_BEGIN /* Buggy 10.4 headers, fixed in 10.5. */
 #include <sys/kpi_mbuf.h>
 #include <net/kpi_interfacefilter.h>
 RT_C_DECLS_END
+
+#include <sys/kpi_socket.h>
 #include <net/if.h>
+#include <net/if_var.h>
+RT_C_DECLS_BEGIN
+#include <net/bpf.h>
+RT_C_DECLS_END
+#include <netinet/in.h>
+#include <netinet/in_var.h>
+#include <netinet6/in6_var.h>
 
 #define VBOXNETFLT_OS_SPECFIC 1
 #include "../VBoxNetFltInternal.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The maximum number of SG segments.
  * Used to prevent stack overflow and similar bad stuff. */
 #define VBOXNETFLT_DARWIN_MAX_SEGS      32
@@ -79,19 +90,26 @@ RT_C_DECLS_END
 #define VBOXNETFLT_DARWIN_TEST_SEG_SIZE 14
 #endif
 
+/* XXX: hidden undef #ifdef __APPLE__ */
+#define VBOX_IN_LOOPBACK(addr)  (((addr) & IN_CLASSA_NET) == 0x7f000000)
+#define VBOX_IN_LINKLOCAL(addr) (((addr) & IN_CLASSB_NET) == 0xa9fe0000)
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 RT_C_DECLS_BEGIN
 static kern_return_t    VBoxNetFltDarwinStart(struct kmod_info *pKModInfo, void *pvData);
 static kern_return_t    VBoxNetFltDarwinStop(struct kmod_info *pKModInfo, void *pvData);
+
+static void vboxNetFltDarwinSysSockUpcall(socket_t pSysSock, void *pvData, int fWait);
 RT_C_DECLS_END
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The mbuf tag data.
  *
@@ -111,9 +129,9 @@ typedef VBOXNETFLTTAG *PVBOXNETFLTTAG;
 typedef VBOXNETFLTTAG const *PCVBOXNETFLTTAG;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Declare the module stuff.
  */
@@ -227,13 +245,13 @@ static void vboxNetFltDarwinDetectPCountOffset(ifnet_t pIfNet)
  */
 static kern_return_t    VBoxNetFltDarwinStart(struct kmod_info *pKModInfo, void *pvData)
 {
-    int rc;
+    RT_NOREF(pKModInfo, pvData);
 
     /*
      * Initialize IPRT and find our module tag id.
      * (IPRT is shared with VBoxDrv, it creates the loggers.)
      */
-    rc = RTR0Init(0);
+    int rc = RTR0Init(0);
     if (RT_SUCCESS(rc))
     {
         Log(("VBoxNetFltDarwinStart\n"));
@@ -273,6 +291,7 @@ static kern_return_t    VBoxNetFltDarwinStart(struct kmod_info *pKModInfo, void 
  */
 static kern_return_t VBoxNetFltDarwinStop(struct kmod_info *pKModInfo, void *pvData)
 {
+    RT_NOREF(pKModInfo, pvData);
     Log(("VBoxNetFltDarwinStop\n"));
 
     /*
@@ -318,7 +337,7 @@ DECLINLINE(ifnet_t) vboxNetFltDarwinRetainIfNet(PVBOXNETFLTINS pThis)
         if (pIfNet)
             ifnet_reference(pIfNet);
     }
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     return pIfNet;
 }
@@ -559,9 +578,10 @@ DECLINLINE(unsigned) vboxNetFltDarwinMBufCalcSGSegs(PVBOXNETFLTINS pThis, mbuf_t
  *                              This should match the number in the mbuf exactly!
  * @param   fSrc                The source of the frame.
  */
-DECLINLINE(void) vboxNetFltDarwinMBufToSG(PVBOXNETFLTINS pThis, mbuf_t pMBuf, void *pvFrame, PINTNETSG pSG, unsigned cSegs, uint32_t fSrc)
+DECLINLINE(void) vboxNetFltDarwinMBufToSG(PVBOXNETFLTINS pThis, mbuf_t pMBuf, void *pvFrame, PINTNETSG pSG, unsigned cSegs,
+                                          uint32_t fSrc)
 {
-    NOREF(pThis);
+    RT_NOREF(pThis, fSrc);
 
     /*
      * Walk the chain and convert the buffers to segments.  Works INTNETSG::cbTotal.
@@ -627,7 +647,7 @@ DECLINLINE(void) vboxNetFltDarwinMBufToSG(PVBOXNETFLTINS pThis, mbuf_t pMBuf, vo
      * yet been padded. The current solution is to add a segment pointing
      * to a buffer containing all zeros and pray that works for all frames...
      */
-    if (pSG->cbTotal < 60 && (fSrc & INTNETTRUNKDIR_HOST))
+    if (pSG->cbTotal < 60 && (fSrc == INTNETTRUNKDIR_HOST))
     {
         AssertReturnVoid(iSeg < cSegs);
 
@@ -748,7 +768,7 @@ static void vboxNetFltDarwinIffDetached(void *pvThis, ifnet_t pIfNet)
     ASMAtomicUoWriteBool(&pThis->fRediscoveryPending, false);
     ASMAtomicWriteBool(&pThis->fDisconnectedFromHost, true);
 
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     if (pIfNet)
         ifnet_release(pIfNet);
@@ -762,6 +782,7 @@ static void vboxNetFltDarwinIffDetached(void *pvThis, ifnet_t pIfNet)
  */
 static errno_t vboxNetFltDarwinIffIoCtl(void *pvThis, ifnet_t pIfNet, protocol_family_t eProtocol, u_long uCmd, void *pvArg)
 {
+    RT_NOREF(pIfNet);
     PVBOXNETFLTINS pThis = (PVBOXNETFLTINS)pvThis;
     LogFlow(("vboxNetFltDarwinIffIoCtl: pThis=%p uCmd=%lx\n", pThis, uCmd));
 
@@ -896,7 +917,7 @@ static errno_t vboxNetFltDarwinIffInputOutputWorker(PVBOXNETFLTINS pThis, mbuf_t
      * TCP/IP checksums as long as possible.
      * ASSUMES this only applies to outbound IP packets.
      */
-    if (    (fSrc & INTNETTRUNKDIR_HOST)
+    if (    (fSrc == INTNETTRUNKDIR_HOST)
         &&  eProtocol == PF_INET)
     {
         Assert(!pvFrame);
@@ -910,27 +931,46 @@ static errno_t vboxNetFltDarwinIffInputOutputWorker(PVBOXNETFLTINS pThis, mbuf_t
     unsigned cSegs = vboxNetFltDarwinMBufCalcSGSegs(pThis, pMBuf, pvFrame);
     if (cSegs < VBOXNETFLT_DARWIN_MAX_SEGS)
     {
-        PINTNETSG pSG = (PINTNETSG)alloca(RT_OFFSETOF(INTNETSG, aSegs[cSegs]));
+        PINTNETSG pSG = (PINTNETSG)alloca(RT_UOFFSETOF_DYN(INTNETSG, aSegs[cSegs]));
         vboxNetFltDarwinMBufToSG(pThis, pMBuf, pvFrame, pSG, cSegs, fSrc);
 
         fDropIt = pThis->pSwitchPort->pfnRecv(pThis->pSwitchPort, NULL /* pvIf */, pSG, fSrc);
         if (fDropIt)
         {
             /*
-             * Check if this interface is in promiscuous mode. We should not drop
-             * any packets before they get to the driver as it passes them to tap
-             * callbacks in order for BPF to work properly.
+             * If the interface is in promiscuous mode we should let
+             * all inbound packets (this one was for a bridged guest)
+             * reach the driver as it passes them to tap callbacks in
+             * order for BPF to work properly.
              */
-            if (vboxNetFltDarwinIsPromiscuous(pThis))
+            if (   fSrc == INTNETTRUNKDIR_WIRE
+                && vboxNetFltDarwinIsPromiscuous(pThis))
+            {
                 fDropIt = false;
-            else
-                mbuf_freem(pMBuf);
+            }
+
+            /*
+             * A packet from the host to a guest.  As we won't pass it
+             * to the drvier/wire we need to feed it to bpf ourselves.
+             *
+             * XXX: TODO: bpf should be done before; use pfnPreRecv?
+             */
+            if (fSrc == INTNETTRUNKDIR_HOST)
+            {
+                bpf_tap_out(pThis->u.s.pIfNet, DLT_EN10MB, pMBuf, NULL, 0);
+                ifnet_stat_increment_out(pThis->u.s.pIfNet, 1, mbuf_len(pMBuf), 0);
+            }
         }
     }
 
     vboxNetFltRelease(pThis, true /* fBusy */);
 
-    return fDropIt ? EJUSTRETURN : 0;
+    if (fDropIt)
+    {
+        mbuf_freem(pMBuf);
+        return EJUSTRETURN;
+    }
+    return 0;
 }
 
 
@@ -956,8 +996,7 @@ static errno_t vboxNetFltDarwinIffOutput(void *pvThis, ifnet_t pIfNet, protocol_
  */
 static errno_t vboxNetFltDarwinIffInput(void *pvThis, ifnet_t pIfNet, protocol_family_t eProtocol, mbuf_t *ppMBuf, char **ppchFrame)
 {
-    NOREF(eProtocol);
-    NOREF(pIfNet);
+    RT_NOREF(eProtocol, pIfNet);
     return vboxNetFltDarwinIffInputOutputWorker((PVBOXNETFLTINS)pvThis, *ppMBuf, *ppchFrame, INTNETTRUNKDIR_WIRE, eProtocol);
 }
 
@@ -965,6 +1004,7 @@ static errno_t vboxNetFltDarwinIffInput(void *pvThis, ifnet_t pIfNet, protocol_f
 /** A worker thread for vboxNetFltSendDummy(). */
 static DECLCALLBACK(int) vboxNetFltSendDummyWorker(RTTHREAD hThreadSelf, void *pvUser)
 {
+    RT_NOREF(hThreadSelf);
     Assert(pvUser);
     ifnet_t pIfNet = (ifnet_t)pvUser;
     return VBoxNetSendDummy(pIfNet);
@@ -1008,6 +1048,7 @@ static void vboxNetFltSendDummy(ifnet_t pIfNet)
 static int vboxNetFltDarwinAttachToInterface(PVBOXNETFLTINS pThis, bool fRediscovery)
 {
     LogFlow(("vboxNetFltDarwinAttachToInterface: pThis=%p (%s)\n", pThis, pThis->szName));
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Locate the interface first.
@@ -1025,12 +1066,13 @@ static int vboxNetFltDarwinAttachToInterface(PVBOXNETFLTINS pThis, bool fRedisco
             LogRel(("VBoxFltDrv: failed to find ifnet '%s' (err=%d)\n", pThis->szName, err));
         else
             Log(("VBoxFltDrv: failed to find ifnet '%s' (err=%d)\n", pThis->szName, err));
+        IPRT_DARWIN_RESTORE_EFL_AC();
         return VERR_INTNET_FLT_IF_NOT_FOUND;
     }
 
     RTSpinlockAcquire(pThis->hSpinlock);
     ASMAtomicUoWritePtr(&pThis->u.s.pIfNet, pIfNet);
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     /* Adjust g_offIfNetPCount as it varies for different versions of xnu. */
     vboxNetFltDarwinDetectPCountOffset(pIfNet);
@@ -1068,7 +1110,7 @@ static int vboxNetFltDarwinAttachToInterface(PVBOXNETFLTINS pThis, bool fRedisco
             ASMAtomicUoWritePtr(&pThis->u.s.pIfFilter, pIfFilter);
             pIfNet = NULL; /* don't dereference it */
         }
-        RTSpinlockReleaseNoInts(pThis->hSpinlock);
+        RTSpinlockRelease(pThis->hSpinlock);
 
         /* Report capabilities. */
         if (   !pIfNet
@@ -1076,7 +1118,15 @@ static int vboxNetFltDarwinAttachToInterface(PVBOXNETFLTINS pThis, bool fRedisco
         {
             Assert(pThis->pSwitchPort);
             pThis->pSwitchPort->pfnReportMacAddress(pThis->pSwitchPort, &pThis->u.s.MacAddr);
+#if 0
+            /*
+             * XXX: Don't tell SrvIntNetR0 if the interface is
+             * promiscuous, because there's no code yet to update that
+             * information and we don't want it stuck, spamming all
+             * traffic to the host.
+             */
             pThis->pSwitchPort->pfnReportPromiscuousMode(pThis->pSwitchPort, vboxNetFltDarwinIsPromiscuous(pThis));
+#endif
             pThis->pSwitchPort->pfnReportGsoCapabilities(pThis->pSwitchPort, 0,  INTNETTRUNKDIR_WIRE | INTNETTRUNKDIR_HOST);
             pThis->pSwitchPort->pfnReportNoPreemptDsts(pThis->pSwitchPort, 0 /* none */);
             vboxNetFltRelease(pThis, true /*fBusy*/);
@@ -1089,9 +1139,10 @@ static int vboxNetFltDarwinAttachToInterface(PVBOXNETFLTINS pThis, bool fRedisco
 
     int rc = RTErrConvertFromErrno(err);
     if (RT_SUCCESS(rc))
-        LogRel(("VBoxFltDrv: attached to '%s' / %.*Rhxs\n", pThis->szName, sizeof(pThis->u.s.MacAddr), &pThis->u.s.MacAddr));
+        LogRel(("VBoxFltDrv: attached to '%s' / %RTmac\n", pThis->szName, &pThis->u.s.MacAddr));
     else
         LogRel(("VBoxFltDrv: failed to attach to ifnet '%s' (err=%d)\n", pThis->szName, err));
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 
@@ -1105,6 +1156,7 @@ bool vboxNetFltOsMaybeRediscovered(PVBOXNETFLTINS pThis)
 
 int  vboxNetFltPortOsXmit(PVBOXNETFLTINS pThis, void *pvIfData, PINTNETSG pSG, uint32_t fDst)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
     NOREF(pvIfData);
 
     int rc = VINF_SUCCESS;
@@ -1113,12 +1165,9 @@ int  vboxNetFltPortOsXmit(PVBOXNETFLTINS pThis, void *pvIfData, PINTNETSG pSG, u
     {
         /*
          * Create a mbuf for the gather list and push it onto the wire.
-         *
-         * Note! If the interface is in the promiscuous mode we need to send the
-         *       packet down the stack so it reaches the driver and Berkeley
-         *       Packet Filter (see @bugref{5817}).
+         * BPF tap and stats will be taken care of by the driver.
          */
-        if ((fDst & INTNETTRUNKDIR_WIRE) || vboxNetFltDarwinIsPromiscuous(pThis))
+        if (fDst & INTNETTRUNKDIR_WIRE)
         {
             mbuf_t pMBuf = vboxNetFltDarwinMBufFromSG(pThis, pSG);
             if (pMBuf)
@@ -1133,20 +1182,43 @@ int  vboxNetFltPortOsXmit(PVBOXNETFLTINS pThis, void *pvIfData, PINTNETSG pSG, u
 
         /*
          * Create a mbuf for the gather list and push it onto the host stack.
+         * BPF tap and stats are on us.
          */
         if (fDst & INTNETTRUNKDIR_HOST)
         {
             mbuf_t pMBuf = vboxNetFltDarwinMBufFromSG(pThis, pSG);
             if (pMBuf)
             {
-                /* This is what IONetworkInterface::inputPacket does. */
+                void *pvEthHdr = mbuf_data(pMBuf);
                 unsigned const cbEthHdr = 14;
-                mbuf_pkthdr_setheader(pMBuf, mbuf_data(pMBuf));
-                mbuf_pkthdr_setlen(pMBuf, mbuf_pkthdr_len(pMBuf) - cbEthHdr);
-                mbuf_setdata(pMBuf, (uint8_t *)mbuf_data(pMBuf) + cbEthHdr, mbuf_len(pMBuf) - cbEthHdr);
-                mbuf_pkthdr_setrcvif(pMBuf, pIfNet); /* will crash without this. */
+                struct ifnet_stat_increment_param stats;
 
-                errno_t err = ifnet_input(pIfNet, pMBuf, NULL);
+                RT_ZERO(stats);
+                stats.packets_in = 1;
+                stats.bytes_in = mbuf_len(pMBuf); /* full ethernet frame */
+
+                mbuf_pkthdr_setrcvif(pMBuf, pIfNet);
+                mbuf_pkthdr_setheader(pMBuf, pvEthHdr); /* link-layer header */
+                mbuf_adj(pMBuf, cbEthHdr);              /* move to payload */
+
+#if 0 /* XXX: disabled since we don't request promiscuous from intnet */
+                /*
+                 * TODO: Since intnet knows whether it forwarded us
+                 * this packet because it's for us or because we are
+                 * promiscuous, it can perhaps set a flag for us in
+                 * INTNETSG::fFlags so that we don't have to re-check
+                 * it here.
+                 */
+                PCRTNETETHERHDR pcEthHdr = (PCRTNETETHERHDR)pvEthHdr;
+                if (   (pcEthHdr->DstMac.au8[0] & 1) == 0 /* unicast? */
+                    && memcmp(&pcEthHdr->DstMac, &pThis->u.s.MacAddr, sizeof(RTMAC)) != 0)
+                {
+                    mbuf_setflags_mask(pMBuf, MBUF_PROMISC, MBUF_PROMISC);
+                }
+#endif
+
+                bpf_tap_in(pIfNet, DLT_EN10MB, pMBuf, pvEthHdr, cbEthHdr);
+                errno_t err = ifnet_input(pIfNet, pMBuf, &stats);
                 if (err)
                     rc = RTErrConvertFromErrno(err);
             }
@@ -1157,12 +1229,14 @@ int  vboxNetFltPortOsXmit(PVBOXNETFLTINS pThis, void *pvIfData, PINTNETSG pSG, u
         vboxNetFltDarwinReleaseIfNet(pThis, pIfNet);
     }
 
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 
 
 void vboxNetFltPortOsSetActive(PVBOXNETFLTINS pThis, bool fActive)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
     ifnet_t pIfNet = vboxNetFltDarwinRetainIfNet(pThis);
     if (pIfNet)
     {
@@ -1261,12 +1335,14 @@ void vboxNetFltPortOsSetActive(PVBOXNETFLTINS pThis, bool fActive)
 
         vboxNetFltDarwinReleaseIfNet(pThis, pIfNet);
     }
+    IPRT_DARWIN_RESTORE_EFL_AC();
 }
 
 
 int vboxNetFltOsDisconnectIt(PVBOXNETFLTINS pThis)
 {
     /* Nothing to do here. */
+    RT_NOREF(pThis);
     return VINF_SUCCESS;
 }
 
@@ -1274,32 +1350,330 @@ int vboxNetFltOsDisconnectIt(PVBOXNETFLTINS pThis)
 int  vboxNetFltOsConnectIt(PVBOXNETFLTINS pThis)
 {
     /* Nothing to do here. */
+    RT_NOREF(pThis);
     return VINF_SUCCESS;
 }
 
 
 void vboxNetFltOsDeleteInstance(PVBOXNETFLTINS pThis)
 {
-    interface_filter_t pIfFilter;
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Carefully obtain the interface filter reference and detach it.
      */
     RTSpinlockAcquire(pThis->hSpinlock);
-    pIfFilter = ASMAtomicUoReadPtrT(&pThis->u.s.pIfFilter, interface_filter_t);
+    interface_filter_t pIfFilter = ASMAtomicUoReadPtrT(&pThis->u.s.pIfFilter, interface_filter_t);
     if (pIfFilter)
         ASMAtomicUoWriteNullPtr(&pThis->u.s.pIfFilter);
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     if (pIfFilter)
         iflt_detach(pIfFilter);
+
+    if (pThis->u.s.pSysSock != NULL)
+    {
+        sock_close(pThis->u.s.pSysSock);
+        pThis->u.s.pSysSock = NULL;
+    }
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
 }
 
 
 int  vboxNetFltOsInitInstance(PVBOXNETFLTINS pThis, void *pvContext)
 {
     NOREF(pvContext);
-    return vboxNetFltDarwinAttachToInterface(pThis, false /* fRediscovery */);
+
+    int rc = vboxNetFltDarwinAttachToInterface(pThis, false /* fRediscovery */);
+    if (RT_FAILURE(rc))
+        return rc;
+
+    if (pThis->pSwitchPort->pfnNotifyHostAddress == NULL)
+        return rc;
+
+    /*
+     * XXX: uwe
+     *
+     * Learn host's IP addresses and set up notifications for changes.
+     * To avoid racing, set up notifications first.
+     *
+     * XXX: This should probably be global, since the only thing
+     * specific to ifnet here is its IPv6 link-local address.
+     */
+    IPRT_DARWIN_SAVE_EFL_AC();
+    errno_t error;
+
+    /** @todo reorg code to not have numerous returns with duplicate code... */
+    error = sock_socket(PF_SYSTEM, SOCK_RAW, SYSPROTO_EVENT,
+                        vboxNetFltDarwinSysSockUpcall, pThis,
+                        &pThis->u.s.pSysSock);
+    if (error != 0)
+    {
+        LogRel(("sock_socket(SYSPROTO_EVENT): error %d\n", error));
+        IPRT_DARWIN_RESTORE_EFL_AC();
+        return rc;
+    }
+
+    int nbio = 1;
+    error = sock_ioctl(pThis->u.s.pSysSock, FIONBIO, &nbio);
+    if (error != 0)
+    {
+        LogRel(("FIONBIO: error %d\n", error));
+        sock_close(pThis->u.s.pSysSock);
+        IPRT_DARWIN_RESTORE_EFL_AC();
+        return rc;
+    }
+
+    if (!sock_isnonblocking(pThis->u.s.pSysSock))
+    {
+        LogRel(("FIONBIO ok, but socket is blocking?!\n"));
+        sock_close(pThis->u.s.pSysSock);
+        IPRT_DARWIN_RESTORE_EFL_AC();
+        return rc;
+    }
+
+    struct kev_request req;
+    req.vendor_code = KEV_VENDOR_APPLE;
+    req.kev_class = KEV_NETWORK_CLASS;
+    req.kev_subclass = KEV_ANY_SUBCLASS; /* need both INET and INET6, so have to request all */
+
+    error = sock_ioctl(pThis->u.s.pSysSock, SIOCSKEVFILT, &req);
+    if (error != 0)
+    {
+        LogRel(("SIOCSKEVFILT: error %d\n", error));
+        sock_close(pThis->u.s.pSysSock);
+        IPRT_DARWIN_RESTORE_EFL_AC();
+        return rc;
+    }
+
+    ifnet_t pIfNet = pThis->u.s.pIfNet; /* already retained */
+
+    ifaddr_t *pIfAddrList;
+    error = ifnet_get_address_list(/* all interfaces*/ NULL, &pIfAddrList);
+    if (error != 0)
+    {
+        LogRel(("ifnet_get_address_list: error %d\n", error));
+        IPRT_DARWIN_RESTORE_EFL_AC();
+        return rc;
+    }
+
+    for (ifaddr_t *pIfAddr = pIfAddrList; *pIfAddr != NULL; ++pIfAddr)
+    {
+        ifaddr_t ifa = *pIfAddr;
+        sa_family_t family = ifaddr_address_family(ifa);
+        struct sockaddr_storage ss;
+
+        error = ifaddr_address(ifa, (struct sockaddr *)&ss, sizeof(ss));
+        if (error != 0)
+        {
+            LogRel(("getting address family %d: error %d\n", family, error));
+            continue;
+        }
+
+        if (family == AF_INET)
+        {
+            struct sockaddr_in *sin = (struct sockaddr_in *)&ss;
+            u_int32_t u32Addr = ntohl(sin->sin_addr.s_addr);
+
+            if (VBOX_IN_LOOPBACK(u32Addr))
+                continue;
+
+            if (ifaddr_ifnet(ifa) != pIfNet && VBOX_IN_LINKLOCAL(u32Addr))
+                continue;
+
+            Log(("> inet %RTnaipv4\n", sin->sin_addr.s_addr));
+            pThis->pSwitchPort->pfnNotifyHostAddress(pThis->pSwitchPort,
+                /* :fAdded */ true, kIntNetAddrType_IPv4, &sin->sin_addr);
+        }
+        else if (family == AF_INET6)
+        {
+            struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ss;
+
+            if (IN6_IS_ADDR_LOOPBACK(&sin6->sin6_addr))
+                continue;
+
+            /* link-local from other interfaces are out of scope */
+            if (ifaddr_ifnet(ifa) != pIfNet && IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr))
+                continue;
+
+            Log(("> inet6 %RTnaipv6\n", &sin6->sin6_addr));
+            pThis->pSwitchPort->pfnNotifyHostAddress(pThis->pSwitchPort,
+                /* :fAdded */ true, kIntNetAddrType_IPv6, &sin6->sin6_addr);
+        }
+    }
+
+    ifnet_free_address_list(pIfAddrList);
+
+    /*
+     * Now that we've got current addresses, check for events that
+     * might have happened while we were working.
+     */
+    vboxNetFltDarwinSysSockUpcall(pThis->u.s.pSysSock, pThis, MBUF_DONTWAIT);
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
+    return rc;
+}
+
+
+static void vboxNetFltDarwinSysSockUpcall(socket_t pSysSock, void *pvData, int fWait)
+{
+    PVBOXNETFLTINS pThis = (PVBOXNETFLTINS)pvData;
+    errno_t error;
+
+    NOREF(fWait);
+
+    if (RT_UNLIKELY(pSysSock != pThis->u.s.pSysSock))
+    {
+        Log(("vboxNetFltDarwinSysSockUpcall: %p != %p?\n",
+             pSysSock, pThis->u.s.pSysSock));
+        return;
+    }
+
+    ifnet_t pIfNet = pThis->u.s.pIfNet; /* XXX: retain? */
+    ifnet_family_t if_family = ifnet_family(pIfNet);
+    u_int32_t if_unit = ifnet_unit(pIfNet);
+
+    for (;;)
+    {
+        mbuf_t m;
+        size_t len = sizeof(struct kern_event_msg) - sizeof(u_int32_t) + sizeof(struct kev_in6_data);
+
+        error = sock_receivembuf(pSysSock, NULL, &m, 0, &len);
+        if (error != 0)
+        {
+            if (error == EWOULDBLOCK)
+            {
+                Log(("vboxNetFltDarwinSysSockUpcall: EWOULDBLOCK - we are done\n"));
+                error = 0;
+            }
+            else
+                Log(("sock_receivembuf: error %d\n", error));
+            break;
+        }
+
+        if (len < sizeof(struct kern_event_msg) - sizeof(u_int32_t))
+        {
+            Log(("vboxNetFltDarwinSysSockUpcall: %u bytes is too short\n", (unsigned int)len));
+            mbuf_freem(m);
+            return;
+        }
+
+        struct kern_event_msg *msg = (struct kern_event_msg *)mbuf_data(m);
+        if (msg->kev_subclass == KEV_INET_SUBCLASS)
+        {
+            if (len - (sizeof(struct kern_event_msg) - sizeof(u_int32_t)) < sizeof(struct kev_in_data))
+            {
+                Log(("vboxNetFltDarwinSysSockUpcall: %u bytes is too short for KEV_INET_SUBCLASS\n",
+                     (unsigned int)len));
+                mbuf_freem(m);
+                return;
+            }
+
+            struct kev_in_data *iev = (struct kev_in_data *)msg->event_data;
+            struct net_event_data *link = &iev->link_data;
+            PCRTNETADDRU pAddr = (PCRTNETADDRU)&iev->ia_addr;
+            u_int32_t u32Addr = ntohl(pAddr->IPv4.u);
+
+            if (VBOX_IN_LOOPBACK(u32Addr))
+            {
+                mbuf_freem(m);
+                continue;
+            }
+
+            if (   (link->if_family != if_family || link->if_unit != if_unit)
+                && VBOX_IN_LINKLOCAL(u32Addr))
+            {
+                mbuf_freem(m);
+                continue;
+            }
+
+            switch (msg->event_code)
+            {
+                case KEV_INET_NEW_ADDR:
+                    Log(("KEV_INET_NEW_ADDR %.*s%d: %RTnaipv4\n", IFNAMSIZ, link->if_name, link->if_unit, pAddr->IPv4.u));
+                    pThis->pSwitchPort->pfnNotifyHostAddress(pThis->pSwitchPort, true /*fAdded*/, kIntNetAddrType_IPv4, pAddr);
+                    break;
+
+                case KEV_INET_ADDR_DELETED:
+                    Log(("KEV_INET_ADDR_DELETED %.*s%d: %RTnaipv4\n", IFNAMSIZ, link->if_name, link->if_unit, pAddr->IPv4.u));
+                    pThis->pSwitchPort->pfnNotifyHostAddress(pThis->pSwitchPort, false /*fAdded*/, kIntNetAddrType_IPv4, pAddr);
+                    break;
+
+                default:
+                    Log(("KEV INET event %u %.*s%d: addr %RTnaipv4\n",
+                         msg->event_code, IFNAMSIZ, link->if_name, link->if_unit, pAddr->IPv4.u));
+                    break;
+            }
+        }
+        else if (msg->kev_subclass == KEV_INET6_SUBCLASS)
+        {
+            if (len - (sizeof(struct kern_event_msg) - sizeof(u_int32_t)) < sizeof(struct kev_in6_data))
+            {
+                Log(("vboxNetFltDarwinSysSockUpcall: %u bytes is too short for KEV_INET6_SUBCLASS\n",
+                        (unsigned int)len));
+                mbuf_freem(m);
+                return;
+            }
+
+            struct kev_in6_data *iev6 = (struct kev_in6_data *)msg->event_data;
+            struct net_event_data *link = &iev6->link_data;
+            PCRTNETADDRU pAddr = (PCRTNETADDRU)&iev6->ia_addr.sin6_addr;
+
+            if (IN6_IS_ADDR_LOOPBACK(&iev6->ia_addr.sin6_addr))
+            {
+                mbuf_freem(m);
+                continue;
+            }
+
+            if (   (link->if_family != if_family || link->if_unit != if_unit)
+                && IN6_IS_ADDR_LINKLOCAL(&iev6->ia_addr.sin6_addr))
+            {
+                mbuf_freem(m);
+                continue;
+            }
+
+            switch (msg->event_code)
+            {
+                case KEV_INET6_NEW_USER_ADDR:
+                    Log(("KEV_INET6_NEW_USER_ADDR %.*s%d: %RTnaipv6\n",
+                         IFNAMSIZ, link->if_name, link->if_unit, pAddr));
+                    goto kev_inet6_new;
+
+                case KEV_INET6_NEW_LL_ADDR:
+                    Log(("KEV_INET6_NEW_LL_ADDR %.*s%d: %RTnaipv6\n",
+                         IFNAMSIZ, link->if_name, link->if_unit, pAddr));
+                    goto kev_inet6_new;
+
+                case KEV_INET6_NEW_RTADV_ADDR:
+                    Log(("KEV_INET6_NEW_RTADV_ADDR %.*s%d: %RTnaipv6\n",
+                         IFNAMSIZ, link->if_name, link->if_unit, pAddr));
+                    goto kev_inet6_new;
+
+                kev_inet6_new:
+                    pThis->pSwitchPort->pfnNotifyHostAddress(pThis->pSwitchPort,
+                        /* :fAdded */ true, kIntNetAddrType_IPv6, pAddr);
+                    break;
+
+                case KEV_INET6_ADDR_DELETED:
+                    Log(("KEV_INET6_ADDR_DELETED %.*s%d: %RTnaipv6\n",
+                         IFNAMSIZ, link->if_name, link->if_unit, pAddr));
+
+                    pThis->pSwitchPort->pfnNotifyHostAddress(pThis->pSwitchPort,
+                        /* :fAdded */ false, kIntNetAddrType_IPv6, pAddr);
+                    break;
+
+                default:
+                    Log(("KEV INET6 event %u %.*s%d: addr %RTnaipv6\n",
+                         msg->event_code, IFNAMSIZ, link->if_name, link->if_unit, pAddr));
+                    break;
+            }
+        }
+        else
+            Log(("vboxNetFltDarwinSysSockUpcall: subclass %u ignored\n", (unsigned)msg->kev_subclass));
+
+        mbuf_freem(m);
+    }
 }
 
 
@@ -1313,6 +1687,7 @@ int  vboxNetFltOsPreInitInstance(PVBOXNETFLTINS pThis)
     pThis->u.s.fSetPromiscuous = false;
     pThis->u.s.fNeedSetPromiscuous = false;
     //pThis->u.s.MacAddr = {0};
+    pThis->u.s.pSysSock = NULL;
 
     return VINF_SUCCESS;
 }

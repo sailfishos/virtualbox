@@ -1,12 +1,10 @@
 /* $Id: Logging.h $ */
-
 /** @file
- *
- * VirtualBox COM: logging macros and function definitions
+ * VirtualBox COM - logging macros and function definitions
  */
 
 /*
- * Copyright (C) 2004-2012 Oracle Corporation
+ * Copyright (C) 2004-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,12 +18,21 @@
 #ifndef ____H_LOGGING
 #define ____H_LOGGING
 
-/** @def LOG_GROUP_MAIN_OVERRIDE
- *  Define this macro to point to the desired log group before including
- *  the |Logging.h| header if you want to use a group other than LOG_GROUP_MAIN
- *  for logging from within Main source files.
+/* @def LOG_GROUP_MAIN_OVERRIDE
  *
- *  @example #define LOG_GROUP_MAIN_OVERRIDE LOG_GROUP_HGCM
+ * DEPRECATED: Define this macro to point to the desired log group before including
+ * DEPRECATED: the |Logging.h| header if you want to use a group other than LOG_GROUP_MAIN
+ * DEPRECATED: for logging from within Main source files.
+ * DEPRECATED:
+ * DEPRECATED: Example:
+ * DEPRECATED: @code
+ * DEPRECATED: #define LOG_GROUP_MAIN_OVERRIDE LOG_GROUP_HGCM
+ * DEPRECATED: @endcode
+ *
+ * INSTEAD: Please define LOG_GROUP and include LoggingNew.h at the top of the source file!
+ * INSTEAD: Please define LOG_GROUP and include LoggingNew.h at the top of the source file!
+ * INSTEAD: Please define LOG_GROUP and include LoggingNew.h at the top of the source file!
+ *
  */
 
 /*
@@ -43,8 +50,11 @@
 #ifndef VBOXSVC_LOG_DEFAULT
 # define VBOXSVC_LOG_DEFAULT "all"
 #endif
+#ifndef VBOXSDS_LOG_DEFAULT
+# define VBOXSDS_LOG_DEFAULT "all"
+#endif
 
 #include <VBox/log.h>
 
-#endif // ____H_LOGGING
+#endif // !____H_LOGGING
 /* vi: set tabstop=4 shiftwidth=4 expandtab: */

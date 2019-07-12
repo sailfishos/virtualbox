@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,12 +25,12 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DIR
 #ifdef RT_OS_WINDOWS /* dir.h has host specific stuff */
-# include <Windows.h>
+# include <iprt/win/windows.h>
 #else
 # include <dirent.h>
 #endif
@@ -44,13 +44,13 @@
 #include "internal/dir.h"
 
 
-RTR3DECL(int) RTDirQueryInfo(PRTDIR pDir, PRTFSOBJINFO pObjInfo, RTFSOBJATTRADD enmAdditionalAttribs)
+RTR3DECL(int) RTDirQueryInfo(RTDIR hDir, PRTFSOBJINFO pObjInfo, RTFSOBJATTRADD enmAdditionalAttribs)
 {
     /*
      * Validate and digest input.
      */
-    if (!rtDirValidHandle(pDir))
+    if (!rtDirValidHandle(hDir))
         return VERR_INVALID_PARAMETER;
-    return RTPathQueryInfoEx(pDir->pszPath, pObjInfo, enmAdditionalAttribs, RTPATH_F_FOLLOW_LINK);
+    return RTPathQueryInfoEx(hDir->pszPath, pObjInfo, enmAdditionalAttribs, RTPATH_F_FOLLOW_LINK);
 }
 

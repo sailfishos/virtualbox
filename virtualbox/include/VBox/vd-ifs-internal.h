@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,8 +23,8 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-#ifndef ___VBox_VD_Interfaces_Internal_h
-#define ___VBox_VD_Interfaces_Internal_h
+#ifndef ___VBox_vd_ifs_internal_h
+#define ___VBox_vd_ifs_internal_h
 
 #include <iprt/sg.h>
 #include <VBox/vd-ifs.h>
@@ -128,7 +128,7 @@ typedef struct VDINTERFACEIOINT
      * @param   pvUser          The opaque data passed on container creation.
      * @param   pszLocation     Name of the location to open.
      * @param   fOpen           Flags for opening the backend.
-     *                          See RTFILE_O_* #defines, inventing another set
+     *                          See RTFILE_O_* \#defines, inventing another set
      *                          of open flags is not worth the mapping effort.
      * @param   ppStorage       Where to store the storage handle.
      */
@@ -204,9 +204,36 @@ typedef struct VDINTERFACEIOINT
      * @param   pvUser          The opaque data passed on container creation.
      * @param   pStorage        The storage handle.
      * @param   cbSize          The new size of the image.
+     *
+     * @note Depending on the host the underlying storage (backing file, etc.)
+     *       might not have all required storage allocated (sparse file) which
+     *       can delay writes or fail with a not enough free space error if there
+     *       is not enough space on the storage medium when writing to the range for
+     *       the first time.
+     *       Use VDINTERFACEIOINT::pfnSetAllocationSize to make sure the storage is
+     *       really alloacted.
      */
     DECLR3CALLBACKMEMBER(int, pfnSetSize, (void *pvUser, PVDIOSTORAGE pStorage,
                                            uint64_t cbSize));
+
+    /**
+     * Sets the size of the opened storage backend making sure the given size
+     * is really allocated.
+     *
+     * @return VBox status code.
+     * @param   pvUser          The opaque data passed on container creation.
+     * @param   pStorage        The storage handle.
+     * @param   cbSize          The new size of the image.
+     * @param   fFlags          Flags for controlling the allocation strategy.
+     *                          Reserved for future use, MBZ.
+     * @param   pIfProgress     Progress interface (optional).
+     * @param   uPercentStart   Progress starting point.
+     * @param   uPercentSpan    Length of operation in percent.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnSetAllocationSize, (void *pvUser, PVDIOSTORAGE pStorage,
+                                                     uint64_t cbSize, uint32_t fFlags,
+                                                     PVDINTERFACEPROGRESS pIfProgress,
+                                                     unsigned uPercentStart, unsigned uPercentSpan));
 
     /**
      * Initiate a read request for user data.
@@ -255,12 +282,12 @@ typedef struct VDINTERFACEIOINT
      * @param   pfnCompleted   Completion callback.
      * @param   pvCompleteUser Opaque user data passed in the completion callback.
      *
-     * @notes If pIoCtx is NULL the metadata read is handled synchronously
-     *        i.e. the call returns only if the data is available in the given
-     *        buffer. ppMetaXfer, pfnCompleted and pvCompleteUser are ignored in that case.
-     *        Use the synchronous version only when opening/closing the image
-     *        or when doing certain operations like resizing, compacting or repairing
-     *        the disk.
+     * @note    If pIoCtx is NULL the metadata read is handled synchronously
+     *          i.e. the call returns only if the data is available in the given
+     *          buffer. ppMetaXfer, pfnCompleted and pvCompleteUser are ignored in that case.
+     *          Use the synchronous version only when opening/closing the image
+     *          or when doing certain operations like resizing, compacting or repairing
+     *          the disk.
      */
     DECLR3CALLBACKMEMBER(int, pfnReadMeta, (void *pvUser, PVDIOSTORAGE pStorage,
                                             uint64_t uOffset, void *pvBuffer,
@@ -282,7 +309,7 @@ typedef struct VDINTERFACEIOINT
      * @param   pfnCompleted   Completion callback.
      * @param   pvCompleteUser Opaque user data passed in the completion callback.
      *
-     * @notes See pfnReadMeta().
+     * @sa      VDINTERFACEIOINT::pfnReadMeta
      */
     DECLR3CALLBACKMEMBER(int, pfnWriteMeta, (void *pvUser, PVDIOSTORAGE pStorage,
                                              uint64_t uOffset, const void *pvBuffer,
@@ -310,7 +337,7 @@ typedef struct VDINTERFACEIOINT
      * @param   pfnCompleted   Completion callback.
      * @param   pvCompleteUser Opaque user data passed in the completion callback.
      *
-     * @notes See pfnReadMeta().
+     * @sa      VDINTERFACEIOINT::pfnReadMeta
      */
     DECLR3CALLBACKMEMBER(int, pfnFlush, (void *pvUser, PVDIOSTORAGE pStorage,
                                          PVDIOCTX pIoCtx,
@@ -482,6 +509,15 @@ DECLINLINE(int) vdIfIoIntFileSetSize(PVDINTERFACEIOINT pIfIoInt, PVDIOSTORAGE pS
                                      uint64_t cbSize)
 {
     return pIfIoInt->pfnSetSize(pIfIoInt->Core.pvUser, pStorage, cbSize);
+}
+
+DECLINLINE(int) vdIfIoIntFileSetAllocationSize(PVDINTERFACEIOINT pIfIoInt, PVDIOSTORAGE pStorage,
+                                               uint64_t cbSize, uint32_t fFlags,
+                                               PVDINTERFACEPROGRESS pIfProgress,
+                                               unsigned uPercentStart, unsigned uPercentSpan)
+{
+    return pIfIoInt->pfnSetAllocationSize(pIfIoInt->Core.pvUser, pStorage, cbSize, fFlags,
+                                          pIfProgress, uPercentStart, uPercentSpan);
 }
 
 DECLINLINE(int) vdIfIoIntFileWriteSync(PVDINTERFACEIOINT pIfIoInt, PVDIOSTORAGE pStorage,

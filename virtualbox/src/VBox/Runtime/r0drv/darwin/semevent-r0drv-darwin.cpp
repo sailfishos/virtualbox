@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define RTSEMEVENT_WITHOUT_REMAPPING
 #include "the-darwin-kernel.h"
 #include "internal/iprt.h"
@@ -49,9 +49,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Waiter entry.  Lives on the stack.
  */
@@ -95,11 +95,13 @@ RTDECL(int)  RTSemEventCreate(PRTSEMEVENT phEventSem)
 
 RTDECL(int)  RTSemEventCreateEx(PRTSEMEVENT phEventSem, uint32_t fFlags, RTLOCKVALCLASS hClass, const char *pszNameFmt, ...)
 {
+    RT_NOREF(hClass, pszNameFmt);
     AssertCompile(sizeof(RTSEMEVENTINTERNAL) > sizeof(void *));
     AssertReturn(!(fFlags & ~(RTSEMEVENT_FLAGS_NO_LOCK_VAL | RTSEMEVENT_FLAGS_BOOTSTRAP_HACK)), VERR_INVALID_PARAMETER);
     Assert(!(fFlags & RTSEMEVENT_FLAGS_BOOTSTRAP_HACK) || (fFlags & RTSEMEVENT_FLAGS_NO_LOCK_VAL));
     AssertPtrReturn(phEventSem, VERR_INVALID_POINTER);
     RT_ASSERT_PREEMPTIBLE();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     PRTSEMEVENTINTERNAL pThis = (PRTSEMEVENTINTERNAL)RTMemAlloc(sizeof(*pThis));
     if (pThis)
@@ -114,12 +116,14 @@ RTDECL(int)  RTSemEventCreateEx(PRTSEMEVENT phEventSem, uint32_t fFlags, RTLOCKV
         if (pThis->pSpinlock)
         {
             *phEventSem = pThis;
+            IPRT_DARWIN_RESTORE_EFL_AC();
             return VINF_SUCCESS;
         }
 
         pThis->u32Magic = 0;
         RTMemFree(pThis);
     }
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VERR_NO_MEMORY;
 }
 
@@ -132,7 +136,7 @@ RTDECL(int)  RTSemEventCreateEx(PRTSEMEVENT phEventSem, uint32_t fFlags, RTLOCKV
 DECLINLINE(void) rtR0SemEventDarwinRetain(PRTSEMEVENTINTERNAL pThis)
 {
     uint32_t cRefs = ASMAtomicIncU32(&pThis->cRefs);
-    Assert(cRefs && cRefs < 100000);
+    Assert(cRefs && cRefs < 100000); RT_NOREF_PV(cRefs);
 }
 
 
@@ -146,8 +150,12 @@ DECLINLINE(void) rtR0SemEventDarwinRelease(PRTSEMEVENTINTERNAL pThis)
     if (RT_UNLIKELY(ASMAtomicDecU32(&pThis->cRefs) == 0))
     {
         Assert(pThis->u32Magic != RTSEMEVENT_MAGIC);
+        IPRT_DARWIN_SAVE_EFL_AC();
+
         lck_spin_destroy(pThis->pSpinlock, g_pDarwinLockGroup);
         RTMemFree(pThis);
+
+        IPRT_DARWIN_RESTORE_EFL_AC();
     }
 }
 
@@ -159,6 +167,7 @@ RTDECL(int)  RTSemEventDestroy(RTSEMEVENT hEventSem)
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertMsgReturn(pThis->u32Magic == RTSEMEVENT_MAGIC, ("pThis=%p u32Magic=%#x\n", pThis, pThis->u32Magic), VERR_INVALID_HANDLE);
     RT_ASSERT_INTS_ON();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     lck_spin_lock(pThis->pSpinlock);
 
@@ -176,6 +185,7 @@ RTDECL(int)  RTSemEventDestroy(RTSEMEVENT hEventSem)
     lck_spin_unlock(pThis->pSpinlock);
     rtR0SemEventDarwinRelease(pThis);
 
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -189,6 +199,7 @@ RTDECL(int)  RTSemEventSignal(RTSEMEVENT hEventSem)
                     VERR_INVALID_HANDLE);
     RT_ASSERT_PREEMPT_CPUID_VAR();
     RT_ASSERT_INTS_ON();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     rtR0SemEventDarwinRetain(pThis);
 
@@ -217,6 +228,7 @@ RTDECL(int)  RTSemEventSignal(RTSEMEVENT hEventSem)
     rtR0SemEventDarwinRelease(pThis);
 
     RT_ASSERT_PREEMPT_CPUID();
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -233,12 +245,15 @@ RTDECL(int)  RTSemEventSignal(RTSEMEVENT hEventSem)
 static int rtR0SemEventDarwinWait(PRTSEMEVENTINTERNAL pThis, uint32_t fFlags, uint64_t uTimeout,
                                   PCRTLOCKVALSRCPOS pSrcPos)
 {
+    RT_NOREF(pSrcPos);
+
     /*
      * Validate the input.
      */
     AssertPtrReturn(pThis, VERR_INVALID_PARAMETER);
     AssertMsgReturn(pThis->u32Magic == RTSEMEVENT_MAGIC, ("%p u32Magic=%RX32\n", pThis, pThis->u32Magic), VERR_INVALID_PARAMETER);
     AssertReturn(RTSEMWAIT_FLAGS_ARE_VALID(fFlags), VERR_INVALID_PARAMETER);
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     rtR0SemEventDarwinRetain(pThis);
     lck_spin_lock(pThis->pSpinlock);
@@ -367,6 +382,7 @@ static int rtR0SemEventDarwinWait(PRTSEMEVENTINTERNAL pThis, uint32_t fFlags, ui
 
     lck_spin_unlock(pThis->pSpinlock);
     rtR0SemEventDarwinRelease(pThis);
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 

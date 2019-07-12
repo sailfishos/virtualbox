@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_LDR
 #include <iprt/ldr.h>
 #include "internal/iprt.h"
@@ -39,19 +39,25 @@
 #include <iprt/mem.h>
 #include <iprt/sha.h>
 #include <iprt/string.h>
+#include <iprt/formats/mz.h>
+#include <iprt/formats/mach-o.h>
 #include "internal/ldr.h"
-#include "internal/ldrMZ.h"
 
-#ifdef LDR_ONLY_PE
+#if defined(LDR_ONLY_PE) || defined(LDR_ONLY_MACHO)
 # undef LDR_WITH_PE
-# undef LDR_WITH_KLDR
 # undef LDR_WITH_ELF
 # undef LDR_WITH_LX
 # undef LDR_WITH_LE
+# undef LDR_WITH_MACHO
 # undef LDR_WITH_NE
 # undef LDR_WITH_MZ
 # undef LDR_WITH_AOUT
-# define LDR_WITH_PE
+# ifdef LDR_ONLY_PE
+#  define LDR_WITH_PE
+# endif
+# ifdef LDR_ONLY_MACHO
+#  define LDR_WITH_MACHO
+# endif
 #endif
 
 
@@ -81,20 +87,24 @@ RTDECL(int) RTLdrOpenWithReader(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH
     int rc = pReader->pfnRead(pReader, &uSign, sizeof(uSign), 0);
     if (RT_FAILURE(rc))
         return rc;
-#ifndef LDR_WITH_KLDR
     if (    uSign.au16[0] != IMAGE_DOS_SIGNATURE
         &&  uSign.u32     != IMAGE_NT_SIGNATURE
         &&  uSign.u32     != IMAGE_ELF_SIGNATURE
-        &&  uSign.au16[0] != IMAGE_LX_SIGNATURE)
+        &&  uSign.au16[0] != IMAGE_LX_SIGNATURE
+        &&  uSign.u32     != IMAGE_MACHO64_SIGNATURE
+        &&  uSign.u32     != IMAGE_MACHO64_SIGNATURE_OE
+        &&  uSign.u32     != IMAGE_MACHO32_SIGNATURE
+        &&  uSign.u32     != IMAGE_MACHO32_SIGNATURE_OE
+        &&  uSign.u32     != IMAGE_FAT_SIGNATURE
+        &&  uSign.u32     != IMAGE_FAT_SIGNATURE_OE )
     {
         Log(("rtldrOpenWithReader: %s: unknown magic %#x / '%.4s\n", pReader->pfnLogName(pReader), uSign.u32, &uSign.ach[0]));
         return VERR_INVALID_EXE_SIGNATURE;
     }
-#endif
     uint32_t offHdr = 0;
     if (uSign.au16[0] == IMAGE_DOS_SIGNATURE)
     {
-        rc = pReader->pfnRead(pReader, &offHdr, sizeof(offHdr), RT_OFFSETOF(IMAGE_DOS_HEADER, e_lfanew));
+        rc = pReader->pfnRead(pReader, &offHdr, sizeof(offHdr), RT_UOFFSETOF(IMAGE_DOS_HEADER, e_lfanew));
         if (RT_FAILURE(rc))
             return rc;
 
@@ -131,6 +141,22 @@ RTDECL(int) RTLdrOpenWithReader(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH
 #else
         rc = VERR_ELF_EXE_NOT_SUPPORTED;
 #endif
+    else if (   uSign.u32 == IMAGE_MACHO64_SIGNATURE
+             || uSign.u32 == IMAGE_MACHO64_SIGNATURE_OE
+             || uSign.u32 == IMAGE_MACHO32_SIGNATURE
+             || uSign.u32 == IMAGE_MACHO32_SIGNATURE_OE)
+#if defined(LDR_WITH_MACHO)
+        rc = rtldrMachOOpen(pReader, fFlags, enmArch, offHdr, phMod, pErrInfo);
+#else
+        rc = VERR_INVALID_EXE_SIGNATURE;
+#endif
+    else if (   uSign.u32 == IMAGE_FAT_SIGNATURE
+             || uSign.u32 == IMAGE_FAT_SIGNATURE_OE)
+#if defined(LDR_WITH_MACHO)
+        rc = rtldrFatOpen(pReader, fFlags, enmArch, phMod, pErrInfo);
+#else
+        rc = VERR_INVALID_EXE_SIGNATURE;
+#endif
     else if (uSign.au16[0] == IMAGE_LX_SIGNATURE)
 #ifdef LDR_WITH_LX
         rc = rtldrLXOpen(pReader, fFlags, enmArch, offHdr, phMod, pErrInfo);
@@ -165,24 +191,9 @@ RTDECL(int) RTLdrOpenWithReader(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH
 #endif
     else
     {
-#ifndef LDR_WITH_KLDR
         Log(("rtldrOpenWithReader: %s: the format isn't implemented %#x / '%.4s\n", pReader->pfnLogName(pReader), uSign.u32, &uSign.ach[0]));
-#endif
         rc = VERR_INVALID_EXE_SIGNATURE;
     }
-
-#ifdef LDR_WITH_KLDR
-    /* Try kLdr if it's a format we don't recognize. */
-    if (rc <= VERR_INVALID_EXE_SIGNATURE && rc > VERR_BAD_EXE_FORMAT)
-    {
-        int rc2 = rtldrkLdrOpen(pReader, fFlags, enmArch, phMod, pErrInfo);
-        if (   RT_SUCCESS(rc2)
-            || (rc == VERR_INVALID_EXE_SIGNATURE && rc2 != VERR_MZ_EXE_NOT_SUPPORTED /* Quick fix for bad return code. */)
-            || rc2 >  VERR_INVALID_EXE_SIGNATURE
-            || rc2 <= VERR_BAD_EXE_FORMAT)
-            rc = rc2;
-    }
-#endif
 
     LogFlow(("rtldrOpenWithReader: %s: returns %Rrc *phMod=%p\n", pReader->pfnLogName(pReader), rc, *phMod));
     return rc;
@@ -290,7 +301,7 @@ RT_EXPORT_SYMBOL(RTLdrRelocate);
 RTDECL(int) RTLdrGetSymbolEx(RTLDRMOD hLdrMod, const void *pvBits, RTLDRADDR BaseAddress,
                              uint32_t iOrdinal, const char *pszSymbol, PRTLDRADDR pValue)
 {
-    LogFlow(("RTLdrGetSymbolEx: hLdrMod=%RTldrm pvBits=%p BaseAddress=%RTptr iOrdinal=%#x pszSymbol=%p:{%s} pValue\n",
+    LogFlow(("RTLdrGetSymbolEx: hLdrMod=%RTldrm pvBits=%p BaseAddress=%RTptr iOrdinal=%#x pszSymbol=%p:{%s} pValue=%p\n",
              hLdrMod, pvBits, BaseAddress, iOrdinal, pszSymbol, pszSymbol, pValue));
 
     /*
@@ -526,8 +537,7 @@ RT_EXPORT_SYMBOL(RTLdrLinkAddressToRva);
 
 RTDECL(int) RTLdrSegOffsetToRva(RTLDRMOD hLdrMod, uint32_t iSeg, RTLDRADDR offSeg, PRTLDRADDR pRva)
 {
-    LogFlow(("RTLdrSegOffsetToRva: hLdrMod=%RTldrm LinkAddress=%RTptr iSeg=%#x offSeg=%RTptr pRva=%p\n",
-             hLdrMod, iSeg, offSeg, pRva));
+    LogFlow(("RTLdrSegOffsetToRva: hLdrMod=%RTldrm iSeg=%#x offSeg=%RTptr pRva=%p\n", hLdrMod, iSeg, offSeg, pRva));
 
     /*
      * Validate input.
@@ -636,6 +646,13 @@ RTDECL(int) RTLdrQueryPropEx(RTLDRMOD hLdrMod, RTLDRPROP enmProp, void *pvBits, 
             *pcbRet = sizeof(uint32_t);
             AssertReturn(cbBuf >= sizeof(uint32_t), VERR_INVALID_PARAMETER);
             break;
+        case RTLDRPROP_FILE_OFF_HEADER:
+            *pcbRet = sizeof(uint64_t);
+            AssertReturn(cbBuf == sizeof(uint32_t) || cbBuf == sizeof(uint64_t), VERR_INVALID_PARAMETER);
+            break;
+        case RTLDRPROP_INTERNAL_NAME:
+            *pcbRet = 0;
+            break;
 
         default:
             AssertFailedReturn(VERR_INVALID_FUNCTION);
@@ -730,3 +747,26 @@ DECLHIDDEN(int) rtLdrReadAt(RTLDRMOD hLdrMod, void *pvBuf, uint32_t iDbgInfo, RT
     return pMod->pReader->pfnRead(pMod->pReader, pvBuf, cb, off);
 }
 
+
+/**
+ * Translates a RTLDRARCH value to a string.
+ *
+ * @returns Name corresponding to @a enmArch
+ * @param   enmArch             The value to name.
+ */
+DECLHIDDEN(const char *) rtLdrArchName(RTLDRARCH enmArch)
+{
+    switch (enmArch)
+    {
+        case RTLDRARCH_INVALID:     return "INVALID";
+        case RTLDRARCH_WHATEVER:    return "WHATEVER";
+        case RTLDRARCH_HOST:        return "HOST";
+        case RTLDRARCH_AMD64:       return "AMD64";
+        case RTLDRARCH_X86_32:      return "X86_32";
+
+        case RTLDRARCH_END:
+        case RTLDRARCH_32BIT_HACK:
+            break;
+    }
+    return "UNKNOWN";
+}

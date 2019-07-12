@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -42,6 +42,7 @@
  * and: http://slps.github.com/zoo/c/iso-9899-tc3.html
  * and: http://www.open-std.org/jtc1/sc22/WG14/www/docs/n1256.pdf
  */
+
 #define LOGGROUP LOGGROUP_DEFAULT
 #include <iprt/string.h>
 #include <iprt/list.h>
@@ -278,28 +279,28 @@ typedef VDSCRIPTKEYWORD *PVDSCRIPTKEYWORD;
  */
 static VDSCRIPTKEYWORD g_aKeywords[] =
 {
-    {"continue", 8, VDSCRIPTTOKENKEYWORD_CONTINUE},
-    {"register", 8, VDSCRIPTTOKENKEYWORD_REGISTER},
-    {"restrict", 8, VDSCRIPTTOKENKEYWORD_RESTRICT},
-    {"voaltile", 8, VDSCRIPTTOKENKEYWORD_VOLATILE},
-    {"typedef",  7, VDSCRIPTTOKENKEYWORD_TYPEDEF},
-    {"default",  7, VDSCRIPTTOKENKEYWORD_DEFAULT},
-    {"extern",   6, VDSCRIPTTOKENKEYWORD_EXTERN},
-    {"static",   6, VDSCRIPTTOKENKEYWORD_STATIC},
-    {"return",   6, VDSCRIPTTOKENKEYWORD_RETURN},
-    {"switch",   6, VDSCRIPTTOKENKEYWORD_SWITCH},
-    {"struct",   6, VDSCRIPTTOKENKEYWORD_STRUCT},
-    {"while",    5, VDSCRIPTTOKENKEYWORD_WHILE},
-    {"break",    5, VDSCRIPTTOKENKEYWORD_BREAK},
-    {"const",    5, VDSCRIPTTOKENKEYWORD_CONST},
-    {"false",    5, VDSCRIPTTOKENKEYWORD_FALSE},
-    {"true",     4, VDSCRIPTTOKENKEYWORD_TRUE},
-    {"else",     4, VDSCRIPTTOKENKEYWORD_ELSE},
-    {"case",     4, VDSCRIPTTOKENKEYWORD_CASE},
-    {"auto",     4, VDSCRIPTTOKENKEYWORD_AUTO},
-    {"for",      3, VDSCRIPTTOKENKEYWORD_FOR},
-    {"if",       2, VDSCRIPTTOKENKEYWORD_IF},
-    {"do",       2, VDSCRIPTTOKENKEYWORD_DO}
+    {RT_STR_TUPLE("continue"), VDSCRIPTTOKENKEYWORD_CONTINUE},
+    {RT_STR_TUPLE("register"), VDSCRIPTTOKENKEYWORD_REGISTER},
+    {RT_STR_TUPLE("restrict"), VDSCRIPTTOKENKEYWORD_RESTRICT},
+    {RT_STR_TUPLE("volatile"), VDSCRIPTTOKENKEYWORD_VOLATILE},
+    {RT_STR_TUPLE("typedef"),  VDSCRIPTTOKENKEYWORD_TYPEDEF},
+    {RT_STR_TUPLE("default"),  VDSCRIPTTOKENKEYWORD_DEFAULT},
+    {RT_STR_TUPLE("extern"),   VDSCRIPTTOKENKEYWORD_EXTERN},
+    {RT_STR_TUPLE("static"),   VDSCRIPTTOKENKEYWORD_STATIC},
+    {RT_STR_TUPLE("return"),   VDSCRIPTTOKENKEYWORD_RETURN},
+    {RT_STR_TUPLE("switch"),   VDSCRIPTTOKENKEYWORD_SWITCH},
+    {RT_STR_TUPLE("struct"),   VDSCRIPTTOKENKEYWORD_STRUCT},
+    {RT_STR_TUPLE("while"),    VDSCRIPTTOKENKEYWORD_WHILE},
+    {RT_STR_TUPLE("break"),    VDSCRIPTTOKENKEYWORD_BREAK},
+    {RT_STR_TUPLE("const"),    VDSCRIPTTOKENKEYWORD_CONST},
+    {RT_STR_TUPLE("false"),    VDSCRIPTTOKENKEYWORD_FALSE},
+    {RT_STR_TUPLE("true"),     VDSCRIPTTOKENKEYWORD_TRUE},
+    {RT_STR_TUPLE("else"),     VDSCRIPTTOKENKEYWORD_ELSE},
+    {RT_STR_TUPLE("case"),     VDSCRIPTTOKENKEYWORD_CASE},
+    {RT_STR_TUPLE("auto"),     VDSCRIPTTOKENKEYWORD_AUTO},
+    {RT_STR_TUPLE("for"),      VDSCRIPTTOKENKEYWORD_FOR},
+    {RT_STR_TUPLE("if"),       VDSCRIPTTOKENKEYWORD_IF},
+    {RT_STR_TUPLE("do"),       VDSCRIPTTOKENKEYWORD_DO}
 };
 
 static int vdScriptParseCompoundStatement(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTSTMT *ppAstNodeCompound);
@@ -307,7 +308,9 @@ static int vdScriptParseStatement(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTSTMT *ppAst
 static int vdScriptParseExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR *ppAstNodeExpr);
 static int vdScriptParseAssignmentExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR *ppAstNodeExpr);
 static int vdScriptParseCastExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR *ppAstNodeExpr);
+#if 0 /* unused */
 static int vdScriptParseConstExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR *ppAstNodeExpr);
+#endif
 
 /**
  * Returns whether the tokenizer reached the end of the stream.
@@ -466,7 +469,7 @@ DECLINLINE(void) vdScriptTokenizerSkipWhitespace(PVDTOKENIZER pTokenizer)
 static void vdScriptTokenizerGetIdeOrKeyword(PVDTOKENIZER pTokenizer, PVDSCRIPTTOKEN pToken)
 {
     char ch;
-    size_t cchIde = 0;
+    unsigned cchIde = 0;
     bool fIsKeyword = false;
     const char *pszIde = pTokenizer->pszInput;
 
@@ -512,7 +515,6 @@ static void vdScriptTokenizerGetIdeOrKeyword(PVDTOKENIZER pTokenizer, PVDSCRIPTT
  */
 static void vdScriptTokenizerGetNumberConst(PVDTOKENIZER pTokenizer, PVDSCRIPTTOKEN pToken)
 {
-    unsigned uBase = 10;
     char *pszNext = NULL;
 
     Assert(RT_C_IS_DIGIT(vdScriptTokenizerGetCh(pTokenizer)));
@@ -520,8 +522,8 @@ static void vdScriptTokenizerGetNumberConst(PVDTOKENIZER pTokenizer, PVDSCRIPTTO
     /* Let RTStrToUInt64Ex() do all the work, looks C compliant :). */
     pToken->enmClass = VDTOKENCLASS_NUMCONST;
     int rc = RTStrToUInt64Ex(pTokenizer->pszInput, &pszNext, 0, &pToken->Class.NumConst.u64);
-    Assert(RT_SUCCESS(rc) || rc == VWRN_TRAILING_CHARS || rc == VWRN_TRAILING_SPACES);
-    /** @todo: Handle number to big, throw a warning */
+    Assert(RT_SUCCESS(rc) || rc == VWRN_TRAILING_CHARS || rc == VWRN_TRAILING_SPACES); NOREF(rc);
+    /** @todo Handle number to big, throw a warning */
 
     unsigned cchNumber = pszNext - pTokenizer->pszInput;
     for (unsigned i = 0; i < cchNumber; i++)
@@ -561,7 +563,7 @@ static void vdScriptTokenizerGetNumberConst(PVDTOKENIZER pTokenizer, PVDSCRIPTTO
  */
 static void vdScriptTokenizerGetStringConst(PVDTOKENIZER pTokenizer, PVDSCRIPTTOKEN pToken)
 {
-    size_t cchStr = 0;
+    unsigned cchStr = 0;
 
     Assert(vdScriptTokenizerGetCh(pTokenizer) == '\"');
     vdScriptTokenizerSkipCh(pTokenizer); /* Skip " */
@@ -625,9 +627,9 @@ static void vdScriptTokenizerGetOperatorOrPunctuator(PVDTOKENIZER pTokenizer, PV
             AssertRC(rc);
 
             pToken->enmClass = VDTOKENCLASS_OPERATORS;
-            pToken->Pos.iChEnd += g_aScriptOps[i].cchOp;
+            pToken->Pos.iChEnd += (unsigned)g_aScriptOps[i].cchOp;
 
-            /** @todo: Make this prettier. */
+            /** @todo Make this prettier. */
             for (unsigned j = 0; j < g_aScriptOps[i].cchOp; j++)
                 vdScriptTokenizerSkipCh(pTokenizer);
             fOpFound = true;
@@ -641,7 +643,7 @@ static void vdScriptTokenizerGetOperatorOrPunctuator(PVDTOKENIZER pTokenizer, PV
         {
             if (!RTStrNCmp(g_aScriptPunctuators[i].pszOp, pTokenizer->pszInput, g_aScriptPunctuators[i].cchOp))
             {
-                pToken->Pos.iChEnd += g_aScriptPunctuators[i].cchOp;
+                pToken->Pos.iChEnd += (unsigned)g_aScriptPunctuators[i].cchOp;
                 pToken->enmClass = VDTOKENCLASS_PUNCTUATOR;
                 pToken->Class.Punctuator.chPunctuator = *g_aScriptPunctuators[i].pszOp;
 
@@ -704,6 +706,7 @@ static PVDTOKENIZER vdScriptTokenizerCreate(const char *pszInput)
     return pTokenizer;
 }
 
+#if 0 /** @todo unused */
 /**
  * Destroys a given tokenizer state.
  *
@@ -714,6 +717,7 @@ static void vdScriptTokenizerDestroy(PVDTOKENIZER pTokenizer)
 {
     RTMemFree(pTokenizer);
 }
+#endif
 
 /**
  * Get the current token in the input stream.
@@ -885,9 +889,11 @@ static bool vdScriptTokenizerSkipIfIsOperatorEqual(PVDTOKENIZER pTokenizer, cons
  */
 static int vdScriptParserError(PVDSCRIPTCTXINT pThis, int rc, RT_SRC_POS_DECL, const char *pszFmt, ...)
 {
-    NOREF(pThis);
-    NOREF(pszFmt);
-    RTPrintf(pszFmt);
+    RT_NOREF1(pThis); RT_SRC_POS_NOREF();
+    va_list va;
+    va_start(va, pszFmt);
+    RTPrintfV(pszFmt, va);
+    va_end(va);
     return rc;
 }
 
@@ -916,7 +922,7 @@ static int vdScriptParseIde(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTIDE *ppAstNodeIde
         {
             rc = RTStrCopyEx(pAstNodeIde->aszIde, pToken->Class.Ide.cchIde + 1, pToken->Class.Ide.pszIde, pToken->Class.Ide.cchIde);
             AssertRC(rc);
-            pAstNodeIde->cchIde = pToken->Class.Ide.cchIde;
+            pAstNodeIde->cchIde = (unsigned)pToken->Class.Ide.cchIde;
 
             *ppAstNodeIde = pAstNodeIde;
             vdScriptTokenizerConsume(pThis->pTokenizer);
@@ -940,7 +946,7 @@ static int vdScriptParsePrimaryExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXP
 {
     int rc = VINF_SUCCESS;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     if (vdScriptTokenizerSkipIfIsPunctuatorEqual(pThis->pTokenizer, '('))
     {
@@ -1022,7 +1028,7 @@ static int vdScriptParseFnCallArgumentList(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEX
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p pFnCall=%p\n", pThis, pFnCall));
 
     rc = vdScriptParseAssignmentExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1069,7 +1075,7 @@ static int vdScriptParsePostfixExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXP
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParsePrimaryExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1199,9 +1205,9 @@ static int vdScriptParseUnaryExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR 
     PVDSCRIPTASTEXPR pExpr = NULL;
     PVDSCRIPTASTEXPR pExprTop = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
-    /** @todo: Think about a more beautiful way of parsing this. */
+    /** @todo Think about a more beautiful way of parsing this. */
     while (true)
     {
         bool fQuit = false;
@@ -1300,6 +1306,7 @@ static int vdScriptParseUnaryExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR 
     return rc;
 }
 
+#if 0 /* unused */
 /**
  * Parse a storage class specifier.
  *
@@ -1331,7 +1338,9 @@ static void vdScriptParseStorageClassSpecifier(PVDSCRIPTCTXINT pThis, PVDSCRIPTA
     else if (vdScriptTokenizerSkipIfIsKeywordEqual(pThis->pTokenizer, VDSCRIPTTOKENKEYWORD_REGISTER))
         *penmStorageClass = VDSCRIPTASTSTORAGECLASS_REGISTER;
 }
+#endif /* unused */
 
+#if 0 /* unused */
 /**
  * Parse a type qualifier.
  *
@@ -1357,6 +1366,7 @@ static void vdScriptParseTypeQualifier(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTTYPEQU
     else if (vdScriptTokenizerSkipIfIsKeywordEqual(pThis->pTokenizer, VDSCRIPTTOKENKEYWORD_VOLATILE))
         *penmTypeQualifier = VDSCRIPTASTTYPEQUALIFIER_VOLATILE;
 }
+#endif /* unused */
 
 #if 0
 /**
@@ -1424,9 +1434,8 @@ static int vdScriptParseTypeSpecifier(PVDSCRIPTCTXINT pThis, )
 static int vdScriptParseCastExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR *ppAstNodeExpr)
 {
     int rc = VINF_SUCCESS;
-    PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
 #if 0
     if (vdScriptTokenizerSkipIfIsPunctuatorEqual(pThis->pTokenizer, '('))
@@ -1440,7 +1449,7 @@ static int vdScriptParseCastExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR *
             if (pExpr)
             {
                 pExpr->enmType = VDSCRIPTEXPRTYPE_CAST;
-                rc = vdScriptParseCastExpression(pThis, &pExpr->Cast.pExpr); /** @todo: Kill recursion. */
+                rc = vdScriptParseCastExpression(pThis, &pExpr->Cast.pExpr); /** @todo Kill recursion. */
                 if (RT_SUCCESS(rc))
                     pExpr->Cast.pTypeName = pTypeName;
                 else
@@ -1481,7 +1490,7 @@ static int vdScriptParseMultiplicativeExpression(PVDSCRIPTCTXINT pThis, PVDSCRIP
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseCastExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1544,7 +1553,7 @@ static int vdScriptParseAdditiveExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEX
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseMultiplicativeExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1606,7 +1615,7 @@ static int vdScriptParseShiftExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR 
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseAdditiveExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1670,7 +1679,7 @@ static int vdScriptParseRelationalExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTAST
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseShiftExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1748,7 +1757,7 @@ static int vdScriptParseEqualityExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEX
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseRelationalExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1809,7 +1818,7 @@ static int vdScriptParseBitwiseAndExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTAST
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseEqualityExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1859,7 +1868,7 @@ static int vdScriptParseBitwiseXorExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTAST
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseBitwiseAndExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1909,7 +1918,7 @@ static int vdScriptParseBitwiseOrExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTE
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseBitwiseXorExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -1959,7 +1968,7 @@ static int vdScriptParseLogicalAndExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTAST
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseBitwiseOrExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -2009,7 +2018,7 @@ static int vdScriptParseLogicalOrExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTE
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseLogicalAndExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -2057,6 +2066,7 @@ static int vdScriptParseCondExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR *
     return vdScriptParseLogicalOrExpression(pThis, ppAstNodeExpr);
 }
 
+#if 0 /* unused */
 /**
  * Parse a constant expression.
  *
@@ -2072,6 +2082,7 @@ static int vdScriptParseConstExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR 
 {
     return vdScriptParseCondExpression(pThis, ppAstNodeExpr);
 }
+#endif
 
 /**
  * Parse an assignment expression.
@@ -2090,7 +2101,7 @@ static int vdScriptParseAssignmentExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTAST
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pExpr;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseLogicalOrExpression(pThis, &pExpr);
     if (RT_SUCCESS(rc))
@@ -2223,7 +2234,7 @@ static int vdScriptParseExpression(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTEXPR *ppAs
     int rc = VINF_SUCCESS;
     PVDSCRIPTASTEXPR pAssignExpr = NULL;
 
-    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n"));
+    LogFlowFunc(("pThis=%p ppAstNodeExpr=%p\n", pThis, ppAstNodeExpr));
 
     rc = vdScriptParseAssignmentExpression(pThis, &pAssignExpr);
     if (   RT_SUCCESS(rc)
@@ -2512,6 +2523,7 @@ static int vdScriptParseFor(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTFOR pAstNodeFor)
 static int vdScriptParseDeclaration(PVDSCRIPTCTXINT pThis, PVDSCRIPTASTDECL *ppAstNodeDecl)
 {
     int rc = VERR_NOT_IMPLEMENTED;
+    RT_NOREF2(pThis, ppAstNodeDecl);
     return rc;
 }
 
@@ -2804,7 +2816,7 @@ static int vdScriptParseAddFnDef(PVDSCRIPTCTXINT pThis)
                                 pFn->Core.cchString = strlen(pFn->Core.pszString);
                                 pFn->fExternal      = false;
                                 pFn->Type.Internal.pAstFn = pAstNodeFn;
-                                /** @todo: Parameters. */
+                                /** @todo Parameters. */
                                 RTStrSpaceInsert(&pThis->hStrSpaceFn, &pFn->Core);
                             }
                             else
@@ -2878,7 +2890,7 @@ DECLHIDDEN(int) VDScriptCtxCreate(PVDSCRIPTCTX phScriptCtx)
     return rc;
 }
 
-static int vdScriptCtxDestroyFnSpace(PRTSTRSPACECORE pStr, void *pvUser)
+static DECLCALLBACK(int) vdScriptCtxDestroyFnSpace(PRTSTRSPACECORE pStr, void *pvUser)
 {
     NOREF(pvUser);
 
@@ -2926,7 +2938,7 @@ DECLHIDDEN(int) VDScriptCtxCallbacksRegister(VDSCRIPTCTX hScriptCtx, PCVDSCRIPTC
     AssertPtrReturn(paCallbacks, VERR_INVALID_POINTER);
     AssertReturn(cCallbacks > 0, VERR_INVALID_PARAMETER);
 
-    /** @todo: Unregister already registered callbacks in case of an error. */
+    /** @todo Unregister already registered callbacks in case of an error. */
     do
     {
         PVDSCRIPTFN pFn = NULL;
@@ -2937,14 +2949,14 @@ DECLHIDDEN(int) VDScriptCtxCallbacksRegister(VDSCRIPTCTX hScriptCtx, PCVDSCRIPTC
             break;
         }
 
-        pFn = (PVDSCRIPTFN)RTMemAllocZ(RT_OFFSETOF(VDSCRIPTFN, aenmArgTypes[paCallbacks->cArgs]));
+        pFn = (PVDSCRIPTFN)RTMemAllocZ(RT_UOFFSETOF_DYN(VDSCRIPTFN, aenmArgTypes[paCallbacks->cArgs]));
         if (!pFn)
         {
             rc = VERR_NO_MEMORY;
             break;
         }
 
-        /** @todo: Validate argument and returns types. */
+        /** @todo Validate argument and returns types. */
         pFn->Core.pszString            = paCallbacks->pszFnName;
         pFn->Core.cchString            = strlen(pFn->Core.pszString);
         pFn->fExternal                 = true;

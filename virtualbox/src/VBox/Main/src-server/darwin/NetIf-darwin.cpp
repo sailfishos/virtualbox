@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +17,9 @@
 
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 /*
  * Deal with conflicts first.
  * PVM - BSD mess, that FreeBSD has correct a long time ago.
@@ -223,11 +223,11 @@ static int getDefaultIfaceIndex(unsigned short *pu16Index)
         Log(("getDefaultIfaceIndex: Failed to get estimate for list size (errno=%d).\n", errno));
         return RTErrConvertFromErrno(errno);
     }
-    if ((pBuf = (char*)malloc(cbNeeded)) == NULL)
+    if ((pBuf = (char *)RTMemAlloc(cbNeeded)) == NULL)
         return VERR_NO_MEMORY;
     if (sysctl(aiMib, 6, pBuf, &cbNeeded, NULL, 0) < 0)
     {
-        free(pBuf);
+        RTMemFree(pBuf);
         Log(("getDefaultIfaceIndex: Failed to retrieve interface table (errno=%d).\n", errno));
         return RTErrConvertFromErrno(errno);
     }
@@ -263,13 +263,13 @@ static int getDefaultIfaceIndex(unsigned short *pu16Index)
                      mask->sin_len == 0))
                 {
                     *pu16Index = pRtMsg->rtm_index;
-                    free(pBuf);
+                    RTMemFree(pBuf);
                     return VINF_SUCCESS;
                 }
             }
         }
     }
-    free(pBuf);
+    RTMemFree(pBuf);
     return 0; /* Failed to find default interface, take the first one in the list. */
 }
 
@@ -298,11 +298,11 @@ int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
         Log(("NetIfList: Failed to get estimate for list size (errno=%d).\n", errno));
         return RTErrConvertFromErrno(errno);
     }
-    if ((pBuf = (char*)malloc(cbNeeded)) == NULL)
+    if ((pBuf = (char*)RTMemAlloc(cbNeeded)) == NULL)
         return VERR_NO_MEMORY;
     if (sysctl(aiMib, 6, pBuf, &cbNeeded, NULL, 0) < 0)
     {
-        free(pBuf);
+        RTMemFree(pBuf);
         Log(("NetIfList: Failed to retrieve interface table (errno=%d).\n", errno));
         return RTErrConvertFromErrno(errno);
     }
@@ -310,7 +310,7 @@ int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
     int sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (sock < 0)
     {
-        free(pBuf);
+        RTMemFree(pBuf);
         Log(("NetIfList: socket() -> %d\n", errno));
         return RTErrConvertFromErrno(errno);
     }
@@ -341,7 +341,7 @@ int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
                 cbNameLen = strlen(pNIC->szName) + 1;
                 break;
             }
-        PNETIFINFO pNew = (PNETIFINFO)RTMemAllocZ(RT_OFFSETOF(NETIFINFO, szName[cbNameLen]));
+        PNETIFINFO pNew = (PNETIFINFO)RTMemAllocZ(RT_UOFFSETOF_DYN(NETIFINFO, szName[cbNameLen]));
         if (!pNew)
         {
             rc = VERR_NO_MEMORY;
@@ -360,6 +360,7 @@ int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
         {
             memcpy(pNew->szName, pNIC->szName, cbNameLen);
             pNew->Uuid = pNIC->Uuid;
+            pNew->fWireless = pNIC->fWireless;
         }
         else
         {
@@ -409,11 +410,13 @@ int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
             ComObjPtr<HostNetworkInterface> IfObj;
             IfObj.createObject();
             if (SUCCEEDED(IfObj->init(Bstr(pNew->szName), enmType, pNew)))
+            {
                 /* Make sure the default interface gets to the beginning. */
                 if (pIfMsg->ifm_index == u16DefaultIface)
                     list.push_front(IfObj);
                 else
                     list.push_back(IfObj);
+            }
         }
         RTMemFree(pNew);
     }
@@ -424,7 +427,7 @@ int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
         RTMemFree(pvFree);
     }
     close(sock);
-    free(pBuf);
+    RTMemFree(pBuf);
     return rc;
 }
 
@@ -447,11 +450,11 @@ int NetIfGetConfigByName(PNETIFINFO pInfo)
         Log(("NetIfList: Failed to get estimate for list size (errno=%d).\n", errno));
         return RTErrConvertFromErrno(errno);
     }
-    if ((pBuf = (char*)malloc(cbNeeded)) == NULL)
+    if ((pBuf = (char*)RTMemAlloc(cbNeeded)) == NULL)
         return VERR_NO_MEMORY;
     if (sysctl(aiMib, 6, pBuf, &cbNeeded, NULL, 0) < 0)
     {
-        free(pBuf);
+        RTMemFree(pBuf);
         Log(("NetIfList: Failed to retrieve interface table (errno=%d).\n", errno));
         return RTErrConvertFromErrno(errno);
     }
@@ -459,7 +462,7 @@ int NetIfGetConfigByName(PNETIFINFO pInfo)
     int sock = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (sock < 0)
     {
-        free(pBuf);
+        RTMemFree(pBuf);
         Log(("NetIfList: socket() -> %d\n", errno));
         return RTErrConvertFromErrno(errno);
     }
@@ -524,7 +527,7 @@ int NetIfGetConfigByName(PNETIFINFO pInfo)
         }
     }
     close(sock);
-    free(pBuf);
+    RTMemFree(pBuf);
     return rc;
 }
 
@@ -537,8 +540,9 @@ int NetIfGetConfigByName(PNETIFINFO pInfo)
  * @param   pcszIfName  Interface name.
  * @param   puMbits     Where to store the link speed.
  */
-int NetIfGetLinkSpeed(const char * /*pcszIfName*/, uint32_t * /*puMbits*/)
+int NetIfGetLinkSpeed(const char *pcszIfName, uint32_t *puMbits)
 {
+    RT_NOREF(pcszIfName, puMbits);
     return VERR_NOT_IMPLEMENTED;
 }
 #endif

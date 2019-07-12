@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2010 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -33,8 +33,8 @@
 #include <VBox/usb.h>
 
 
-/** @defgroup grp_USBFilter     USBFilter - USB Filter constructs shared by kernel and user mode
- * @ingroup grp_USBLib
+/** @defgroup grp_usbfilter  USBFilter - USB Filter constructs shared by kernel and user mode
+ * @ingroup grp_usblib
  * @{
  */
 
@@ -211,7 +211,7 @@ typedef USBFILTER *PUSBFILTER;
 typedef const USBFILTER *PCUSBFILTER;
 
 /** USBFILTER::u32Magic (Yasuhiro Nightow). */
-#define USBFILTER_MAGIC      0x19670408
+#define USBFILTER_MAGIC      UINT32_C(0x19670408)
 
 
 RT_C_DECLS_BEGIN
@@ -230,7 +230,8 @@ USBLIB_DECL(int)  USBFilterSetIgnore(PUSBFILTER pFilter, USBFILTERIDX enmFieldId
 USBLIB_DECL(int)  USBFilterSetPresentOnly(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx);
 USBLIB_DECL(int)  USBFilterSetNumExact(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, uint16_t u16Value, bool fMustBePresent);
 USBLIB_DECL(int)  USBFilterSetNumExpression(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, const char *pszExpression, bool fMustBePresent);
-USBLIB_DECL(int)  USBFilterSetStringExact(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, const char *pszValue, bool fMustBePresent);
+USBLIB_DECL(int)  USBFilterSetStringExact(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, const char *pszValue,
+                                          bool fMustBePresent, bool fPurge);
 USBLIB_DECL(int)  USBFilterSetStringPattern(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, const char *pszPattern, bool fMustBePresent);
 USBLIB_DECL(int)  USBFilterSetMustBePresent(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, bool fMustBePresent);
 

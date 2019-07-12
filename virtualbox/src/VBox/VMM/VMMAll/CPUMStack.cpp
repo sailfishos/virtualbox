@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,18 +16,13 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/vmm/cpum.h>
 #include "CPUMInternal.h"
 #include <VBox/vmm/vm.h>
 #include <VBox/vmm/mm.h>
-
-/** Disable stack frame pointer generation here. */
-#if defined(_MSC_VER) && !defined(DEBUG)
-# pragma optimize("y", off)
-#endif
 
 
 VMMDECL(void) CPUMPushHyper(PVMCPU pVCpu, uint32_t u32)

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -43,7 +43,7 @@ public:
     /**
      * Construct the object.
      *
-     * @param   pDbgGui     Pointer to the debugger gui object.
+     * @param   a_pDbgGui   Pointer to the debugger gui object.
      */
     VBoxDbgBase(VBoxDbgGui *a_pDbgGui);
 
@@ -129,7 +129,8 @@ public:
     /**
      * Construct the object.
      *
-     * @param   pDbgGui     Pointer to the debugger gui object.
+     * @param   a_pDbgGui   Pointer to the debugger gui object.
+     * @param   a_pParent   Pointer to the parent object.
      */
     VBoxDbgBaseWindow(VBoxDbgGui *a_pDbgGui, QWidget *a_pParent);
 

@@ -1,5 +1,10 @@
+/* $Id: eltorito.c $ */
+/** @file
+ * PC BIOS - ???
+ */
+
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,6 +43,15 @@
  *
  */
 
+/*
+ * Oracle LGPL Disclaimer: For the avoidance of doubt, except that if any license choice
+ * other than GPL or LGPL is available it will apply instead, Oracle elects to use only
+ * the Lesser General Public License version 2.1 (LGPLv2) at this time for any software where
+ * a choice of LGPL license versions is made available with the language indicating
+ * that LGPLv2 or any later version may be used, or where a choice of which version
+ * of the LGPL is applied is otherwise unspecified.
+ */
+
 
 #include <stdint.h>
 #include <string.h>
@@ -65,7 +79,7 @@
 #endif
 
 
-//@todo: put in a header
+/// @todo put in a header
 #define AX      r.gr.u.r16.ax
 #define BX      r.gr.u.r16.bx
 #define CX      r.gr.u.r16.cx
@@ -141,7 +155,7 @@ extern  int     diskette_param_table;
 
 void BIOSCALL cdemu_init(void)
 {
-    // @TODO: a macro or a function for getting the EBDA segment
+    /// @todo a macro or a function for getting the EBDA segment
     uint16_t    ebda_seg = read_word(0x0040,0x000E);
 
     // the only important data is this one for now
@@ -150,7 +164,7 @@ void BIOSCALL cdemu_init(void)
 
 uint8_t BIOSCALL cdemu_isactive(void)
 {
-    // @TODO: a macro or a function for getting the EBDA segment
+    /// @todo a macro or a function for getting the EBDA segment
     uint16_t    ebda_seg = read_word(0x0040,0x000E);
 
     return read_byte(ebda_seg,(uint16_t)&EbdaData->cdemu.active);
@@ -158,7 +172,7 @@ uint8_t BIOSCALL cdemu_isactive(void)
 
 uint8_t BIOSCALL cdemu_emulated_drive(void)
 {
-    // @TODO: a macro or a function for getting the EBDA segment
+    /// @todo a macro or a function for getting the EBDA segment
     uint16_t    ebda_seg = read_word(0x0040,0x000E);
 
     return read_byte(ebda_seg,(uint16_t)&EbdaData->cdemu.emulated_drive);
@@ -170,7 +184,7 @@ uint8_t BIOSCALL cdemu_emulated_drive(void)
 
 void BIOSCALL int13_eltorito(disk_regs_t r)
 {
-    // @TODO: a macro or a function for getting the EBDA segment
+    /// @todo a macro or a function for getting the EBDA segment
     uint16_t        ebda_seg=read_word(0x0040,0x000E);
     cdemu_t __far   *cdemu;
 
@@ -192,7 +206,7 @@ void BIOSCALL int13_eltorito(disk_regs_t r)
 
     case 0x4b: // ElTorito - Terminate disk emu
         // FIXME ElTorito Hardcoded
-        //@todo: maybe our cdemu struct should match El Torito to allow memcpy()?
+        /// @todo maybe our cdemu struct should match El Torito to allow memcpy()?
         write_byte(DS,SI+0x00,0x13);
         write_byte(DS,SI+0x01,cdemu->media);
         write_byte(DS,SI+0x02,cdemu->emulated_drive);
@@ -239,7 +253,7 @@ int13_success:
 // ---------------------------------------------------------------------------
 
 /* Utility routine to check if a device is a CD-ROM. */
-//@todo: this function is kinda useless as the ATAPI type check is obsolete.
+/// @todo this function is kinda useless as the ATAPI type check is obsolete.
 static uint16_t device_is_cdrom(uint8_t device)
 {
     bio_dsk_t __far *bios_dsk;
@@ -268,7 +282,7 @@ static const char eltorito[]="EL TORITO SPECIFICATION";
 //
 uint16_t cdrom_boot(void)
 {
-    // @TODO: a macro or a function for getting the EBDA segment
+    /// @todo a macro or a function for getting the EBDA segment
     uint16_t            ebda_seg=read_word(0x0040,0x000E);
     uint8_t             buffer[2048];
     cdb_atapi           atapicmd;
@@ -313,7 +327,7 @@ uint16_t cdrom_boot(void)
     /* Check for a valid BRVD. */
     if (buffer[0] != 0)
         return 4;
-    //@todo: what's wrong with memcmp()?
+    /// @todo what's wrong with memcmp()?
     for (i = 0; i < 5; ++i) {
         if (buffer[1+i] != isotag[i])
             return 5;
@@ -340,7 +354,7 @@ uint16_t cdrom_boot(void)
     if (error != 0)
         return 7;
 
-    //@todo: Define a struct for the Boot Catalog, the hardcoded offsets are so dumb...
+    /// @todo Define a struct for the Boot Catalog, the hardcoded offsets are so dumb...
 
     /* Check if the Boot Catalog looks valid. */
     if (buffer[0x00] != 0x01)
@@ -430,7 +444,7 @@ uint16_t cdrom_boot(void)
         break;
     case 0x04:  /* Hard disk */
         cdemu->vdevice.spt       = read_byte(boot_segment,446+6)&0x3f;
-        cdemu->vdevice.cylinders = (read_byte(boot_segment,446+6)<<2) + read_byte(boot_segment,446+7) + 1;
+        cdemu->vdevice.cylinders = ((read_byte(boot_segment,446+6)&~0x3f)<<2) + read_byte(boot_segment,446+7) + 1;
         cdemu->vdevice.heads     = read_byte(boot_segment,446+5) + 1;
         break;
     }
@@ -463,7 +477,7 @@ uint16_t cdrom_boot(void)
 
 void BIOSCALL int13_cdemu(disk_regs_t r)
 {
-    // @TODO: a macro or a function for getting the EBDA segment
+    /// @todo a macro or a function for getting the EBDA segment
     uint16_t            ebda_seg=read_word(0x0040,0x000E);
     uint8_t             device, status;
     uint16_t            vheads, vspt, vcylinders;
@@ -627,8 +641,8 @@ void BIOSCALL int13_cdemu(disk_regs_t r)
 
         /* Only set the DPT pointer for emulated floppies. */
         if (cdemu->media < 4) {
-            DI = (uint16_t)&diskette_param_table;   // @todo: should this depend on emulated medium?
-            ES = 0xF000;                            // @todo: how to make this relocatable?
+            DI = (uint16_t)&diskette_param_table;   /// @todo should this depend on emulated medium?
+            ES = 0xF000;                            /// @todo how to make this relocatable?
         }
         goto int13_success;
         break;
@@ -851,7 +865,7 @@ void BIOSCALL int13_cdrom(uint16_t EHBX, disk_regs_t r)
         // FIXME should handle 0x31 no media in device
         // FIXME should handle 0xb5 valid request failed
 
-#if 0 //@todo: implement!
+#if 0 /// @todo implement!
         // Call removable media eject
         ASM_START
         push bp
@@ -875,7 +889,7 @@ int13_cdrom_rme_end:
         goto int13_success;
         break;
 
-    //@todo: Part of this should be merged with analogous code in disk.c
+    /// @todo Part of this should be merged with analogous code in disk.c
     case 0x48: // IBM/MS get drive parameters
         dpt = DS :> (dpt_t *)SI;
         size = dpt->size;
@@ -920,7 +934,9 @@ int13_cdrom_rme_end:
             options  = (1<<4); // lba translation
             options |= (1<<5); // removable device
             options |= (1<<6); // atapi device
+#if VBOX_BIOS_CPU >= 80386
             options |= (mode==ATA_MODE_PIO32?1:0<<7);
+#endif
 
             bios_dsk->dpte.iobase1  = iobase1;
             bios_dsk->dpte.iobase2  = iobase2;
@@ -1049,3 +1065,4 @@ int13_success_noah:
 // ---------------------------------------------------------------------------
 // End of int13 for cdrom
 // ---------------------------------------------------------------------------
+

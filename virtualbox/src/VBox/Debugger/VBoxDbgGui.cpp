@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGG
 #define VBOX_COM_NO_ATL
 #include <VBox/com/defs.h>
@@ -194,7 +195,9 @@ VBoxDbgGui::showConsole()
 {
     if (!m_pDbgConsole)
     {
-        m_pDbgConsole = new VBoxDbgConsole(this, m_pParent);
+        IVirtualBox *pVirtualBox = NULL;
+        m_pMachine->COMGETTER(Parent)(&pVirtualBox);
+        m_pDbgConsole = new VBoxDbgConsole(this, m_pParent, pVirtualBox);
         connect(m_pDbgConsole, SIGNAL(destroyed(QObject *)), this, SLOT(notifyChildDestroyed(QObject *)));
         repositionConsole();
     }

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_REM
 #ifdef VBOX_WITH_REM
 # include <VBox/vmm/rem.h>
@@ -39,7 +39,7 @@
 /**
  * Records a invlpg instruction for replaying upon REM entry.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtrPage   The
  */
 VMMDECL(void) REMNotifyInvalidatePage(PVM pVM, RTGCPTR GCPtrPage)
@@ -79,7 +79,7 @@ VMMDECL(void) REMNotifyInvalidatePage(PVM pVM, RTGCPTR GCPtrPage)
 /**
  * Insert pending notification
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pRec            Notification record to insert
  */
 static void remNotifyHandlerInsert(PVM pVM, PREMHANDLERNOTIFICATION pRec)
@@ -131,17 +131,17 @@ static void remNotifyHandlerInsert(PVM pVM, PREMHANDLERNOTIFICATION pRec)
 /**
  * Notification about a successful PGMR3HandlerPhysicalRegister() call.
  *
- * @param   pVM             Pointer to the VM.
- * @param   enmType         Handler type.
+ * @param   pVM             The cross context VM structure.
+ * @param   enmKind         Kind of access handler.
  * @param   GCPhys          Handler range address.
  * @param   cb              Size of the handler range.
  * @param   fHasHCHandler   Set if the handler have a HC callback function.
  */
-VMMDECL(void) REMNotifyHandlerPhysicalRegister(PVM pVM, PGMPHYSHANDLERTYPE enmType, RTGCPHYS GCPhys, RTGCPHYS cb, bool fHasHCHandler)
+VMMDECL(void) REMNotifyHandlerPhysicalRegister(PVM pVM, PGMPHYSHANDLERKIND enmKind, RTGCPHYS GCPhys, RTGCPHYS cb, bool fHasHCHandler)
 {
     REMHANDLERNOTIFICATION Rec;
     Rec.enmKind = REMHANDLERNOTIFICATIONKIND_PHYSICAL_REGISTER;
-    Rec.u.PhysicalRegister.enmType = enmType;
+    Rec.u.PhysicalRegister.enmKind = enmKind;
     Rec.u.PhysicalRegister.GCPhys = GCPhys;
     Rec.u.PhysicalRegister.cb = cb;
     Rec.u.PhysicalRegister.fHasHCHandler = fHasHCHandler;
@@ -152,18 +152,18 @@ VMMDECL(void) REMNotifyHandlerPhysicalRegister(PVM pVM, PGMPHYSHANDLERTYPE enmTy
 /**
  * Notification about a successful PGMR3HandlerPhysicalDeregister() operation.
  *
- * @param   pVM             Pointer to the VM.
- * @param   enmType         Handler type.
+ * @param   pVM             The cross context VM structure.
+ * @param   enmKind         Kind of access handler.
  * @param   GCPhys          Handler range address.
  * @param   cb              Size of the handler range.
  * @param   fHasHCHandler   Set if the handler have a HC callback function.
  * @param   fRestoreAsRAM   Whether the to restore it as normal RAM or as unassigned memory.
  */
-VMMDECL(void) REMNotifyHandlerPhysicalDeregister(PVM pVM, PGMPHYSHANDLERTYPE enmType, RTGCPHYS GCPhys, RTGCPHYS cb, bool fHasHCHandler, bool fRestoreAsRAM)
+VMMDECL(void) REMNotifyHandlerPhysicalDeregister(PVM pVM, PGMPHYSHANDLERKIND enmKind, RTGCPHYS GCPhys, RTGCPHYS cb, bool fHasHCHandler, bool fRestoreAsRAM)
 {
     REMHANDLERNOTIFICATION Rec;
     Rec.enmKind = REMHANDLERNOTIFICATIONKIND_PHYSICAL_DEREGISTER;
-    Rec.u.PhysicalDeregister.enmType = enmType;
+    Rec.u.PhysicalDeregister.enmKind = enmKind;
     Rec.u.PhysicalDeregister.GCPhys = GCPhys;
     Rec.u.PhysicalDeregister.cb = cb;
     Rec.u.PhysicalDeregister.fHasHCHandler = fHasHCHandler;
@@ -175,19 +175,19 @@ VMMDECL(void) REMNotifyHandlerPhysicalDeregister(PVM pVM, PGMPHYSHANDLERTYPE enm
 /**
  * Notification about a successful PGMR3HandlerPhysicalModify() call.
  *
- * @param   pVM             Pointer to the VM.
- * @param   enmType         Handler type.
+ * @param   pVM             The cross context VM structure.
+ * @param   enmKind         Kind of access handler.
  * @param   GCPhysOld       Old handler range address.
  * @param   GCPhysNew       New handler range address.
  * @param   cb              Size of the handler range.
  * @param   fHasHCHandler   Set if the handler have a HC callback function.
  * @param   fRestoreAsRAM   Whether the to restore it as normal RAM or as unassigned memory.
  */
-VMMDECL(void) REMNotifyHandlerPhysicalModify(PVM pVM, PGMPHYSHANDLERTYPE enmType, RTGCPHYS GCPhysOld, RTGCPHYS GCPhysNew, RTGCPHYS cb, bool fHasHCHandler, bool fRestoreAsRAM)
+VMMDECL(void) REMNotifyHandlerPhysicalModify(PVM pVM, PGMPHYSHANDLERKIND enmKind, RTGCPHYS GCPhysOld, RTGCPHYS GCPhysNew, RTGCPHYS cb, bool fHasHCHandler, bool fRestoreAsRAM)
 {
     REMHANDLERNOTIFICATION Rec;
     Rec.enmKind = REMHANDLERNOTIFICATIONKIND_PHYSICAL_MODIFY;
-    Rec.u.PhysicalModify.enmType = enmType;
+    Rec.u.PhysicalModify.enmKind = enmKind;
     Rec.u.PhysicalModify.GCPhysOld = GCPhysOld;
     Rec.u.PhysicalModify.GCPhysNew = GCPhysNew;
     Rec.u.PhysicalModify.cb = cb;
@@ -204,8 +204,8 @@ VMMDECL(void) REMNotifyHandlerPhysicalModify(PVM pVM, PGMPHYSHANDLERTYPE enmType
  *
  * This is for avoiding trouble in RC when changing CR3.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU of the calling EMT.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  */
 VMMDECL(void) REMNotifyHandlerPhysicalFlushIfAlmostFull(PVM pVM, PVMCPU pVCpu)
 {
@@ -238,7 +238,7 @@ VMMDECL(void) REMNotifyHandlerPhysicalFlushIfAlmostFull(PVM pVM, PVMCPU pVCpu)
 /**
  * Make REM flush all translation block upon the next call to REMR3State().
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  */
 VMMDECL(void) REMFlushTBs(PVM pVM)
 {

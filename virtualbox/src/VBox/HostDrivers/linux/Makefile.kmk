@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -14,6 +14,15 @@
 # VirtualBox OSE distribution. VirtualBox OSE is distributed in the
 # hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
 #
+# The contents of this file may alternatively be used under the terms
+# of the Common Development and Distribution License Version 1.0
+# (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+# VirtualBox OSE distribution, in which case the provisions of the
+# CDDL are applicable instead of those of the GPL.
+#
+# You may elect to license modified versions of this file under the
+# terms and conditions of either the GPL or the CDDL or both.
+#
 
 SUB_DEPTH = ../../../..
 include $(KBUILD_PATH)/subheader.kmk
@@ -21,27 +30,11 @@ include $(KBUILD_PATH)/subheader.kmk
 INSTALLS += HostDrivers-scripts
 HostDrivers-scripts_INST        = $(INST_DIST)
 HostDrivers-scripts_SOURCES     = \
-	Makefile=>src/Makefile \
-	$(HostDrivers-scripts_0_OUTDIR)/dkms.conf=>src/dkms.conf
+	Makefile=>src/Makefile
 HostDrivers-scripts_EXEC_SOURCES = \
 	loadall.sh \
 	load.sh \
-	do_dkms=>src/do_dkms \
 	build_in_tmp=>src/build_in_tmp
-HostDrivers-scripts_CLEAN       = \
-	$(HostDrivers-scripts_0_OUTDIR)/dkms.conf
-
-$$(HostDrivers-scripts_0_OUTDIR)/dkms.conf: \
-		$(PATH_SUB_CURRENT)/dkms.conf \
-		$(VBOX_VERSION_STAMP) \
-		| $$(dir $$@)
-	$(call MSG_TOOL,Creating,,$@)
-	$(QUIET)$(SED) \
-		-e "s;_VERSION_;${VBOX_VERSION_STRING};g" \
-		-e "s;_OMIT_VBOXNETFLT_;$(if $(VBOX_WITH_NETFLT),,#);g" \
-		-e "s;_OMIT_VBOXNETADP_;$(if $(VBOX_WITH_NETADP),,#);g" \
-		-e "s;_OMIT_VBOXPCI_;$(if $(VBOX_WITH_PCI_PASSTHROUGH),,#);g" \
-		--output $@ $<
 
 include $(FILE_KBUILD_SUB_FOOTER)
 

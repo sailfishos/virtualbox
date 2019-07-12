@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -44,9 +44,10 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <KernelExport.h>
 #include <PCI.h>
 #include <malloc.h>
@@ -54,7 +55,7 @@
 #include <string.h>
 #include <graphic_driver.h>
 #include <VBoxGuest-haiku.h>
-#include <VBox/VBoxVideoGuest.h>
+#include <VBoxVideoGuest.h>
 #include "../common/VBoxVideo_common.h"
 
 #define VENDOR_ID 0x80ee
@@ -121,9 +122,10 @@ struct DeviceInfo
     char            name[B_OS_NAME_LENGTH]; /* Name of device */
 };
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 status_t device_open(const char *name, uint32 flags, void **cookie);
 status_t device_close(void *dev);
 status_t device_free(void *dev);
@@ -132,9 +134,10 @@ status_t device_write(void *dev, off_t pos, const void *buf, size_t *len);
 status_t device_ioctl(void *dev, uint32 msg, void *buf, size_t len);
 static uint32 get_color_space_for_depth(uint32 depth);
 
-/*******************************************************************************
-*   Globals                                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Globals                                                                                                                      *
+*********************************************************************************************************************************/
 /* At most one virtual video card ever appears, no reason for this to be an array */
 static DeviceInfo gDeviceInfo;
 static char *gDeviceNames[2] = { gDeviceInfo.name, NULL };
@@ -274,7 +277,7 @@ status_t device_open(const char *name, uint32 flags, void **cookie)
     if (!gCanHasDevice || strcmp(name, gDeviceInfo.name) != 0)
         return B_BAD_VALUE;
 
-    /* @todo init device! */
+    /** @todo init device! */
 
     *cookie = (void *)&gDeviceInfo;
     return B_OK;
@@ -297,7 +300,7 @@ status_t device_free(void *dev)
 
     if (di.openCount <= 1)
     {
-        // TODO deinit device!
+        /// @todo deinit device!
         delete_area(di.sharedArea);
         di.sharedArea = -1;
         di.sharedInfo = NULL;

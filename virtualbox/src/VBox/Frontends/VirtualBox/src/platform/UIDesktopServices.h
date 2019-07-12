@@ -1,11 +1,10 @@
+/* $Id: UIDesktopServices.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Desktop Services.
+ * VBox Qt GUI - Desktop Services..
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

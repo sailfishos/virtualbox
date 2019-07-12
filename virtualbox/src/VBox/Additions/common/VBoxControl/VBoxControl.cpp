@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,12 +15,14 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/alloca.h>
 #include <iprt/cpp/autores.h>
 #include <iprt/buildconfig.h>
+#include <iprt/getopt.h>
 #include <iprt/initterm.h>
 #include <iprt/mem.h>
 #include <iprt/message.h>
@@ -31,42 +33,46 @@
 #include <VBox/version.h>
 #include <VBox/VBoxGuestLib.h>
 #ifdef RT_OS_WINDOWS
-# include <Windows.h>
+# include <iprt/win/windows.h>
 #endif
 #ifdef VBOX_WITH_GUEST_PROPS
 # include <VBox/HostServices/GuestPropertySvc.h>
 #endif
 #ifdef VBOX_WITH_DPC_LATENCY_CHECKER
 # include <VBox/VBoxGuest.h>
-# include "../VBoxGuestLib/VBGLR3Internal.h" /* HACK ALERT! Using vbglR3DoIOCtl directly!! */
+# include "../VBoxGuest/lib/VBoxGuestR3LibInternal.h" /* HACK ALERT! Using vbglR3DoIOCtl directly!! */
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The program name (derived from argv[0]). */
 char const *g_pszProgName = "";
 /** The current verbosity level. */
 int g_cVerbosity = 0;
 
 
-/**
- * Displays the program usage message.
- *
- * @param u64Which
- *
+/** @name Displays the program usage message.
  * @{
  */
 
-/** Helper function */
-static void doUsage(char const *line, char const *name = "", char const *command = "")
+/**
+ * Helper function that does indentation.
+ *
+ * @param   pszLine     Text.
+ * @param   pszName     Program name.
+ * @param   pszCommand  Command/option syntax.
+ */
+static void doUsage(char const *pszLine, char const *pszName = "", char const *pszCommand = "")
 {
     /* Allow for up to 15 characters command name length (VBoxControl.exe) with
      * perfect column alignment. Beyond that there's at least one space between
      * the command if there are command line parameters. */
-    RTPrintf("%s %-*s%s%s\n", name, strlen(line) ? 35 - strlen(name) : 1,
-                              command, strlen(line) ? " " : "", line);
+    RTPrintf("%s %-*s%s%s\n",
+             pszName,
+             *pszLine ? 35 - strlen(pszName) : 1, pszCommand,
+             *pszLine ? " " : "", pszLine);
 }
 
 /** Enumerate the different parts of the usage we might want to print out */
@@ -90,6 +96,7 @@ enum VBoxControlUsage
 #if !defined(VBOX_CONTROL_TEST)
     WRITE_CORE_DUMP,
 #endif
+    WRITE_LOG,
     TAKE_SNAPSHOT,
     SAVE_STATE,
     SUSPEND,
@@ -99,10 +106,10 @@ enum VBoxControlUsage
     USAGE_ALL = UINT32_MAX
 };
 
-static void usage(enum VBoxControlUsage eWhich = USAGE_ALL)
+static RTEXITCODE usage(enum VBoxControlUsage eWhich = USAGE_ALL)
 {
     RTPrintf("Usage:\n\n");
-    doUsage("print version number and exit", g_pszProgName, "[-v|--version]");
+    doUsage("print version number and exit", g_pszProgName, "[-V|--version]");
     doUsage("suppress the logo", g_pszProgName, "--nologo ...");
     RTPrintf("\n");
 
@@ -147,6 +154,8 @@ static void usage(enum VBoxControlUsage eWhich = USAGE_ALL)
     if (eWhich == WRITE_CORE_DUMP || eWhich == USAGE_ALL)
         doUsage("", g_pszProgName, "writecoredump");
 #endif
+    if (eWhich == WRITE_LOG || eWhich == USAGE_ALL)
+        doUsage("", g_pszProgName, "writelog [-n|--no-newline] [--] <msg>");
     if (eWhich == TAKE_SNAPSHOT || eWhich == USAGE_ALL)
         doUsage("", g_pszProgName, "takesnapshot");
     if (eWhich == SAVE_STATE || eWhich == USAGE_ALL)
@@ -159,9 +168,24 @@ static void usage(enum VBoxControlUsage eWhich = USAGE_ALL)
         doUsage("[command]", g_pszProgName, "help");
     if (eWhich == VERSION   || eWhich == USAGE_ALL)
         doUsage("", g_pszProgName, "version");
+
+    return RTEXITCODE_SUCCESS;
 }
 
 /** @} */
+
+
+/**
+ * Implementation of the '--version' option.
+ *
+ * @returns RTEXITCODE_SUCCESS
+ */
+static RTEXITCODE printVersion(void)
+{
+    RTPrintf("%sr%u\n", VBOX_VERSION_STRING, RTBldCfgRevision());
+    return RTEXITCODE_SUCCESS;
+}
+
 
 /**
  * Displays an error message.
@@ -172,11 +196,26 @@ static void usage(enum VBoxControlUsage eWhich = USAGE_ALL)
  */
 static RTEXITCODE VBoxControlError(const char *pszFormat, ...)
 {
+    /** @todo prefix with current command. */
     va_list va;
     va_start(va, pszFormat);
     RTMsgErrorV(pszFormat, va);
     va_end(va);
     return RTEXITCODE_FAILURE;
+}
+
+
+/**
+ * Displays a getopt error.
+ *
+ * @returns RTEXITCODE_FAILURE.
+ * @param   ch          The RTGetOpt return value.
+ * @param   pValueUnion The RTGetOpt return data.
+ */
+static RTEXITCODE VBoxCtrlGetOptError(int ch, PCRTGETOPTUNION pValueUnion)
+{
+    /** @todo prefix with current command. */
+    return RTGetOptPrintError(ch, pValueUnion);
 }
 
 
@@ -189,6 +228,7 @@ static RTEXITCODE VBoxControlError(const char *pszFormat, ...)
  */
 static RTEXITCODE VBoxControlSyntaxError(const char *pszFormat, ...)
 {
+    /** @todo prefix with current command. */
     va_list va;
     va_start(va, pszFormat);
     RTMsgErrorV(pszFormat, va);
@@ -200,63 +240,43 @@ static RTEXITCODE VBoxControlSyntaxError(const char *pszFormat, ...)
 
 LONG (WINAPI * gpfnChangeDisplaySettingsEx)(LPCTSTR lpszDeviceName, LPDEVMODE lpDevMode, HWND hwnd, DWORD dwflags, LPVOID lParam);
 
-static unsigned nextAdjacentRectXP (RECTL *paRects, unsigned nRects, unsigned iRect)
+static unsigned nextAdjacentRectXP(RECTL const *paRects, unsigned cRects, unsigned iRect)
 {
-    unsigned i;
-    for (i = 0; i < nRects; i++)
-    {
+    for (unsigned i = 0; i < cRects; i++)
         if (paRects[iRect].right == paRects[i].left)
-        {
             return i;
-        }
-    }
-    return ~0;
+    return ~0U;
 }
 
-static unsigned nextAdjacentRectXN (RECTL *paRects, unsigned nRects, unsigned iRect)
+static unsigned nextAdjacentRectXN(RECTL const *paRects, unsigned cRects, unsigned iRect)
 {
-    unsigned i;
-    for (i = 0; i < nRects; i++)
-    {
+    for (unsigned i = 0; i < cRects; i++)
         if (paRects[iRect].left == paRects[i].right)
-        {
             return i;
-        }
-    }
-    return ~0;
+    return ~0U;
 }
 
-static unsigned nextAdjacentRectYP (RECTL *paRects, unsigned nRects, unsigned iRect)
+static unsigned nextAdjacentRectYP(RECTL const *paRects, unsigned cRects, unsigned iRect)
 {
-    unsigned i;
-    for (i = 0; i < nRects; i++)
-    {
+    for (unsigned i = 0; i < cRects; i++)
         if (paRects[iRect].bottom == paRects[i].top)
-        {
             return i;
-        }
-    }
-    return ~0;
+    return ~0U;
 }
 
-unsigned nextAdjacentRectYN (RECTL *paRects, unsigned nRects, unsigned iRect)
+unsigned nextAdjacentRectYN(RECTL const *paRects, unsigned cRects, unsigned iRect)
 {
-    unsigned i;
-    for (i = 0; i < nRects; i++)
-    {
+    for (unsigned i = 0; i < cRects; i++)
         if (paRects[iRect].top == paRects[i].bottom)
-        {
             return i;
-        }
-    }
-    return ~0;
+    return ~0U;
 }
 
-void resizeRect(RECTL *paRects, unsigned nRects, unsigned iPrimary, unsigned iResized, int NewWidth, int NewHeight)
+void resizeRect(RECTL *paRects, unsigned cRects, unsigned iPrimary, unsigned iResized, int NewWidth, int NewHeight)
 {
-    RECTL *paNewRects = (RECTL *)alloca (sizeof (RECTL) * nRects);
-    memcpy (paNewRects, paRects, sizeof (RECTL) * nRects);
-    paNewRects[iResized].right += NewWidth - (paNewRects[iResized].right - paNewRects[iResized].left);
+    RECTL *paNewRects = (RECTL *)alloca(sizeof (RECTL) * cRects);
+    memcpy (paNewRects, paRects, sizeof(RECTL) * cRects);
+    paNewRects[iResized].right  += NewWidth - (paNewRects[iResized].right - paNewRects[iResized].left);
     paNewRects[iResized].bottom += NewHeight - (paNewRects[iResized].bottom - paNewRects[iResized].top);
 
     /* Verify all pairs of originally adjacent rectangles for all 4 directions.
@@ -267,10 +287,10 @@ void resizeRect(RECTL *paRects, unsigned nRects, unsigned iPrimary, unsigned iRe
 
     /* X positive. */
     unsigned iRect;
-    for (iRect = 0; iRect < nRects; iRect++)
+    for (iRect = 0; iRect < cRects; iRect++)
     {
         /* Find the next adjacent original rect in x positive direction. */
-        unsigned iNextRect = nextAdjacentRectXP (paRects, nRects, iRect);
+        unsigned iNextRect = nextAdjacentRectXP (paRects, cRects, iRect);
         Log(("next %d -> %d\n", iRect, iNextRect));
 
         if (iNextRect == ~0 || iNextRect == iPrimary)
@@ -295,10 +315,10 @@ void resizeRect(RECTL *paRects, unsigned nRects, unsigned iPrimary, unsigned iRe
     }
 
     /* X negative. */
-    for (iRect = 0; iRect < nRects; iRect++)
+    for (iRect = 0; iRect < cRects; iRect++)
     {
         /* Find the next adjacent original rect in x negative direction. */
-        unsigned iNextRect = nextAdjacentRectXN (paRects, nRects, iRect);
+        unsigned iNextRect = nextAdjacentRectXN (paRects, cRects, iRect);
         Log(("next %d -> %d\n", iRect, iNextRect));
 
         if (iNextRect == ~0 || iNextRect == iPrimary)
@@ -323,10 +343,10 @@ void resizeRect(RECTL *paRects, unsigned nRects, unsigned iPrimary, unsigned iRe
     }
 
     /* Y positive (in the computer sense, top->down). */
-    for (iRect = 0; iRect < nRects; iRect++)
+    for (iRect = 0; iRect < cRects; iRect++)
     {
         /* Find the next adjacent original rect in y positive direction. */
-        unsigned iNextRect = nextAdjacentRectYP (paRects, nRects, iRect);
+        unsigned iNextRect = nextAdjacentRectYP (paRects, cRects, iRect);
         Log(("next %d -> %d\n", iRect, iNextRect));
 
         if (iNextRect == ~0 || iNextRect == iPrimary)
@@ -351,10 +371,10 @@ void resizeRect(RECTL *paRects, unsigned nRects, unsigned iPrimary, unsigned iRe
     }
 
     /* Y negative (in the computer sense, down->top). */
-    for (iRect = 0; iRect < nRects; iRect++)
+    for (iRect = 0; iRect < cRects; iRect++)
     {
         /* Find the next adjacent original rect in x negative direction. */
-        unsigned iNextRect = nextAdjacentRectYN (paRects, nRects, iRect);
+        unsigned iNextRect = nextAdjacentRectYN (paRects, cRects, iRect);
         Log(("next %d -> %d\n", iRect, iNextRect));
 
         if (iNextRect == ~0 || iNextRect == iPrimary)
@@ -378,7 +398,7 @@ void resizeRect(RECTL *paRects, unsigned nRects, unsigned iPrimary, unsigned iRe
         }
     }
 
-    memcpy (paRects, paNewRects, sizeof (RECTL) * nRects);
+    memcpy (paRects, paNewRects, sizeof (RECTL) * cRects);
     return;
 }
 
@@ -388,51 +408,50 @@ static BOOL ResizeDisplayDevice(ULONG Id, DWORD Width, DWORD Height, DWORD BitsP
     BOOL fModeReset = (Width == 0 && Height == 0 && BitsPerPixel == 0);
 
     DISPLAY_DEVICE DisplayDevice;
-
-    ZeroMemory(&DisplayDevice, sizeof(DisplayDevice));
+    RT_ZERO(DisplayDevice);
     DisplayDevice.cb = sizeof(DisplayDevice);
 
     /* Find out how many display devices the system has */
     DWORD NumDevices = 0;
     DWORD i = 0;
-    while (EnumDisplayDevices (NULL, i, &DisplayDevice, 0))
+    while (EnumDisplayDevices(NULL, i, &DisplayDevice, 0))
     {
         Log(("[%d] %s\n", i, DisplayDevice.DeviceName));
 
         if (DisplayDevice.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE)
         {
-            Log(("Found primary device. err %d\n", GetLastError ()));
+            Log(("Found primary device. err %d\n", GetLastError()));
             NumDevices++;
         }
         else if (!(DisplayDevice.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER))
         {
 
-            Log(("Found secondary device. err %d\n", GetLastError ()));
+            Log(("Found secondary device. err %d\n", GetLastError()));
             NumDevices++;
         }
 
-        ZeroMemory(&DisplayDevice, sizeof(DisplayDevice));
+        RT_ZERO(DisplayDevice);
         DisplayDevice.cb = sizeof(DisplayDevice);
         i++;
     }
 
-    Log(("Found total %d devices. err %d\n", NumDevices, GetLastError ()));
+    Log(("Found total %d devices. err %d\n", NumDevices, GetLastError()));
 
     if (NumDevices == 0 || Id >= NumDevices)
     {
-        Log(("Requested identifier %d is invalid. err %d\n", Id, GetLastError ()));
+        Log(("Requested identifier %d is invalid. err %d\n", Id, GetLastError()));
         return FALSE;
     }
 
-    DISPLAY_DEVICE *paDisplayDevices = (DISPLAY_DEVICE *)alloca (sizeof (DISPLAY_DEVICE) * NumDevices);
-    DEVMODE *paDeviceModes = (DEVMODE *)alloca (sizeof (DEVMODE) * NumDevices);
-    RECTL *paRects = (RECTL *)alloca (sizeof (RECTL) * NumDevices);
+    DISPLAY_DEVICE *paDisplayDevices = (DISPLAY_DEVICE *)alloca(sizeof (DISPLAY_DEVICE) * NumDevices);
+    DEVMODE *paDeviceModes = (DEVMODE *)alloca(sizeof (DEVMODE) * NumDevices);
+    RECTL *paRects = (RECTL *)alloca(sizeof (RECTL) * NumDevices);
 
     /* Fetch information about current devices and modes. */
     DWORD DevNum = 0;
     DWORD DevPrimaryNum = 0;
 
-    ZeroMemory(&DisplayDevice, sizeof(DISPLAY_DEVICE));
+    RT_ZERO(DisplayDevice);
     DisplayDevice.cb = sizeof(DISPLAY_DEVICE);
 
     i = 0;
@@ -440,22 +459,22 @@ static BOOL ResizeDisplayDevice(ULONG Id, DWORD Width, DWORD Height, DWORD BitsP
     {
         Log(("[%d(%d)] %s\n", i, DevNum, DisplayDevice.DeviceName));
 
-        BOOL bFetchDevice = FALSE;
+        BOOL fFetchDevice = FALSE;
 
         if (DisplayDevice.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE)
         {
-            Log(("Found primary device. err %d\n", GetLastError ()));
+            Log(("Found primary device. err %d\n", GetLastError()));
             DevPrimaryNum = DevNum;
-            bFetchDevice = TRUE;
+            fFetchDevice = TRUE;
         }
         else if (!(DisplayDevice.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER))
         {
 
-            Log(("Found secondary device. err %d\n", GetLastError ()));
-            bFetchDevice = TRUE;
+            Log(("Found secondary device. err %d\n", GetLastError()));
+            fFetchDevice = TRUE;
         }
 
-        if (bFetchDevice)
+        if (fFetchDevice)
         {
             if (DevNum >= NumDevices)
             {
@@ -465,12 +484,11 @@ static BOOL ResizeDisplayDevice(ULONG Id, DWORD Width, DWORD Height, DWORD BitsP
 
             paDisplayDevices[DevNum] = DisplayDevice;
 
-            ZeroMemory(&paDeviceModes[DevNum], sizeof(DEVMODE));
+            RT_BZERO(&paDeviceModes[DevNum], sizeof(DEVMODE));
             paDeviceModes[DevNum].dmSize = sizeof(DEVMODE);
-            if (!EnumDisplaySettings((LPSTR)DisplayDevice.DeviceName,
-                 ENUM_REGISTRY_SETTINGS, &paDeviceModes[DevNum]))
+            if (!EnumDisplaySettings((LPSTR)DisplayDevice.DeviceName, ENUM_REGISTRY_SETTINGS, &paDeviceModes[DevNum]))
             {
-                Log(("EnumDisplaySettings err %d\n", GetLastError ()));
+                Log(("EnumDisplaySettings err %d\n", GetLastError()));
                 return FALSE;
             }
 
@@ -487,25 +505,21 @@ static BOOL ResizeDisplayDevice(ULONG Id, DWORD Width, DWORD Height, DWORD BitsP
             DevNum++;
         }
 
-        ZeroMemory(&DisplayDevice, sizeof(DISPLAY_DEVICE));
+        RT_ZERO(DisplayDevice);
         DisplayDevice.cb = sizeof(DISPLAY_DEVICE);
         i++;
     }
 
     if (Width == 0)
-    {
         Width = paRects[Id].right - paRects[Id].left;
-    }
 
     if (Height == 0)
-    {
         Height = paRects[Id].bottom - paRects[Id].top;
-    }
 
     /* Check whether a mode reset or a change is requested. */
     if (   !fModeReset
-        && paRects[Id].right - paRects[Id].left == Width
-        && paRects[Id].bottom - paRects[Id].top == Height
+        && paRects[Id].right - paRects[Id].left == (LONG)Width
+        && paRects[Id].bottom - paRects[Id].top == (LONG)Height
         && paDeviceModes[Id].dmBitsPerPel == BitsPerPixel)
     {
         Log(("VBoxDisplayThread : already at desired resolution.\n"));
@@ -513,21 +527,19 @@ static BOOL ResizeDisplayDevice(ULONG Id, DWORD Width, DWORD Height, DWORD BitsP
     }
 
     resizeRect(paRects, NumDevices, DevPrimaryNum, Id, Width, Height);
-#ifdef Log
+#ifdef LOG_ENABLED
     for (i = 0; i < NumDevices; i++)
-    {
         Log(("[%d]: %d,%d %dx%d\n",
-                i, paRects[i].left, paRects[i].top,
-                paRects[i].right - paRects[i].left,
-                paRects[i].bottom - paRects[i].top));
-    }
+             i, paRects[i].left, paRects[i].top,
+             paRects[i].right - paRects[i].left,
+             paRects[i].bottom - paRects[i].top));
 #endif /* Log */
 
     /* Without this, Windows will not ask the miniport for its
      * mode table but uses an internal cache instead.
      */
     DEVMODE tempDevMode;
-    ZeroMemory (&tempDevMode, sizeof (tempDevMode));
+    RT_ZERO(tempDevMode);
     tempDevMode.dmSize = sizeof(DEVMODE);
     EnumDisplaySettings(NULL, 0xffffff, &tempDevMode);
 
@@ -550,7 +562,7 @@ static BOOL ResizeDisplayDevice(ULONG Id, DWORD Width, DWORD Height, DWORD BitsP
         Log(("calling pfnChangeDisplaySettingsEx %x\n", gpfnChangeDisplaySettingsEx));
         gpfnChangeDisplaySettingsEx((LPSTR)paDisplayDevices[i].DeviceName,
                  &paDeviceModes[i], NULL, CDS_NORESET | CDS_UPDATEREGISTRY, NULL);
-        Log(("ChangeDisplaySettings position err %d\n", GetLastError ()));
+        Log(("ChangeDisplaySettings position err %d\n", GetLastError()));
     }
 
     /* A second call to ChangeDisplaySettings updates the monitor. */
@@ -566,7 +578,7 @@ static BOOL ResizeDisplayDevice(ULONG Id, DWORD Width, DWORD Height, DWORD BitsP
     return TRUE;
 }
 
-static RTEXITCODE handleSetVideoMode(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleSetVideoMode(int argc, char *argv[])
 {
     if (argc != 3 && argc != 4)
     {
@@ -578,14 +590,10 @@ static RTEXITCODE handleSetVideoMode(int argc, char *argv[])
     DWORD yres = atoi(argv[1]);
     DWORD bpp  = atoi(argv[2]);
     DWORD scr  = 0;
-
     if (argc == 4)
-    {
         scr = atoi(argv[3]);
-    }
 
     HMODULE hUser = GetModuleHandle("user32.dll");
-
     if (hUser)
     {
         *(uintptr_t *)&gpfnChangeDisplaySettingsEx = (uintptr_t)GetProcAddress(hUser, "ChangeDisplaySettingsExA");
@@ -594,7 +602,7 @@ static RTEXITCODE handleSetVideoMode(int argc, char *argv[])
         if (gpfnChangeDisplaySettingsEx)
         {
             /* The screen index is 0 based in the ResizeDisplayDevice call. */
-            scr = scr > 0? scr - 1: 0;
+            scr = scr > 0 ? scr - 1 : 0;
 
             /* Horizontal resolution must be a multiple of 8, round down. */
             xres &= ~0x7;
@@ -614,20 +622,17 @@ static RTEXITCODE handleSetVideoMode(int argc, char *argv[])
 
 static int checkVBoxVideoKey(HKEY hkeyVideo)
 {
-    char szValue[128];
-    DWORD len = sizeof(szValue);
-    DWORD dwKeyType;
-    LONG status = RegQueryValueExA(hkeyVideo, "Device Description", NULL, &dwKeyType,
-                                   (LPBYTE)szValue, &len);
-
+    RTUTF16 wszValue[128];
+    DWORD   cbValue = sizeof(wszValue);
+    DWORD   dwKeyType;
+    LONG status = RegQueryValueExW(hkeyVideo, L"Device Description", NULL, &dwKeyType, (LPBYTE)wszValue, &cbValue);
     if (status == ERROR_SUCCESS)
     {
         /* WDDM has additional chars after "Adapter" */
-        static char sszDeviceDescription[] = "VirtualBox Graphics Adapter";
-        if (_strnicmp(szValue, sszDeviceDescription, sizeof(sszDeviceDescription) - sizeof(char)) == 0)
-        {
+        static char s_szDeviceDescription[] = "VirtualBox Graphics Adapter";
+        wszValue[sizeof(s_szDeviceDescription) - 1] = '\0';
+        if (RTUtf16ICmpAscii(wszValue, s_szDeviceDescription) == 0)
             return VINF_SUCCESS;
-        }
     }
 
     return VERR_NOT_FOUND;
@@ -653,51 +658,46 @@ static HKEY getVideoKey(bool writable)
      */
 
     /* Get the 'ObjectNumberList' */
-    ULONG numDevices = 0;
+    ULONG cDevices = 0;
     DWORD adwObjectNumberList[256];
-    DWORD len = sizeof(adwObjectNumberList);
-    status = RegQueryValueExA(hkeyDeviceMap, "ObjectNumberList", NULL, &dwKeyType, (LPBYTE)&adwObjectNumberList[0], &len);
+    DWORD cbValue = sizeof(adwObjectNumberList);
+    status = RegQueryValueExA(hkeyDeviceMap, "ObjectNumberList", NULL, &dwKeyType, (LPBYTE)&adwObjectNumberList[0], &cbValue);
 
     if (   status == ERROR_SUCCESS
         && dwKeyType == REG_BINARY)
-    {
-        numDevices = len / sizeof(DWORD);
-    }
+        cDevices = cbValue / sizeof(DWORD);
     else
     {
        /* The list might not exists. Use 'MaxObjectNumber' REG_DWORD and build a list. */
        DWORD dwMaxObjectNumber = 0;
-       len = sizeof(dwMaxObjectNumber);
-       status = RegQueryValueExA(hkeyDeviceMap, "MaxObjectNumber", NULL, &dwKeyType, (LPBYTE)&dwMaxObjectNumber, &len);
-
+       cbValue = sizeof(dwMaxObjectNumber);
+       status = RegQueryValueExA(hkeyDeviceMap, "MaxObjectNumber", NULL, &dwKeyType, (LPBYTE)&dwMaxObjectNumber, &cbValue);
        if (   status == ERROR_SUCCESS
            && dwKeyType == REG_DWORD)
        {
            /* 'MaxObjectNumber' is inclusive. */
-           numDevices = RT_MIN(dwMaxObjectNumber + 1, RT_ELEMENTS(adwObjectNumberList));
-           for (iDevice = 0; iDevice < numDevices; iDevice++)
-           {
+           cDevices = RT_MIN(dwMaxObjectNumber + 1, RT_ELEMENTS(adwObjectNumberList));
+           for (iDevice = 0; iDevice < cDevices; iDevice++)
                adwObjectNumberList[iDevice] = iDevice;
-           }
        }
     }
 
-    if (numDevices == 0)
+    if (cDevices == 0)
     {
         /* Always try '\Device\Video0' as the old code did. Enum can be used in this case in principle. */
         adwObjectNumberList[0] = 0;
-        numDevices = 1;
+        cDevices = 1;
     }
 
     /* Scan device entries */
-    for (iDevice = 0; iDevice < numDevices; iDevice++)
+    for (iDevice = 0; iDevice < cDevices; iDevice++)
     {
         char szValueName[64];
         RTStrPrintf(szValueName, sizeof(szValueName), "\\Device\\Video%u", adwObjectNumberList[iDevice]);
 
         char szVideoLocation[256];
-        len = sizeof(szVideoLocation);
-        status = RegQueryValueExA(hkeyDeviceMap, szValueName, NULL, &dwKeyType, (LPBYTE)&szVideoLocation[0], &len);
+        cbValue = sizeof(szVideoLocation);
+        status = RegQueryValueExA(hkeyDeviceMap, szValueName, NULL, &dwKeyType, (LPBYTE)&szVideoLocation[0], &cbValue);
 
         /* This value starts with '\REGISTRY\Machine' */
         if (   status == ERROR_SUCCESS
@@ -730,8 +730,9 @@ static HKEY getVideoKey(bool writable)
     return hkeyVideo;
 }
 
-static RTEXITCODE handleGetVideoAcceleration(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleGetVideoAcceleration(int argc, char *argv[])
 {
+    RT_NOREF2(argc, argv);
     ULONG status;
     HKEY hkeyVideo = getVideoKey(false);
 
@@ -739,9 +740,9 @@ static RTEXITCODE handleGetVideoAcceleration(int argc, char *argv[])
     {
         /* query the actual value */
         DWORD fAcceleration = 1;
-        DWORD len = sizeof(fAcceleration);
+        DWORD cbValue = sizeof(fAcceleration);
         DWORD dwKeyType;
-        status = RegQueryValueExA(hkeyVideo, "EnableVideoAccel", NULL, &dwKeyType, (LPBYTE)&fAcceleration, &len);
+        status = RegQueryValueExA(hkeyVideo, "EnableVideoAccel", NULL, &dwKeyType, (LPBYTE)&fAcceleration, &cbValue);
         if (status != ERROR_SUCCESS)
             RTPrintf("Video acceleration: default\n");
         else
@@ -751,7 +752,7 @@ static RTEXITCODE handleGetVideoAcceleration(int argc, char *argv[])
     return RTEXITCODE_SUCCESS;
 }
 
-static RTEXITCODE handleSetVideoAcceleration(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleSetVideoAcceleration(int argc, char *argv[])
 {
     ULONG status;
     HKEY hkeyVideo;
@@ -783,16 +784,16 @@ static RTEXITCODE handleSetVideoAcceleration(int argc, char *argv[])
     return RTEXITCODE_SUCCESS;
 }
 
-static RTEXITCODE videoFlagsGet(void)
+static DECLCALLBACK(RTEXITCODE) videoFlagsGet(void)
 {
     HKEY hkeyVideo = getVideoKey(false);
 
     if (hkeyVideo)
     {
         DWORD dwFlags = 0;
-        DWORD len = sizeof(dwFlags);
+        DWORD cbValue = sizeof(dwFlags);
         DWORD dwKeyType;
-        ULONG status = RegQueryValueExA(hkeyVideo, "VBoxVideoFlags", NULL, &dwKeyType, (LPBYTE)&dwFlags, &len);
+        ULONG status = RegQueryValueExA(hkeyVideo, "VBoxVideoFlags", NULL, &dwKeyType, (LPBYTE)&dwFlags, &cbValue);
         if (status != ERROR_SUCCESS)
             RTPrintf("Video flags: default\n");
         else
@@ -804,7 +805,7 @@ static RTEXITCODE videoFlagsGet(void)
     return RTEXITCODE_FAILURE;
 }
 
-static RTEXITCODE videoFlagsDelete(void)
+static DECLCALLBACK(RTEXITCODE) videoFlagsDelete(void)
 {
     HKEY hkeyVideo = getVideoKey(true);
 
@@ -820,7 +821,7 @@ static RTEXITCODE videoFlagsDelete(void)
     return RTEXITCODE_FAILURE;
 }
 
-static RTEXITCODE videoFlagsModify(bool fSet, int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) videoFlagsModify(bool fSet, int argc, char *argv[])
 {
     if (argc != 1)
     {
@@ -842,16 +843,13 @@ static RTEXITCODE videoFlagsModify(bool fSet, int argc, char *argv[])
     if (hkeyVideo)
     {
         DWORD dwFlags = 0;
-        DWORD len = sizeof(dwFlags);
+        DWORD cbValue = sizeof(dwFlags);
         DWORD dwKeyType;
-        ULONG status = RegQueryValueExA(hkeyVideo, "VBoxVideoFlags", NULL, &dwKeyType, (LPBYTE)&dwFlags, &len);
+        ULONG status = RegQueryValueExA(hkeyVideo, "VBoxVideoFlags", NULL, &dwKeyType, (LPBYTE)&dwFlags, &cbValue);
         if (status != ERROR_SUCCESS)
-        {
             dwFlags = 0;
-        }
 
-        dwFlags = fSet? (dwFlags | u32Mask):
-                        (dwFlags & ~u32Mask);
+        dwFlags = fSet ? dwFlags | u32Mask : dwFlags & ~u32Mask;
 
         status = RegSetValueExA(hkeyVideo, "VBoxVideoFlags", 0, REG_DWORD, (LPBYTE)&dwFlags, sizeof(dwFlags));
         if (status != ERROR_SUCCESS)
@@ -870,7 +868,7 @@ static RTEXITCODE videoFlagsModify(bool fSet, int argc, char *argv[])
     return exitCode;
 }
 
-static RTEXITCODE handleVideoFlags(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleVideoFlags(int argc, char *argv[])
 {
     /* Must have a keyword and optional value (32 bit hex string). */
     if (argc != 1 && argc != 2)
@@ -952,10 +950,10 @@ void getCustomModes(HKEY hkeyVideo)
 
         /* check if the mode is OK */
         if (   (xres > (1 << 16))
-            && (yres > (1 << 16))
-            && (   (bpp != 16)
-                || (bpp != 24)
-                || (bpp != 32)))
+            || (yres > (1 << 16))
+            || (   (bpp != 16)
+                && (bpp != 24)
+                && (bpp != 32)))
             break;
 
         /* add mode to table */
@@ -1021,8 +1019,9 @@ void writeCustomModes(HKEY hkeyVideo)
 
 }
 
-static RTEXITCODE handleListCustomModes(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleListCustomModes(int argc, char *argv[])
 {
+    RT_NOREF1(argv);
     if (argc != 0)
     {
         usage(LIST_CUST_MODES);
@@ -1049,7 +1048,7 @@ static RTEXITCODE handleListCustomModes(int argc, char *argv[])
     return RTEXITCODE_SUCCESS;
 }
 
-static RTEXITCODE handleAddCustomMode(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleAddCustomMode(int argc, char *argv[])
 {
     if (argc != 3)
     {
@@ -1063,10 +1062,10 @@ static RTEXITCODE handleAddCustomMode(int argc, char *argv[])
 
     /** @todo better check including xres mod 8 = 0! */
     if (   (xres > (1 << 16))
-        && (yres > (1 << 16))
-        && (   (bpp != 16)
-            || (bpp != 24)
-            || (bpp != 32)))
+        || (yres > (1 << 16))
+        || (   (bpp != 16)
+            && (bpp != 24)
+            && (bpp != 32)))
     {
         VBoxControlError("invalid mode specified!\n");
         return RTEXITCODE_FAILURE;
@@ -1110,7 +1109,7 @@ static RTEXITCODE handleAddCustomMode(int argc, char *argv[])
     return RTEXITCODE_SUCCESS;
 }
 
-static RTEXITCODE handleRemoveCustomMode(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleRemoveCustomMode(int argc, char *argv[])
 {
     if (argc != 3)
     {
@@ -1161,7 +1160,7 @@ static RTEXITCODE getGuestProperty(int argc, char **argv)
     using namespace guestProp;
 
     bool fVerbose = false;
-    if (   2 == argc
+    if (   argc == 2
         && (   strcmp(argv[1], "-verbose")  == 0
             || strcmp(argv[1], "--verbose") == 0)
        )
@@ -1196,8 +1195,8 @@ static RTEXITCODE getGuestProperty(int argc, char **argv)
          * property and the guest updating it, we loop a few times here and
          * hope.  Actually this should never go wrong, as we are generous
          * enough with buffer space. */
-        bool finish = false;
-        for (unsigned i = 0; (i < 10) && !finish; ++i)
+        bool fFinished = false;
+        for (unsigned i = 0; i < 10 && !fFinished; ++i)
         {
             void *pvTmpBuf = RTMemRealloc(pvBuf, cbBuf);
             if (NULL == pvTmpBuf)
@@ -1216,7 +1215,7 @@ static RTEXITCODE getGuestProperty(int argc, char **argv)
                 /* Leave a bit of extra space to be safe */
                 cbBuf += 1024;
             else
-                finish = true;
+                fFinished = true;
         }
         if (VERR_TOO_MUCH_DATA == rc)
             VBoxControlError("Temporarily unable to retrieve the property\n");
@@ -1259,7 +1258,7 @@ static RTEXITCODE setGuestProperty(int argc, char *argv[])
      * Check the syntax.  We can deduce the correct syntax from the number of
      * arguments.
      */
-    bool usageOK = true;
+    bool fUsageOK = true;
     const char *pszName = NULL;
     const char *pszValue = NULL;
     const char *pszFlags = NULL;
@@ -1268,18 +1267,18 @@ static RTEXITCODE setGuestProperty(int argc, char *argv[])
         pszValue = argv[1];
     }
     else if (3 == argc)
-        usageOK = false;
+        fUsageOK = false;
     else if (4 == argc)
     {
         pszValue = argv[1];
         if (   strcmp(argv[2], "-flags") != 0
             && strcmp(argv[2], "--flags") != 0)
-            usageOK = false;
+            fUsageOK = false;
         pszFlags = argv[3];
     }
     else if (argc != 1)
-        usageOK = false;
-    if (!usageOK)
+        fUsageOK = false;
+    if (!fUsageOK)
     {
         usage(GUEST_PROP);
         return RTEXITCODE_FAILURE;
@@ -1324,11 +1323,11 @@ static RTEXITCODE deleteGuestProperty(int argc, char *argv[])
      * Check the syntax.  We can deduce the correct syntax from the number of
      * arguments.
      */
-    bool usageOK = true;
+    bool fUsageOK = true;
     const char *pszName = NULL;
     if (argc < 1)
-        usageOK = false;
-    if (!usageOK)
+        fUsageOK = false;
+    if (!fUsageOK)
     {
         usage(GUEST_PROP);
         return RTEXITCODE_FAILURE;
@@ -1440,11 +1439,11 @@ static RTEXITCODE waitGuestProperty(int argc, char **argv)
     const char *pszPatterns = NULL;
     uint64_t u64TimestampIn = 0;
     uint32_t u32Timeout = RT_INDEFINITE_WAIT;
-    bool usageOK = true;
+    bool fUsageOK = true;
     if (argc < 1)
-        usageOK = false;
+        fUsageOK = false;
     pszPatterns = argv[0];
-    for (int i = 1; usageOK && i < argc; ++i)
+    for (int i = 1; fUsageOK && i < argc; ++i)
     {
         if (   strcmp(argv[i], "-timeout")  == 0
             || strcmp(argv[i], "--timeout") == 0)
@@ -1453,7 +1452,7 @@ static RTEXITCODE waitGuestProperty(int argc, char **argv)
                 || RTStrToUInt32Full(argv[i + 1], 10, &u32Timeout)
                        != VINF_SUCCESS
                )
-                usageOK = false;
+                fUsageOK = false;
             else
                 ++i;
         }
@@ -1464,14 +1463,14 @@ static RTEXITCODE waitGuestProperty(int argc, char **argv)
                 || RTStrToUInt64Full(argv[i + 1], 10, &u64TimestampIn)
                        != VINF_SUCCESS
                )
-                usageOK = false;
+                fUsageOK = false;
             else
                 ++i;
         }
         else
-            usageOK = false;
+            fUsageOK = false;
     }
-    if (!usageOK)
+    if (!fUsageOK)
     {
         usage(GUEST_PROP);
         return RTEXITCODE_FAILURE;
@@ -1502,10 +1501,8 @@ static RTEXITCODE waitGuestProperty(int argc, char **argv)
      * property and the guest updating it, we loop a few times here and
      * hope.  Actually this should never go wrong, as we are generous
      * enough with buffer space. */
-    bool finish = false;
-    for (unsigned i = 0;
-         (RT_SUCCESS(rc) || rc == VERR_BUFFER_OVERFLOW) && !finish && (i < 10);
-         ++i)
+    bool fFinished = false;
+    for (unsigned i = 0; (RT_SUCCESS(rc) || rc == VERR_BUFFER_OVERFLOW) && !fFinished && i < 10; i++)
     {
         void *pvTmpBuf = RTMemRealloc(pvBuf, cbBuf);
         if (NULL == pvTmpBuf)
@@ -1525,7 +1522,7 @@ static RTEXITCODE waitGuestProperty(int argc, char **argv)
             /* Leave a bit of extra space to be safe */
             cbBuf += 1024;
         else
-            finish = true;
+            fFinished = true;
         if (rc == VERR_TOO_MUCH_DATA)
             VBoxControlError("Temporarily unable to get a notification\n");
         else if (rc == VERR_INTERRUPTED)
@@ -1565,24 +1562,24 @@ static RTEXITCODE waitGuestProperty(int argc, char **argv)
  * @returns 0 on success, 1 on failure
  * @note see the command line API description for parameters
  */
-static RTEXITCODE handleGuestProperty(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleGuestProperty(int argc, char *argv[])
 {
-    if (0 == argc)
+    if (argc == 0)
     {
         usage(GUEST_PROP);
         return RTEXITCODE_FAILURE;
     }
     if (!strcmp(argv[0], "get"))
         return getGuestProperty(argc - 1, argv + 1);
-    else if (!strcmp(argv[0], "set"))
+    if (!strcmp(argv[0], "set"))
         return setGuestProperty(argc - 1, argv + 1);
-    else if (!strcmp(argv[0], "delete") || !strcmp(argv[0], "unset"))
+    if (!strcmp(argv[0], "delete") || !strcmp(argv[0], "unset"))
         return deleteGuestProperty(argc - 1, argv + 1);
-    else if (!strcmp(argv[0], "enumerate"))
+    if (!strcmp(argv[0], "enumerate"))
         return enumGuestProperty(argc - 1, argv + 1);
-    else if (!strcmp(argv[0], "wait"))
+    if (!strcmp(argv[0], "wait"))
         return waitGuestProperty(argc - 1, argv + 1);
-    /* else */
+    /* unknown cmd */
     usage(GUEST_PROP);
     return RTEXITCODE_FAILURE;
 }
@@ -1594,7 +1591,7 @@ static RTEXITCODE handleGuestProperty(int argc, char *argv[])
  */
 static RTEXITCODE listSharedFolders(int argc, char **argv)
 {
-    bool usageOK = true;
+    bool fUsageOK = true;
     bool fOnlyShowAutoMount = false;
     if (argc == 1)
     {
@@ -1602,12 +1599,11 @@ static RTEXITCODE listSharedFolders(int argc, char **argv)
             || !strcmp(argv[0], "--automount"))
             fOnlyShowAutoMount = true;
         else
-            usageOK = false;
+            fUsageOK = false;
     }
     else if (argc > 1)
-        usageOK = false;
-
-    if (!usageOK)
+        fUsageOK = false;
+    if (!fUsageOK)
     {
         usage(GUEST_SHAREDFOLDERS);
         return RTEXITCODE_FAILURE;
@@ -1621,8 +1617,7 @@ static RTEXITCODE listSharedFolders(int argc, char **argv)
     {
         PVBGLR3SHAREDFOLDERMAPPING paMappings;
         uint32_t cMappings;
-        rc = VbglR3SharedFolderGetMappings(u32ClientId, fOnlyShowAutoMount,
-                                           &paMappings, &cMappings);
+        rc = VbglR3SharedFolderGetMappings(u32ClientId, fOnlyShowAutoMount, &paMappings, &cMappings);
         if (RT_SUCCESS(rc))
         {
             if (fOnlyShowAutoMount)
@@ -1661,9 +1656,9 @@ static RTEXITCODE listSharedFolders(int argc, char **argv)
  * @note see the command line API description for parameters
  *      (r=bird: yeah, right. The API description contains nil about params)
  */
-static RTEXITCODE handleSharedFolder(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleSharedFolder(int argc, char *argv[])
 {
-    if (0 == argc)
+    if (argc == 0)
     {
         usage(GUEST_SHAREDFOLDERS);
         return RTEXITCODE_FAILURE;
@@ -1680,8 +1675,9 @@ static RTEXITCODE handleSharedFolder(int argc, char *argv[])
 /**
  * @callback_method_impl{FNVBOXCTRLCMDHANDLER, Command: writecoredump}
  */
-static RTEXITCODE handleWriteCoreDump(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleWriteCoreDump(int argc, char *argv[])
 {
+    RT_NOREF2(argc, argv);
     int rc = VbglR3WriteCoreDump();
     if (RT_SUCCESS(rc))
     {
@@ -1700,19 +1696,21 @@ static RTEXITCODE handleWriteCoreDump(int argc, char *argv[])
 /**
  * @callback_method_impl{FNVBOXCTRLCMDHANDLER, Command: help}
  */
-static RTEXITCODE handleDpc(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleDpc(int argc, char *argv[])
 {
+    RT_NOREF(argc,  argv);
+    int rc = VERR_NOT_IMPLEMENTED;
 # ifndef VBOX_CONTROL_TEST
-    int rc;
     for (int i = 0; i < 30; i++)
     {
-        rc = vbglR3DoIOCtl(VBOXGUEST_IOCTL_DPC_LATENCY_CHECKER, NULL, 0);
-        if (RT_FAILURE(rc))
+        VBGLREQHDR Req;
+        VBGLREQHDR_INIT(&Req, DPC_LATENCY_CHECKER);
+        rc = vbglR3DoIOCtl(VBGL_IOCTL_DPC_LATENCY_CHECKER, &Req, sizeof(Req));
+        if (RT_SUCCESS(rc))
+            RTPrintf("%d\n", i);
+        else
             break;
-        RTPrintf("%d\n", i);
     }
-# else
-    int rc = VERR_NOT_IMPLEMENTED;
 # endif
     if (RT_FAILURE(rc))
         return VBoxControlError("Error. rc=%Rrc\n", rc);
@@ -1723,58 +1721,121 @@ static RTEXITCODE handleDpc(int argc, char *argv[])
 
 
 /**
+ * @callback_method_impl{FNVBOXCTRLCMDHANDLER, Command: writelog}
+ */
+static DECLCALLBACK(RTEXITCODE) handleWriteLog(int argc, char *argv[])
+{
+    static const RTGETOPTDEF s_aOptions[] =
+    {
+        { "--no-newline", 'n', RTGETOPT_REQ_NOTHING },
+    };
+    bool fNoNewline = false;
+
+    RTGETOPTSTATE GetOptState;
+    int rc = RTGetOptInit(&GetOptState, argc, argv, s_aOptions, RT_ELEMENTS(s_aOptions),
+                          0 /*iFirst*/, RTGETOPTINIT_FLAGS_OPTS_FIRST);
+    if (RT_SUCCESS(rc))
+    {
+        RTGETOPTUNION   ValueUnion;
+        int             ch;
+        while ((ch = RTGetOpt(&GetOptState, &ValueUnion)) != 0)
+        {
+            switch (ch)
+            {
+                case VINF_GETOPT_NOT_OPTION:
+                {
+                    size_t cch = strlen(ValueUnion.psz);
+                    if (   fNoNewline
+                        || (cch > 0 && ValueUnion.psz[cch - 1] == '\n') )
+                        rc = VbglR3WriteLog(ValueUnion.psz, cch);
+                    else
+                    {
+                        char *pszDup = (char *)RTMemDupEx(ValueUnion.psz, cch, 2);
+                        if (RT_SUCCESS(rc))
+                        {
+                            pszDup[cch++] = '\n';
+                            pszDup[cch]   = '\0';
+                            rc = VbglR3WriteLog(pszDup, cch);
+                            RTMemFree(pszDup);
+                        }
+                        else
+                            rc = VERR_NO_MEMORY;
+                    }
+                    if (RT_FAILURE(rc))
+                        return VBoxControlError("VbglR3WriteLog: %Rrc", rc);
+                    break;
+                }
+
+                case 'n':
+                    fNoNewline = true;
+                    break;
+
+                case 'h': return usage(WRITE_LOG);
+                case 'V': return printVersion();
+                default:
+                    return VBoxCtrlGetOptError(ch, &ValueUnion);
+            }
+        }
+    }
+    else
+        return VBoxControlError("RTGetOptInit: %Rrc", rc);
+    return RTEXITCODE_SUCCESS;
+}
+
+
+/**
  * @callback_method_impl{FNVBOXCTRLCMDHANDLER, Command: takesnapshot}
  */
-static RTEXITCODE handleTakeSnapshot(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleTakeSnapshot(int argc, char *argv[])
 {
-    //VbglR3VmTakeSnapshot(argv[0], argv[1]);
+    RT_NOREF2(argc, argv); //VbglR3VmTakeSnapshot(argv[0], argv[1]);
     return VBoxControlError("not implemented");
 }
 
 /**
  * @callback_method_impl{FNVBOXCTRLCMDHANDLER, Command: savestate}
  */
-static RTEXITCODE handleSaveState(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleSaveState(int argc, char *argv[])
 {
-    //VbglR3VmSaveState();
+    RT_NOREF2(argc, argv); //VbglR3VmSaveState();
     return VBoxControlError("not implemented");
 }
 
 /**
  * @callback_method_impl{FNVBOXCTRLCMDHANDLER, Command: suspend|pause}
  */
-static RTEXITCODE handleSuspend(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleSuspend(int argc, char *argv[])
 {
-    //VbglR3VmSuspend();
+    RT_NOREF2(argc, argv); //VbglR3VmSuspend();
     return VBoxControlError("not implemented");
 }
 
 /**
  * @callback_method_impl{FNVBOXCTRLCMDHANDLER, Command: poweroff|powerdown}
  */
-static RTEXITCODE handlePowerOff(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handlePowerOff(int argc, char *argv[])
 {
-    //VbglR3VmPowerOff();
+    RT_NOREF2(argc, argv); //VbglR3VmPowerOff();
     return VBoxControlError("not implemented");
 }
 
 /**
  * @callback_method_impl{FNVBOXCTRLCMDHANDLER, Command: version}
  */
-static RTEXITCODE handleVersion(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleVersion(int argc, char *argv[])
 {
+    RT_NOREF1(argv);
     if (argc)
         return VBoxControlSyntaxError("getversion does not take any arguments");
-    RTPrintf("%sr%u\n", VBOX_VERSION_STRING, RTBldCfgRevision());
-    return RTEXITCODE_SUCCESS;
+    return printVersion();
 }
 
 /**
  * @callback_method_impl{FNVBOXCTRLCMDHANDLER, Command: help}
  */
-static RTEXITCODE handleHelp(int argc, char *argv[])
+static DECLCALLBACK(RTEXITCODE) handleHelp(int argc, char *argv[])
 {
-    /* ignore arguments for now. */
+    RT_NOREF2(argc, argv); /* ignore arguments for now. */
     usage();
     return RTEXITCODE_SUCCESS;
 }
@@ -1812,6 +1873,7 @@ struct COMMANDHANDLER
 #ifdef VBOX_WITH_DPC_LATENCY_CHECKER
     { "dpc",                    handleDpc },
 #endif
+    { "writelog",               handleWriteLog },
     { "takesnapshot",           handleTakeSnapshot },
     { "savestate",              handleSaveState },
     { "suspend",                handleSuspend },
@@ -1857,7 +1919,7 @@ int main(int argc, char **argv)
            )
         {
             /* Print version number, and do nothing else. */
-            RTPrintf("%sr%u\n", VBOX_VERSION_STRING, RTBldCfgRevision());
+            printVersion();
             fOnlyInfo = true;
             fShowLogo = false;
             done = true;

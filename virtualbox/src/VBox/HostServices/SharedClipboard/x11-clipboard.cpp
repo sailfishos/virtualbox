@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -249,17 +249,17 @@ int vboxClipboardReadData (VBOXCLIPBOARDCLIENTDATA *pClient,
  * be written to the buffer provided in the initial request.
  * @param  pCtx  request context information
  * @param  rc    the completion status of the request
- * @param  cbActual  on successful completion, the number of bytes of data
- *                   actually written, on buffer overflow the size of the
- *                   buffer needed, ignored otherwise
+ * @param  pReq  request
+ * @param  pv    address
+ * @param  cb    size
+ *
  * @todo   change this to deal with the buffer issues rather than offloading
  *         them onto the caller
  */
 void ClipCompleteDataRequestFromX11(VBOXCLIPBOARDCONTEXT *pCtx, int rc,
-                                    CLIPREADCBREQ *pReq, void *pv,
-                                    uint32_t cb)
+                                    CLIPREADCBREQ *pReq, void *pv, uint32_t cb)
 {
-    if (cb <= pReq->cb)
+    if (cb <= pReq->cb && cb != 0)
         memcpy(pReq->pv, pv, cb);
     RTMemFree(pReq);
     vboxSvcClipboardCompleteReadData(pCtx->pClient, rc, cb);
@@ -453,6 +453,7 @@ struct _CLIPBACKEND
 
 void vboxSvcClipboardReportMsg (VBOXCLIPBOARDCLIENTDATA *pClient, uint32_t u32Msg, uint32_t u32Formats)
 {
+    RT_NOREF1(u32Formats);
     CLIPBACKEND *pBackend = pClient->pCtx->pBackend;
     if (   (u32Msg == VBOX_SHARED_CLIPBOARD_HOST_MSG_READ_DATA)
         && !pBackend->writeData.timeout)
@@ -472,6 +473,7 @@ void vboxSvcClipboardCompleteReadData(VBOXCLIPBOARDCLIENTDATA *pClient, int rc, 
 
 CLIPBACKEND *ClipConstructX11(VBOXCLIPBOARDCONTEXT *pFrontend, bool)
 {
+    RT_NOREF1(pFrontend);
     return (CLIPBACKEND *)RTMemAllocZ(sizeof(CLIPBACKEND));
 }
 
@@ -482,11 +484,13 @@ void ClipDestructX11(CLIPBACKEND *pBackend)
 
 int ClipStartX11(CLIPBACKEND *pBackend, bool)
 {
+    RT_NOREF1(pBackend);
     return VINF_SUCCESS;
 }
 
 int ClipStopX11(CLIPBACKEND *pBackend)
 {
+    RT_NOREF1(pBackend);
     return VINF_SUCCESS;
 }
 

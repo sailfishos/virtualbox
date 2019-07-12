@@ -1,11 +1,10 @@
 /* $Id: VBoxMPCrUtil.cpp $ */
-
 /** @file
  * VBox WDDM Miniport driver
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -73,23 +72,23 @@ DECLEXPORT(int)  crMemcmp( const void *p1, const void *p2, unsigned int bytes )
 
 DECLEXPORT(void) crDebug(const char *format, ... )
 {
-
+    RT_NOREF(format);
 }
 
 #ifndef DEBUG_misha
 DECLEXPORT(void) crWarning(const char *format, ... )
 {
-
+    RT_NOREF(format);
 }
 #endif
 
 DECLEXPORT(void) crInfo(const char *format, ... )
 {
-
+    RT_NOREF(format);
 }
 
 DECLEXPORT(void) crError(const char *format, ... )
 {
-
+    RT_NOREF(format);
 }
 

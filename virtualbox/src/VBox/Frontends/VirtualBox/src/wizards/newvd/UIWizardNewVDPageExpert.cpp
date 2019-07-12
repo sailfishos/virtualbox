@@ -1,12 +1,10 @@
 /* $Id: UIWizardNewVDPageExpert.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardNewVDPageExpert class implementation
+ * VBox Qt GUI - UIWizardNewVDPageExpert class implementation.
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,30 +15,38 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QGridLayout>
-#include <QVBoxLayout>
-#include <QRegExpValidator>
-#include <QGroupBox>
-#include <QRadioButton>
-#include <QCheckBox>
-#include <QButtonGroup>
-#include <QLineEdit>
-#include <QSlider>
-#include <QLabel>
+# include <QGridLayout>
+# include <QVBoxLayout>
+# include <QRegExpValidator>
+# include <QGroupBox>
+# include <QRadioButton>
+# include <QCheckBox>
+# include <QButtonGroup>
+# include <QLineEdit>
+# include <QSlider>
+# include <QLabel>
 
 /* GUI includes: */
-#include "UIWizardNewVDPageExpert.h"
-#include "UIWizardNewVD.h"
-#include "VBoxGlobal.h"
-#include "UIMessageCenter.h"
-#include "UIIconPool.h"
-#include "QIRichTextLabel.h"
-#include "QIToolButton.h"
-#include "QILineEdit.h"
+# include "UIWizardNewVDPageExpert.h"
+# include "UIWizardNewVD.h"
+# include "VBoxGlobal.h"
+# include "UIMessageCenter.h"
+# include "UIIconPool.h"
+# include "QIRichTextLabel.h"
+# include "QIToolButton.h"
+# include "QILineEdit.h"
+# include "UIMediumSizeEditor.h"
 
 /* COM includes: */
-#include "CSystemProperties.h"
+# include "CSystemProperties.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardNewVDPageExpert::UIWizardNewVDPageExpert(const QString &strDefaultName, const QString &strDefaultPath, qulonglong uDefaultSize)
     : UIWizardNewVDPage3(strDefaultName, strDefaultPath)
@@ -48,8 +54,6 @@ UIWizardNewVDPageExpert::UIWizardNewVDPageExpert(const QString &strDefaultName, 
     /* Create widgets: */
     QGridLayout *pMainLayout = new QGridLayout(this);
     {
-        pMainLayout->setContentsMargins(8, 6, 8, 6);
-        pMainLayout->setSpacing(10);
         m_pLocationCnt = new QGroupBox(this);
         {
             m_pLocationCnt->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
@@ -71,42 +75,12 @@ UIWizardNewVDPageExpert::UIWizardNewVDPageExpert(const QString &strDefaultName, 
         m_pSizeCnt = new QGroupBox(this);
         {
             m_pSizeCnt->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
-            QGridLayout *pSizeCntLayout = new QGridLayout(m_pSizeCnt);
+            QVBoxLayout *pSizeCntLayout = new QVBoxLayout(m_pSizeCnt);
             {
-                m_pSizeSlider = new QSlider(m_pSizeCnt);
+                m_pEditorSize = new UIMediumSizeEditor;
                 {
-                    m_pSizeSlider->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-                    m_pSizeSlider->setOrientation(Qt::Horizontal);
-                    m_pSizeSlider->setTickPosition(QSlider::TicksBelow);
-                    m_pSizeSlider->setFocusPolicy(Qt::StrongFocus);
-                    m_pSizeSlider->setPageStep(m_iSliderScale);
-                    m_pSizeSlider->setSingleStep(m_iSliderScale / 8);
-                    m_pSizeSlider->setTickInterval(0);
-                    m_pSizeSlider->setMinimum(sizeMBToSlider(m_uMediumSizeMin, m_iSliderScale));
-                    m_pSizeSlider->setMaximum(sizeMBToSlider(m_uMediumSizeMax, m_iSliderScale));
+                    pSizeCntLayout->addWidget(m_pEditorSize);
                 }
-                m_pSizeEditor = new QILineEdit(m_pSizeCnt);
-                {
-                    m_pSizeEditor->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-                    m_pSizeEditor->setFixedWidthByText("88888.88 MB");
-                    m_pSizeEditor->setAlignment(Qt::AlignRight);
-                    m_pSizeEditor->setValidator(new QRegExpValidator(QRegExp(vboxGlobal().sizeRegexp()), this));
-                }
-                QLabel *m_pSizeMin = new QLabel(m_pSizeCnt);
-                {
-                    m_pSizeMin->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-                    m_pSizeMin->setText(vboxGlobal().formatSize(m_uMediumSizeMin));
-                }
-                QLabel *m_pSizeMax = new QLabel(m_pSizeCnt);
-                {
-                    m_pSizeMax->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-                    m_pSizeMax->setText(vboxGlobal().formatSize(m_uMediumSizeMax));
-                }
-                pSizeCntLayout->addWidget(m_pSizeSlider, 0, 0, 1, 3);
-                pSizeCntLayout->addWidget(m_pSizeEditor, 0, 3);
-                pSizeCntLayout->addWidget(m_pSizeMin, 1, 0);
-                pSizeCntLayout->setColumnStretch(1, 1);
-                pSizeCntLayout->addWidget(m_pSizeMax, 1, 2);
             }
         }
         m_pFormatCnt = new QGroupBox(this);
@@ -116,20 +90,35 @@ UIWizardNewVDPageExpert::UIWizardNewVDPageExpert(const QString &strDefaultName, 
             {
                 m_pFormatButtonGroup = new QButtonGroup(m_pFormatCnt);
                 {
-                    CSystemProperties systemProperties = vboxGlobal().virtualBox().GetSystemProperties();
-                    const QVector<CMediumFormat> &medFormats = systemProperties.GetMediumFormats();
-                    for (int i = 0; i < medFormats.size(); ++i)
+                    /* Enumerate medium formats in special order: */
+                    CSystemProperties properties = vboxGlobal().virtualBox().GetSystemProperties();
+                    const QVector<CMediumFormat> &formats = properties.GetMediumFormats();
+                    QMap<QString, CMediumFormat> vdi, preferred, others;
+                    foreach (const CMediumFormat &format, formats)
                     {
-                        const CMediumFormat &medFormat = medFormats[i];
-                        if (medFormat.GetName() == "VDI")
-                            addFormatButton(m_pFormatCnt, pFormatCntLayout, medFormat);
+                        /* VDI goes first: */
+                        if (format.GetName() == "VDI")
+                            vdi[format.GetId()] = format;
+                        else
+                        {
+                            const QVector<KMediumFormatCapabilities> &capabilities = format.GetCapabilities();
+                            /* Then goes preferred: */
+                            if (capabilities.contains(KMediumFormatCapabilities_Preferred))
+                                preferred[format.GetId()] = format;
+                            /* Then others: */
+                            else
+                                others[format.GetId()] = format;
+                        }
                     }
-                    for (int i = 0; i < medFormats.size(); ++i)
-                    {
-                        const CMediumFormat &medFormat = medFormats[i];
-                        if (medFormat.GetName() != "VDI")
-                            addFormatButton(m_pFormatCnt, pFormatCntLayout, medFormat);
-                    }
+
+                    /* Create buttons for VDI, preferred and others: */
+                    foreach (const QString &strId, vdi.keys())
+                        addFormatButton(this, pFormatCntLayout, vdi.value(strId), true);
+                    foreach (const QString &strId, preferred.keys())
+                        addFormatButton(this, pFormatCntLayout, preferred.value(strId), true);
+                    foreach (const QString &strId, others.keys())
+                        addFormatButton(this, pFormatCntLayout, others.value(strId));
+
                     if (!m_pFormatButtonGroup->buttons().isEmpty())
                     {
                         m_pFormatButtonGroup->button(0)->click();
@@ -174,8 +163,7 @@ UIWizardNewVDPageExpert::UIWizardNewVDPageExpert(const QString &strDefaultName, 
     connect(m_pSplitBox, SIGNAL(stateChanged(int)), this, SIGNAL(completeChanged()));
     connect(m_pLocationEditor, SIGNAL(textChanged(const QString &)), this, SIGNAL(completeChanged()));
     connect(m_pLocationOpenButton, SIGNAL(clicked()), this, SLOT(sltSelectLocationButtonClicked()));
-    connect(m_pSizeSlider, SIGNAL(valueChanged(int)), this, SLOT(sltSizeSliderValueChanged(int)));
-    connect(m_pSizeEditor, SIGNAL(textChanged(const QString &)), this, SLOT(sltSizeEditorTextChanged(const QString &)));
+    connect(m_pEditorSize, &UIMediumSizeEditor::sigSizeChanged, this, &UIWizardNewVDPageExpert::completeChanged);
 
     /* Register classes: */
     qRegisterMetaType<CMediumFormat>();
@@ -223,34 +211,20 @@ void UIWizardNewVDPageExpert::sltSelectLocationButtonClicked()
     onSelectLocationButtonClicked();
 }
 
-void UIWizardNewVDPageExpert::sltSizeSliderValueChanged(int iValue)
-{
-    onSizeSliderValueChanged(iValue);
-
-    emit completeChanged();
-}
-
-void UIWizardNewVDPageExpert::sltSizeEditorTextChanged(const QString &strValue)
-{
-    onSizeEditorTextChanged(strValue);
-
-    emit completeChanged();
-}
-
 void UIWizardNewVDPageExpert::retranslateUi()
 {
     /* Translate widgets: */
     m_pLocationCnt->setTitle(UIWizardNewVD::tr("File &location"));
-    m_pLocationOpenButton->setToolTip(UIWizardNewVD::tr("Choose a location for new virtual hard drive file..."));
+    m_pLocationOpenButton->setToolTip(UIWizardNewVD::tr("Choose a location for new virtual hard disk file..."));
     m_pSizeCnt->setTitle(UIWizardNewVD::tr("File &size"));
-    m_pFormatCnt->setTitle(UIWizardNewVD::tr("Hard drive file &type"));
+    m_pFormatCnt->setTitle(UIWizardNewVD::tr("Hard disk file &type"));
     QList<QAbstractButton*> buttons = m_pFormatButtonGroup->buttons();
     for (int i = 0; i < buttons.size(); ++i)
     {
         QAbstractButton *pButton = buttons[i];
         pButton->setText(VBoxGlobal::fullMediumFormatName(m_formatNames[m_pFormatButtonGroup->id(pButton)]));
     }
-    m_pVariantCnt->setTitle(UIWizardNewVD::tr("Storage on physical hard drive"));
+    m_pVariantCnt->setTitle(UIWizardNewVD::tr("Storage on physical hard disk"));
     m_pDynamicalButton->setText(UIWizardNewVD::tr("&Dynamically allocated"));
     m_pFixedButton->setText(UIWizardNewVD::tr("&Fixed size"));
     m_pSplitBox->setText(UIWizardNewVD::tr("&Split into files of less than 2GB"));

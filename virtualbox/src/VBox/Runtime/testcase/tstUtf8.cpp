@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/string.h>
 
 #include <iprt/alloc.h>
@@ -308,17 +309,12 @@ int mymemcmp(const void *pv1, const void *pv2, size_t cb, int cBits)
         {
             RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, "mismatch at %#x: ", off);
             whereami(cBits, off);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off-1, pb1[off-1], pb2[off-1]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, "*%#x: %02x != %02x!\n", off, pb1[off], pb2[off]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+1, pb1[off+1], pb2[off+1]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+2, pb1[off+2], pb2[off+2]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+3, pb1[off+3], pb2[off+3]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+4, pb1[off+4], pb2[off+4]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+5, pb1[off+5], pb2[off+5]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+6, pb1[off+6], pb2[off+6]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+7, pb1[off+7], pb2[off+7]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+8, pb1[off+8], pb2[off+8]);
-            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+9, pb1[off+9], pb2[off+9]);
+            if (off > 0)
+                RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off-1, pb1[off-1], pb2[off-1]);
+            RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, "*%#x: %02x != %02x!\n", off,   pb1[off], pb2[off]);
+            for (size_t i = 1; i < 10; i++)
+                if (off + i < cb)
+                    RTTestPrintf(NIL_RTTEST, RTTESTLVL_FAILURE, " %#x: %02x != %02x!\n", off+i, pb1[off+i], pb2[off+i]);
             return 1;
         }
     }
@@ -429,6 +425,7 @@ void test2(RTTEST hTest)
     int rc = RTUtf16ToUtf8(&g_wszAll[0], &pszUtf8);
     if (rc == VINF_SUCCESS)
     {
+        pszUtf8[0] = 1;
         if (mymemcmp(pszUtf8, g_szAll, sizeof(g_szAll), 8))
             RTTestFailed(hTest, "UTF-16 -> UTF-8 mismatch!");
 
@@ -744,6 +741,25 @@ void TstRTStrXCmp(RTTEST hTest)
     CHECK_DIFF(RTStrICmp("AbCdEG", "aBcDef"), > ); /* diff performed on the lower case cp. */
 
 
+    RTTestSub(hTest, "RTStrICmpAscii");
+    CHECK_DIFF(RTStrICmpAscii(NULL, NULL), == );
+    CHECK_DIFF(RTStrICmpAscii(NULL, ""), < );
+    CHECK_DIFF(RTStrICmpAscii("", NULL), > );
+    CHECK_DIFF(RTStrICmpAscii("", ""), == );
+    CHECK_DIFF(RTStrICmpAscii("abcdef", "abcdef"), == );
+    CHECK_DIFF(RTStrICmpAscii("abcdef", "abcde"), > );
+    CHECK_DIFF(RTStrICmpAscii("abcde", "abcdef"), < );
+    CHECK_DIFF(RTStrICmpAscii("abcdeg", "abcdef"), > );
+    CHECK_DIFF(RTStrICmpAscii("abcdef", "abcdeg"), < );
+
+    CHECK_DIFF(RTStrICmpAscii("abcdeF", "abcdef"), ==);
+    CHECK_DIFF(RTStrICmpAscii("abcdef", "abcdeF"), ==);
+    CHECK_DIFF(RTStrICmpAscii("ABCDEF", "abcdef"), ==);
+    CHECK_DIFF(RTStrICmpAscii("abcdef", "ABCDEF"), ==);
+    CHECK_DIFF(RTStrICmpAscii("AbCdEf", "aBcDeF"), ==);
+    CHECK_DIFF(RTStrICmpAscii("AbCdEg", "aBcDeF"), > );
+    CHECK_DIFF(RTStrICmpAscii("AbCdEG", "aBcDef"), > ); /* diff performed on the lower case cp. */
+
 
     RTTestSub(hTest, "RTStrNICmp");
     CHECK_DIFF(RTStrNICmp(NULL, NULL, RTSTR_MAX), == );
@@ -876,8 +892,9 @@ void TstRTStrPurgeComplementSet(RTTEST hTest)
         char szCopy[MAX_IN_STRING];
         ssize_t cReplacements;
         AssertRC(RTStrCopy(szCopy, RT_ELEMENTS(szCopy), aTests[i].pcszIn));
-        cReplacements = RTStrPurgeComplementSet(szCopy, aTests[i].pcCpSet,
-                                                aTests[i].chReplacement);
+        RTTestDisableAssertions(hTest);
+        cReplacements = RTStrPurgeComplementSet(szCopy, aTests[i].pcCpSet, aTests[i].chReplacement);
+        RTTestRestoreAssertions(hTest);
         if (cReplacements != aTests[i].cExpected)
             RTTestFailed(hTest, "#%u: expected %lld, actual %lld\n", i,
                          (long long) aTests[i].cExpected,
@@ -939,8 +956,11 @@ void TstRTUtf16PurgeComplementSet(RTTEST hTest)
             memcpy(wszInCopy, aTests[i].pcszIn, aTests[i].cwc * 2);
             memcpy(wszOutCopy, aTests[i].pcszOut, aTests[i].cwc * 2);
         }
-        cReplacements = RTUtf16PurgeComplementSet(wszInCopy, aTests[i].pcCpSet,
-                                                  aTests[i].chReplacement);
+
+        RTTestDisableAssertions(hTest);
+        cReplacements = RTUtf16PurgeComplementSet(wszInCopy, aTests[i].pcCpSet, aTests[i].chReplacement);
+        RTTestRestoreAssertions(hTest);
+
         if (cReplacements != aTests[i].cExpected)
             RTTestFailed(hTest, "#%u: expected %lld, actual %lld\n", i,
                          (long long) aTests[i].cExpected,
@@ -1040,11 +1060,12 @@ static void testStrStr(RTTEST hTest)
 #define CHECK(expr, expect) \
     do { \
         const char *pszRet = expr; \
-        if (   (pszRet != NULL && (expect) == NULL) \
-            || (pszRet == NULL && (expect) != NULL) \
-            || strcmp(pszRet, (expect)) \
+        const char *pszExpect = (expect); \
+        if (   (pszRet != NULL && pszExpect == NULL) \
+            || (pszRet == NULL && pszExpect != NULL) \
+            || strcmp(pszRet, pszExpect) \
             ) \
-            RTTestFailed(hTest, "%d: %#x -> %s expected %s", __LINE__, #expr, pszRet, (expect)); \
+            RTTestFailed(hTest, "%d: %#x -> %s expected %s", __LINE__, #expr, pszRet, pszExpect); \
     } while (0)
 
 
@@ -1518,13 +1539,8 @@ int main()
     TstRTStrXCmp(hTest);
     TstRTStrPurgeEncoding(hTest);
     /* TstRT*PurgeComplementSet test conditions which assert. */
-    bool fAreQuiet = RTAssertAreQuiet(), fMayPanic = RTAssertMayPanic();
-    RTAssertSetQuiet(true);
-    RTAssertSetMayPanic(false);
     TstRTStrPurgeComplementSet(hTest);
     TstRTUtf16PurgeComplementSet(hTest);
-    RTAssertSetQuiet(fAreQuiet);
-    RTAssertSetMayPanic(fMayPanic);
     testStrEnd(hTest);
     testStrStr(hTest);
     testUtf8Latin1(hTest);

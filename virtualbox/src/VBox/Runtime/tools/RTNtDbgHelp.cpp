@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,10 +25,10 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <Windows.h>
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
 #include <Dbghelp.h>
 
 #include <iprt/alloca.h>
@@ -50,9 +50,9 @@
 #include <iprt/ldrlazy.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Debug module record.
  *
@@ -73,9 +73,9 @@ typedef struct RTNTDBGHELPMOD
 typedef RTNTDBGHELPMOD *PRTNTDBGHELPMOD;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Verbosity level. */
 static int          g_iOptVerbose = 1;
 
@@ -181,12 +181,12 @@ static RTEXITCODE loadModule(const char *pszFile)
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "SymLoadModuleEx failed: %u\n", GetLastError());
 
     size_t cbFullName = strlen(pszFile) + 1;
-    PRTNTDBGHELPMOD pMod = (PRTNTDBGHELPMOD)RTMemAlloc(RT_OFFSETOF(RTNTDBGHELPMOD, szFullName[cbFullName + 1]));
+    PRTNTDBGHELPMOD pMod = (PRTNTDBGHELPMOD)RTMemAlloc(RT_UOFFSETOF_DYN(RTNTDBGHELPMOD, szFullName[cbFullName + 1]));
     memcpy(pMod->szFullName, pszFile, cbFullName);
     pMod->pszName  = RTPathFilename(pMod->szFullName);
     pMod->uModAddr = uModAddrGot;
     RTListAppend(&g_ModuleList, &pMod->ListEntry);
-    infoPrintf(1, "%#018x %s\n", pMod->uModAddr, pMod->pszName);
+    infoPrintf(1, "%#018RX64 %s\n", pMod->uModAddr, pMod->pszName);
 
     return RTEXITCODE_SUCCESS;
 }
@@ -210,10 +210,13 @@ static const char *symTypeName(SYM_TYPE enmType)
         case SymSym:        return "SymSym";
         case SymDia:        return "SymDia";
         case SymVirtual:    return "SymVirtual";
+        default:
+        {
+            static char s_szBuf[32];
+            RTStrPrintf(s_szBuf, sizeof(s_szBuf), "Unknown-%#x", enmType);
+            return s_szBuf;
+        }
     }
-    static char s_szBuf[32];
-    RTStrPrintf(s_szBuf, sizeof(s_szBuf), "Unknown-%#x", enmType);
-    return s_szBuf;
 }
 
 
@@ -228,7 +231,7 @@ static const char *symTypeName(SYM_TYPE enmType)
 static BOOL CALLBACK dumpSymbolCallback(PSYMBOL_INFO pSymInfo, ULONG cbSymbol, PVOID pvUser)
 {
     NOREF(pvUser);
-    RTPrintf("  %#018x LB %#07x  %s\n", pSymInfo->Address, cbSymbol, pSymInfo->Name);
+    RTPrintf("  %#018RX64 LB %#07x  %s\n", pSymInfo->Address, cbSymbol, pSymInfo->Name);
     return TRUE;
 }
 
@@ -242,7 +245,7 @@ static RTEXITCODE dumpAll(void)
     PRTNTDBGHELPMOD pMod;
     RTListForEach(&g_ModuleList, pMod, RTNTDBGHELPMOD, ListEntry)
     {
-        RTPrintf("*** %#018x - %s ***\n", pMod->uModAddr, pMod->szFullName);
+        RTPrintf("*** %#018RX64 - %s ***\n", pMod->uModAddr, pMod->szFullName);
 
         static const int8_t s_acbVariations[]  = { 0, -4, -8, -12, -16, -20, -24, -28, -32, 4, 8, 12, 16, 20, 24, 28, 32 };
         unsigned            iVariation = 0;
@@ -319,7 +322,7 @@ int main(int argc, char **argv)
     };
 
     RTEXITCODE  rcExit      = RTEXITCODE_SUCCESS;
-    const char *pszOutput   = "-";
+    //const char *pszOutput   = "-";
 
     int ch;
     RTGETOPTUNION ValueUnion;
@@ -358,7 +361,7 @@ int main(int argc, char **argv)
 
 
             case 'V':
-                RTPrintf("$Revision: 85818 $");
+                RTPrintf("$Revision: 125570 $");
                 break;
 
             case 'h':

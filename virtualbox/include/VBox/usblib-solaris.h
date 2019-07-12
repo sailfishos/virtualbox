@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,9 +35,11 @@
 #include <sys/param.h>
 
 RT_C_DECLS_BEGIN
-/** @defgroup grp_USBLib_solaris Solaris Specifics
- * @addtogroup grp_USBLib
- * @{ */
+
+/** @defgroup grp_usblib_solaris    Solaris USB Specifics
+ * @ingroup grp_usblib
+ * @{
+ */
 
 /** @name VBoxUSB specific IOCtls.
  * VBoxUSB uses them for resetting USB devices requests from userland.

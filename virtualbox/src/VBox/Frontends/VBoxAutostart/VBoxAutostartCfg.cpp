@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 
 #include <iprt/stream.h>
 #include <iprt/process.h>
@@ -28,9 +29,10 @@
 
 #include "VBoxAutostart.h"
 
-/*******************************************************************************
-*   Constants And Macros, Structures and Typedefs                              *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Constants And Macros, Structures and Typedefs                                                                                *
+*********************************************************************************************************************************/
 
 /**
  * Token type.
@@ -69,7 +71,7 @@ typedef struct CFGTOKEN
     /** Line number of the token. */
     unsigned        iLine;
     /** Starting character of the token in the stream. */
-    unsigned        cchStart;
+    size_t          cchStart;
     /** Type dependen token data. */
     union
     {
@@ -104,16 +106,17 @@ typedef struct CFGTOKENIZER
     /** Current line in the config file. */
     unsigned   iLine;
     /** Current character of the line. */
-    unsigned   cchCurr;
+    size_t     cchCurr;
     /** Flag whether the end of the config stream is reached. */
     bool       fEof;
     /** Pointer to the next token in the stream (used to peek). */
     PCFGTOKEN  pTokenNext;
 } CFGTOKENIZER, *PCFGTOKENIZER;
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 /**
  * Free a config token.
@@ -406,9 +409,7 @@ static const char *autostartConfigTokenTypeToStr(CFGTOKENTYPE enmType)
             AssertFailed();
             return "<Invalid>";
     }
-
-    AssertFailed();
-    return NULL;
+    /* not reached */
 }
 
 /**
@@ -448,9 +449,7 @@ static size_t autostartConfigTokenGetLength(PCFGTOKEN pToken)
             AssertFailed();
             return 0;
     }
-
-    AssertFailed();
-    return 0;
+    /* not reached */
 }
 
 /**
@@ -556,7 +555,7 @@ static int autostartConfigParseValue(PCFGTOKENIZER pCfgTokenizer, const char *ps
     {
         PCFGAST pCfgAst = NULL;
 
-        pCfgAst = (PCFGAST)RTMemAllocZ(RT_OFFSETOF(CFGAST, u.KeyValue.aszValue[pToken->u.Id.cchToken + 1]));
+        pCfgAst = (PCFGAST)RTMemAllocZ(RT_UOFFSETOF_DYN(CFGAST, u.KeyValue.aszValue[pToken->u.Id.cchToken + 1]));
         if (!pCfgAst)
             return VERR_NO_MEMORY;
 
@@ -592,12 +591,8 @@ static int autostartConfigParseValue(PCFGTOKENIZER pCfgTokenizer, const char *ps
 static int autostartConfigParseCompoundNode(PCFGTOKENIZER pCfgTokenizer, const char *pszScopeId,
                                             PCFGAST *ppCfgAst)
 {
-    int rc = VINF_SUCCESS;
     unsigned cAstNodesMax = 10;
-    unsigned idxAstNodeCur = 0;
-    PCFGAST pCfgAst = NULL;
-
-    pCfgAst = (PCFGAST)RTMemAllocZ(RT_OFFSETOF(CFGAST, u.Compound.apAstNodes[cAstNodesMax]));
+    PCFGAST pCfgAst = (PCFGAST)RTMemAllocZ(RT_UOFFSETOF_DYN(CFGAST, u.Compound.apAstNodes[cAstNodesMax]));
     if (!pCfgAst)
         return VERR_NO_MEMORY;
 
@@ -610,6 +605,7 @@ static int autostartConfigParseCompoundNode(PCFGTOKENIZER pCfgTokenizer, const c
         return VERR_NO_MEMORY;
     }
 
+    int rc = VINF_SUCCESS;
     do
     {
         PCFGTOKEN pToken = NULL;
@@ -656,7 +652,7 @@ static int autostartConfigParseCompoundNode(PCFGTOKENIZER pCfgTokenizer, const c
             {
                 cAstNodesMax += 10;
 
-                PCFGAST pCfgAstNew = (PCFGAST)RTMemRealloc(pCfgAst, RT_OFFSETOF(CFGAST, u.Compound.apAstNodes[cAstNodesMax]));
+                PCFGAST pCfgAstNew = (PCFGAST)RTMemRealloc(pCfgAst, RT_UOFFSETOF_DYN(CFGAST, u.Compound.apAstNodes[cAstNodesMax]));
                 if (!pCfgAstNew)
                     rc = VERR_NO_MEMORY;
                 else

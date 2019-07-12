@@ -1,11 +1,10 @@
 /* $Id: VBoxDispDriver.cpp $ */
-
 /** @file
  * VBox XPDM Display driver interface functions
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -184,11 +183,13 @@ VOID _wcsncpy(WCHAR *pwcd, WCHAR *pwcs, ULONG dstsize)
 
 static int VBoxDispInitDevice(PVBOXDISPDEV pDev, DEVMODEW *pdm, GDIINFO *pGdiInfo, DEVINFO *pDevInfo)
 {
-    VIDEO_MODE_INFORMATION *pModesTable, selectedMode;
+    VIDEO_MODE_INFORMATION *pModesTable = NULL, selectedMode;
     ULONG cModes, i=0;
     int rc;
 
     LOGF_ENTER();
+
+    memset(&selectedMode, 0, sizeof(VIDEO_MODE_INFORMATION));
 
     /* Get a list of supported modes by both miniport and display driver */
     rc = VBoxDispMPGetVideoModes(pDev->hDriver, &pModesTable, &cModes);
@@ -235,7 +236,7 @@ static int VBoxDispInitDevice(PVBOXDISPDEV pDev, DEVMODEW *pdm, GDIINFO *pGdiInf
     pDev->mode.ulWidth = selectedMode.VisScreenWidth;
     pDev->mode.ulHeight = selectedMode.VisScreenHeight;
     pDev->mode.ulBitsPerPel = selectedMode.BitsPerPlane * selectedMode.NumberOfPlanes;
-    pDev->mode.lScanlineStride = selectedMode.ScreenStride;
+    pDev->mode.lScanlineStride = RT_ALIGN_32(selectedMode.ScreenStride, 4);
     pDev->mode.flMaskR = selectedMode.RedMask;
     pDev->mode.flMaskG = selectedMode.GreenMask;
     pDev->mode.flMaskB = selectedMode.BlueMask;
@@ -285,7 +286,7 @@ static int VBoxDispInitDevice(PVBOXDISPDEV pDev, DEVMODEW *pdm, GDIINFO *pGdiInf
 
     pGdiInfo->ulNumPalReg = (pDev->mode.ulBitsPerPel==8) ? (1<<pDev->mode.ulBitsPerPel) : 0;
 
-    /* @todo: might want to implement IOCTL_VIDEO_QUERY_COLOR_CAPABILITIES in miniport driver
+    /** @todo might want to implement IOCTL_VIDEO_QUERY_COLOR_CAPABILITIES in miniport driver
      *        and query host for this info there
      */
     VBOXDISPSETCIEC(pGdiInfo->ciDevice.Red, 6700, 3300, 0);
@@ -390,7 +391,7 @@ static int VBoxDispInitDevice(PVBOXDISPDEV pDev, DEVMODEW *pdm, GDIINFO *pGdiInf
  */
 BOOL DrvEnableDriver(ULONG iEngineVersion, ULONG cj, PDRVENABLEDATA pded)
 {
-    /*@todo: can't link with hal.lib
+    /** @todo can't link with hal.lib
     int irc = RTR0Init(0);
     if (RT_FAILURE(irc))
     {
@@ -497,6 +498,7 @@ VBoxDispDrvEnablePDEV(DEVMODEW *pdm, LPWSTR pwszLogAddress, ULONG cPat, HSURF *p
                       ULONG cjDevInfo, DEVINFO  *pdi,
                       HDEV  hdev, PWSTR pwszDeviceName, HANDLE hDriver)
 {
+    RT_NOREF(hdev);
     PVBOXDISPDEV pDev = NULL;
     GDIINFO gdiInfo;
     DEVINFO devInfo;
@@ -603,7 +605,7 @@ HSURF APIENTRY VBoxDispDrvEnableSurface(DHPDEV dhpdev)
     VBOX_WARNRC_RETV(rc, NULL);
 
     /* Clear mapped memory, to avoid garbage while video mode is switching */
-    /* @todo: VIDEO_MODE_NO_ZERO_MEMORY does nothing in miniport's IOCTL_VIDEO_SET_CURRENT_MODE*/
+    /** @todo VIDEO_MODE_NO_ZERO_MEMORY does nothing in miniport's IOCTL_VIDEO_SET_CURRENT_MODE*/
     memset(pDev->memInfo.FrameBufferBase, 0, pDev->mode.ulHeight * abs(pDev->mode.lScanlineStride));
 
     /* Allocate memory for pointer attrs */
@@ -673,13 +675,15 @@ HSURF APIENTRY VBoxDispDrvEnableSurface(DHPDEV dhpdev)
             iFormat = BMF_32BPP;
             break;
         }
+        default:
+            AssertMsgFailedReturn(("ulBitsPerPel=%#x\n", pDev->mode.ulBitsPerPel), NULL);
     }
 
     size.cx = pDev->mode.ulWidth;
     size.cy = pDev->mode.ulHeight;
 
     pDev->surface.hBitmap = EngCreateBitmap(size, pDev->mode.lScanlineStride, iFormat,
-                                            pDev->mode.lScanlineStride>0 ? BMF_TOPDOWN:0,
+                                            pDev->mode.lScanlineStride > 0 ? BMF_TOPDOWN:0,
                                             pDev->memInfo.FrameBufferBase);
     if (!pDev->surface.hBitmap)
     {
@@ -780,6 +784,7 @@ VBoxDispDrvRealizeBrush(BRUSHOBJ *pbo, SURFOBJ *psoTarget, SURFOBJ *psoPattern, 
 
 ULONG APIENTRY VBoxDispDrvDitherColor(DHPDEV dhpdev, ULONG iMode, ULONG rgb, ULONG *pul)
 {
+    RT_NOREF(dhpdev, iMode, rgb, pul);
     ULONG rc;
     LOGF_ENTER();
 
@@ -1041,6 +1046,7 @@ ULONG APIENTRY VBoxDispDrvEscape(SURFOBJ *pso, ULONG iEsc, ULONG cjIn, PVOID pvI
 /* Obsolete, NT4 specific. Called to set display offset in virtual desktop */
 BOOL APIENTRY VBoxDispDrvOffset(SURFOBJ* pso, LONG x, LONG y, FLONG flReserved)
 {
+    RT_NOREF(flReserved);
     PVBOXDISPDEV pDev = (PVBOXDISPDEV)pso->dhpdev;
     LOGF(("%x %x %x\n", x, y, flReserved));
 

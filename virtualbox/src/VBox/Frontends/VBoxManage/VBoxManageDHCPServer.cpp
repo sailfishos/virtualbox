@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifndef VBOX_ONLY_DOCS
 #include <VBox/com/com.h>
 #include <VBox/com/array.h>
@@ -53,21 +54,19 @@ typedef enum enMainOpCodes
     OP_MODIFY
 } OPCODE;
 
-typedef std::map<DhcpOpt_T, std::string> DhcpOptMap;
-typedef DhcpOptMap::iterator DhcpOptIterator;
-typedef DhcpOptMap::value_type DhcpOptValuePair;
-
-struct VmNameSlotKey;
-typedef struct VmNameSlotKey VmNameSlotKey;
+typedef std::pair<DhcpOpt_T, std::string> DhcpOptSpec;
+typedef std::vector<DhcpOptSpec> DhcpOpts;
+typedef DhcpOpts::iterator DhcpOptIterator;
 
 struct VmNameSlotKey
 {
-    std::string VmName;
+    const std::string VmName;
     uint8_t u8Slot;
 
-    VmNameSlotKey(std::string aVmName, uint8_t aSlot) :
-      VmName(aVmName),
-      u8Slot(aSlot) {}
+    VmNameSlotKey(const std::string &aVmName, uint8_t aSlot)
+      : VmName(aVmName)
+      , u8Slot(aSlot)
+    {}
 
     bool operator< (const VmNameSlotKey& that) const
     {
@@ -78,44 +77,43 @@ struct VmNameSlotKey
     }
 };
 
-typedef std::map<VmNameSlotKey, DhcpOptMap> VmSlot2OptionsM;
+typedef std::map<VmNameSlotKey, DhcpOpts> VmSlot2OptionsM;
 typedef VmSlot2OptionsM::iterator VmSlot2OptionsIterator;
 typedef VmSlot2OptionsM::value_type VmSlot2OptionsPair;
 
 typedef std::vector<VmNameSlotKey> VmConfigs;
 
-static const RTGETOPTDEF g_aDHCPIPOptions[]
-    = {
-        { "--netname",          't', RTGETOPT_REQ_STRING },  /* we use 't' instead of 'n' to avoid
-                                                              * 1. the misspelled "-enable" long option to be treated as 'e' (for -enable) + 'n' (for -netname) + "<the_rest_opt>" (for net name)
-                                                              * 2. the misspelled "-netmask" to be treated as 'n' (for -netname) + "<the_rest_opt>" (for net name)
-                                                              */
-        { "-netname",           't', RTGETOPT_REQ_STRING },     // deprecated (if removed check below)
-        { "--ifname",           'f', RTGETOPT_REQ_STRING },  /* we use 'f' instead of 'i' to avoid
-                                                              * 1. the misspelled "-disable" long option to be treated as 'd' (for -disable) + 'i' (for -ifname) + "<the_rest_opt>" (for if name)
-                                                              */
-        { "-ifname",            'f', RTGETOPT_REQ_STRING },     // deprecated
-        { "--ip",               'a', RTGETOPT_REQ_STRING },
-        { "-ip",                'a', RTGETOPT_REQ_STRING },     // deprecated
-        { "--netmask",          'm', RTGETOPT_REQ_STRING },
-        { "-netmask",           'm', RTGETOPT_REQ_STRING },     // deprecated
-        { "--lowerip",          'l', RTGETOPT_REQ_STRING },
-        { "-lowerip",           'l', RTGETOPT_REQ_STRING },     // deprecated
-        { "--upperip",          'u', RTGETOPT_REQ_STRING },
-        { "-upperip",           'u', RTGETOPT_REQ_STRING },     // deprecated
-        { "--enable",           'e', RTGETOPT_REQ_NOTHING },
-        { "-enable",            'e', RTGETOPT_REQ_NOTHING },    // deprecated
-        { "--disable",          'd', RTGETOPT_REQ_NOTHING },
-        { "-disable",           'd', RTGETOPT_REQ_NOTHING },     // deprecated
-        { "--options",          'o', RTGETOPT_REQ_NOTHING },
-        {"--vm",                'n', RTGETOPT_REQ_STRING}, /* only with -o */
-        {"--slot",              's', RTGETOPT_REQ_UINT8}, /* only with -o and -n */
-        {"--id",                'i', RTGETOPT_REQ_UINT8}, /* only with -o */
-        {"--value",             'p', RTGETOPT_REQ_STRING} /* only with -i */
+static const RTGETOPTDEF g_aDHCPIPOptions[] =
+{
+    { "--netname",          't', RTGETOPT_REQ_STRING },  /* we use 't' instead of 'n' to avoid
+                                                          * 1. the misspelled "-enable" long option to be treated as 'e' (for -enable) + 'n' (for -netname) + "<the_rest_opt>" (for net name)
+                                                          * 2. the misspelled "-netmask" to be treated as 'n' (for -netname) + "<the_rest_opt>" (for net name)
+                                                          */
+    { "-netname",           't', RTGETOPT_REQ_STRING },     // deprecated (if removed check below)
+    { "--ifname",           'f', RTGETOPT_REQ_STRING },  /* we use 'f' instead of 'i' to avoid
+                                                          * 1. the misspelled "-disable" long option to be treated as 'd' (for -disable) + 'i' (for -ifname) + "<the_rest_opt>" (for if name)
+                                                          */
+    { "-ifname",            'f', RTGETOPT_REQ_STRING },     // deprecated
+    { "--ip",               'a', RTGETOPT_REQ_STRING },
+    { "-ip",                'a', RTGETOPT_REQ_STRING },     // deprecated
+    { "--netmask",          'm', RTGETOPT_REQ_STRING },
+    { "-netmask",           'm', RTGETOPT_REQ_STRING },     // deprecated
+    { "--lowerip",          'l', RTGETOPT_REQ_STRING },
+    { "-lowerip",           'l', RTGETOPT_REQ_STRING },     // deprecated
+    { "--upperip",          'u', RTGETOPT_REQ_STRING },
+    { "-upperip",           'u', RTGETOPT_REQ_STRING },     // deprecated
+    { "--enable",           'e', RTGETOPT_REQ_NOTHING },
+    { "-enable",            'e', RTGETOPT_REQ_NOTHING },    // deprecated
+    { "--disable",          'd', RTGETOPT_REQ_NOTHING },
+    { "-disable",           'd', RTGETOPT_REQ_NOTHING },     // deprecated
+    { "--options",          'o', RTGETOPT_REQ_NOTHING },
+    { "--vm",               'n', RTGETOPT_REQ_STRING}, /* only with -o */
+    { "--slot",             's', RTGETOPT_REQ_UINT8}, /* only with -o and -n */
+    { "--id",               'i', RTGETOPT_REQ_UINT8}, /* only with -o */
+    { "--value",            'p', RTGETOPT_REQ_STRING} /* only with -i */
+};
 
-      };
-
-static int handleOp(HandlerArg *a, OPCODE enmCode, int iStart, int *pcProcessed)
+static RTEXITCODE handleOp(HandlerArg *a, OPCODE enmCode, int iStart)
 {
     if (a->argc - iStart < 2)
         return errorSyntax(USAGE_DHCPSERVER, "Not enough parameters");
@@ -138,7 +136,7 @@ static int handleOp(HandlerArg *a, OPCODE enmCode, int iStart, int *pcProcessed)
 
     int enable = -1;
 
-    DhcpOptMap GlobalDhcpOptions;
+    DhcpOpts        GlobalDhcpOptions;
     VmSlot2OptionsM VmSlot2Options;
     VmConfigs       VmConfigs2Delete;
 
@@ -291,10 +289,10 @@ static int handleOp(HandlerArg *a, OPCODE enmCode, int iStart, int *pcProcessed)
                         return errorSyntax(USAGE_DHCPSERVER,
                                            "--slot wasn't found");
 
-                    DhcpOptMap& map = fVmOptionRead ? VmSlot2Options[VmNameSlotKey(pszVmName, u8Slot)]
+                    DhcpOpts &opts = fVmOptionRead ? VmSlot2Options[VmNameSlotKey(pszVmName, u8Slot)]
                                                     : GlobalDhcpOptions;
                     std::string strVal = ValueUnion.psz;
-                    map.insert(DhcpOptValuePair((DhcpOpt_T)u8OptId, strVal));
+                    opts.push_back(DhcpOptSpec((DhcpOpt_T)u8OptId, strVal));
 
                 }
                 break; // --end of value
@@ -433,27 +431,27 @@ static int handleOp(HandlerArg *a, OPCODE enmCode, int iStart, int *pcProcessed)
             return errorArgument("Failed to remove server");
     }
 
-    return 0;
+    return RTEXITCODE_SUCCESS;
 }
 
 
-int handleDHCPServer(HandlerArg *a)
+RTEXITCODE handleDHCPServer(HandlerArg *a)
 {
     if (a->argc < 1)
         return errorSyntax(USAGE_DHCPSERVER, "Not enough parameters");
 
-    int result;
-    int cProcessed;
+    RTEXITCODE rcExit;
     if (strcmp(a->argv[0], "modify") == 0)
-        result = handleOp(a, OP_MODIFY, 1, &cProcessed);
+        rcExit = handleOp(a, OP_MODIFY, 1);
     else if (strcmp(a->argv[0], "add") == 0)
-        result = handleOp(a, OP_ADD, 1, &cProcessed);
+        rcExit = handleOp(a, OP_ADD, 1);
     else if (strcmp(a->argv[0], "remove") == 0)
-        result = handleOp(a, OP_REMOVE, 1, &cProcessed);
+        rcExit = handleOp(a, OP_REMOVE, 1);
     else
-        result = errorSyntax(USAGE_DHCPSERVER, "Invalid parameter '%s'", Utf8Str(a->argv[0]).c_str());
+        rcExit = errorSyntax(USAGE_DHCPSERVER, "Invalid parameter '%s'", Utf8Str(a->argv[0]).c_str());
 
-    return result;
+    return rcExit;
 }
 
 #endif /* !VBOX_ONLY_DOCS */
+

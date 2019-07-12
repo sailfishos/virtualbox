@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DBG
 #include <iprt/dbg.h>
 #include "internal/iprt.h"
@@ -40,9 +40,9 @@
 #include "internal/dbgmod.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct RTDBGMODEXPORTARGS
 {
     PRTDBGMODINT    pDbgMod;
@@ -54,8 +54,9 @@ typedef struct RTDBGMODEXPORTARGS
 typedef RTDBGMODEXPORTARGS *PRTDBGMODEXPORTARGS;
 
 
-/** @callback_method_impl{FNRTLDRENUMSYMS,
- *  Copies the symbols over into the container.} */
+/**
+ * @callback_method_impl{FNRTLDRENUMSYMS,
+ *      Copies the symbols over into the container} */
 static DECLCALLBACK(int) rtDbgModExportsAddSymbolCallback(RTLDRMOD hLdrMod, const char *pszSymbol, unsigned uSymbol,
                                                           RTLDRADDR Value, void *pvUser)
 {
@@ -64,18 +65,25 @@ static DECLCALLBACK(int) rtDbgModExportsAddSymbolCallback(RTLDRMOD hLdrMod, cons
 
     if (Value >= pArgs->uImageBase)
     {
+        char szOrdinalNm[48];
+        if (!pszSymbol)
+        {
+            RTStrPrintf(szOrdinalNm, sizeof(szOrdinalNm), "Ordinal%u", uSymbol);
+            pszSymbol = szOrdinalNm;
+        }
+
         int rc = RTDbgModSymbolAdd(pArgs->pDbgMod, pszSymbol, RTDBGSEGIDX_RVA, Value - pArgs->uImageBase,
                                    0 /*cb*/, 0 /* fFlags */, NULL /*piOrdinal*/);
-        Log(("Symbol #%05u %#018x %s [%Rrc]\n", uSymbol, Value, pszSymbol, rc)); NOREF(rc);
+        Log(("Symbol #%05u %#018RTptr %s [%Rrc]\n", uSymbol, Value, pszSymbol, rc)); NOREF(rc);
     }
     else
-        Log(("Symbol #%05u %#018x %s [SKIPPED - INVALID ADDRESS]\n", uSymbol, Value, pszSymbol));
+        Log(("Symbol #%05u %#018RTptr %s [SKIPPED - INVALID ADDRESS]\n", uSymbol, Value, pszSymbol));
     return VINF_SUCCESS;
 }
 
 
 /** @callback_method_impl{FNRTLDRENUMSEGS,
- *  Copies the segments over into the container.} */
+ *      Copies the segments over into the container} */
 static DECLCALLBACK(int) rtDbgModExportsAddSegmentsCallback(RTLDRMOD hLdrMod, PCRTLDRSEG pSeg, void *pvUser)
 {
     PRTDBGMODEXPORTARGS pArgs = (PRTDBGMODEXPORTARGS)pvUser;
@@ -86,7 +94,8 @@ static DECLCALLBACK(int) rtDbgModExportsAddSegmentsCallback(RTLDRMOD hLdrMod, PC
     pArgs->cSegs++;
 
     /* Add dummy segments for segments that doesn't get mapped. */
-    if (pSeg->LinkAddress == NIL_RTLDRADDR)
+    if (   pSeg->LinkAddress == NIL_RTLDRADDR
+        || pSeg->RVA         == NIL_RTLDRADDR)
         return RTDbgModSegmentAdd(pArgs->pDbgMod, 0, 0, pSeg->pszName, 0 /*fFlags*/, NULL);
 
     RTLDRADDR uRva = pSeg->RVA;

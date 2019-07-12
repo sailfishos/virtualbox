@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -98,7 +98,7 @@ DECLINLINE(bool) selmIsShwDescGoodForSReg(PCCPUMSELREG pSReg, PCX86DESC pShwDesc
  * register.
  *
  * @returns @c true if good, @c false if not.
- * @param   pVCpu               The current virtual CPU.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  * @param   pSReg               The segment register.
  * @param   pGstDesc            The guest descriptor table entry.
  * @param   iSReg               The segment register index (X86_SREG_XXX).
@@ -173,7 +173,7 @@ DECLINLINE(bool) selmIsGstDescGoodForSReg(PVMCPU pVCpu, PCCPUMSELREG pSReg, PCX8
 /**
  * Converts a guest GDT or LDT entry to a shadow table entry.
  *
- * @param   pVM                 The VM handle.
+ * @param   pVM                 The cross context VM structure.
  * @param   pDesc       Guest entry on input, shadow entry on return.
  */
 DECL_FORCE_INLINE(void) selmGuestToShadowDesc(PVM pVM, PX86DESC pDesc)
@@ -246,22 +246,23 @@ DECLINLINE(bool) selmIsSRegStale32(PCCPUMSELREG pSReg, PCX86DESC pShwDesc, uint3
         || pSReg->Attr.n.u1Granularity != pShwDesc->Gen.u1Granularity
         || pSReg->Attr.n.u2Dpl         != pShwDesc->Gen.u2Dpl - pShwDesc->Gen.u1Available)
     {
-        Log(("selmIsSRegStale32: Attributes changed (%#x -> %#x)\n", pSReg->Attr.u, X86DESC_GET_HID_ATTR(pShwDesc)));
+        Log(("selmIsSRegStale32: Attributes changed (%#x -> %#x) for %u\n", pSReg->Attr.u, X86DESC_GET_HID_ATTR(pShwDesc), iSReg));
         return true;
     }
 
     if (pSReg->u64Base != X86DESC_BASE(pShwDesc))
     {
-        Log(("selmIsSRegStale32: base changed (%#llx -> %#x)\n", pSReg->u64Base, X86DESC_BASE(pShwDesc)));
+        Log(("selmIsSRegStale32: base changed (%#llx -> %#x) for %u\n", pSReg->u64Base, X86DESC_BASE(pShwDesc), iSReg));
         return true;
     }
 
     if (pSReg->u32Limit != X86DESC_LIMIT_G(pShwDesc))
     {
-        Log(("selmIsSRegStale32: limit changed (%#x -> %#x)\n", pSReg->u32Limit, X86DESC_LIMIT_G(pShwDesc)));
+        Log(("selmIsSRegStale32: limit changed (%#x -> %#x) for %u\n", pSReg->u32Limit, X86DESC_LIMIT_G(pShwDesc), iSReg));
         return true;
     }
 
+    RT_NOREF_PV(iSReg);
     return false;
 }
 
@@ -292,7 +293,7 @@ DECLINLINE(void) selmLoadHiddenSRegFromShadowDesc(PCPUMSELREG pSReg, PCX86DESC p
  * Loads the hidden bits of a selector register from a guest descriptor table
  * entry.
  *
- * @param   pVCpu               The current virtual CPU.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  * @param   pSReg               The segment register in question.
  * @param   pGstDesc            The guest descriptor table entry.
  */

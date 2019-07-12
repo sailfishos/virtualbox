@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +17,10 @@
 
 //#define NO_SUPCALLR0VMM
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VMM
 #include <iprt/asm-amd64-x86.h> /* for SUPGetCpuHzFromGIP */
 #include <VBox/vmm/vmm.h>
@@ -42,6 +43,9 @@
 #include <iprt/string.h>
 #include <iprt/x86.h>
 
+
+#ifdef VBOX_WITH_RAW_MODE
+
 static void vmmR3TestClearStack(PVMCPU pVCpu)
 {
     /* We leave the first 64 bytes of the stack alone because of strict
@@ -50,15 +54,13 @@ static void vmmR3TestClearStack(PVMCPU pVCpu)
 }
 
 
-#ifdef VBOX_WITH_RAW_MODE
-
 static int vmmR3ReportMsrRange(PVM pVM, uint32_t uMsr, uint64_t cMsrs, PRTSTREAM pReportStrm, uint32_t *pcMsrsFound)
 {
     /*
      * Preps.
      */
     RTRCPTR RCPtrEP;
-    int rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "VMMRCTestReadMsrs", &RCPtrEP);
+    int rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "VMMRCTestReadMsrs", &RCPtrEP);
     AssertMsgRCReturn(rc, ("Failed to resolved VMMRC.rc::VMMRCEntry(), rc=%Rrc\n", rc), rc);
 
     uint32_t const      cMsrsPerCall = 16384;
@@ -110,7 +112,7 @@ static int vmmR3ReportMsrRange(PVM pVM, uint32_t uMsr, uint64_t cMsrs, PRTSTREAM
                         RTStrmPrintf(pReportStrm,
                                      "    MVO(%#010llx, \"MSR\", UINT64_C(%#018llx)),\n", paResults[i].uMsr, paResults[i].uValue);
                     RTPrintf("%#010llx = %#010x`%08x\n", paResults[i].uMsr,
-                             (uint32_t)(paResults[i].uValue >> 32), (uint32_t)paResults[i].uValue);
+                             RT_HI_U32(paResults[i].uValue), RT_LO_U32(paResults[i].uValue));
                 }
                 cMsrsFound++;
                 uLastMsr = paResults[i].uMsr;
@@ -133,7 +135,7 @@ static int vmmR3ReportMsrRange(PVM pVM, uint32_t uMsr, uint64_t cMsrs, PRTSTREAM
  * Produces a quick report of MSRs.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the cross context VM structure.
+ * @param   pVM             The cross context VM structure.
  * @param   pReportStrm     Pointer to the report output stream. Optional.
  * @param   fWithCpuId      Whether CPUID should be included.
  */
@@ -187,16 +189,16 @@ static int vmmR3DoMsrQuickReport(PVM pVM, PRTSTREAM pReportStrm, bool fWithCpuId
  * Performs a testcase.
  *
  * @returns return value from the test.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTestcase The testcase operation to perform.
  * @param   uVariation  The testcase variation id.
  */
-static int vmmR3DoGCTest(PVM pVM, VMMGCOPERATION enmTestcase, unsigned uVariation)
+static int vmmR3DoGCTest(PVM pVM, VMMRCOPERATION enmTestcase, unsigned uVariation)
 {
     PVMCPU pVCpu = &pVM->aCpus[0];
 
     RTRCPTR RCPtrEP;
-    int rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "VMMGCEntry", &RCPtrEP);
+    int rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "VMMRCEntry", &RCPtrEP);
     if (RT_FAILURE(rc))
         return rc;
 
@@ -211,20 +213,20 @@ static int vmmR3DoGCTest(PVM pVM, VMMGCOPERATION enmTestcase, unsigned uVariatio
     Assert(CPUMGetHyperCR3(pVCpu) && CPUMGetHyperCR3(pVCpu) == PGMGetHyperCR3(pVCpu));
     rc = SUPR3CallVMMR0Fast(pVM->pVMR0, VMMR0_DO_RAW_RUN, 0);
 
-#if 1
+# if 1
     /* flush the raw-mode logs. */
-# ifdef LOG_ENABLED
+#  ifdef LOG_ENABLED
     PRTLOGGERRC pLogger = pVM->vmm.s.pRCLoggerR3;
     if (   pLogger
         && pLogger->offScratch > 0)
         RTLogFlushRC(NULL, pLogger);
-# endif
-# ifdef VBOX_WITH_RC_RELEASE_LOGGING
+#  endif
+#  ifdef VBOX_WITH_RC_RELEASE_LOGGING
     PRTLOGGERRC pRelLogger = pVM->vmm.s.pRCRelLoggerR3;
     if (RT_UNLIKELY(pRelLogger && pRelLogger->offScratch > 0))
-        RTLogFlushRC(RTLogRelDefaultInstance(), pRelLogger);
+        RTLogFlushRC(RTLogRelGetDefaultInstance(), pRelLogger);
+#  endif
 # endif
-#endif
 
     Log(("vmmR3DoGCTest: rc=%Rrc iLastGZRc=%Rrc\n", rc, pVCpu->vmm.s.iLastGZRc));
     if (RT_LIKELY(rc == VINF_SUCCESS))
@@ -237,7 +239,7 @@ static int vmmR3DoGCTest(PVM pVM, VMMGCOPERATION enmTestcase, unsigned uVariatio
  * Performs a trap test.
  *
  * @returns Return value from the trap test.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   u8Trap      The trap number to test.
  * @param   uVariation  The testcase variation.
  * @param   rcExpect    The expected result.
@@ -252,14 +254,14 @@ static int vmmR3DoTrapTest(PVM pVM, uint8_t u8Trap, unsigned uVariation, int rcE
     RTPrintf("VMM: testing 0%x / %d - %s\n", u8Trap, uVariation, pszDesc);
 
     RTRCPTR RCPtrEP;
-    int rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "VMMGCEntry", &RCPtrEP);
+    int rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "VMMRCEntry", &RCPtrEP);
     if (RT_FAILURE(rc))
         return rc;
 
     CPUMSetHyperState(pVCpu, pVM->vmm.s.pfnCallTrampolineRC, pVCpu->vmm.s.pbEMTStackBottomRC, 0, 0);
     vmmR3TestClearStack(pVCpu);
     CPUMPushHyper(pVCpu, uVariation);
-    CPUMPushHyper(pVCpu, u8Trap + VMMGC_DO_TESTCASE_TRAP_FIRST);
+    CPUMPushHyper(pVCpu, u8Trap + VMMRC_DO_TESTCASE_TRAP_FIRST);
     CPUMPushHyper(pVCpu, pVM->pVMRC);
     CPUMPushHyper(pVCpu, 3 * sizeof(RTRCPTR));    /* stack frame size */
     CPUMPushHyper(pVCpu, RCPtrEP);                /* what to call */
@@ -286,7 +288,7 @@ static int vmmR3DoTrapTest(PVM pVM, uint8_t u8Trap, unsigned uVariation, int rcE
     else if (pszFaultEIP)
     {
         RTRCPTR RCPtrFault;
-        int rc2 = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, pszFaultEIP, &RCPtrFault);
+        int rc2 = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, pszFaultEIP, &RCPtrFault);
         if (RT_FAILURE(rc2))
             RTPrintf("VMM: FAILURE - Failed to resolve symbol '%s', %Rrc!\n", pszFaultEIP, rc);
         else if (RCPtrFault != CPUMGetHyperEIP(pVCpu))
@@ -345,13 +347,13 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
 # endif
 
     /*
-     * Setup stack for calling VMMGCEntry().
+     * Setup stack for calling VMMRCEntry().
      */
     RTRCPTR RCPtrEP;
-    rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "VMMGCEntry", &RCPtrEP);
+    rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "VMMRCEntry", &RCPtrEP);
     if (RT_SUCCESS(rc))
     {
-        RTPrintf("VMM: VMMGCEntry=%RRv\n", RCPtrEP);
+        RTPrintf("VMM: VMMRCEntry=%RRv\n", RCPtrEP);
 
         /*
          * Test various crashes which we must be able to recover from.
@@ -368,14 +370,14 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
         if (RT_SUCCESS(rc) && f)
 # endif
         {
-            /* see triple fault warnings in SELM and VMMGC.cpp. */
+            /* see triple fault warnings in SELM and VMMRC.cpp. */
             vmmR3DoTrapTest(pVM, 0x8, 1, VERR_TRPM_PANIC,       0x00000000, "vmmGCTestTrap8_FaultEIP", "#DF [#PG] WP");
             SELMR3Relocate(pVM); /* this resets the busy flag of the Trap 08 TSS */
         }
 # endif
 
         vmmR3DoTrapTest(pVM, 0xd, 0, VERR_TRPM_DONT_PANIC,  0xf0f0f0f0, "vmmGCTestTrap0d_FaultEIP", "ltr #GP");
-        ///@todo find a better \#GP case, on intel ltr will \#PF (busy update?) and not \#GP.
+        /// @todo find a better \#GP case, on intel ltr will \#PF (busy update?) and not \#GP.
         //vmmR3DoTrapTest(pVM, 0xd, 1, VERR_TRPM_DONT_PANIC,  0xf0f0f0f0, "vmmGCTestTrap0d_FaultEIP", "ltr #GP WP");
 
         vmmR3DoTrapTest(pVM, 0xe, 0, VERR_TRPM_DONT_PANIC,  0x00000000, "vmmGCTestTrap0e_FaultEIP", "#PF (NULL)");
@@ -390,7 +392,7 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
         /*
          * Set a debug register and perform a context switch.
          */
-        rc = vmmR3DoGCTest(pVM, VMMGC_DO_TESTCASE_NOP, 0);
+        rc = vmmR3DoGCTest(pVM, VMMRC_DO_TESTCASE_NOP, 0);
         if (rc != VINF_SUCCESS)
         {
             RTPrintf("VMM: Nop test failed, rc=%Rrc not VINF_SUCCESS\n", rc);
@@ -404,23 +406,23 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
         RTUINT iBp0;
         rc = DBGFR3BpSetReg(pUVM, &Addr, 0,  ~(uint64_t)0, X86_DR7_RW_EO, 1, &iBp0);
         AssertReleaseRC(rc);
-        rc = vmmR3DoGCTest(pVM, VMMGC_DO_TESTCASE_NOP, 0);
+        rc = vmmR3DoGCTest(pVM, VMMRC_DO_TESTCASE_NOP, 0);
         if (rc != VINF_SUCCESS)
         {
             RTPrintf("VMM: DR0=0x10000 test failed with rc=%Rrc!\n", rc);
             return RT_FAILURE(rc) ? rc : VERR_IPE_UNEXPECTED_INFO_STATUS;
         }
 
-        /* a bad one at VMMGCEntry */
-        RTPrintf("VMM: testing hardware bp at VMMGCEntry (hit)\n");
+        /* a bad one at VMMRCEntry */
+        RTPrintf("VMM: testing hardware bp at VMMRCEntry (hit)\n");
         DBGFR3AddrFromFlat(pUVM, &Addr, RCPtrEP);
         RTUINT iBp1;
         rc = DBGFR3BpSetReg(pUVM, &Addr, 0,  ~(uint64_t)0, X86_DR7_RW_EO, 1, &iBp1);
         AssertReleaseRC(rc);
-        rc = vmmR3DoGCTest(pVM, VMMGC_DO_TESTCASE_NOP, 0);
+        rc = vmmR3DoGCTest(pVM, VMMRC_DO_TESTCASE_NOP, 0);
         if (rc != VINF_EM_DBG_HYPER_BREAKPOINT)
         {
-            RTPrintf("VMM: DR1=VMMGCEntry test failed with rc=%Rrc! expected VINF_EM_RAW_BREAKPOINT_HYPER\n", rc);
+            RTPrintf("VMM: DR1=VMMRCEntry test failed with rc=%Rrc! expected VINF_EM_RAW_BREAKPOINT_HYPER\n", rc);
             return RT_FAILURE(rc) ? rc : VERR_IPE_UNEXPECTED_INFO_STATUS;
         }
 
@@ -435,11 +437,11 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
         }
 
         /* engage the breakpoint again and try single stepping. */
-        RTPrintf("VMM: testing hardware bp at VMMGCEntry + stepping\n");
-        rc = vmmR3DoGCTest(pVM, VMMGC_DO_TESTCASE_NOP, 0);
+        RTPrintf("VMM: testing hardware bp at VMMRCEntry + stepping\n");
+        rc = vmmR3DoGCTest(pVM, VMMRC_DO_TESTCASE_NOP, 0);
         if (rc != VINF_EM_DBG_HYPER_BREAKPOINT)
         {
-            RTPrintf("VMM: DR1=VMMGCEntry test failed with rc=%Rrc! expected VINF_EM_RAW_BREAKPOINT_HYPER\n", rc);
+            RTPrintf("VMM: DR1=VMMRCEntry test failed with rc=%Rrc! expected VINF_EM_RAW_BREAKPOINT_HYPER\n", rc);
             return RT_FAILURE(rc) ? rc : VERR_IPE_UNEXPECTED_INFO_STATUS;
         }
 
@@ -473,7 +475,7 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
             RTPrintf("VMM: Failed to clear breakpoints!\n");
             return VERR_GENERAL_FAILURE;
         }
-        rc = vmmR3DoGCTest(pVM, VMMGC_DO_TESTCASE_NOP, 0);
+        rc = vmmR3DoGCTest(pVM, VMMRC_DO_TESTCASE_NOP, 0);
         if (rc != VINF_SUCCESS)
         {
             RTPrintf("VMM: NOP failed, rc=%Rrc\n", rc);
@@ -487,15 +489,15 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
         for (i = 0; i < 10000; i++)
         {
             uint64_t StartTick = ASMReadTSC();
-            rc = vmmR3DoGCTest(pVM, VMMGC_DO_TESTCASE_INTERRUPT_MASKING, 0);
+            rc = vmmR3DoGCTest(pVM, VMMRC_DO_TESTCASE_INTERRUPT_MASKING, 0);
             if (rc != VINF_SUCCESS)
             {
                 RTPrintf("VMM: Interrupt masking failed: rc=%Rrc\n", rc);
                 return RT_FAILURE(rc) ? rc : VERR_IPE_UNEXPECTED_INFO_STATUS;
             }
             uint64_t Ticks = ASMReadTSC() - StartTick;
-            if (Ticks < (SUPGetCpuHzFromGIP(g_pSUPGlobalInfoPage) / 10000))
-                RTPrintf("Warning: Ticks=%RU64 (< %RU64)\n", Ticks, SUPGetCpuHzFromGIP(g_pSUPGlobalInfoPage) / 10000);
+            if (Ticks < (SUPGetCpuHzFromGip(g_pSUPGlobalInfoPage) / 10000))
+                RTPrintf("Warning: Ticks=%RU64 (< %RU64)\n", Ticks, SUPGetCpuHzFromGip(g_pSUPGlobalInfoPage) / 10000);
         }
 
         /*
@@ -503,7 +505,7 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
          */
         CPUMSetHyperState(pVCpu, pVM->vmm.s.pfnCallTrampolineRC, pVCpu->vmm.s.pbEMTStackBottomRC, 0, 0);
         CPUMPushHyper(pVCpu, 0);
-        CPUMPushHyper(pVCpu, VMMGC_DO_TESTCASE_HYPER_INTERRUPT);
+        CPUMPushHyper(pVCpu, VMMRC_DO_TESTCASE_HYPER_INTERRUPT);
         CPUMPushHyper(pVCpu, pVM->pVMRC);
         CPUMPushHyper(pVCpu, 3 * sizeof(RTRCPTR));    /* stack frame size */
         CPUMPushHyper(pVCpu, RCPtrEP);                /* what to call */
@@ -557,7 +559,7 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
          */
         RTPrintf("VMM: profiling switcher...\n");
         Log(("VMM: profiling switcher...\n"));
-        uint64_t TickMin = ~0;
+        uint64_t TickMin = UINT64_MAX;
         tsBegin = RTTimeNanoTS();
         TickStart = ASMReadTSC();
         Assert(CPUMGetHyperCR3(pVCpu) && CPUMGetHyperCR3(pVCpu) == PGMGetHyperCR3(pVCpu));
@@ -565,7 +567,7 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
         {
             CPUMSetHyperState(pVCpu, pVM->vmm.s.pfnCallTrampolineRC, pVCpu->vmm.s.pbEMTStackBottomRC, 0, 0);
             CPUMPushHyper(pVCpu, 0);
-            CPUMPushHyper(pVCpu, VMMGC_DO_TESTCASE_NOP);
+            CPUMPushHyper(pVCpu, VMMRC_DO_TESTCASE_NOP);
             CPUMPushHyper(pVCpu, pVM->pVMRC);
             CPUMPushHyper(pVCpu, 3 * sizeof(RTRCPTR));    /* stack frame size */
             CPUMPushHyper(pVCpu, RCPtrEP);                /* what to call */
@@ -599,16 +601,18 @@ VMMR3DECL(int) VMMDoTest(PVM pVM)
 
         rc = VINF_SUCCESS;
 
-#if 0  /* drop this for now as it causes trouble on AMDs (Opteron 2384 and possibly others). */
+# if 0  /* drop this for now as it causes trouble on AMDs (Opteron 2384 and possibly others). */
         /*
          * A quick MSR report.
          */
         vmmR3DoMsrQuickReport(pVM, NULL, true);
-#endif
+# endif
     }
     else
-        AssertMsgFailed(("Failed to resolved VMMGC.gc::VMMGCEntry(), rc=%Rrc\n", rc));
-#endif
+        AssertMsgFailed(("Failed to resolved VMMRC.rc::VMMRCEntry(), rc=%Rrc\n", rc));
+#else  /* !VBOX_WITH_RAW_MODE */
+    RT_NOREF(pVM);
+#endif /* !VBOX_WITH_RAW_MODE */
     return rc;
 }
 
@@ -665,7 +669,7 @@ VMMR3DECL(int) VMMDoHmTest(PVM pVM)
     pHyperCtx = CPUMGetHyperCtxPtr(pVCpu);
 
     pHyperCtx->cr0 = X86_CR0_PE | X86_CR0_WP | X86_CR0_PG | X86_CR0_TS | X86_CR0_ET | X86_CR0_NE | X86_CR0_MP;
-    pHyperCtx->cr4 = X86_CR4_PGE | X86_CR4_OSFSXR | X86_CR4_OSXMMEEXCPT;
+    pHyperCtx->cr4 = X86_CR4_PGE | X86_CR4_OSFXSR | X86_CR4_OSXMMEEXCPT;
     PGMChangeMode(pVCpu, pHyperCtx->cr0, pHyperCtx->cr4, pHyperCtx->msrEFER);
     PGMSyncCR3(pVCpu, pHyperCtx->cr0, CR3Phys, pHyperCtx->cr4, true);
 
@@ -675,13 +679,13 @@ VMMR3DECL(int) VMMDoHmTest(PVM pVM)
     VM_FF_CLEAR(pVM, VM_FF_REQUEST);
 
     /*
-     * Setup stack for calling VMMGCEntry().
+     * Setup stack for calling VMMRCEntry().
      */
     RTRCPTR RCPtrEP;
-    rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "VMMGCEntry", &RCPtrEP);
+    rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "VMMRCEntry", &RCPtrEP);
     if (RT_SUCCESS(rc))
     {
-        RTPrintf("VMM: VMMGCEntry=%RRv\n", RCPtrEP);
+        RTPrintf("VMM: VMMRCEntry=%RRv\n", RCPtrEP);
 
         pHyperCtx = CPUMGetHyperCtxPtr(pVCpu);
 
@@ -699,14 +703,14 @@ VMMR3DECL(int) VMMDoHmTest(PVM pVM)
          */
         RTPrintf("VMM: profiling switcher...\n");
         Log(("VMM: profiling switcher...\n"));
-        uint64_t TickMin = ~0;
+        uint64_t TickMin = UINT64_MAX;
         uint64_t tsBegin = RTTimeNanoTS();
         uint64_t TickStart = ASMReadTSC();
         for (i = 0; i < 1000000; i++)
         {
             CPUMSetHyperState(pVCpu, pVM->vmm.s.pfnCallTrampolineRC, pVCpu->vmm.s.pbEMTStackBottomRC, 0, 0);
             CPUMPushHyper(pVCpu, 0);
-            CPUMPushHyper(pVCpu, VMMGC_DO_TESTCASE_HM_NOP);
+            CPUMPushHyper(pVCpu, VMMRC_DO_TESTCASE_HM_NOP);
             CPUMPushHyper(pVCpu, pVM->pVMRC);
             CPUMPushHyper(pVCpu, 3 * sizeof(RTRCPTR));    /* stack frame size */
             CPUMPushHyper(pVCpu, RCPtrEP);                /* what to call */
@@ -750,7 +754,7 @@ VMMR3DECL(int) VMMDoHmTest(PVM pVM)
         rc = VINF_SUCCESS;
     }
     else
-        AssertMsgFailed(("Failed to resolved VMMGC.gc::VMMGCEntry(), rc=%Rrc\n", rc));
+        AssertMsgFailed(("Failed to resolved VMMRC.rc::VMMRCEntry(), rc=%Rrc\n", rc));
 
     return rc;
 }
@@ -790,7 +794,7 @@ static DECLCALLBACK(void) vmmDoPrintfToStream(PCDBGFINFOHLP pHlp, const char *ps
  * writing the values and process to stdout.
  *
  * @returns VBox status code.
- * @param   pVM         The VM handle.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) VMMDoBruteForceMsrs(PVM pVM)
 {
@@ -818,6 +822,7 @@ VMMR3DECL(int) VMMDoBruteForceMsrs(PVM pVM)
     }
     return rc;
 #else
+    RT_NOREF(pVM);
     return VERR_NOT_SUPPORTED;
 #endif
 }
@@ -830,7 +835,7 @@ VMMR3DECL(int) VMMDoBruteForceMsrs(PVM pVM)
  * well as writing the values and process to stdout.
  *
  * @returns VBox status code.
- * @param   pVM         The VM handle.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) VMMDoKnownMsrs(PVM pVM)
 {
@@ -844,6 +849,7 @@ VMMR3DECL(int) VMMDoKnownMsrs(PVM pVM)
     }
     return rc;
 #else
+    RT_NOREF(pVM);
     return VERR_NOT_SUPPORTED;
 #endif
 }
@@ -853,7 +859,7 @@ VMMR3DECL(int) VMMDoKnownMsrs(PVM pVM)
  * MSR experimentation.
  *
  * @returns VBox status code.
- * @param   pVM         The VM handle.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) VMMDoMsrExperiments(PVM pVM)
 {
@@ -862,7 +868,7 @@ VMMR3DECL(int) VMMDoMsrExperiments(PVM pVM)
      * Preps.
      */
     RTRCPTR RCPtrEP;
-    int rc = PDMR3LdrGetSymbolRC(pVM, VMMGC_MAIN_MODULE_NAME, "VMMRCTestTestWriteMsr", &RCPtrEP);
+    int rc = PDMR3LdrGetSymbolRC(pVM, VMMRC_MAIN_MODULE_NAME, "VMMRCTestTestWriteMsr", &RCPtrEP);
     AssertMsgRCReturn(rc, ("Failed to resolved VMMRC.rc::VMMRCEntry(), rc=%Rrc\n", rc), rc);
 
     uint64_t *pauValues;
@@ -875,14 +881,14 @@ VMMR3DECL(int) VMMDoMsrExperiments(PVM pVM)
      */
     uint32_t uMsr   = 0x00000277;
     uint64_t uValue = UINT64_C(0x0007010600070106);
-#if 0
+# if 0
     uValue &= ~(RT_BIT_64(17) | RT_BIT_64(16) | RT_BIT_64(15) | RT_BIT_64(14) | RT_BIT_64(13));
     uValue |= RT_BIT_64(13);
     rc = VMMR3CallRC(pVM, RCPtrEP, 6, pVM->pVMRC, uMsr, RT_LODWORD(uValue), RT_HIDWORD(uValue),
                      RCPtrValues, RCPtrValues + sizeof(uint64_t));
     RTPrintf("uMsr=%#010x before=%#018llx written=%#018llx after=%#018llx rc=%Rrc\n",
              uMsr, pauValues[0], uValue, pauValues[1], rc);
-#elif 1
+# elif 1
     const uint64_t uOrgValue = uValue;
     uint32_t       cChanges = 0;
     for (int iBit = 63; iBit >= 58; iBit--)
@@ -904,7 +910,7 @@ VMMR3DECL(int) VMMDoMsrExperiments(PVM pVM)
         cChanges += RT_BOOL(pauValues[0] ^ pauValues[1]);
     }
     RTPrintf("%u change(s)\n", cChanges);
-#else
+# else
     uint64_t fWriteable = 0;
     for (uint32_t i = 0; i <= 63; i++)
     {
@@ -939,7 +945,7 @@ VMMR3DECL(int) VMMDoMsrExperiments(PVM pVM)
     RTPrintf("uMsr=%#010x before=%#018llx written=%#018llx after=%#018llx rc=%Rrc [fWriteable]\n",
              uMsr, pauValues[0], uValue, pauValues[1], rc);
 
-#endif
+# endif
 
     /*
      * Cleanups.
@@ -947,6 +953,7 @@ VMMR3DECL(int) VMMDoMsrExperiments(PVM pVM)
     MMHyperFree(pVM, pauValues);
     return rc;
 #else
+    RT_NOREF(pVM);
     return VERR_NOT_SUPPORTED;
 #endif
 }

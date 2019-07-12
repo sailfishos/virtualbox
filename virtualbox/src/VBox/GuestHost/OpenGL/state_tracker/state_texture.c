@@ -194,7 +194,7 @@ crStateTextureInitTextureObj(CRContext *ctx, CRTextureObj *tobj,
     tobj->minLod        = -1000.0;
     tobj->maxLod        = 1000.0;
     tobj->baseLevel     = 0;
-    tobj->maxLevel      = 1000;
+    tobj->maxLevel      = t->maxLevel;
 #endif
     tobj->target        = target;
     tobj->id            = name;
@@ -621,6 +621,7 @@ crStateDeleteTextureObject(CRTextureObj *tobj)
 void crStateRegNames(CRContext *g, CRHashTable *table, GLsizei n, GLuint *names)
 {
     GLint i;
+    (void)g;
     for (i = 0; i < n; i++)
     {
         if (names[i])
@@ -2836,7 +2837,7 @@ crStateGetTexLevelParameterfv(GLenum target, GLint level,
         return;
     }
 
-    if (level < 0 && level > t->maxLevel)
+    if (level < 0 || level > t->maxLevel)
     {
         crStateError(__LINE__, __FILE__, GL_INVALID_VALUE,
             "glGetTexLevelParameterfv: Invalid level: %d", level);
@@ -2922,7 +2923,7 @@ crStateGetTexLevelParameteriv(GLenum target, GLint level,
         return;
     }
 
-    if (level < 0 && level > t->maxLevel)
+    if (level < 0 || level > t->maxLevel)
     {
         crStateError(__LINE__, __FILE__, GL_INVALID_VALUE,
             "glGetTexLevelParameteriv: Invalid level: %d", level);
@@ -3319,7 +3320,7 @@ crStatePrioritizeTextures(GLsizei n, const GLuint *textures,
         /* so far the code just ensures the tex object is created to make
          * the crserverlib code be able to pass it to host ogl */
 
-        /* TODO: store texture priorities in the state data to be able to restore it properly
+        /** @todo store texture priorities in the state data to be able to restore it properly
          * on save state load */
     }
 
@@ -3334,7 +3335,7 @@ crStateAreTexturesResident(GLsizei n, const GLuint *textures,
     UNUSED(n);
     UNUSED(textures);
     UNUSED(residences);
-    /* TODO: */
+    /** @todo */
     return GL_TRUE;
 }
 
@@ -3389,7 +3390,7 @@ DECLEXPORT(GLuint) STATE_APIENTRY crStateGetTextureHWID(GLuint id)
     }
     if (tobj)
     {
-//        crDebug("tex id(%d), hwid(%d)", tobj->id, tobj->hwid);
+/*        crDebug("tex id(%d), hwid(%d)", tobj->id, tobj->hwid);*/
     }
 #endif
 
@@ -3406,7 +3407,7 @@ DECLEXPORT(GLuint) STATE_APIENTRY crStateGetTextureObjHWID(CRTextureObj *tobj)
     {
         CRASSERT(diff_api.GenTextures);
         diff_api.GenTextures(1, &tobj->hwid);
-#if 0 //def DEBUG_misha
+#if 0 /*def DEBUG_misha*/
         crDebug("tex id(%d), hwid(%d)", tobj->id, tobj->hwid);
 #endif
         CRASSERT(tobj->hwid);

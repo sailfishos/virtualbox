@@ -1,11 +1,10 @@
+/* $Id: QIArrowButtonSwitch.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: QIArrowButtonSwitch class declaration
+ * VBox Qt GUI - QIArrowButtonSwitch class declaration.
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,44 +15,57 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#ifndef __QIArrowButtonSwitch_h__
-#define __QIArrowButtonSwitch_h__
+#ifndef ___QIArrowButtonSwitch_h___
+#define ___QIArrowButtonSwitch_h___
 
-/* VBox includes */
+/* Qt includes: */
+#include <QIcon>
+
+/* GUI includes: */
 #include "QIRichToolButton.h"
 
-/* VBox forwards */
-class QIRichToolButton;
-
-
-/** @class QIArrowButtonSwitch
- *
- *  The QIArrowButtonSwitch class is an arrow tool-button with text-label,
- *  used as collaps/expand switch in QIMessageBox class.
- *
- */
+/** QIRichToolButton extension
+  * representing arrow tool-button with text-label,
+  * can be used as collaps/expand switch in various places. */
 class QIArrowButtonSwitch : public QIRichToolButton
 {
     Q_OBJECT;
 
 public:
 
-    QIArrowButtonSwitch (QWidget *aParent = 0);
-    QIArrowButtonSwitch (const QString &aName, QWidget *aParent = 0);
+    /** Constructor, passes @a pParent to the QIRichToolButton constructor. */
+    QIArrowButtonSwitch(QWidget *pParent = 0);
 
-    bool isExpanded() const { return mIsExpanded; }
+    /** Defines the @a iconCollapsed and the @a iconExpanded. */
+    void setIcons(const QIcon &iconCollapsed, const QIcon &iconExpanded);
 
-private slots:
+    /** Defines whether the button is @a fExpanded. */
+    void setExpanded(bool fExpanded);
+    /** Returns whether the button is expanded. */
+    bool isExpanded() const { return m_fExpanded; }
 
-    void buttonClicked();
+protected slots:
+
+    /** Button-click handler. */
+    virtual void sltButtonClicked();
+
+protected:
+
+    /** Key-press-event handler. */
+    virtual void keyPressEvent(QKeyEvent *pEvent);
 
 private:
 
-    void updateIcon();
-    bool eventFilter (QObject *aObject, QEvent *aEvent);
+    /** Updates icon according button-state. */
+    void updateIcon() { setIcon(m_fExpanded ? m_iconExpanded : m_iconCollapsed); }
 
-    bool mIsExpanded;
+    /** Holds whether the button is expanded. */
+    bool m_fExpanded;
+
+    /** Holds the icon for collapsed button. */
+    QIcon m_iconCollapsed;
+    /** Holds the icon for expanded button. */
+    QIcon m_iconExpanded;
 };
 
-#endif
-
+#endif /* !___QIArrowButtonSwitch_h___ */

@@ -1,10 +1,11 @@
+/* $Id: VRDEServerImpl.cpp $ */
 /** @file
  *
  * VirtualBox COM class implementation
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -88,13 +89,7 @@ HRESULT VRDEServer::init(Machine *aParent)
 
     mData.allocate();
 
-    mData->mAuthType             = AuthType_Null;
-    mData->mAuthTimeout          = 0;
-    mData->mAuthLibrary.setNull();
-    mData->mEnabled              = FALSE;
-    mData->mAllowMultiConnection = FALSE;
-    mData->mReuseSingleConnection = FALSE;
-    mData->mVrdeExtPack.setNull();
+    mData->fEnabled = false;
 
     /* Confirm a successful initialization */
     autoInitSpan.setSucceeded();
@@ -192,11 +187,11 @@ void VRDEServer::uninit()
  *  Loads settings from the given machine node.
  *  May be called once right after this object creation.
  *
- *  @param aMachineNode <Machine> node.
+ *  @param data Configuration settings.
  *
  *  @note Locks this object for writing.
  */
-HRESULT VRDEServer::loadSettings(const settings::VRDESettings &data)
+HRESULT VRDEServer::i_loadSettings(const settings::VRDESettings &data)
 {
     using namespace settings;
 
@@ -204,15 +199,7 @@ HRESULT VRDEServer::loadSettings(const settings::VRDESettings &data)
     AssertComRCReturnRC(autoCaller.rc());
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
-
-    mData->mEnabled = data.fEnabled;
-    mData->mAuthType = data.authType;
-    mData->mAuthTimeout = data.ulAuthTimeout;
-    mData->mAuthLibrary = data.strAuthLibrary;
-    mData->mAllowMultiConnection = data.fAllowMultiConnection;
-    mData->mReuseSingleConnection = data.fReuseSingleConnection;
-    mData->mVrdeExtPack = data.strVrdeExtPack;
-    mData->mProperties = data.mapProperties;
+    mData.assignCopy(&data);
 
     return S_OK;
 }
@@ -220,25 +207,17 @@ HRESULT VRDEServer::loadSettings(const settings::VRDESettings &data)
 /**
  *  Saves settings to the given machine node.
  *
- *  @param aMachineNode <Machine> node.
+ *  @param data Configuration settings.
  *
  *  @note Locks this object for reading.
  */
-HRESULT VRDEServer::saveSettings(settings::VRDESettings &data)
+HRESULT VRDEServer::i_saveSettings(settings::VRDESettings &data)
 {
     AutoCaller autoCaller(this);
     AssertComRCReturnRC(autoCaller.rc());
 
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
-
-    data.fEnabled = !!mData->mEnabled;
-    data.authType = mData->mAuthType;
-    data.strAuthLibrary = mData->mAuthLibrary;
-    data.ulAuthTimeout = mData->mAuthTimeout;
-    data.fAllowMultiConnection = !!mData->mAllowMultiConnection;
-    data.fReuseSingleConnection = !!mData->mReuseSingleConnection;
-    data.strVrdeExtPack = mData->mVrdeExtPack;
-    data.mapProperties = mData->mProperties;
+    data = *mData.data();
 
     return S_OK;
 }
@@ -246,60 +225,67 @@ HRESULT VRDEServer::saveSettings(settings::VRDESettings &data)
 // IVRDEServer properties
 /////////////////////////////////////////////////////////////////////////////
 
-STDMETHODIMP VRDEServer::COMGETTER(Enabled)(BOOL *aEnabled)
+HRESULT VRDEServer::getEnabled(BOOL *aEnabled)
 {
-    CheckComArgOutPointerValid(aEnabled);
+    AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
-    *aEnabled = mData->mEnabled;
+    *aEnabled = mData->fEnabled;
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMSETTER(Enabled)(BOOL aEnabled)
+HRESULT VRDEServer::setEnabled(BOOL aEnabled)
 {
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* the machine can also be in saved state for this property to change */
-    AutoMutableOrSavedStateDependency adep(mParent);
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent);
     if (FAILED(adep.rc())) return adep.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
     HRESULT rc = S_OK;
 
-    if (mData->mEnabled != aEnabled)
+    if (mData->fEnabled != RT_BOOL(aEnabled))
     {
         mData.backup();
-        mData->mEnabled = aEnabled;
+        mData->fEnabled = RT_BOOL(aEnabled);
 
         /* leave the lock before informing callbacks */
         alock.release();
 
         AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);       // mParent is const, needs no locking
-        mParent->setModified(Machine::IsModified_VRDEServer);
+        mParent->i_setModified(Machine::IsModified_VRDEServer);
         mlock.release();
 
-        /* Avoid deadlock when onVRDEServerChange eventually calls SetExtraData. */
+        /* Avoid deadlock when i_onVRDEServerChange eventually calls SetExtraData. */
         adep.release();
 
-        rc = mParent->onVRDEServerChange(/* aRestart */ TRUE);
+        rc = mParent->i_onVRDEServerChange(/* aRestart */ TRUE);
+        if (FAILED(rc))
+        {
+            /* Failed to enable/disable the server. Revert the internal state. */
+            adep.add();
+            if (SUCCEEDED(adep.rc()))
+            {
+                alock.acquire();
+                mData->fEnabled = !RT_BOOL(aEnabled);
+                alock.release();
+                mlock.acquire();
+                mParent->i_setModified(Machine::IsModified_VRDEServer);
+            }
+        }
     }
 
     return rc;
 }
 
-static int portParseNumber(uint16_t *pu16Port, const char *pszStart, const char *pszEnd)
+static int i_portParseNumber(uint16_t *pu16Port, const char *pszStart, const char *pszEnd)
 {
     /* Gets a string of digits, converts to 16 bit port number.
      * Note: pszStart <= pszEnd is expected, the string contains
      *       only digits and pszEnd points to the char after last
      *       digit.
      */
-    int cch = pszEnd - pszStart;
+    size_t cch = pszEnd - pszStart;
     if (cch > 0 && cch <= 5) /* Port is up to 5 decimal digits. */
     {
         unsigned uPort = 0;
@@ -320,11 +306,9 @@ static int portParseNumber(uint16_t *pu16Port, const char *pszStart, const char 
     return VERR_INVALID_PARAMETER;
 }
 
-static int vrdpServerVerifyPortsString(Bstr ports)
+static int i_vrdpServerVerifyPortsString(const com::Utf8Str &aPortRange)
 {
-    com::Utf8Str portRange = ports;
-
-    const char *pszPortRange = portRange.c_str();
+    const char *pszPortRange = aPortRange.c_str();
 
     if (!pszPortRange || *pszPortRange == 0) /* Reject empty string. */
         return VERR_INVALID_PARAMETER;
@@ -362,12 +346,12 @@ static int vrdpServerVerifyPortsString(Bstr ports)
         int rc;
         if (pszDash)
         {
-            rc = portParseNumber(NULL, pszStart, pszDash);
+            rc = i_portParseNumber(NULL, pszStart, pszDash);
             if (RT_SUCCESS(rc))
-                rc = portParseNumber(NULL, pszDash + 1, pszEnd);
+                rc = i_portParseNumber(NULL, pszDash + 1, pszEnd);
         }
         else
-            rc = portParseNumber(NULL, pszStart, pszEnd);
+            rc = i_portParseNumber(NULL, pszStart, pszEnd);
 
         if (RT_FAILURE(rc))
             return rc;
@@ -376,54 +360,47 @@ static int vrdpServerVerifyPortsString(Bstr ports)
     return VINF_SUCCESS;
 }
 
-STDMETHODIMP VRDEServer::SetVRDEProperty(IN_BSTR aKey, IN_BSTR aValue)
+HRESULT VRDEServer::setVRDEProperty(const com::Utf8Str &aKey, const com::Utf8Str &aValue)
 {
     LogFlowThisFunc(("\n"));
 
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* the machine can also be in saved state for this property to change */
-    AutoMutableOrSavedStateDependency adep(mParent);
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent);
     if (FAILED(adep.rc())) return adep.rc();
-
-    Bstr key = aKey;
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
     /* Special processing for some "standard" properties. */
-    if (key == Bstr("TCP/Ports"))
+    if (aKey == "TCP/Ports")
     {
-        Bstr ports = aValue;
-
-        if (ports == Bstr("0"))
-            ports = VRDP_DEFAULT_PORT_STR;
-
-        /* Verify the string. */
-        int vrc = vrdpServerVerifyPortsString(ports);
+        /* Verify the string. "0" means the default port. */
+        Utf8Str strPorts = aValue == "0"?
+                               VRDP_DEFAULT_PORT_STR:
+                               aValue;
+        int vrc = i_vrdpServerVerifyPortsString(strPorts);
         if (RT_FAILURE(vrc))
             return E_INVALIDARG;
 
-        if (ports != mData->mProperties["TCP/Ports"])
+        if (strPorts != mData->mapProperties["TCP/Ports"])
         {
             /* Port value is not verified here because it is up to VRDP transport to
              * use it. Specifying a wrong port number will cause a running server to
              * stop. There is no fool proof here.
              */
             mData.backup();
-            mData->mProperties["TCP/Ports"] = ports;
+            mData->mapProperties["TCP/Ports"] = strPorts;
 
             /* leave the lock before informing callbacks */
             alock.release();
 
             AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);       // mParent is const, needs no locking
-            mParent->setModified(Machine::IsModified_VRDEServer);
+            mParent->i_setModified(Machine::IsModified_VRDEServer);
             mlock.release();
 
-            /* Avoid deadlock when onVRDEServerChange eventually calls SetExtraData. */
+            /* Avoid deadlock when i_onVRDEServerChange eventually calls SetExtraData. */
             adep.release();
 
-            mParent->onVRDEServerChange(/* aRestart */ TRUE);
+            mParent->i_onVRDEServerChange(/* aRestart */ TRUE);
         }
     }
     else
@@ -431,57 +408,44 @@ STDMETHODIMP VRDEServer::SetVRDEProperty(IN_BSTR aKey, IN_BSTR aValue)
         /* Generic properties processing.
          * Look up the old value first; if nothing's changed then do nothing.
          */
-        Utf8Str strValue(aValue);
-        Utf8Str strKey(aKey);
         Utf8Str strOldValue;
 
-        settings::StringsMap::const_iterator it = mData->mProperties.find(strKey);
-        if (it != mData->mProperties.end())
+        settings::StringsMap::const_iterator it = mData->mapProperties.find(aKey);
+        if (it != mData->mapProperties.end())
             strOldValue = it->second;
 
-        if (strOldValue != strValue)
+        if (strOldValue != aValue)
         {
-            if (strValue.isEmpty())
-                mData->mProperties.erase(strKey);
+            if (aValue.isEmpty())
+                mData->mapProperties.erase(aKey);
             else
-                mData->mProperties[strKey] = strValue;
+                mData->mapProperties[aKey] = aValue;
 
             /* leave the lock before informing callbacks */
             alock.release();
 
             AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);
-            mParent->setModified(Machine::IsModified_VRDEServer);
+            mParent->i_setModified(Machine::IsModified_VRDEServer);
             mlock.release();
 
-            /* Avoid deadlock when onVRDEServerChange eventually calls SetExtraData. */
+            /* Avoid deadlock when i_onVRDEServerChange eventually calls SetExtraData. */
             adep.release();
 
-            mParent->onVRDEServerChange(/* aRestart */ TRUE);
+            mParent->i_onVRDEServerChange(/* aRestart */ TRUE);
         }
     }
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::GetVRDEProperty(IN_BSTR aKey, BSTR *aValue)
+HRESULT VRDEServer::getVRDEProperty(const com::Utf8Str &aKey, com::Utf8Str &aValue)
 {
-    CheckComArgOutPointerValid(aValue);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
-    Bstr key = aKey;
-    Bstr value;
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
-
-    Utf8Str strKey(key);
-    settings::StringsMap::const_iterator it = mData->mProperties.find(strKey);
-    if (it != mData->mProperties.end())
-        value = it->second; // source is a Utf8Str
-    else if (strKey == "TCP/Ports")
-        value = VRDP_DEFAULT_PORT_STR;
-    value.cloneTo(aValue);
+    settings::StringsMap::const_iterator it = mData->mapProperties.find(aKey);
+    if (it != mData->mapProperties.end())
+        aValue = it->second; // source is a Utf8Str
+    else if (aKey == "TCP/Ports")
+        aValue = VRDP_DEFAULT_PORT_STR;
 
     return S_OK;
 }
@@ -531,21 +495,13 @@ static int loadVRDELibrary(const char *pszLibraryName, RTLDRMOD *phmod, PFNVRDES
     return rc;
 }
 
-STDMETHODIMP VRDEServer::COMGETTER(VRDEProperties)(ComSafeArrayOut(BSTR, aProperties))
+HRESULT VRDEServer::getVRDEProperties(std::vector<com::Utf8Str> &aProperties)
 {
-    if (ComSafeArrayOutIsNull(aProperties))
-        return E_POINTER;
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     size_t cProperties = 0;
-
+    aProperties.resize(0);
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
-    if (!mData->mEnabled)
+    if (!mData->fEnabled)
     {
-        com::SafeArray<BSTR> properties(cProperties);
-        properties.detachTo(ComSafeArrayOutArg(aProperties));
         return S_OK;
     }
     alock.release();
@@ -570,9 +526,9 @@ STDMETHODIMP VRDEServer::COMGETTER(VRDEProperties)(ComSafeArrayOut(BSTR, aProper
     else
     {
 #ifdef VBOX_WITH_EXTPACK
-        VirtualBox *pVirtualBox = mParent->getVirtualBox();
-        ExtPackManager *pExtPackMgr = pVirtualBox->getExtPackManager();
-        vrc = pExtPackMgr->getVrdeLibraryPathForExtPack(&strExtPack, &strVrdeLibrary);
+        VirtualBox *pVirtualBox = mParent->i_getVirtualBox();
+        ExtPackManager *pExtPackMgr = pVirtualBox->i_getExtPackManager();
+        vrc = pExtPackMgr->i_getVrdeLibraryPathForExtPack(&strExtPack, &strVrdeLibrary);
 #else
         vrc = VERR_FILE_NOT_FOUND;
 #endif
@@ -602,23 +558,18 @@ STDMETHODIMP VRDEServer::COMGETTER(VRDEProperties)(ComSafeArrayOut(BSTR, aProper
             }
             Log(("VRDEPROP: %d properties\n", cProperties));
 
-            com::SafeArray<BSTR> properties(cProperties);
-
             if (cProperties > 0)
             {
-                size_t i;
-                for (i = 0; papszNames[i] != NULL && i < cProperties; ++i)
+                aProperties.resize(cProperties);
+                for (size_t i = 0; i < cProperties && papszNames[i] != NULL; ++i)
                 {
-                    Bstr tmp(papszNames[i]);
-                    tmp.cloneTo(&properties[i]);
+                     aProperties[i] = papszNames[i];
                 }
             }
 
             /* Do not forget to unload the library. */
             RTLdrClose(hmod);
             hmod = NIL_RTLDRMOD;
-
-            properties.detachTo(ComSafeArrayOutArg(aProperties));
         }
     }
 
@@ -630,84 +581,70 @@ STDMETHODIMP VRDEServer::COMGETTER(VRDEProperties)(ComSafeArrayOut(BSTR, aProper
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMGETTER(AuthType)(AuthType_T *aType)
+
+HRESULT VRDEServer::getAuthType(AuthType_T *aType)
 {
-    CheckComArgOutPointerValid(aType);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    *aType = mData->mAuthType;
+    *aType = mData->authType;
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMSETTER(AuthType)(AuthType_T aType)
+HRESULT VRDEServer::setAuthType(AuthType_T aType)
 {
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* the machine can also be in saved state for this property to change */
-    AutoMutableOrSavedStateDependency adep(mParent);
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent);
     if (FAILED(adep.rc())) return adep.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData->mAuthType != aType)
+    if (mData->authType != aType)
     {
         mData.backup();
-        mData->mAuthType = aType;
+        mData->authType = aType;
 
         /* leave the lock before informing callbacks */
         alock.release();
 
         AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);       // mParent is const, needs no locking
-        mParent->setModified(Machine::IsModified_VRDEServer);
+        mParent->i_setModified(Machine::IsModified_VRDEServer);
         mlock.release();
 
-        mParent->onVRDEServerChange(/* aRestart */ TRUE);
+        mParent->i_onVRDEServerChange(/* aRestart */ TRUE);
     }
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMGETTER(AuthTimeout)(ULONG *aTimeout)
+HRESULT VRDEServer::getAuthTimeout(ULONG *aTimeout)
 {
-    CheckComArgOutPointerValid(aTimeout);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    *aTimeout = mData->mAuthTimeout;
+    *aTimeout = mData->ulAuthTimeout;
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMSETTER(AuthTimeout)(ULONG aTimeout)
-{
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
+HRESULT VRDEServer::setAuthTimeout(ULONG aTimeout)
+{
     /* the machine can also be in saved state for this property to change */
-    AutoMutableOrSavedStateDependency adep(mParent);
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent);
     if (FAILED(adep.rc())) return adep.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (aTimeout != mData->mAuthTimeout)
+    if (aTimeout != mData->ulAuthTimeout)
     {
         mData.backup();
-        mData->mAuthTimeout = aTimeout;
+        mData->ulAuthTimeout = aTimeout;
 
         /* leave the lock before informing callbacks */
         alock.release();
 
         AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);       // mParent is const, needs no locking
-        mParent->setModified(Machine::IsModified_VRDEServer);
+        mParent->i_setModified(Machine::IsModified_VRDEServer);
         mlock.release();
 
         /* sunlover 20060131: This setter does not require the notification
@@ -720,247 +657,217 @@ STDMETHODIMP VRDEServer::COMSETTER(AuthTimeout)(ULONG aTimeout)
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMGETTER(AuthLibrary)(BSTR *aLibrary)
+HRESULT VRDEServer::getAuthLibrary(com::Utf8Str &aLibrary)
 {
-    CheckComArgOutPointerValid(aLibrary);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
-    Bstr bstrLibrary;
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
-    bstrLibrary = mData->mAuthLibrary;
+    aLibrary = mData->strAuthLibrary;
     alock.release();
 
-    if (bstrLibrary.isEmpty())
+    if (aLibrary.isEmpty())
     {
         /* Get the global setting. */
         ComPtr<ISystemProperties> systemProperties;
-        HRESULT hrc = mParent->getVirtualBox()->COMGETTER(SystemProperties)(systemProperties.asOutParam());
-
+        HRESULT hrc = mParent->i_getVirtualBox()->COMGETTER(SystemProperties)(systemProperties.asOutParam());
         if (SUCCEEDED(hrc))
-            hrc = systemProperties->COMGETTER(VRDEAuthLibrary)(bstrLibrary.asOutParam());
+        {
+            Bstr strlib;
+            hrc = systemProperties->COMGETTER(VRDEAuthLibrary)(strlib.asOutParam());
+            if (SUCCEEDED(hrc))
+                aLibrary = Utf8Str(strlib).c_str();
+        }
 
         if (FAILED(hrc))
             return setError(hrc, "failed to query the library setting\n");
     }
 
-    bstrLibrary.cloneTo(aLibrary);
-
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMSETTER(AuthLibrary)(IN_BSTR aLibrary)
+
+HRESULT VRDEServer::setAuthLibrary(const com::Utf8Str &aLibrary)
 {
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     /* the machine can also be in saved state for this property to change */
-    AutoMutableOrSavedStateDependency adep(mParent);
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent);
     if (FAILED(adep.rc())) return adep.rc();
-
-    Bstr bstrLibrary(aLibrary);
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData->mAuthLibrary != bstrLibrary)
+    if (mData->strAuthLibrary != aLibrary)
     {
         mData.backup();
-        mData->mAuthLibrary = bstrLibrary;
+        mData->strAuthLibrary = aLibrary;
 
         /* leave the lock before informing callbacks */
         alock.release();
 
         AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);
-        mParent->setModified(Machine::IsModified_VRDEServer);
+        mParent->i_setModified(Machine::IsModified_VRDEServer);
         mlock.release();
 
-        mParent->onVRDEServerChange(/* aRestart */ TRUE);
+        mParent->i_onVRDEServerChange(/* aRestart */ TRUE);
     }
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMGETTER(AllowMultiConnection)(BOOL *aAllowMultiConnection)
+
+HRESULT VRDEServer::getAllowMultiConnection(BOOL *aAllowMultiConnection)
 {
-    CheckComArgOutPointerValid(aAllowMultiConnection);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    *aAllowMultiConnection = mData->mAllowMultiConnection;
+    *aAllowMultiConnection = mData->fAllowMultiConnection;
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMSETTER(AllowMultiConnection)(BOOL aAllowMultiConnection)
-{
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
+HRESULT VRDEServer::setAllowMultiConnection(BOOL aAllowMultiConnection)
+{
     /* the machine can also be in saved state for this property to change */
-    AutoMutableOrSavedStateDependency adep(mParent);
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent);
     if (FAILED(adep.rc())) return adep.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData->mAllowMultiConnection != aAllowMultiConnection)
+    if (mData->fAllowMultiConnection != RT_BOOL(aAllowMultiConnection))
     {
         mData.backup();
-        mData->mAllowMultiConnection = aAllowMultiConnection;
+        mData->fAllowMultiConnection = RT_BOOL(aAllowMultiConnection);
 
         /* leave the lock before informing callbacks */
         alock.release();
 
         AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);       // mParent is const, needs no locking
-        mParent->setModified(Machine::IsModified_VRDEServer);
+        mParent->i_setModified(Machine::IsModified_VRDEServer);
         mlock.release();
 
-        mParent->onVRDEServerChange(/* aRestart */ TRUE); // @todo does it need a restart?
+        mParent->i_onVRDEServerChange(/* aRestart */ TRUE); /// @todo does it need a restart?
     }
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMGETTER(ReuseSingleConnection)(BOOL *aReuseSingleConnection)
+HRESULT VRDEServer::getReuseSingleConnection(BOOL *aReuseSingleConnection)
 {
-    CheckComArgOutPointerValid(aReuseSingleConnection);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    *aReuseSingleConnection = mData->mReuseSingleConnection;
+    *aReuseSingleConnection = mData->fReuseSingleConnection;
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMSETTER(ReuseSingleConnection)(BOOL aReuseSingleConnection)
-{
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
-    /* the machine can also be in saved state for this property to change */
-    AutoMutableOrSavedStateDependency adep(mParent);
+HRESULT VRDEServer::setReuseSingleConnection(BOOL aReuseSingleConnection)
+{
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent);
     if (FAILED(adep.rc())) return adep.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (mData->mReuseSingleConnection != aReuseSingleConnection)
+    if (mData->fReuseSingleConnection != RT_BOOL(aReuseSingleConnection))
     {
         mData.backup();
-        mData->mReuseSingleConnection = aReuseSingleConnection;
+        mData->fReuseSingleConnection = RT_BOOL(aReuseSingleConnection);
 
         /* leave the lock before informing callbacks */
         alock.release();
 
         AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);       // mParent is const, needs no locking
-        mParent->setModified(Machine::IsModified_VRDEServer);
+        mParent->i_setModified(Machine::IsModified_VRDEServer);
         mlock.release();
 
-        mParent->onVRDEServerChange(/* aRestart */ TRUE); // @todo needs a restart?
+        mParent->i_onVRDEServerChange(/* aRestart */ TRUE); /// @todo needs a restart?
     }
 
     return S_OK;
 }
 
-STDMETHODIMP VRDEServer::COMGETTER(VRDEExtPack)(BSTR *aExtPack)
+HRESULT VRDEServer::getVRDEExtPack(com::Utf8Str &aExtPack)
 {
-    CheckComArgOutPointerValid(aExtPack);
+    AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
+    Utf8Str strExtPack = mData->strVrdeExtPack;
+    alock.release();
+    HRESULT hrc = S_OK;
 
-    AutoCaller autoCaller(this);
-    HRESULT hrc = autoCaller.rc();
+    if (strExtPack.isNotEmpty())
+    {
+        if (strExtPack.equals(VBOXVRDP_KLUDGE_EXTPACK_NAME))
+            hrc = S_OK;
+        else
+        {
+#ifdef VBOX_WITH_EXTPACK
+            ExtPackManager *pExtPackMgr = mParent->i_getVirtualBox()->i_getExtPackManager();
+            hrc = pExtPackMgr->i_checkVrdeExtPack(&strExtPack);
+#else
+            hrc = setError(E_FAIL, tr("Extension pack '%s' does not exist"), strExtPack.c_str());
+#endif
+        }
+        if (SUCCEEDED(hrc))
+            aExtPack = strExtPack;
+    }
+    else
+    {
+        /* Get the global setting. */
+        ComPtr<ISystemProperties> systemProperties;
+        hrc = mParent->i_getVirtualBox()->COMGETTER(SystemProperties)(systemProperties.asOutParam());
+        if (SUCCEEDED(hrc))
+        {
+            BSTR bstr;
+            hrc = systemProperties->COMGETTER(DefaultVRDEExtPack)(&bstr);
+            if (SUCCEEDED(hrc))
+                aExtPack = Utf8Str(bstr);
+        }
+    }
+    return hrc;
+}
+
+// public methods only for internal purposes
+/////////////////////////////////////////////////////////////////////////////
+HRESULT VRDEServer::setVRDEExtPack(const com::Utf8Str &aExtPack)
+{
+    HRESULT hrc = S_OK;
+    /* the machine can also be in saved state for this property to change */
+    AutoMutableOrSavedOrRunningStateDependency adep(mParent);
+    hrc = adep.rc();
     if (SUCCEEDED(hrc))
     {
-        AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
-        Utf8Str strExtPack = mData->mVrdeExtPack;
-        alock.release();
-
-        if (strExtPack.isNotEmpty())
+        /*
+         * If not empty, check the specific extension pack.
+         */
+        if (!aExtPack.isEmpty())
         {
-            if (strExtPack.equals(VBOXVRDP_KLUDGE_EXTPACK_NAME))
+            if (aExtPack.equals(VBOXVRDP_KLUDGE_EXTPACK_NAME))
                 hrc = S_OK;
             else
             {
 #ifdef VBOX_WITH_EXTPACK
-                ExtPackManager *pExtPackMgr = mParent->getVirtualBox()->getExtPackManager();
-                hrc = pExtPackMgr->checkVrdeExtPack(&strExtPack);
+                ExtPackManager *pExtPackMgr = mParent->i_getVirtualBox()->i_getExtPackManager();
+                hrc = pExtPackMgr->i_checkVrdeExtPack(&aExtPack);
 #else
-                hrc = setError(E_FAIL, tr("Extension pack '%s' does not exist"), strExtPack.c_str());
+                hrc = setError(E_FAIL, tr("Extension pack '%s' does not exist"), aExtPack.c_str());
 #endif
             }
-            if (SUCCEEDED(hrc))
-                strExtPack.cloneTo(aExtPack);
         }
-        else
-        {
-            /* Get the global setting. */
-            ComPtr<ISystemProperties> systemProperties;
-            hrc = mParent->getVirtualBox()->COMGETTER(SystemProperties)(systemProperties.asOutParam());
-            if (SUCCEEDED(hrc))
-                hrc = systemProperties->COMGETTER(DefaultVRDEExtPack)(aExtPack);
-        }
-    }
-
-    return hrc;
-}
-
-STDMETHODIMP VRDEServer::COMSETTER(VRDEExtPack)(IN_BSTR aExtPack)
-{
-    CheckComArgNotNull(aExtPack);
-    Utf8Str strExtPack(aExtPack);
-
-    AutoCaller autoCaller(this);
-    HRESULT hrc = autoCaller.rc();
-    if (SUCCEEDED(hrc))
-    {
-        /* the machine can also be in saved state for this property to change */
-        AutoMutableOrSavedStateDependency adep(mParent);
-        hrc = adep.rc();
         if (SUCCEEDED(hrc))
         {
             /*
-             * If not empty, check the specific extension pack.
+             * Update the setting if there is an actual change, post an
+             * change event to trigger a VRDE server restart.
              */
-            if (!strExtPack.isEmpty())
-            {
-                if (strExtPack.equals(VBOXVRDP_KLUDGE_EXTPACK_NAME))
-                    hrc = S_OK;
-                else
-                {
-#ifdef VBOX_WITH_EXTPACK
-                    ExtPackManager *pExtPackMgr = mParent->getVirtualBox()->getExtPackManager();
-                    hrc = pExtPackMgr->checkVrdeExtPack(&strExtPack);
-#else
-                    hrc = setError(E_FAIL, tr("Extension pack '%s' does not exist"), strExtPack.c_str());
-#endif
-                }
-            }
-            if (SUCCEEDED(hrc))
-            {
-                /*
-                 * Update the setting if there is an actual change, post an
-                 * change event to trigger a VRDE server restart.
-                 */
-                AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
-                if (strExtPack != mData->mVrdeExtPack)
-                {
-                    mData.backup();
-                    mData->mVrdeExtPack = strExtPack;
+             AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
+             if (aExtPack != mData->strVrdeExtPack)
+             {
+                 mData.backup();
+                 mData->strVrdeExtPack = aExtPack;
 
-                    /* leave the lock before informing callbacks */
-                    alock.release();
+                /* leave the lock before informing callbacks */
+                alock.release();
 
-                    AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);
-                    mParent->setModified(Machine::IsModified_VRDEServer);
-                    mlock.release();
+                AutoWriteLock mlock(mParent COMMA_LOCKVAL_SRC_POS);
+                mParent->i_setModified(Machine::IsModified_VRDEServer);
+                mlock.release();
 
-                    mParent->onVRDEServerChange(/* aRestart */ TRUE);
-                }
+                mParent->i_onVRDEServerChange(/* aRestart */ TRUE);
             }
         }
     }
@@ -974,7 +881,7 @@ STDMETHODIMP VRDEServer::COMSETTER(VRDEExtPack)(IN_BSTR aExtPack)
 /**
  *  @note Locks this object for writing.
  */
-void VRDEServer::rollback()
+void VRDEServer::i_rollback()
 {
     /* sanity */
     AutoCaller autoCaller(this);
@@ -989,7 +896,7 @@ void VRDEServer::rollback()
  *  @note Locks this object for writing, together with the peer object (also
  *  for writing) if there is one.
  */
-void VRDEServer::commit()
+void VRDEServer::i_commit()
 {
     /* sanity */
     AutoCaller autoCaller(this);
@@ -1018,7 +925,7 @@ void VRDEServer::commit()
  *  @note Locks this object for writing, together with the peer object
  *  represented by @a aThat (locked for reading).
  */
-void VRDEServer::copyFrom(VRDEServer *aThat)
+void VRDEServer::i_copyFrom(VRDEServer *aThat)
 {
     AssertReturnVoid(aThat != NULL);
 

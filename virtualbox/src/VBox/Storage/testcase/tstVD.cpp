@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/vd.h>
 #include <VBox/err.h>
 #include <VBox/log.h>
@@ -36,24 +37,26 @@
 #define VDI_TEST
 #define VMDK_TEST
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The error count. */
 unsigned g_cErrors = 0;
 
 
-static void tstVDError(void *pvUser, int rc, RT_SRC_POS_DECL,
-                       const char *pszFormat, va_list va)
+static DECLCALLBACK(void) tstVDError(void *pvUser, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va)
 {
+    RT_NOREF1(pvUser);
     g_cErrors++;
     RTPrintf("tstVD: Error %Rrc at %s:%u (%s): ", rc, RT_SRC_POS_ARGS);
     RTPrintfV(pszFormat, va);
     RTPrintf("\n");
 }
 
-static int tstVDMessage(void *pvUser, const char *pszFormat, va_list va)
+static DECLCALLBACK(int) tstVDMessage(void *pvUser, const char *pszFormat, va_list va)
 {
+    RT_NOREF1(pvUser);
     RTPrintf("tstVD: ");
     RTPrintfV(pszFormat, va);
     return VINF_SUCCESS;
@@ -63,7 +66,7 @@ static int tstVDCreateDelete(const char *pszBackend, const char *pszFilename,
                              uint64_t cbSize, unsigned uFlags, bool fDelete)
 {
     int rc;
-    PVBOXHDD pVD = NULL;
+    PVDISK pVD = NULL;
     VDGEOMETRY       PCHS = { 0, 0, 0 };
     VDGEOMETRY       LCHS = { 0, 0, 0 };
     PVDINTERFACE     pVDIfs = NULL;
@@ -118,9 +121,7 @@ static int tstVDCreateDelete(const char *pszBackend, const char *pszFilename,
 static int tstVDOpenDelete(const char *pszBackend, const char *pszFilename)
 {
     int rc;
-    PVBOXHDD pVD = NULL;
-    VDGEOMETRY       PCHS = { 0, 0, 0 };
-    VDGEOMETRY       LCHS = { 0, 0, 0 };
+    PVDISK         pVD = NULL;
     PVDINTERFACE     pVDIfs = NULL;
     VDINTERFACEERROR VDIfError;
 
@@ -402,6 +403,8 @@ static void generateRandomSegments(PRNDCTX pCtx, PSEGMENT pSegment, uint32_t nSe
 
 static void mergeSegments(PSEGMENT pBaseSegment, PSEGMENT pDiffSegment, PSEGMENT pMergeSegment, uint32_t u32MaxLength)
 {
+    RT_NOREF1(u32MaxLength);
+
     while (pBaseSegment->u32Length > 0 || pDiffSegment->u32Length > 0)
     {
         if (pBaseSegment->u64Offset < pDiffSegment->u64Offset)
@@ -450,7 +453,7 @@ static void mergeSegments(PSEGMENT pBaseSegment, PSEGMENT pDiffSegment, PSEGMENT
     }
 }
 
-static void writeSegmentsToDisk(PVBOXHDD pVD, void *pvBuf, PSEGMENT pSegment)
+static void writeSegmentsToDisk(PVDISK pVD, void *pvBuf, PSEGMENT pSegment)
 {
     while (pSegment->u32Length)
     {
@@ -461,7 +464,7 @@ static void writeSegmentsToDisk(PVBOXHDD pVD, void *pvBuf, PSEGMENT pSegment)
     }
 }
 
-static int readAndCompareSegments(PVBOXHDD pVD, void *pvBuf, PSEGMENT pSegment)
+static int readAndCompareSegments(PVDISK pVD, void *pvBuf, PSEGMENT pSegment)
 {
     while (pSegment->u32Length)
     {
@@ -497,7 +500,7 @@ static int tstVDOpenCreateWriteMerge(const char *pszBackend,
                                      uint32_t u32Seed)
 {
     int rc;
-    PVBOXHDD pVD = NULL;
+    PVDISK pVD = NULL;
     char *pszFormat;
     VDTYPE enmType = VDTYPE_INVALID;
     VDGEOMETRY PCHS = { 0, 0, 0 };
@@ -621,7 +624,7 @@ static int tstVDCreateWriteOpenRead(const char *pszBackend,
                                     uint32_t u32Seed)
 {
     int rc;
-    PVBOXHDD pVD = NULL;
+    PVDISK pVD = NULL;
     VDGEOMETRY PCHS = { 0, 0, 0 };
     VDGEOMETRY LCHS = { 0, 0, 0 };
     uint64_t u64DiskSize = 1000 * _1M;
@@ -700,7 +703,7 @@ static int tstVDCreateWriteOpenRead(const char *pszBackend,
 static int tstVmdkRename(const char *src, const char *dst)
 {
     int rc;
-    PVBOXHDD pVD = NULL;
+    PVDISK pVD = NULL;
     PVDINTERFACE     pVDIfs = NULL;
     VDINTERFACEERROR VDIfError;
 
@@ -748,7 +751,7 @@ static int tstVmdkCreateRenameOpen(const char *src, const char *dst,
     if (RT_FAILURE(rc))
         return rc;
 
-    PVBOXHDD pVD = NULL;
+    PVDISK pVD = NULL;
     PVDINTERFACE     pVDIfs = NULL;
     VDINTERFACEERROR VDIfError;
 

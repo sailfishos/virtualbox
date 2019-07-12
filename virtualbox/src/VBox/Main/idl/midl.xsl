@@ -5,7 +5,7 @@
  *  A template to generate a MS IDL compatible interface definition file
  *  from the generic interface definition expressed in XML.
 
-    Copyright (C) 2006-2014 Oracle Corporation
+    Copyright (C) 2006-2016 Oracle Corporation
 
     This file is part of VirtualBox Open Source Edition (OSE), as
     available from http://www.virtualbox.org. This file is free software;
@@ -21,45 +21,13 @@
 
 <xsl:strip-space elements="*"/>
 
+<!-- Whether to generate proxy code and type library ('yes'), or just the type-library. -->
+<xsl:param name="g_fGenProxy" select="'no'"/>
 
-<!--
-//  helper definitions
-/////////////////////////////////////////////////////////////////////////////
--->
+<!-- Whether to generate coclass and interfaces for VBoxSDS-->
+<xsl:param name="g_fVBoxWithSDS" select="'no'"/>
 
-<!--
- *  capitalizes the first letter
--->
-<xsl:template name="capitalize">
-  <xsl:param name="str" select="."/>
-  <xsl:value-of select="
-    concat(
-      translate(substring($str,1,1),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),
-      substring($str,2)
-    )
-  "/>
-</xsl:template>
-
-<!--
- *  uncapitalizes the first letter only if the second one is not capital
- *  otherwise leaves the string unchanged
--->
-<xsl:template name="uncapitalize">
-  <xsl:param name="str" select="."/>
-  <xsl:choose>
-    <xsl:when test="not(contains('ABCDEFGHIJKLMNOPQRSTUVWXYZ', substring($str,2,1)))">
-      <xsl:value-of select="
-        concat(
-          translate(substring($str,1,1),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),
-          substring($str,2)
-        )
-      "/>
-    </xsl:when>
-    <xsl:otherwise>
-      <xsl:value-of select="string($str)"/>
-    </xsl:otherwise>
-  </xsl:choose>
-</xsl:template>
+<xsl:include href="typemap-shared.inc.xsl"/>
 
 
 <!--
@@ -76,8 +44,8 @@
 <!--
  *  header
 -->
-<xsl:template match="/idl">
-  <xsl:text>
+    <xsl:template match="/idl">
+        <xsl:text>
 /*
  *  DO NOT EDIT! This is a generated file.
  *
@@ -87,9 +55,17 @@
  *  Source    : src/VBox/Main/idl/VirtualBox.xidl
  *  Generator : src/VBox/Main/idl/midl.xsl
  */
-  </xsl:text>
-  <xsl:text>&#x0A;</xsl:text>
-  <xsl:text>import "unknwn.idl";&#x0A;&#x0A;</xsl:text>
+
+#if (__midl >= 501)
+midl_pragma warning(disable:2039) /* Disable warning MIDL2039 regarding interface not being automation
+                                     marshaling conformant and requiring NT 4.0 SP4 or greater. */
+midl_pragma warning(disable:2456) /* Disable warning MIDL2456 regarding SAFEARRAY(interface pointer). */
+midl_pragma warning(disable:2111) /* Disable warning MIDL2111 regarding identifier lengths exceeding 31 chars. */
+#endif
+
+import "unknwn.idl";
+
+</xsl:text>
   <xsl:apply-templates/>
 </xsl:template>
 
@@ -143,28 +119,54 @@
 <!--
  *  libraries
 -->
-<xsl:template match="library">[
+<xsl:template match="library">
+  <xsl:if test="$g_fGenProxy = 'yes'">
+    <!-- Declare everything outside the library and then reference these
+         from inside the library statement.  See:
+         http://msdn.microsoft.com/en-us/library/windows/desktop/aa366841(v=vs.85).aspx -->
+    <xsl:text>&#x0A;</xsl:text>
+    <!-- forward declarations -->
+    <xsl:apply-templates select="application/if | application/interface" mode="forward"/>
+    <xsl:text>&#x0A;</xsl:text>
+    <!-- all enums go first -->
+    <xsl:apply-templates select="application/enum | application/if[enum]"/>
+    <!-- declare the interfaces -->
+    <xsl:apply-templates select="application/if | application/interface"/>
+  </xsl:if>
+
+[
     uuid(<xsl:value-of select="@uuid"/>),
     version(<xsl:value-of select="@version"/>),
-    helpstring("<xsl:value-of select="@desc"/>")
+    helpstring("<xsl:value-of select="@name"/> Type Library")
 ]
 <xsl:text>library </xsl:text>
   <xsl:value-of select="@name"/>
   <xsl:text>&#x0A;{&#x0A;</xsl:text>
   <xsl:text>&#x0A;importlib("stdole2.tlb");&#x0A;&#x0A;</xsl:text>
   <!-- result codes -->
-  <xsl:for-each select="result">
+  <xsl:for-each select="application/result">
     <xsl:apply-templates select="."/>
   </xsl:for-each>
   <xsl:text>&#x0A;</xsl:text>
-  <!-- forward declarations -->
-  <xsl:apply-templates select="if | interface" mode="forward"/>
   <xsl:text>&#x0A;</xsl:text>
-  <!-- all enums go first -->
-  <xsl:apply-templates select="enum | if/enum"/>
-  <!-- everything else but result codes and enums -->
-  <xsl:apply-templates select="*[not(self::result or self::enum) and
-                                 not(self::if[result] or self::if[enum])]"/>
+  <xsl:choose>
+    <xsl:when test="$g_fGenProxy = 'yes'">
+      <!-- reference enums and interfaces -->
+      <xsl:apply-templates select="application/if | application/interface" mode="forward"/>
+      <xsl:apply-templates select="application/enum | application/if[enum]" mode="forward"/>
+      <!-- the modules (i.e. everything else) -->
+      <xsl:apply-templates select="application/module | application/if[module]"/>
+    </xsl:when>
+    <xsl:otherwise>
+      <!-- forward declarations -->
+      <xsl:apply-templates select="application/if | application/interface" mode="forward"/>
+      <!-- all enums go first -->
+      <xsl:apply-templates select="application/enum | application/if[enum]"/>
+      <!-- everything else but result codes and enums -->
+      <xsl:apply-templates select="  application/interface | application/if[interface]
+                                   | application/module | application/if[module]"/>
+    </xsl:otherwise>
+  </xsl:choose>
   <!-- -->
   <xsl:text>}; /* library </xsl:text>
   <xsl:value-of select="@name"/>
@@ -173,11 +175,22 @@
 
 
 <!--
+ *  applications
+-->
+<xsl:template match="application">
+  <xsl:apply-templates/>
+</xsl:template>
+<xsl:template match="application" mode="forward">
+  <xsl:apply-templates mode="forward"/>
+</xsl:template>
+
+
+<!--
  *  result codes
 -->
 <xsl:template match="result">
   <xsl:text>cpp_quote("</xsl:text>
-  <xsl:value-of select="concat('#define ',@name,' ',@value)"/>
+  <xsl:value-of select="concat('#define ',@name,' ((HRESULT)',@value, ')')"/>
   <xsl:text>")&#x0A;</xsl:text>
 </xsl:template>
 
@@ -185,40 +198,76 @@
 <!--
  *  forward declarations
 -->
-<xsl:template match="interface" mode="forward">
+<xsl:template match="interface" mode="forward" name="template_interface_forward">
   <xsl:text>interface </xsl:text>
   <xsl:value-of select="@name"/>
   <xsl:text>;&#x0A;</xsl:text>
 </xsl:template>
 
 
+<xsl:template match="enum" mode="forward">
+  <xsl:text>enum </xsl:text>
+  <xsl:value-of select="@name"/>
+  <xsl:text>;&#x0A;&#x0A;</xsl:text>
+</xsl:template>
+
+
 <!--
  *  interfaces
 -->
-<xsl:template match="interface">[
+<xsl:template match="interface" name="template_interface">[
     uuid(<xsl:value-of select="@uuid"/>),
     object,
-    dual,
+<xsl:if test="not(@notdual = 'yes')">    dual,</xsl:if>
     oleautomation
+<xsl:if test="$g_fGenProxy = 'yes'">
+  <!-- Indicates to the typelib that we are using a proxy stub DLL and that interfaces
+       should have any ProxyStubClsid32 or TypeLib keys in the registry. -->
+  <xsl:text>    , proxy</xsl:text>
+</xsl:if>
 ]
 <xsl:text>interface </xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:variable name="name" select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text> : </xsl:text>
   <xsl:choose>
+    <xsl:when test="(@extends = '$unknown') and (@notdual = 'yes')">IUnknown</xsl:when>
     <xsl:when test="@extends='$unknown'">IDispatch</xsl:when>
     <xsl:when test="@extends='$errorinfo'">IErrorInfo</xsl:when>
+    <!-- TODO/FIXME/BUGBUG: The above $errorinfo value causes the following warning (/W4):
+warning MIDL2460 : dual interface should be derived from IDispatch : IVirtualBoxErrorInfo [ Interface 'IVirtualBoxErrorInfo'  ]
+    -->
     <xsl:otherwise><xsl:value-of select="@extends"/></xsl:otherwise>
   </xsl:choose>
-  <xsl:text>&#x0A;{&#x0A;</xsl:text>
+  <xsl:call-template name="xsltprocNewlineOutputHack"/>
+  <xsl:text>{&#x0A;</xsl:text>
   <!-- attributes (properties) -->
   <xsl:apply-templates select="attribute"/>
+  <xsl:variable name="reservedAttributes" select="@reservedAttributes"/>
+  <xsl:if test="$reservedAttributes > 0">
+    <!-- tricky way to do a "for" loop without recursion -->
+    <xsl:for-each select="(//*)[position() &lt;= $reservedAttributes]">
+      <xsl:text>    [propget] HRESULT InternalAndReservedAttribute</xsl:text>
+      <xsl:value-of select="concat(position(), $name)"/>
+      <xsl:text> ([out, retval] ULONG *aReserved);&#x0A;&#x0A;</xsl:text>
+    </xsl:for-each>
+  </xsl:if>
   <!-- methods -->
   <xsl:apply-templates select="method"/>
+  <xsl:variable name="reservedMethods" select="@reservedMethods"/>
+  <xsl:if test="$reservedMethods > 0">
+    <!-- tricky way to do a "for" loop without recursion -->
+    <xsl:for-each select="(//*)[position() &lt;= $reservedMethods]">
+      <xsl:text>    HRESULT InternalAndReservedMethod</xsl:text>
+      <xsl:value-of select="concat(position(), $name)"/>
+      <xsl:text>();&#x0A;&#x0A;</xsl:text>
+    </xsl:for-each>
+  </xsl:if>
   <!-- 'if' enclosed elements, unsorted -->
   <xsl:apply-templates select="if"/>
   <!-- -->
   <xsl:text>}; /* interface </xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text> */&#x0A;&#x0A;</xsl:text>
   <!-- Interface implementation forwarder macro -->
   <xsl:text>/* Interface implementation forwarder macro */&#x0A;</xsl:text>
@@ -228,7 +277,7 @@
   <xsl:apply-templates select="if" mode="forwarder"/>
   <!-- 2) COM_FORWARD_Interface_TO(smth) -->
   <xsl:text>cpp_quote("#define COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO(smth) </xsl:text>
   <xsl:apply-templates select="attribute" mode="forwarder">
     <xsl:with-param name="nameOnly" select="'yes'"/>
@@ -242,15 +291,15 @@
   <xsl:text>")&#x0A;</xsl:text>
   <!-- 3) COM_FORWARD_Interface_TO_OBJ(obj) -->
   <xsl:text>cpp_quote("#define COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO_OBJ(obj) COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO ((obj)->)")&#x0A;</xsl:text>
   <!-- 4) COM_FORWARD_Interface_TO_BASE(base) -->
   <xsl:text>cpp_quote("#define COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO_BASE(base) COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO (base::)")&#x0A;</xsl:text>
   <!-- end -->
   <xsl:text>&#x0A;</xsl:text>
@@ -611,7 +660,7 @@
 <!--
  *  co-classes
 -->
-<xsl:template match="module/class">[
+<xsl:template match="module/class" name="template_class">[
     uuid(<xsl:value-of select="@uuid"/>)
 ]
 <xsl:text>coclass </xsl:text>
@@ -807,15 +856,15 @@
           <xsl:choose>
             <!-- enum types -->
             <xsl:when test="
-              (ancestor::library/enum[@name=current()]) or
-              (ancestor::library/if[@target=$self_target]/enum[@name=current()])
+              (ancestor::library/application/enum[@name=current()]) or
+              (ancestor::library/application/if[@target=$self_target]/enum[@name=current()])
             ">
               <xsl:value-of select="."/>
             </xsl:when>
             <!-- custom interface types -->
             <xsl:when test="
-              ((ancestor::library/interface[@name=current()]) or
-               (ancestor::library/if[@target=$self_target]/interface[@name=current()])
+              ((ancestor::library/application/interface[@name=current()]) or
+               (ancestor::library/application/if[@target=$self_target]/interface[@name=current()])
               )
             ">
               <xsl:value-of select="."/><xsl:text> *</xsl:text>
@@ -833,5 +882,28 @@
     </xsl:otherwise>
   </xsl:choose>
 </xsl:template>
+
+
+<!-- Filters for switch on/off VBoxSDS definitions -->
+
+<xsl:template match="application[@uuid='ec0e78e8-fa43-43e8-ac0a-02c784c4a4fa']//module/class" >
+    <xsl:if test="$g_fVBoxWithSDS='yes'" >
+        <xsl:call-template name="template_class" />
+    </xsl:if>
+</xsl:template>
+
+<xsl:template match="application[@uuid='ec0e78e8-fa43-43e8-ac0a-02c784c4a4fa']/if//interface
+                                | application[@uuid='ec0e78e8-fa43-43e8-ac0a-02c784c4a4fa']//interface" >
+    <xsl:if test="$g_fVBoxWithSDS='yes'" >
+        <xsl:call-template name="template_interface" />
+    </xsl:if>
+</xsl:template>
+
+<xsl:template match="application[@uuid='ec0e78e8-fa43-43e8-ac0a-02c784c4a4fa']//interface" mode="forward" >
+    <xsl:if test="$g_fVBoxWithSDS='yes'" >
+        <xsl:call-template name="template_interface_forward" />
+    </xsl:if>
+</xsl:template>
+
 
 </xsl:stylesheet>

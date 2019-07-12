@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,15 +15,16 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "../include/cr_compositor.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define VBOXVR_SCR_COMPOSITOR_RECTS_UNDEFINED UINT32_MAX
 #ifdef IN_VMSVGA3D
 # define WARN AssertMsgFailed
@@ -104,6 +105,8 @@ static DECLCALLBACK(bool) crVrScrCompositorRectsCounterCb(PVBOXVR_COMPOSITOR pCo
                                                           void *pvVisitor)
 {
     uint32_t* pCounter = (uint32_t*)pvVisitor;
+    (void)pCompositor; (void)pEntry;
+
     Assert(VBoxVrListRectsCount(&pEntry->Vr));
     *pCounter += VBoxVrListRectsCount(&pEntry->Vr);
     return true;
@@ -494,6 +497,8 @@ VBOXVREGDECL(int) CrVrScrCompositorEntryRectSet(PVBOXVR_SCR_COMPOSITOR pComposit
 VBOXVREGDECL(int) CrVrScrCompositorEntryTexAssign(PVBOXVR_SCR_COMPOSITOR pCompositor, PVBOXVR_SCR_COMPOSITOR_ENTRY pEntry,
                                                   CR_TEXDATA *pTex)
 {
+    (void)pCompositor;
+
     if (pEntry->pTex == pTex)
         return VINF_SUCCESS;
 
@@ -509,7 +514,7 @@ VBOXVREGDECL(int) CrVrScrCompositorEntryRegionsSet(PVBOXVR_SCR_COMPOSITOR pCompo
                                                    PCRTPOINT pPos, uint32_t cRegions, PCRTRECT paRegions,
                                                    bool fPosRelated, bool *pfChanged)
 {
-    /* @todo: the fChanged sate calculation is really rough now, this is enough for now though */
+    /** @todo the fChanged sate calculation is really rough now, this is enough for now though */
     bool fChanged = false, fPosChanged = false;
     bool fWasInList = CrVrScrCompositorEntryIsInList(pEntry);
     RTRECT *paTranslatedRects = NULL;
@@ -556,26 +561,28 @@ VBOXVREGDECL(int) CrVrScrCompositorEntryRegionsSet(PVBOXVR_SCR_COMPOSITOR pCompo
     }
 
     rc = crVrScrCompositorEntryRegionsSet(pCompositor, pEntry, cRegions, paRegions, &fChanged);
-    if (RT_FAILURE(rc))
+    if (RT_SUCCESS(rc))
     {
-        WARN(("crVrScrCompositorEntryRegionsSet failed, rc %d", rc));
-        return rc;
-    }
-
-    if (fChanged && CrVrScrCompositorEntryIsUsed(pEntry))
-    {
-        rc = crVrScrCompositorEntryEnsureRegionsBounds(pCompositor, pEntry, NULL);
-        if (RT_FAILURE(rc))
+        if (fChanged && CrVrScrCompositorEntryIsUsed(pEntry))
         {
-            WARN(("crVrScrCompositorEntryEnsureRegionsBounds failed, rc %d", rc));
-            return rc;
+            rc = crVrScrCompositorEntryEnsureRegionsBounds(pCompositor, pEntry, NULL);
+            if (RT_SUCCESS(rc))
+            {
+                if (pfChanged)
+                    *pfChanged = fPosChanged || fChanged || fWasInList;
+            }
+            else
+                WARN(("crVrScrCompositorEntryEnsureRegionsBounds failed, rc %d", rc));
         }
+
     }
+    else
+        WARN(("crVrScrCompositorEntryRegionsSet failed, rc %d", rc));
 
-    if (pfChanged)
-        *pfChanged = fPosChanged || fChanged || fWasInList;
+    if (paTranslatedRects)
+        RTMemFree(paTranslatedRects);
 
-    return VINF_SUCCESS;
+    return rc;
 }
 
 VBOXVREGDECL(int) CrVrScrCompositorEntryListIntersect(PVBOXVR_SCR_COMPOSITOR pCompositor, PVBOXVR_SCR_COMPOSITOR_ENTRY pEntry,

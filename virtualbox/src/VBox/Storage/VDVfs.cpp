@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/types.h>
 #include <iprt/assert.h>
 #include <iprt/mem.h>
@@ -31,9 +31,10 @@
 #include <iprt/poll.h>
 #include <VBox/vd.h>
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * The internal data of a DVM volume I/O stream.
@@ -41,7 +42,7 @@
 typedef struct VDVFSFILE
 {
     /** The volume the VFS file belongs to. */
-    PVBOXHDD       pDisk;
+    PVDISK         pDisk;
     /** Current position. */
     uint64_t       offCurPos;
     /** Flags given during creation. */
@@ -59,7 +60,7 @@ typedef VDVFSFILE *PVDVFSFILE;
  * @param   pvBuf    Pointer to the buffer to read into.
  * @param   cbRead   Amount of bytes to read.
  */
-static int vdReadHelper(PVBOXHDD pDisk, uint64_t off, void *pvBuf, size_t cbRead)
+static int vdReadHelper(PVDISK pDisk, uint64_t off, void *pvBuf, size_t cbRead)
 {
     int rc = VINF_SUCCESS;
 
@@ -127,7 +128,7 @@ static int vdReadHelper(PVBOXHDD pDisk, uint64_t off, void *pvBuf, size_t cbRead
  * @param   pvBuf    Pointer to the buffer to read from.
  * @param   cbWrite  Amount of bytes to write.
  */
-static int vdWriteHelper(PVBOXHDD pDisk, uint64_t off, const void *pvBuf, size_t cbWrite)
+static int vdWriteHelper(PVDISK pDisk, uint64_t off, const void *pvBuf, size_t cbWrite)
 {
     int rc = VINF_SUCCESS;
 
@@ -208,13 +209,54 @@ static DECLCALLBACK(int) vdVfsFile_Close(void *pvThis)
 /**
  * @interface_method_impl{RTVFSOBJOPS,pfnQueryInfo}
  */
-static DECLCALLBACK(int) vdVfsFile_QueryInfo(void *pvThis, PRTFSOBJINFO pObjInfo,
-                                               RTFSOBJATTRADD enmAddAttr)
+static DECLCALLBACK(int) vdVfsFile_QueryInfo(void *pvThis, PRTFSOBJINFO pObjInfo, RTFSOBJATTRADD enmAddAttr)
 {
-    NOREF(pvThis);
-    NOREF(pObjInfo);
-    NOREF(enmAddAttr);
-    return VERR_NOT_SUPPORTED;
+    PVDVFSFILE pThis = (PVDVFSFILE)pvThis;
+    unsigned const cOpenImages = VDGetCount(pThis->pDisk);
+
+    pObjInfo->cbObject    = VDGetSize(pThis->pDisk, cOpenImages - 1);
+    pObjInfo->cbAllocated = 0;
+    for (unsigned iImage = 0; iImage < cOpenImages; iImage++)
+        pObjInfo->cbAllocated += VDGetFileSize(pThis->pDisk, iImage);
+
+    /** @todo enumerate the disk images directly...   */
+    RTTimeNow(&pObjInfo->AccessTime);
+    pObjInfo->BirthTime        = pObjInfo->AccessTime;
+    pObjInfo->ChangeTime       = pObjInfo->AccessTime;
+    pObjInfo->ModificationTime = pObjInfo->AccessTime;
+
+    pObjInfo->Attr.fMode       = RTFS_DOS_NT_NORMAL | RTFS_TYPE_FILE | 0644;
+    pObjInfo->Attr.enmAdditional = enmAddAttr;
+    switch (enmAddAttr)
+    {
+        case RTFSOBJATTRADD_UNIX:
+            pObjInfo->Attr.u.Unix.uid           = NIL_RTUID;
+            pObjInfo->Attr.u.Unix.gid           = NIL_RTGID;
+            pObjInfo->Attr.u.Unix.cHardlinks    = 1;
+            pObjInfo->Attr.u.Unix.INodeIdDevice = 0;
+            pObjInfo->Attr.u.Unix.INodeId       = 0;
+            pObjInfo->Attr.u.Unix.fFlags        = 0;
+            pObjInfo->Attr.u.Unix.GenerationId  = 0;
+            pObjInfo->Attr.u.Unix.Device        = 0;
+            break;
+
+        case RTFSOBJATTRADD_UNIX_OWNER:
+            pObjInfo->Attr.u.UnixOwner.uid = NIL_RTUID;
+            pObjInfo->Attr.u.UnixOwner.szName[0] = '\0';
+            break;
+        case RTFSOBJATTRADD_UNIX_GROUP:
+            pObjInfo->Attr.u.UnixGroup.gid = NIL_RTGID;
+            pObjInfo->Attr.u.UnixGroup.szName[0] = '\0';
+            break;
+        case RTFSOBJATTRADD_EASIZE:
+            pObjInfo->Attr.u.EASize.cb = 0;
+            break;
+
+        default:
+            AssertFailedReturn(VERR_INVALID_PARAMETER);
+    }
+
+    return VINF_SUCCESS;
 }
 
 
@@ -224,7 +266,6 @@ static DECLCALLBACK(int) vdVfsFile_QueryInfo(void *pvThis, PRTFSOBJINFO pObjInfo
 static DECLCALLBACK(int) vdVfsFile_Read(void *pvThis, RTFOFF off, PCRTSGBUF pSgBuf, bool fBlocking, size_t *pcbRead)
 {
     PVDVFSFILE pThis = (PVDVFSFILE)pvThis;
-    int rc = VINF_SUCCESS;
 
     Assert(pSgBuf->cSegs == 1);
     NOREF(fBlocking);
@@ -233,29 +274,31 @@ static DECLCALLBACK(int) vdVfsFile_Read(void *pvThis, RTFOFF off, PCRTSGBUF pSgB
      * Find the current position and check if it's within the volume.
      */
     uint64_t offUnsigned = off < 0 ? pThis->offCurPos : (uint64_t)off;
-    if (offUnsigned >= VDGetSize(pThis->pDisk, VD_LAST_IMAGE))
+    uint64_t const cbImage = VDGetSize(pThis->pDisk, VD_LAST_IMAGE);
+    if (offUnsigned >= cbImage)
     {
         if (pcbRead)
         {
             *pcbRead = 0;
-            pThis->offCurPos = offUnsigned;
+            pThis->offCurPos = cbImage;
             return VINF_EOF;
         }
         return VERR_EOF;
     }
 
-    size_t cbLeftToRead;
-    if (offUnsigned + pSgBuf->paSegs[0].cbSeg > VDGetSize(pThis->pDisk, VD_LAST_IMAGE))
+    int rc = VINF_SUCCESS;
+    size_t cbLeftToRead = pSgBuf->paSegs[0].cbSeg;
+    if (offUnsigned + cbLeftToRead <= cbImage)
     {
-        if (!pcbRead)
-            return VERR_EOF;
-        *pcbRead = cbLeftToRead = (size_t)(VDGetSize(pThis->pDisk, VD_LAST_IMAGE) - offUnsigned);
+        if (pcbRead)
+            *pcbRead = cbLeftToRead;
     }
     else
     {
-        cbLeftToRead = pSgBuf->paSegs[0].cbSeg;
-        if (pcbRead)
-            *pcbRead = cbLeftToRead;
+        if (!pcbRead)
+            return VERR_EOF;
+        *pcbRead = cbLeftToRead = (size_t)(cbImage - offUnsigned);
+        rc = VINF_EOF;
     }
 
     /*
@@ -263,9 +306,11 @@ static DECLCALLBACK(int) vdVfsFile_Read(void *pvThis, RTFOFF off, PCRTSGBUF pSgB
      */
     if (cbLeftToRead > 0)
     {
-        rc = vdReadHelper(pThis->pDisk, (uint64_t)off, pSgBuf->paSegs[0].pvSeg, cbLeftToRead);
-        if (RT_SUCCESS(rc))
+        int rc2 = vdReadHelper(pThis->pDisk, offUnsigned, pSgBuf->paSegs[0].pvSeg, cbLeftToRead);
+        if (RT_SUCCESS(rc2))
             offUnsigned += cbLeftToRead;
+        else
+            rc = rc2;
     }
 
     pThis->offCurPos = offUnsigned;
@@ -279,7 +324,6 @@ static DECLCALLBACK(int) vdVfsFile_Read(void *pvThis, RTFOFF off, PCRTSGBUF pSgB
 static DECLCALLBACK(int) vdVfsFile_Write(void *pvThis, RTFOFF off, PCRTSGBUF pSgBuf, bool fBlocking, size_t *pcbWritten)
 {
     PVDVFSFILE pThis = (PVDVFSFILE)pvThis;
-    int rc = VINF_SUCCESS;
 
     Assert(pSgBuf->cSegs == 1);
     NOREF(fBlocking);
@@ -289,36 +333,38 @@ static DECLCALLBACK(int) vdVfsFile_Write(void *pvThis, RTFOFF off, PCRTSGBUF pSg
      * Writing beyond the end of a volume is not supported.
      */
     uint64_t offUnsigned = off < 0 ? pThis->offCurPos : (uint64_t)off;
-    if (offUnsigned >= VDGetSize(pThis->pDisk, VD_LAST_IMAGE))
+    uint64_t const cbImage = VDGetSize(pThis->pDisk, VD_LAST_IMAGE);
+    if (offUnsigned >= cbImage)
     {
         if (pcbWritten)
         {
             *pcbWritten = 0;
-            pThis->offCurPos = offUnsigned;
+            pThis->offCurPos = cbImage;
         }
-        return VERR_NOT_SUPPORTED;
+        return VERR_EOF;
     }
 
     size_t cbLeftToWrite;
-    if (offUnsigned + pSgBuf->paSegs[0].cbSeg > VDGetSize(pThis->pDisk, VD_LAST_IMAGE))
-    {
-        if (!pcbWritten)
-            return VERR_EOF;
-        *pcbWritten = cbLeftToWrite = (size_t)(VDGetSize(pThis->pDisk, VD_LAST_IMAGE) - offUnsigned);
-    }
-    else
+    if (offUnsigned + pSgBuf->paSegs[0].cbSeg < cbImage)
     {
         cbLeftToWrite = pSgBuf->paSegs[0].cbSeg;
         if (pcbWritten)
             *pcbWritten = cbLeftToWrite;
     }
+    else
+    {
+        if (!pcbWritten)
+            return VERR_EOF;
+        *pcbWritten = cbLeftToWrite = (size_t)(cbImage - offUnsigned);
+    }
 
     /*
      * Ok, we've got a valid stretch within the file.  Do the reading.
      */
+    int rc = VINF_SUCCESS;
     if (cbLeftToWrite > 0)
     {
-        rc = vdWriteHelper(pThis->pDisk, (uint64_t)off, pSgBuf->paSegs[0].pvSeg, cbLeftToWrite);
+        rc = vdWriteHelper(pThis->pDisk, offUnsigned, pSgBuf->paSegs[0].pvSeg, cbLeftToWrite);
         if (RT_SUCCESS(rc))
             offUnsigned += cbLeftToWrite;
     }
@@ -342,7 +388,7 @@ static DECLCALLBACK(int) vdVfsFile_Flush(void *pvThis)
  * @interface_method_impl{RTVFSIOSTREAMOPS,pfnPollOne}
  */
 static DECLCALLBACK(int) vdVfsFile_PollOne(void *pvThis, uint32_t fEvents, RTMSINTERVAL cMillies, bool fIntr,
-                                              uint32_t *pfRetEvents)
+                                           uint32_t *pfRetEvents)
 {
     NOREF(pvThis);
     int rc;
@@ -369,7 +415,7 @@ static DECLCALLBACK(int) vdVfsFile_Tell(void *pvThis, PRTFOFF poffActual)
 
 
 /**
- * @interface_method_impl{RTVFSOBJSETOPS,pfnMode}
+ * @interface_method_impl{RTVFSOBJSETOPS,pfnSetMode}
  */
 static DECLCALLBACK(int) vdVfsFile_SetMode(void *pvThis, RTFMODE fMode, RTFMODE fMask)
 {
@@ -437,9 +483,7 @@ static DECLCALLBACK(int) vdVfsFile_Seek(void *pvThis, RTFOFF offSeek, unsigned u
     }
 
     /*
-     * Calc new position, take care to stay within bounds.
-     *
-     * @todo: Setting position beyond the end of the disk does not make sense.
+     * Calc new position, take care to stay without bounds.
      */
     uint64_t offNew;
     if (offSeek == 0)
@@ -506,7 +550,7 @@ DECL_HIDDEN_CONST(const RTVFSFILEOPS) g_vdVfsStdFileOps =
     /*RTVFSIOFILEOPS_FEAT_NO_AT_OFFSET*/ 0,
     { /* ObjSet */
         RTVFSOBJSETOPS_VERSION,
-        RT_OFFSETOF(RTVFSFILEOPS, Stream.Obj) - RT_OFFSETOF(RTVFSFILEOPS, ObjSet),
+        RT_UOFFSETOF(RTVFSFILEOPS, ObjSet) - RT_UOFFSETOF(RTVFSFILEOPS, Stream.Obj),
         vdVfsFile_SetMode,
         vdVfsFile_SetTimes,
         vdVfsFile_SetOwner,
@@ -518,7 +562,7 @@ DECL_HIDDEN_CONST(const RTVFSFILEOPS) g_vdVfsStdFileOps =
 };
 
 
-VBOXDDU_DECL(int) VDCreateVfsFileFromDisk(PVBOXHDD pDisk, uint32_t fFlags,
+VBOXDDU_DECL(int) VDCreateVfsFileFromDisk(PVDISK pDisk, uint32_t fFlags,
                                           PRTVFSFILE phVfsFile)
 {
     AssertPtrReturn(pDisk, VERR_INVALID_HANDLE);
@@ -544,4 +588,134 @@ VBOXDDU_DECL(int) VDCreateVfsFileFromDisk(PVBOXHDD pDisk, uint32_t fFlags,
 
     return rc;
 }
+
+
+/**
+ * @interface_method_impl{RTVFSCHAINELEMENTREG,pfnValidate}
+ */
+static DECLCALLBACK(int) vdVfsChain_Validate(PCRTVFSCHAINELEMENTREG pProviderReg, PRTVFSCHAINSPEC pSpec,
+                                             PRTVFSCHAINELEMSPEC pElement, uint32_t *poffError, PRTERRINFO pErrInfo)
+{
+    RT_NOREF(pProviderReg, pSpec);
+
+    /*
+     * Basic checks.
+     */
+    if (pElement->enmTypeIn != RTVFSOBJTYPE_INVALID)
+        return VERR_VFS_CHAIN_MUST_BE_FIRST_ELEMENT;
+    if (   pElement->enmType != RTVFSOBJTYPE_FILE
+        && pElement->enmType != RTVFSOBJTYPE_IO_STREAM)
+        return VERR_VFS_CHAIN_ONLY_FILE_OR_IOS;
+
+    if (pElement->cArgs < 1)
+        return VERR_VFS_CHAIN_AT_LEAST_ONE_ARG;
+    if (pElement->cArgs > 2)
+        return VERR_VFS_CHAIN_AT_MOST_TWO_ARGS;
+
+    /*
+     * Parse the flag if present, save in pElement->uProvider.
+     */
+    uint32_t fFlags = (pSpec->fOpenFile & RTFILE_O_ACCESS_MASK) == RTFILE_O_READ
+                    ? VD_OPEN_FLAGS_READONLY : VD_OPEN_FLAGS_NORMAL;
+    if (pElement->cArgs > 1)
+    {
+        const char *psz = pElement->paArgs[1].psz;
+        if (*psz)
+        {
+            if (   !strcmp(psz, "ro")
+                || !strcmp(psz, "r"))
+            {
+                fFlags &= ~(VD_OPEN_FLAGS_READONLY | VD_OPEN_FLAGS_NORMAL);
+                fFlags |= VD_OPEN_FLAGS_READONLY;
+            }
+            else if (!strcmp(psz, "rw"))
+            {
+                fFlags &= ~(VD_OPEN_FLAGS_READONLY | VD_OPEN_FLAGS_NORMAL);
+                fFlags |= VD_OPEN_FLAGS_NORMAL;
+            }
+            else
+            {
+                *poffError = pElement->paArgs[0].offSpec;
+                return RTErrInfoSet(pErrInfo, VERR_VFS_CHAIN_INVALID_ARGUMENT, "Expected 'ro' or 'rw' as argument");
+            }
+        }
+    }
+
+    pElement->uProvider = fFlags;
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @interface_method_impl{RTVFSCHAINELEMENTREG,pfnInstantiate}
+ */
+static DECLCALLBACK(int) vdVfsChain_Instantiate(PCRTVFSCHAINELEMENTREG pProviderReg, PCRTVFSCHAINSPEC pSpec,
+                                                PCRTVFSCHAINELEMSPEC pElement, RTVFSOBJ hPrevVfsObj,
+                                                PRTVFSOBJ phVfsObj, uint32_t *poffError, PRTERRINFO pErrInfo)
+{
+    RT_NOREF(pProviderReg, pSpec, poffError, pErrInfo);
+    AssertReturn(hPrevVfsObj == NIL_RTVFSOBJ, VERR_VFS_CHAIN_IPE);
+
+    /* Determin the format. */
+    char  *pszFormat = NULL;
+    VDTYPE enmType   = VDTYPE_INVALID;
+    int rc = VDGetFormat(NULL, NULL, pElement->paArgs[0].psz, &pszFormat, &enmType);
+    if (RT_SUCCESS(rc))
+    {
+        PVDISK pDisk = NULL;
+        rc = VDCreate(NULL, enmType, &pDisk);
+        if (RT_SUCCESS(rc))
+        {
+            rc = VDOpen(pDisk, pszFormat, pElement->paArgs[0].psz, (uint32_t)pElement->uProvider, NULL);
+            if (RT_SUCCESS(rc))
+            {
+                RTVFSFILE hVfsFile;
+                rc = VDCreateVfsFileFromDisk(pDisk, VD_VFSFILE_DESTROY_ON_RELEASE, &hVfsFile);
+                if (RT_SUCCESS(rc))
+                {
+                    RTStrFree(pszFormat);
+
+                    *phVfsObj = RTVfsObjFromFile(hVfsFile);
+                    RTVfsFileRelease(hVfsFile);
+
+                    if (*phVfsObj != NIL_RTVFSOBJ)
+                        return VINF_SUCCESS;
+                    return VERR_VFS_CHAIN_CAST_FAILED;
+                }
+            }
+            VDDestroy(pDisk);
+        }
+        RTStrFree(pszFormat);
+    }
+    return rc;
+}
+
+
+/**
+ * @interface_method_impl{RTVFSCHAINELEMENTREG,pfnCanReuseElement}
+ */
+static DECLCALLBACK(bool) vdVfsChain_CanReuseElement(PCRTVFSCHAINELEMENTREG pProviderReg,
+                                                     PCRTVFSCHAINSPEC pSpec, PCRTVFSCHAINELEMSPEC pElement,
+                                                     PCRTVFSCHAINSPEC pReuseSpec, PCRTVFSCHAINELEMSPEC pReuseElement)
+{
+    RT_NOREF(pProviderReg, pSpec, pElement, pReuseSpec, pReuseElement);
+    return false;
+}
+
+
+/** VFS chain element 'file'. */
+static RTVFSCHAINELEMENTREG g_rtVfsChainIsoFsVolReg =
+{
+    /* uVersion = */            RTVFSCHAINELEMENTREG_VERSION,
+    /* fReserved = */           0,
+    /* pszName = */             "vd",
+    /* ListEntry = */           { NULL, NULL },
+    /* pszHelp = */             "Opens a container image using the VD API.\n",
+    /* pfnValidate = */         vdVfsChain_Validate,
+    /* pfnInstantiate = */      vdVfsChain_Instantiate,
+    /* pfnCanReuseElement = */  vdVfsChain_CanReuseElement,
+    /* uEndMarker = */          RTVFSCHAINELEMENTREG_VERSION
+};
+
+RTVFSCHAIN_AUTO_REGISTER_ELEMENT_PROVIDER(&g_rtVfsChainIsoFsVolReg, rtVfsChainIsoFsVolReg);
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,23 +16,25 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifndef UNICODE
 # define UNICODE
 #endif
 
+#include <iprt/cdefs.h>
 #include <VBox/version.h>
 
-#include <Windows.h>
-#include <setupapi.h>
+#include <iprt/win/windows.h>
+#include <iprt/win/setupapi.h>
 #include <stdio.h>
 #include <tchar.h>
 
-/*******************************************************************************
-*   Defines                                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defines                                                                                                                      *
+*********************************************************************************************************************************/
 
 /* Exit codes */
 #define EXIT_OK      (0)
@@ -95,6 +97,8 @@ fnDIFXAPISetLogCallback g_pfnDIFXAPISetLogCallback = NULL;
 # define VBOX_DRVINST_LOGFILE                 "C:\\Temp\\VBoxDrvInstDIFx.log"
 #endif
 
+/** @todo Get rid of all that TCHAR crap! Use WCHAR wherever possible. */
+
 bool GetErrorMsg(DWORD dwLastError, _TCHAR *pszMsg, DWORD dwBufSize)
 {
     if (::FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM, NULL, dwLastError, 0, pszMsg, dwBufSize / sizeof(TCHAR), NULL) == 0)
@@ -102,13 +106,9 @@ bool GetErrorMsg(DWORD dwLastError, _TCHAR *pszMsg, DWORD dwBufSize)
         _sntprintf(pszMsg, dwBufSize / sizeof(TCHAR), _T("Unknown error!\n"), dwLastError);
         return false;
     }
-    else
-    {
-        _TCHAR *p = _tcschr(pszMsg, _T('\r'));
-        if (p != NULL)
-            *p = _T('\0');
-    }
-
+    _TCHAR *p = _tcschr(pszMsg, _T('\r'));
+    if (p != NULL)
+        *p = _T('\0');
     return true;
 }
 
@@ -382,9 +382,9 @@ int VBoxInstallDriver(const BOOL fInstall, const _TCHAR *pszDriverPath, BOOL fSi
                 fclose(phFile);
             if (SUCCEEDED(hr))
             {
-                _tprintf(_T("Driver was installed successfully!\n"));
+                _tprintf(_T("Driver was %sinstalled successfully!\n"), fInstall ? _T("") : _T("un"));
                 if (fReboot)
-                    _tprintf(_T("A reboot is needed to complete the driver (un)installation!\n"));
+                    _tprintf(_T("A reboot is needed to complete the driver %sinstallation!\n"), fInstall ? _T("") : _T("un"));
             }
         }
     }
@@ -432,6 +432,7 @@ static UINT WINAPI vboxDrvInstExecuteInfFileCallback(PVOID Context,
  */
 int ExecuteInfFile(const _TCHAR *pszSection, int iMode, const _TCHAR *pszInf)
 {
+    RT_NOREF(iMode);
     _tprintf(_T("Installing from INF-File: %ws (Section: %ws) ...\n"),
              pszInf, pszSection);
 
@@ -503,7 +504,7 @@ int ExecuteInfFile(const _TCHAR *pszSection, int iMode, const _TCHAR *pszInf)
  * @return  Exit code (EXIT_OK, EXIT_FAIL)
  * @param   pszSubKey           Sub key containing the list.
  * @param   pszKeyValue         The actual key name of the list.
- * @param   pszValueToRemove    The value to add to the list.
+ * @param   pszValueToAdd       The value to add to the list.
  * @param   uiOrder             Position (zero-based) of where to add the value to the list.
  */
 int RegistryAddStringToMultiSZ(const TCHAR *pszSubKey, const TCHAR *pszKeyValue, const TCHAR *pszValueToAdd, unsigned int uiOrder)
@@ -601,7 +602,7 @@ int RegistryAddStringToMultiSZ(const TCHAR *pszSubKey, const TCHAR *pszKeyValue,
  */
 int RegistryRemoveStringFromMultiSZ(const TCHAR *pszSubKey, const TCHAR *pszKeyValue, const TCHAR *pszValueToRemove)
 {
-    // @todo Make string sizes dynamically allocated!
+    /// @todo Make string sizes dynamically allocated!
 
     const TCHAR *pszKey = pszSubKey;
 #ifdef DEBUG
@@ -913,7 +914,7 @@ int CreateService(const TCHAR *pszStartStopName,
     }
 
     /* Fixup end of multistring. */
-    TCHAR szDepend[ _MAX_PATH ] = { 0 }; /* @todo Use dynamically allocated string here! */
+    TCHAR szDepend[ _MAX_PATH ] = { 0 }; /** @todo Use dynamically allocated string here! */
     if (pszDependencies != NULL)
     {
         _tcsnccpy (szDepend, pszDependencies, wcslen(pszDependencies));
@@ -1046,7 +1047,8 @@ int DelService(const TCHAR *pszStartStopName)
 
     if (hService != NULL)
     {
-        if (LockServiceDatabase(hSCManager))
+        SC_LOCK hSCLock = LockServiceDatabase(hSCManager);
+        if (hSCLock != NULL)
         {
             if (FALSE == DeleteService(hService))
             {
@@ -1070,7 +1072,7 @@ int DelService(const TCHAR *pszStartStopName)
             {
                 _tprintf(_T("Service '%ws' successfully removed!\n"), pszStartStopName);
             }
-            UnlockServiceDatabase(hSCManager);
+            UnlockServiceDatabase(hSCLock);
         }
         else
         {
@@ -1247,7 +1249,7 @@ int __cdecl _tmain(int argc, _TCHAR *argv[])
                      && argc >= 8)
             {
                 HKEY hRootKey = HKEY_LOCAL_MACHINE;  /** @todo needs to be expanded (argv[3]) */
-                DWORD dwValSize;
+                DWORD dwValSize = 0;
                 BYTE *pbVal = NULL;
                 DWORD dwVal;
 
@@ -1262,8 +1264,8 @@ int __cdecl _tmain(int argc, _TCHAR *argv[])
                 }
                 if (pbVal == NULL) /* By default interpret value as string */
                 {
-                    pbVal = (BYTE*)argv[7];
-                    dwValSize = _tcslen(argv[7]);
+                    pbVal = (BYTE *)argv[7];
+                    dwValSize = (DWORD)_tcslen(argv[7]);
                 }
                 if (argc > 9)
                     dwValSize = _ttol(argv[9]);      /* Get the size in bytes of the value we want to write */

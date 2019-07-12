@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/mem.h>
 #include <iprt/assert.h>
 #include <iprt/ctype.h>
@@ -224,7 +224,7 @@ int main(int argc, char **argv)
                 return RTEXITCODE_SUCCESS;
 
             case 'V':
-                RTPrintf("$Revision: 87101 $\n");
+                RTPrintf("$Revision: 118769 $\n");
                 return RTEXITCODE_SUCCESS;
 
             case VINF_GETOPT_NOT_OPTION:
@@ -291,22 +291,39 @@ int main(int argc, char **argv)
                 for (uint32_t iMapping = 0; iMapping < cMappings; iMapping++)
                 {
                     if (aMappings[iMapping].iSeg == NIL_RTDBGSEGIDX)
+                    {
                         RTPrintf("  mapping #%u: %RTptr-%RTptr\n",
                                  iMapping,
                                  aMappings[iMapping].Address,
                                  aMappings[iMapping].Address + RTDbgModImageSize(hDbgMod) - 1);
+                        if (cVerbosityLevel > 2)
+                        {
+                            uint32_t cSegments = RTDbgModSegmentCount(hDbgMod);
+                            for (uint32_t iSeg = 0; iSeg < cSegments; iSeg++)
+                            {
+                                RTDBGSEGMENT SegInfo;
+                                rc = RTDbgModSegmentByIndex(hDbgMod, iSeg, &SegInfo);
+                                if (RT_SUCCESS(rc))
+                                    RTPrintf("      seg #%u: %RTptr LB %RTptr '%s'\n",
+                                             iSeg, SegInfo.uRva, SegInfo.cb, SegInfo.szName);
+                                else
+                                    RTPrintf("      seg #%u: %Rrc\n", iSeg, rc);
+                            }
+                        }
+                    }
                     else
                     {
                         RTDBGSEGMENT SegInfo;
                         rc = RTDbgModSegmentByIndex(hDbgMod, aMappings[iMapping].iSeg, &SegInfo);
                         if (RT_SUCCESS(rc))
-                            RTPrintf("  mapping #%u: %RTptr-%RTptr (segment #%u - '%s')",
+                            RTPrintf("  mapping #%u: %RTptr-%RTptr (segment #%u - '%s')\n",
                                      iMapping,
                                      aMappings[iMapping].Address,
                                      aMappings[iMapping].Address + SegInfo.cb,
                                      SegInfo.iSeg, SegInfo.szName);
                         else
-                            RTPrintf("  mapping #%u: %RTptr-???????? (segment #%u)", iMapping, aMappings[iMapping].Address);
+                            RTPrintf("  mapping #%u: %RTptr-???????? (segment #%u) rc=%Rrc\n",
+                                     iMapping, aMappings[iMapping].Address, aMappings[iMapping].iSeg, rc);
                     }
 
                     if (cVerbosityLevel > 1)
@@ -318,8 +335,8 @@ int main(int argc, char **argv)
                             RTDBGSYMBOL SymInfo;
                             rc = RTDbgModSymbolByOrdinal(hDbgMod, iSymbol, &SymInfo);
                             if (RT_SUCCESS(rc))
-                                RTPrintf("    #%04u at %08x:%RTptr %05llx %s\n",
-                                         SymInfo.iOrdinal, SymInfo.iSeg, SymInfo.offSeg,
+                                RTPrintf("    #%04u at %08x:%RTptr (%RTptr) %05llx %s\n",
+                                         SymInfo.iOrdinal, SymInfo.iSeg, SymInfo.offSeg, SymInfo.Value,
                                          (uint64_t)SymInfo.cb, SymInfo.szName);
                         }
                     }
@@ -380,7 +397,7 @@ int main(int argc, char **argv)
                     if (iSeg != UINT32_MAX)
                         RTStrmPrintf(pOutput, "=[%s:%u", RTDbgModName(hDbgMod), iSeg);
                     else
-                        RTStrmPrintf(pOutput, "=[%s", RTDbgModName(hDbgMod), iSeg);
+                        RTStrmPrintf(pOutput, "=[%s", RTDbgModName(hDbgMod));
 
                     /*
                      * Do we have symbols?

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,12 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#ifdef DEBUG_ramshankar
-# define LOG_INSTANCE       RTLogRelDefaultInstance()
-#endif
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "VirtioPci-solaris.h"
 
 #include <iprt/asm.h>
@@ -41,9 +39,10 @@
 #include <sys/pci.h>
 #include <sys/param.h>
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /*
  * Pci Register offsets.
  */
@@ -121,9 +120,9 @@ static size_t               g_cIntrAllocated;
 static kmutex_t             g_IrqMtx;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void    *VirtioPciAlloc(PVIRTIODEVICE pDevice);
 static void     VirtioPciFree(PVIRTIODEVICE pDevice);
 static int      VirtioPciAttach(PVIRTIODEVICE pDevice);

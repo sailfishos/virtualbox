@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_FILE
 #include <iprt/asm.h>
 #include <iprt/file.h>
@@ -48,9 +48,10 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Async I/O completion context state.
  */
@@ -101,9 +102,9 @@ typedef struct RTFILEAIOREQINTERNAL
 typedef RTFILEAIOREQINTERNAL *PRTFILEAIOREQINTERNAL;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The max number of events to get in one call. */
 #define AIO_MAXIMUM_REQUESTS_PER_CONTEXT 64
 
@@ -124,7 +125,7 @@ RTR3DECL(int) RTFileAioGetLimits(PRTFILEAIOLIMITS pAioLimits)
                          &cReqsOutstandingMax,       /* Where to store the old value. */
                          &cbParameter,               /* Size of the memory pointed to. */
                          NULL,                       /* Where the new value is located. */
-                         NULL);                      /* Where the size of the new value is stored. */
+                         0);                         /* Where the size of the new value is stored. */
     if (rcBSD == -1)
     {
         /* ENOENT means the value is unknown thus the module is not loaded. */

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -29,11 +29,11 @@
 #define WIN32_SCHED_ENABLED
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_THREAD
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
 #include <iprt/thread.h>
 #include <iprt/log.h>
@@ -43,9 +43,9 @@
 #include "internal/thread.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Configuration of one priority.
  */
@@ -64,7 +64,7 @@ typedef struct
         /** For sanity include the array index. */
         RTTHREADTYPE    enmType;
         /** The Win32 thread priority. */
-        DWORD           dwThreadPriority;
+        int             iThreadPriority;
     } aTypes[RTTHREADTYPE_END];
 } PROCPRIORITY;
 
@@ -72,9 +72,9 @@ typedef struct
 #define ANY_PROCESS_PRIORITY_CLASS  (~0U)
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Array of static priority configurations.
  */
@@ -258,7 +258,7 @@ static const PROCPRIORITY *g_pProcessPriority = &g_aDefaultPriority;
  */
 DECLHIDDEN(int) rtSchedNativeCalcDefaultPriority(RTTHREADTYPE enmType)
 {
-    Assert(enmType > RTTHREADTYPE_INVALID && enmType < RTTHREADTYPE_END);
+    Assert(enmType > RTTHREADTYPE_INVALID && enmType < RTTHREADTYPE_END); RT_NOREF_PV(enmType);
     return VINF_SUCCESS;
 }
 
@@ -274,7 +274,7 @@ DECLHIDDEN(int) rtSchedNativeCalcDefaultPriority(RTTHREADTYPE enmType)
  */
 DECLHIDDEN(int) rtProcNativeSetPriority(RTPROCPRIORITY enmPriority)
 {
-    Assert(enmPriority > RTPROCPRIORITY_INVALID && enmPriority < RTPROCPRIORITY_LAST);
+    Assert(enmPriority > RTPROCPRIORITY_INVALID && enmPriority < RTPROCPRIORITY_LAST); RT_NOREF_PV(enmPriority);
     return VINF_SUCCESS;
 }
 
@@ -312,13 +312,13 @@ DECLHIDDEN(int) rtThreadNativeSetPriority(PRTTHREADINT pThread, RTTHREADTYPE enm
               ("enmType=%d entry=%d\n", enmType, g_pProcessPriority->aTypes[enmType].enmType));
 
 #ifdef WIN32_SCHED_ENABLED
-    if (SetThreadPriority(rtThreadNativeGetHandle(pThread), g_pProcessPriority->aTypes[enmType].dwThreadPriority))
+    if (SetThreadPriority(rtThreadNativeGetHandle(pThread), g_pProcessPriority->aTypes[enmType].iThreadPriority))
         return VINF_SUCCESS;
 
     DWORD dwLastError = GetLastError();
     int rc = RTErrConvertFromWin32(dwLastError);
     AssertMsgFailed(("SetThreadPriority(%p, %d) failed, dwLastError=%d rc=%Rrc\n",
-                     rtThreadNativeGetHandle(pThread), g_pProcessPriority->aTypes[enmType].dwThreadPriority, dwLastError, rc));
+                     rtThreadNativeGetHandle(pThread), g_pProcessPriority->aTypes[enmType].iThreadPriority, dwLastError, rc));
     return rc;
 #else
     return VINF_SUCCESS;

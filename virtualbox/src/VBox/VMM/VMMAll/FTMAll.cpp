@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_FTM
 #include "FTMInternal.h"
 #include <VBox/vmm/vm.h>
@@ -35,7 +35,7 @@
  *
  * @returns VBox status code.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmType     Checkpoint type
  */
 VMM_INT_DECL(int) FTMSetCheckpoint(PVM pVM, FTMCHECKPOINTTYPE enmType)
@@ -56,7 +56,7 @@ VMM_INT_DECL(int) FTMSetCheckpoint(PVM pVM, FTMCHECKPOINTTYPE enmType)
  *
  * @returns true/false
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMM_INT_DECL(bool) FTMIsDeltaLoadSaveActive(PVM pVM)
 {

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2013 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,12 +25,13 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/dir.h>
 #include <iprt/file.h>
 #include <iprt/err.h>
+#include <iprt/log.h>
 #include <iprt/param.h>
 #include <iprt/path.h>
 #include <iprt/cpp/lock.h>
@@ -48,9 +49,9 @@
 #include <map>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Global module initialization structure. This is to wrap non-reentrant bits
  * of libxml, among other things.
@@ -153,8 +154,9 @@ EIPRTFailure::EIPRTFailure(int aRC, const char *pcszContext, ...)
     va_list args;
     va_start(args, pcszContext);
     RTStrAPrintfV(&pszContext2, pcszContext, args);
+    va_end(args);
     char *newMsg;
-    RTStrAPrintf(&newMsg, "%s: %d(%s)", pszContext2, aRC, RTErrGetShort(aRC));
+    RTStrAPrintf(&newMsg, "%s: %d (%s)", pszContext2, aRC, RTErrGetShort(aRC));
     setWhat(newMsg);
     RTStrFree(newMsg);
     RTStrFree(pszContext2);
@@ -185,25 +187,31 @@ File::File(Mode aMode, const char *aFileName, bool aFlushIt /* = false */)
     m->flushOnClose = aFlushIt;
 
     uint32_t flags = 0;
+    const char *pcszMode = "???";
     switch (aMode)
     {
         /** @todo change to RTFILE_O_DENY_WRITE where appropriate. */
         case Mode_Read:
             flags = RTFILE_O_READ      | RTFILE_O_OPEN           | RTFILE_O_DENY_NONE;
+            pcszMode = "reading";
             break;
         case Mode_WriteCreate:      // fail if file exists
             flags = RTFILE_O_WRITE     | RTFILE_O_CREATE         | RTFILE_O_DENY_NONE;
+            pcszMode = "writing";
             break;
         case Mode_Overwrite:        // overwrite if file exists
             flags = RTFILE_O_WRITE     | RTFILE_O_CREATE_REPLACE | RTFILE_O_DENY_NONE;
+            pcszMode = "overwriting";
             break;
         case Mode_ReadWrite:
-            flags = RTFILE_O_READWRITE | RTFILE_O_OPEN           | RTFILE_O_DENY_NONE;;
+            flags = RTFILE_O_READWRITE | RTFILE_O_OPEN           | RTFILE_O_DENY_NONE;
+            pcszMode = "reading/writing";
+            break;
     }
 
     int vrc = RTFileOpen(&m->handle, aFileName, flags);
     if (RT_FAILURE(vrc))
-        throw EIPRTFailure(vrc, "Runtime error opening '%s' for reading", aFileName);
+        throw EIPRTFailure(vrc, "Runtime error opening '%s' for %s", aFileName, pcszMode);
 
     m->opened = true;
     m->flushOnClose = aFlushIt && (flags & RTFILE_O_ACCESS_MASK) != RTFILE_O_READ;
@@ -1274,6 +1282,42 @@ ContentNode *ElementNode::addContent(const char *pcszContent)
 }
 
 /**
+ * Changes the contents of node and appends it to the list of
+ * children
+ *
+ * @param pcszContent
+ * @return
+ */
+ContentNode *ElementNode::setContent(const char *pcszContent)
+{
+//  1. Update content
+    xmlNodeSetContent(m_pLibNode, (const xmlChar*)pcszContent);
+
+//  2. Remove Content node from the list
+    /* Check that the order is right. */
+    xml::Node * pNode;
+    RTListForEachCpp(&m_children, pNode, xml::Node, m_listEntry)
+    {
+        bool fLast = RTListNodeIsLast(&m_children, &pNode->m_listEntry);
+
+        if (pNode->isContent())
+        {
+            RTListNodeRemove(&pNode->m_listEntry);
+        }
+
+        if (fLast)
+            break;
+    }
+
+//  3. Create a new node and append to the list
+    // now wrap this in C++
+    ContentNode *pCNode = new ContentNode(this, &m_children, m_pLibNode);
+    RTListAppend(&m_children, &pCNode->m_listEntry);
+
+    return pCNode;
+}
+
+/**
  * Sets the given attribute; overloaded version for const char *.
  *
  * If an attribute with the given name exists, it is overwritten,
@@ -1432,8 +1476,8 @@ AttributeNode* ElementNode::setAttributeHex(const char *pcszName, uint32_t u)
  * otherwise a new attribute is created. Returns the attribute node
  * that was either created or changed.
  *
- * @param pcszName
- * @param i
+ * @param   pcszName    The attribute name.
+ * @param   f           The attribute value.
  * @return
  */
 AttributeNode* ElementNode::setAttribute(const char *pcszName, bool f)
@@ -1450,7 +1494,7 @@ AttributeNode* ElementNode::setAttribute(const char *pcszName, bool f)
  *                      despite the type).  NULL for the root node.
  * @param   pListAnchor Pointer to the m_children member of the parent.  NULL
  *                      for the root node.
- * @param   pLibNode    Pointer to the libxml2 node structure.
+ * @param   pLibAttr    Pointer to the libxml2 attribute structure.
  */
 AttributeNode::AttributeNode(const ElementNode *pElmRoot,
                              Node *pParent,
@@ -1463,6 +1507,7 @@ AttributeNode::AttributeNode(const ElementNode *pElmRoot,
            pLibAttr)
 {
     m_pcszName = (const char *)pLibAttr->name;
+    RT_NOREF_PV(pElmRoot);
 
     if (   pLibAttr->ns
         && pLibAttr->ns->prefix)
@@ -1682,15 +1727,36 @@ ElementNode *Document::createRootElement(const char *pcszRootElementName,
 //
 ////////////////////////////////////////////////////////////////////////////////
 
+static void xmlParserBaseGenericError(void *pCtx, const char *pszMsg, ...)
+{
+    NOREF(pCtx);
+    va_list args;
+    va_start(args, pszMsg);
+    RTLogRelPrintfV(pszMsg, args);
+    va_end(args);
+}
+
+static void xmlParserBaseStructuredError(void *pCtx, xmlErrorPtr error)
+{
+    NOREF(pCtx);
+    /* we expect that there is always a trailing NL */
+    LogRel(("XML error at '%s' line %d: %s", error->file, error->line, error->message));
+}
+
 XmlParserBase::XmlParserBase()
 {
     m_ctxt = xmlNewParserCtxt();
     if (m_ctxt == NULL)
         throw std::bad_alloc();
+    /* per-thread so it must be here */
+    xmlSetGenericErrorFunc(NULL, xmlParserBaseGenericError);
+    xmlSetStructuredErrorFunc(NULL, xmlParserBaseStructuredError);
 }
 
 XmlParserBase::~XmlParserBase()
 {
+    xmlSetStructuredErrorFunc(NULL, NULL);
+    xmlSetGenericErrorFunc(NULL, NULL);
     xmlFreeParserCtxt (m_ctxt);
     m_ctxt = NULL;
 }
@@ -1732,12 +1798,19 @@ void XmlMemParser::read(const void *pvBuf, size_t cbSize,
     const char *pcszFilename = strFilename.c_str();
 
     doc.m->reset();
+    const int options = XML_PARSE_NOBLANKS /* remove blank nodes */
+                      | XML_PARSE_NONET    /* forbit any network access */
+#if LIBXML_VERSION >= 20700
+                      | XML_PARSE_HUGE     /* don't restrict the node depth
+                                              to 256 (bad for snapshots!) */
+#endif
+                ;
     if (!(doc.m->plibDocument = xmlCtxtReadMemory(m_ctxt,
                                                   (const char*)pvBuf,
                                                   (int)cbSize,
                                                   pcszFilename,
                                                   NULL,       // encoding = auto
-                                                  XML_PARSE_NOBLANKS | XML_PARSE_NONET)))
+                                                  options)))
         throw XmlError(xmlCtxtGetLastError(m_ctxt));
 
     doc.refreshInternals();
@@ -1772,6 +1845,120 @@ void XmlMemWriter::write(const Document &doc, void **ppvBuf, size_t *pcbSize)
     *ppvBuf = m_pBuf;
     *pcbSize = size;
 }
+
+
+////////////////////////////////////////////////////////////////////////////////
+//
+// XmlStringWriter class
+//
+////////////////////////////////////////////////////////////////////////////////
+
+XmlStringWriter::XmlStringWriter()
+  : m_pStrDst(NULL), m_fOutOfMemory(false)
+{
+}
+
+int XmlStringWriter::write(const Document &rDoc, RTCString *pStrDst)
+{
+    /*
+     * Clear the output string and take the global libxml2 lock so we can
+     * safely configure the output formatting.
+     */
+    pStrDst->setNull();
+
+    GlobalLock lock;
+
+    xmlIndentTreeOutput = 1;
+    xmlTreeIndentString = "  ";
+    xmlSaveNoEmptyTags  = 0;
+
+    /*
+     * Do a pass to calculate the size.
+     */
+    size_t cbOutput = 1; /* zero term */
+
+    xmlSaveCtxtPtr pSaveCtx= xmlSaveToIO(WriteCallbackForSize, CloseCallback, &cbOutput, NULL /*pszEncoding*/, XML_SAVE_FORMAT);
+    if (!pSaveCtx)
+        return VERR_NO_MEMORY;
+
+    long rcXml = xmlSaveDoc(pSaveCtx, rDoc.m->plibDocument);
+    xmlSaveClose(pSaveCtx);
+    if (rcXml == -1)
+        return VERR_GENERAL_FAILURE;
+
+    /*
+     * Try resize the string.
+     */
+    int rc = pStrDst->reserveNoThrow(cbOutput);
+    if (RT_SUCCESS(rc))
+    {
+        /*
+         * Do the real run where we feed output to the string.
+         */
+        m_pStrDst      = pStrDst;
+        m_fOutOfMemory = false;
+        pSaveCtx = xmlSaveToIO(WriteCallbackForReal, CloseCallback, this, NULL /*pszEncoding*/, XML_SAVE_FORMAT);
+        if (pSaveCtx)
+        {
+            rcXml = xmlSaveDoc(pSaveCtx, rDoc.m->plibDocument);
+            xmlSaveClose(pSaveCtx);
+            m_pStrDst = NULL;
+            if (rcXml != -1)
+            {
+                if (!m_fOutOfMemory)
+                    return VINF_SUCCESS;
+
+                rc = VERR_NO_STR_MEMORY;
+            }
+            else
+                rc = VERR_GENERAL_FAILURE;
+        }
+        else
+            rc = VERR_NO_MEMORY;
+        pStrDst->setNull();
+        m_pStrDst = NULL;
+    }
+    return rc;
+}
+
+/*static*/ int XmlStringWriter::WriteCallbackForSize(void *pvUser, const char *pachBuf, int cbToWrite)
+{
+    if (cbToWrite > 0)
+        *(size_t *)pvUser += (unsigned)cbToWrite;
+    RT_NOREF(pachBuf);
+    return cbToWrite;
+}
+
+/*static*/ int XmlStringWriter::WriteCallbackForReal(void *pvUser, const char *pachBuf, int cbToWrite)
+{
+    XmlStringWriter *pThis = static_cast<XmlStringWriter*>(pvUser);
+    if (!pThis->m_fOutOfMemory)
+    {
+        if (cbToWrite > 0)
+        {
+            try
+            {
+                pThis->m_pStrDst->append(pachBuf, (size_t)cbToWrite);
+            }
+            catch (std::bad_alloc &)
+            {
+                pThis->m_fOutOfMemory = true;
+                return -1;
+            }
+        }
+        return cbToWrite;
+    }
+    return -1; /* failure */
+}
+
+int XmlStringWriter::CloseCallback(void *pvUser)
+{
+    /* Nothing to do here. */
+    RT_NOREF(pvUser);
+    return 0;
+}
+
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -1823,6 +2010,9 @@ struct IOContext
     {
         error = x.what();
     }
+
+private:
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(IOContext); /* (shuts up C4626 and C4625 MSC warnings) */
 };
 
 struct ReadContext : IOContext
@@ -1831,6 +2021,9 @@ struct ReadContext : IOContext
         : IOContext(pcszFilename, File::Mode_Read)
     {
     }
+
+private:
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(ReadContext); /* (shuts up C4626 and C4625 MSC warnings) */
 };
 
 struct WriteContext : IOContext
@@ -1839,6 +2032,9 @@ struct WriteContext : IOContext
         : IOContext(pcszFilename, File::Mode_Overwrite, fFlush)
     {
     }
+
+private:
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(WriteContext); /* (shuts up C4626 and C4625 MSC warnings) */
 };
 
 /**
@@ -1861,13 +2057,20 @@ void XmlFileParser::read(const RTCString &strFilename,
 
     ReadContext context(pcszFilename);
     doc.m->reset();
+    const int options = XML_PARSE_NOBLANKS /* remove blank nodes */
+                      | XML_PARSE_NONET    /* forbit any network access */
+#if LIBXML_VERSION >= 20700
+                      | XML_PARSE_HUGE     /* don't restrict the node depth
+                                              to 256 (bad for snapshots!) */
+#endif
+                ;
     if (!(doc.m->plibDocument = xmlCtxtReadIO(m_ctxt,
                                               ReadCallback,
                                               CloseCallback,
                                               &context,
                                               pcszFilename,
                                               NULL,       // encoding = auto
-                                              XML_PARSE_NOBLANKS | XML_PARSE_NONET)))
+                                              options)))
         throw XmlError(xmlCtxtGetLastError(m_ctxt));
 
     doc.refreshInternals();

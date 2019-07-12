@@ -1,11 +1,10 @@
+/* $Id: UINetworkManagerIndicator.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UINetworkManagerIndicator stuff declaration
+ * VBox Qt GUI - UINetworkManagerIndicator stuff declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,7 +23,7 @@
 #include <QUuid>
 
 /* Local includes: */
-#include "QIStateIndicator.h"
+#include "QIStatusBarIndicator.h"
 
 /* Forward declarations: */
 class UINetworkRequest;
@@ -38,23 +37,24 @@ enum UINetworkManagerIndicatorState
 };
 
 /* Network-manager status-bar indicator: */
-class UINetworkManagerIndicator : public QIStateIndicator
+class UINetworkManagerIndicator : public QIStateStatusBarIndicator
 {
     Q_OBJECT;
 
-protected:
+public:
 
-    /* Allow creation of UINetworkManagerIndicator to UINetworkManager: */
-    friend class UINetworkManager;
     /* Constructor: */
     UINetworkManagerIndicator();
 
-    /* Allow adding/removing network-request tokens to UINetworkRequest: */
-    friend class UINetworkRequest;
-    /* Add network-request token: */
-    void addNetworkRequest(UINetworkRequest *pNetworkRequest);
-    /* Remove network-request token: */
-    void removeNetworkRequest(const QUuid &uuid);
+    /** Update routine. */
+    void updateAppearance();
+
+public slots:
+
+    /** Adds @a pNetworkRequest to network-manager state-indicators. */
+    void sltAddNetworkManagerIndicatorDescription(UINetworkRequest *pNetworkRequest);
+    /** Removes network-request with @a uuid from network-manager state-indicators. */
+    void sldRemoveNetworkManagerIndicatorDescription(const QUuid &uuid);
 
 private slots:
 
@@ -88,7 +88,6 @@ private:
 
     /* Update stuff: */
     void recalculateIndicatorState();
-    void updateAppearance();
 
     /* Variables: */
     QVector<QUuid> m_ids;

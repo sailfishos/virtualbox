@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/pipe.h>
 #include "internal/iprt.h"
 
@@ -58,9 +58,9 @@
 #include "internal/pipe.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct RTPIPEINTERNAL
 {
     /** Magic value (RTPIPE_MAGIC). */
@@ -79,9 +79,9 @@ typedef struct RTPIPEINTERNAL
 } RTPIPEINTERNAL;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @name RTPIPEINTERNAL::u32State defines
  * @{ */
 #define RTPIPE_POSIX_BLOCKING           UINT32_C(0x40000000)
@@ -668,6 +668,51 @@ RTDECL(int) RTPipeQueryReadable(RTPIPE hPipe, size_t *pcbReadable)
     else
         rc = RTErrConvertFromErrno(rc);
     return rc;
+}
+
+
+RTDECL(int) RTPipeQueryInfo(RTPIPE hPipe, PRTFSOBJINFO pObjInfo, RTFSOBJATTRADD enmAddAttr)
+{
+    RTPIPEINTERNAL *pThis = hPipe;
+    AssertPtrReturn(pThis, 0);
+    AssertReturn(pThis->u32Magic == RTPIPE_MAGIC, 0);
+
+    rtPipeFakeQueryInfo(pObjInfo, enmAddAttr, pThis->fRead);
+
+    if (pThis->fRead)
+    {
+        int cb = 0;
+        int rc = ioctl(pThis->fd, FIONREAD, &cb);
+        if (rc >= 0)
+            pObjInfo->cbObject = cb;
+    }
+#ifdef FIONSPACE
+    else
+    {
+        int cb = 0;
+        int rc = ioctl(pThis->fd, FIONSPACE, &cb);
+        if (rc >= 0)
+            pObjInfo->cbObject = cb;
+    }
+#endif
+
+    /** @todo Check this out on linux, solaris and darwin... (Currently going by a
+     *        FreeBSD manpage.) */
+    struct stat St;
+    if (fstat(pThis->fd, &St))
+    {
+        pObjInfo->cbAllocated = St.st_blksize;
+        if (   enmAddAttr == RTFSOBJATTRADD_NOTHING
+            || enmAddAttr == RTFSOBJATTRADD_UNIX)
+        {
+            pObjInfo->Attr.enmAdditional = RTFSOBJATTRADD_UNIX;
+            pObjInfo->Attr.u.Unix.INodeId       = St.st_ino;
+            pObjInfo->Attr.u.Unix.INodeIdDevice = St.st_dev;
+        }
+    }
+    /** @todo error handling?  */
+
+    return VINF_SUCCESS;
 }
 
 

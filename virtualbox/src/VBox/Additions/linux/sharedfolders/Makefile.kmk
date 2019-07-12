@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -22,54 +22,14 @@ include $(KBUILD_PATH)/subheader.kmk
 #
 # Populate FILES_VBOXSF_NOBIN
 #
-INSTALLS += vboxsf-mod
+INSTALLS += vboxsf-src
 include $(PATH_SUB_CURRENT)/files_vboxsf
-vboxsf-mod_INST         = $(INST_ADDITIONS)src/vboxsf/
-vboxsf-mod_SOURCES      = \
+vboxsf-src_INST         = $(INST_ADDITIONS)src/vboxsf/
+vboxsf-src_SOURCES      = \
 	$(subst $(DQUOTE),,$(FILES_VBOXSF_NOBIN))
-vboxsf-mod_EXEC_SOURCES = \
-	$(subst $(DQUOTE),,$(FILES_VBOXSF_BIN)) \
-	$(PATH_ROOT)/src/VBox/HostDrivers/linux/do_Module.symvers
+vboxsf-src_EXEC_SOURCES = \
+	$(subst $(DQUOTE),,$(FILES_VBOXSF_BIN))
 
-
-#
-# The module (for syntax checking).
-# The DEBUG_HASH* stuff is for CONFIG_DYNAMIC_DEBUG-enabled kernels
-#
-ifdef VBOX_WITH_ADDITION_DRIVERS
- SYSMODS += vboxsf
- vboxsf_TEMPLATE        = VBOXGUESTR0
- vboxsf_CFLAGS          = -fshort-wchar
- vboxsf_DEFS            = \
- 	MODULE IN_RT_R0 VBOXGUEST VBOX_WITH_HGCM \
- 	KBUILD_MODNAME=KBUILD_STR\(vboxsf\) \
- 	KBUILD_BASENAME=KBUILD_STR\(vboxsf\) \
- 	DEBUG_HASH=2 DEBUG_HASH2=3
- # detect fc6 2.6.18
- vboxsf_DEFS           += \
- 	$(foreach inc, $(VBOX_LINUX_INCS),\
- 		$(if $(wildcard $(inc)/linux/utsrelease.h),\
- 		  $(if $(shell if grep -q '"2.6.18.*fc6.*"' $(inc)/linux/utsrelease.h;\
- 		               then echo yes; fi),KERNEL_FC6,),))
- # detect rhel5 2.6.18
- vboxsf_DEFS           += \
- 	$(foreach inc, $(VBOX_LINUX_INCS),\
- 		$(if $(wildcard $(inc)/linux/utsrelease.h),\
- 		  $(if $(shell if grep -q '"2.6.18.*el5.*"' $(inc)/linux/utsrelease.h;\
- 		               then echo yes; fi),KERNEL_FC6,),))
-
- vboxsf_INCS            = \
- 	$(PATH_ROOT)/src/VBox/Additions/common/VBoxGuestLib \
- 	$(PATH_ROOT)/src/VBox/Runtime/r0drv/linux
- vboxsf_SOURCES         = \
- 	vfsmod.c \
- 	utils.c \
- 	dirops.c \
- 	lnkops.c \
- 	regops.c
- vboxsf_LIBS            = \
- 	$(VBOX_LIB_VBGL_R0)
-endif
 
 #
 # The mount util.

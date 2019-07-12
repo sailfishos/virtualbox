@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,7 +35,7 @@
 
 RT_C_DECLS_BEGIN
 
-/** @defgroup grp_rt_spc  RTCrSpc - Microsoft Authenticode
+/** @defgroup grp_rt_cr_spc  RTCrSpc - Microsoft Authenticode
  * @ingroup grp_rt_crypto
  * @{
  */
@@ -83,6 +83,15 @@ typedef union RTCRSPCPEIMAGEPAGEHASHES
         /** The hash. */
         uint8_t         abHash[RTSHA512_HASH_SIZE];
     } aSha512[1];
+
+    /** Generic view of ONE hash. */
+    struct
+    {
+        /** The file offset. */
+        uint32_t        offFile;
+        /** Variable length hash field. */
+        uint8_t         abHash[1];
+    } Generic;
 } RTCRSPCPEIMAGEPAGEHASHES;
 /** Pointer to a PE image page hash table union. */
 typedef RTCRSPCPEIMAGEPAGEHASHES *PRTCRSPCPEIMAGEPAGEHASHES;
@@ -477,6 +486,7 @@ RTDECL(int) RTCrSpcIndirectDataContent_CheckSanityEx(PCRTCRSPCINDIRECTDATACONTEN
  *
  * @returns Pointer to the attribute with the given type, NULL if not found.
  * @param   pThis               The Authenticode SpcIndirectDataContent.
+ * @param   enmType             The type of attribute to get.
  */
 RTDECL(PCRTCRSPCSERIALIZEDOBJECTATTRIBUTE)
 RTCrSpcIndirectDataContent_GetPeImageObjAttrib(PCRTCRSPCINDIRECTDATACONTENT pThis,

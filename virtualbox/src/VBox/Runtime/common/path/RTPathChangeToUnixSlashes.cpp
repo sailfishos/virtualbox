@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/path.h>
 
@@ -44,7 +44,9 @@
  */
 RTDECL(char *) RTPathChangeToUnixSlashes(char *pszPath, bool fForce)
 {
-#if !defined(RT_OS_WINDOWS) && !defined(RT_OS_OS2)
+#if defined(RT_OS_WINDOWS) || defined(RT_OS_OS2)
+    RT_NOREF_PV(fForce);
+#else
     if (fForce)
 #endif
     {

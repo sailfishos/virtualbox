@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -78,7 +78,7 @@ typedef struct REMHANDLERNOTIFICATION
         {
             RTGCPHYS            GCPhys;
             RTGCPHYS            cb;
-            PGMPHYSHANDLERTYPE  enmType;
+            PGMPHYSHANDLERKIND  enmKind;
             bool                fHasHCHandler;
         } PhysicalRegister;
 
@@ -86,7 +86,7 @@ typedef struct REMHANDLERNOTIFICATION
         {
             RTGCPHYS            GCPhys;
             RTGCPHYS            cb;
-            PGMPHYSHANDLERTYPE  enmType;
+            PGMPHYSHANDLERKIND  enmKind;
             bool                fHasHCHandler;
             bool                fRestoreAsRAM;
         } PhysicalDeregister;
@@ -96,7 +96,7 @@ typedef struct REMHANDLERNOTIFICATION
             RTGCPHYS            GCPhysOld;
             RTGCPHYS            GCPhysNew;
             RTGCPHYS            cb;
-            PGMPHYSHANDLERTYPE  enmType;
+            PGMPHYSHANDLERKIND  enmKind;
             bool                fHasHCHandler;
             bool                fRestoreAsRAM;
         } PhysicalModify;
@@ -155,8 +155,8 @@ typedef struct REM
      * It is used to prevent rescheduling on the first call. */
     uint32_t                cCanExecuteRaw;
 
-    /** Pending interrupt (~0 -> nothing). */
-    uint32_t                u32PendingInterrupt;
+    /** Pending interrupt that remR3LoadDone will assert with TRPM. */
+    uint32_t                uStateLoadPendingInterrupt;
 
     /** Number of recorded invlpg instructions. */
     uint32_t volatile       cInvalidatedPages;

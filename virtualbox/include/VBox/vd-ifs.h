@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,8 +23,8 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-#ifndef ___VBox_VD_Interfaces_h
-#define ___VBox_VD_Interfaces_h
+#ifndef ___VBox_vd_ifs_h
+#define ___VBox_vd_ifs_h
 
 #include <iprt/assert.h>
 #include <iprt/string.h>
@@ -69,7 +69,7 @@ typedef enum VDINTERFACETYPE
     VDINTERFACETYPE_QUERYRANGEUSE,
     /** Interface for the metadata traverse callback. Per-operation. */
     VDINTERFACETYPE_TRAVERSEMETADATA,
-    /** Interface for crypto opertions. Per-disk. */
+    /** Interface for crypto operations. Per-filter. */
     VDINTERFACETYPE_CRYPTO,
     /** invalid interface. */
     VDINTERFACETYPE_INVALID
@@ -142,10 +142,10 @@ DECLINLINE(PVDINTERFACE) VDInterfaceGet(PVDINTERFACE pVDIfs, VDINTERFACETYPE enm
  * @param  pszName      Name of the interface.
  * @param  enmInterface Type of the interface.
  * @param  pvUser       Opaque user data passed on every function call.
+ * @param  cbInterface  The interface size.
  * @param  ppVDIfs      Pointer to the VD interface list.
  */
-DECLINLINE(int) VDInterfaceAdd(PVDINTERFACE pInterface, const char *pszName,
-                               VDINTERFACETYPE enmInterface, void *pvUser,
+DECLINLINE(int) VDInterfaceAdd(PVDINTERFACE pInterface, const char *pszName, VDINTERFACETYPE enmInterface, void *pvUser,
                                size_t cbInterface, PVDINTERFACE *ppVDIfs)
 {
     /* Argument checks. */
@@ -239,11 +239,12 @@ typedef struct VDINTERFACEERROR
      *
      * @param   pvUser          The opaque data passed on container creation.
      * @param   rc              The VBox error code.
-     * @param   RT_SRC_POS_DECL Use RT_SRC_POS.
+     * @param   SRC_POS         Use RT_SRC_POS.
      * @param   pszFormat       Error message format string.
      * @param   va              Error message arguments.
      */
-    DECLR3CALLBACKMEMBER(void, pfnError, (void *pvUser, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va));
+    DECLR3CALLBACKMEMBER(void, pfnError, (void *pvUser, int rc, RT_SRC_POS_DECL,
+                                          const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(6, 0));
 
     /**
      * Informational message callback. May be NULL. Used e.g. in
@@ -254,7 +255,7 @@ typedef struct VDINTERFACEERROR
      * @param   pszFormat       Message format string.
      * @param   va              Message arguments.
      */
-    DECLR3CALLBACKMEMBER(int, pfnMessage, (void *pvUser, const char *pszFormat, va_list va));
+    DECLR3CALLBACKMEMBER(int, pfnMessage, (void *pvUser, const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(2, 0));
 
 } VDINTERFACEERROR, *PVDINTERFACEERROR;
 
@@ -283,12 +284,12 @@ DECLINLINE(PVDINTERFACEERROR) VDIfErrorGet(PVDINTERFACE pVDIfs)
  * @returns VBox status code.
  * @param   pIfError           The error interface.
  * @param   rc                 The status code.
- * @param   RT_SRC_POS_DECL    The position in the source code.
+ * @param   SRC_POS            The position in the source code.
  * @param   pszFormat          The format string to pass.
  * @param   ...                Arguments to the format string.
  */
-DECLINLINE(int) vdIfError(PVDINTERFACEERROR pIfError, int rc, RT_SRC_POS_DECL,
-                          const char *pszFormat, ...)
+DECLINLINE(int) RT_IPRT_FORMAT_ATTR(6, 7) vdIfError(PVDINTERFACEERROR pIfError, int rc, RT_SRC_POS_DECL,
+                                                    const char *pszFormat, ...)
 {
     va_list va;
     va_start(va, pszFormat);
@@ -306,7 +307,7 @@ DECLINLINE(int) vdIfError(PVDINTERFACEERROR pIfError, int rc, RT_SRC_POS_DECL,
  * @param   pszFormat          The format string to pass.
  * @param   ...                Arguments to the format string.
  */
-DECLINLINE(int) vdIfErrorMessage(PVDINTERFACEERROR pIfError, const char *pszFormat, ...)
+DECLINLINE(int) RT_IPRT_FORMAT_ATTR(2, 3) vdIfErrorMessage(PVDINTERFACEERROR pIfError, const char *pszFormat, ...)
 {
     int rc = VINF_SUCCESS;
     va_list va;
@@ -348,28 +349,28 @@ typedef struct VDINTERFACEIO
      * @param   pvUser          The opaque data passed on container creation.
      * @param   pszLocation     Name of the location to open.
      * @param   fOpen           Flags for opening the backend.
-     *                          See RTFILE_O_* #defines, inventing another set
+     *                          See RTFILE_O_* \#defines, inventing another set
      *                          of open flags is not worth the mapping effort.
      * @param   pfnCompleted    The callback which is called whenever a task
      *                          completed. The backend has to pass the user data
      *                          of the request initiator (ie the one who calls
      *                          VDAsyncRead or VDAsyncWrite) in pvCompletion
      *                          if this is NULL.
-     * @param   ppStorage       Where to store the opaque storage handle.
+     * @param   ppvStorage      Where to store the opaque storage handle.
      */
     DECLR3CALLBACKMEMBER(int, pfnOpen, (void *pvUser, const char *pszLocation,
                                         uint32_t fOpen,
                                         PFNVDCOMPLETED pfnCompleted,
-                                        void **ppStorage));
+                                        void **ppvStorage));
 
     /**
      * Close callback.
      *
      * @return  VBox status code.
      * @param   pvUser          The opaque data passed on container creation.
-     * @param   pStorage        The opaque storage handle to close.
+     * @param   pvStorage       The opaque storage handle to close.
      */
-    DECLR3CALLBACKMEMBER(int, pfnClose, (void *pvUser, void *pStorage));
+    DECLR3CALLBACKMEMBER(int, pfnClose, (void *pvUser, void *pvStorage));
 
     /**
      * Delete callback.
@@ -417,10 +418,10 @@ typedef struct VDINTERFACEIO
      *
      * @return  VBox status code.
      * @param   pvUser          The opaque data passed on container creation.
-     * @param   pStorage        The opaque storage handle to close.
-     * @param   pcbSize         Where to store the size of the storage backend.
+     * @param   pvStorage       The opaque storage handle to get the size from.
+     * @param   pcb             Where to store the size of the storage backend.
      */
-    DECLR3CALLBACKMEMBER(int, pfnGetSize, (void *pvUser, void *pStorage, uint64_t *pcbSize));
+    DECLR3CALLBACKMEMBER(int, pfnGetSize, (void *pvUser, void *pvStorage, uint64_t *pcb));
 
     /**
      * Sets the size of the opened storage backend if possible.
@@ -428,54 +429,78 @@ typedef struct VDINTERFACEIO
      * @return  VBox status code.
      * @retval  VERR_NOT_SUPPORTED if the backend does not support this operation.
      * @param   pvUser          The opaque data passed on container creation.
-     * @param   pStorage        The opaque storage handle to close.
-     * @param   cbSize          The new size of the image.
+     * @param   pvStorage       The opaque storage handle to set the size for.
+     * @param   cb              The new size of the image.
+     *
+     * @note Depending on the host the underlying storage (backing file, etc.)
+     *       might not have all required storage allocated (sparse file) which
+     *       can delay writes or fail with a not enough free space error if there
+     *       is not enough space on the storage medium when writing to the range for
+     *       the first time.
+     *       Use VDINTERFACEIO::pfnSetAllocationSize to make sure the storage is
+     *       really alloacted.
      */
-    DECLR3CALLBACKMEMBER(int, pfnSetSize, (void *pvUser, void *pStorage, uint64_t cbSize));
+    DECLR3CALLBACKMEMBER(int, pfnSetSize, (void *pvUser, void *pvStorage, uint64_t cb));
+
+    /**
+     * Sets the size of the opened storage backend making sure the given size
+     * is really allocated.
+     *
+     * @return VBox status code.
+     * @retval VERR_NOT_SUPPORTED if the implementer of the interface doesn't support
+     *         this method.
+     * @param  pvUser          The opaque data passed on container creation.
+     * @param  pvStorage       The storage handle.
+     * @param  cbSize          The new size of the image.
+     * @param  fFlags          Flags for controlling the allocation strategy.
+     *                         Reserved for future use, MBZ.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnSetAllocationSize, (void *pvUser, void *pvStorage,
+                                                     uint64_t cbSize, uint32_t fFlags));
 
     /**
      * Synchronous write callback.
      *
      * @return  VBox status code.
      * @param   pvUser          The opaque data passed on container creation.
-     * @param   pStorage        The storage handle to use.
-     * @param   uOffset         The offset to start from.
-     * @param   pvBuffer        Pointer to the bits need to be written.
-     * @param   cbBuffer        How many bytes to write.
+     * @param   pvStorage       The storage handle to use.
+     * @param   off             The offset to start from.
+     * @param   pvBuf           Pointer to the bits need to be written.
+     * @param   cbToWrite       How many bytes to write.
      * @param   pcbWritten      Where to store how many bytes were actually written.
      */
-    DECLR3CALLBACKMEMBER(int, pfnWriteSync, (void *pvUser, void *pStorage, uint64_t uOffset,
-                                             const void *pvBuffer, size_t cbBuffer, size_t *pcbWritten));
+    DECLR3CALLBACKMEMBER(int, pfnWriteSync, (void *pvUser, void *pvStorage, uint64_t off,
+                                             const void *pvBuf, size_t cbToWrite, size_t *pcbWritten));
 
     /**
      * Synchronous read callback.
      *
      * @return  VBox status code.
      * @param   pvUser          The opaque data passed on container creation.
-     * @param   pStorage        The storage handle to use.
-     * @param   uOffset         The offset to start from.
-     * @param   pvBuffer        Where to store the read bits.
-     * @param   cbBuffer        How many bytes to read.
+     * @param   pvStorage       The storage handle to use.
+     * @param   off             The offset to start from.
+     * @param   pvBuf           Where to store the read bits.
+     * @param   cbToRead        How many bytes to read.
      * @param   pcbRead         Where to store how many bytes were actually read.
      */
-    DECLR3CALLBACKMEMBER(int, pfnReadSync, (void *pvUser, void *pStorage, uint64_t uOffset,
-                                            void *pvBuffer, size_t cbBuffer, size_t *pcbRead));
+    DECLR3CALLBACKMEMBER(int, pfnReadSync, (void *pvUser, void *pvStorage, uint64_t off,
+                                            void *pvBuf, size_t cbToRead, size_t *pcbRead));
 
     /**
      * Flush data to the storage backend.
      *
      * @return  VBox status code.
      * @param   pvUser          The opaque data passed on container creation.
-     * @param   pStorage        The storage handle to flush.
+     * @param   pvStorage       The storage handle to flush.
      */
-    DECLR3CALLBACKMEMBER(int, pfnFlushSync, (void *pvUser, void *pStorage));
+    DECLR3CALLBACKMEMBER(int, pfnFlushSync, (void *pvUser, void *pvStorage));
 
     /**
      * Initiate an asynchronous read request.
      *
      * @return  VBox status code.
      * @param   pvUser         The opaque user data passed on container creation.
-     * @param   pStorage       The storage handle.
+     * @param   pvStorage      The storage handle.
      * @param   uOffset        The offset to start reading from.
      * @param   paSegments     Scatter gather list to store the data in.
      * @param   cSegments      Number of segments in the list.
@@ -483,7 +508,7 @@ typedef struct VDINTERFACEIO
      * @param   pvCompletion   The opaque user data which is returned upon completion.
      * @param   ppTask         Where to store the opaque task handle.
      */
-    DECLR3CALLBACKMEMBER(int, pfnReadAsync, (void *pvUser, void *pStorage, uint64_t uOffset,
+    DECLR3CALLBACKMEMBER(int, pfnReadAsync, (void *pvUser, void *pvStorage, uint64_t uOffset,
                                              PCRTSGSEG paSegments, size_t cSegments,
                                              size_t cbRead, void *pvCompletion,
                                              void **ppTask));
@@ -493,7 +518,7 @@ typedef struct VDINTERFACEIO
      *
      * @return  VBox status code.
      * @param   pvUser         The opaque user data passed on conatiner creation.
-     * @param   pStorage       The storage handle.
+     * @param   pvStorage      The storage handle.
      * @param   uOffset        The offset to start writing to.
      * @param   paSegments     Scatter gather list of the data to write
      * @param   cSegments      Number of segments in the list.
@@ -501,7 +526,7 @@ typedef struct VDINTERFACEIO
      * @param   pvCompletion   The opaque user data which is returned upon completion.
      * @param   ppTask         Where to store the opaque task handle.
      */
-    DECLR3CALLBACKMEMBER(int, pfnWriteAsync, (void *pvUser, void *pStorage, uint64_t uOffset,
+    DECLR3CALLBACKMEMBER(int, pfnWriteAsync, (void *pvUser, void *pvStorage, uint64_t uOffset,
                                               PCRTSGSEG paSegments, size_t cSegments,
                                               size_t cbWrite, void *pvCompletion,
                                               void **ppTask));
@@ -511,11 +536,11 @@ typedef struct VDINTERFACEIO
      *
      * @return  VBox status code.
      * @param   pvUser          The opaque data passed on container creation.
-     * @param   pStorage        The storage handle to flush.
+     * @param   pvStorage       The storage handle to flush.
      * @param   pvCompletion    The opaque user data which is returned upon completion.
      * @param   ppTask          Where to store the opaque task handle.
      */
-    DECLR3CALLBACKMEMBER(int, pfnFlushAsync, (void *pvUser, void *pStorage,
+    DECLR3CALLBACKMEMBER(int, pfnFlushAsync, (void *pvUser, void *pvStorage,
                                               void *pvCompletion, void **ppTask));
 
 } VDINTERFACEIO, *PVDINTERFACEIO;
@@ -625,6 +650,8 @@ DECLINLINE(int) vdIfIoFileFlushSync(PVDINTERFACEIO pIfIo, void *pStorage)
  */
 VBOXDDU_DECL(int) VDIfCreateVfsStream(PVDINTERFACEIO pVDIfsIo, void *pvStorage, uint32_t fFlags, PRTVFSIOSTREAM phVfsIos);
 
+struct VDINTERFACEIOINT;
+
 /**
  * Create a VFS file handle around a VD I/O interface.
  *
@@ -642,7 +669,31 @@ VBOXDDU_DECL(int) VDIfCreateVfsStream(PVDINTERFACEIO pVDIfsIo, void *pvStorage, 
  * @param   fFlags          RTFILE_O_XXX, access mask requied.
  * @param   phVfsFile       Where to return the VFS file handle on success.
  */
-VBOXDDU_DECL(int) VDIfCreateVfsFile(PVDINTERFACEIO pVDIfs, struct VDINTERFACEIOINT *pVDIfsInt, void *pvStorage, uint32_t fFlags, PRTVFSFILE phVfsFile);
+VBOXDDU_DECL(int) VDIfCreateVfsFile(PVDINTERFACEIO pVDIfs, struct VDINTERFACEIOINT *pVDIfsInt, void *pvStorage,
+                                    uint32_t fFlags, PRTVFSFILE phVfsFile);
+
+/**
+ * Creates an VD I/O interface wrapper around an IPRT VFS I/O stream.
+ *
+ * @return  VBox status code.
+ * @param   hVfsIos         The IPRT VFS I/O stream handle. The handle will be
+ *                          retained by the returned I/O interface (released on
+ *                          close or destruction).
+ * @param   fAccessMode     The access mode (RTFILE_O_ACCESS_MASK) to accept.
+ * @param   ppIoIf          Where to return the pointer to the VD I/O interface.
+ *                          This must be passed to VDIfDestroyFromVfsStream().
+ */
+VBOXDDU_DECL(int) VDIfCreateFromVfsStream(RTVFSIOSTREAM hVfsIos, uint32_t fAccessMode, PVDINTERFACEIO *ppIoIf);
+
+/**
+ * Destroys the VD I/O interface returned by VDIfCreateFromVfsStream.
+ *
+ * @returns VBox status code.
+ * @param   pIoIf           The I/O interface pointer returned by
+ *                          VDIfCreateFromVfsStream.  NULL will be quietly
+ *                          ignored.
+ */
+VBOXDDU_DECL(int) VDIfDestroyFromVfsStream(PVDINTERFACEIO pIoIf);
 
 
 /**
@@ -651,7 +702,7 @@ VBOXDDU_DECL(int) VDIfCreateVfsFile(PVDINTERFACEIO pVDIfs, struct VDINTERFACEIOI
  *
  * @return  VBox status code.
  * @param   pvUser          The opaque user data associated with this interface.
- * @param   uPercent        Completion percentage.
+ * @param   uPercentage     Completion percentage.
  */
 typedef DECLCALLBACK(int) FNVDPROGRESS(void *pvUser, unsigned uPercentage);
 /** Pointer to FNVDPROGRESS() */
@@ -676,6 +727,9 @@ typedef struct VDINTERFACEPROGRESS
 
 } VDINTERFACEPROGRESS, *PVDINTERFACEPROGRESS;
 
+/** Initializer for VDINTERFACEPROGRESS.  */
+#define VDINTERFACEPROGRESS_INITALIZER(a_pfnProgress) { { 0, NULL, NULL, VDINTERFACETYPE_INVALID, 0, NULL }, a_pfnProgress }
+
 /**
  * Get progress interface from interface list.
  *
@@ -695,6 +749,19 @@ DECLINLINE(PVDINTERFACEPROGRESS) VDIfProgressGet(PVDINTERFACE pVDIfs)
     return (PVDINTERFACEPROGRESS)pIf;
 }
 
+/**
+ * Signal new progress information to the frontend.
+ *
+ * @returns VBox status code.
+ * @param   pIfProgress        The progress interface.
+ * @param   uPercentage        Completion percentage.
+ */
+DECLINLINE(int) vdIfProgress(PVDINTERFACEPROGRESS pIfProgress, unsigned uPercentage)
+{
+    if (pIfProgress)
+        return pIfProgress->pfnProgress(pIfProgress->Core.pvUser, uPercentage);
+    return VINF_SUCCESS;
+}
 
 /**
  * Configuration information interface
@@ -794,6 +861,21 @@ DECLINLINE(bool) VDCFGAreKeysValid(PVDINTERFACECONFIG pCfgIf, const char *pszzVa
 }
 
 /**
+ * Checks whether a given key is existing.
+ *
+ * @return  true if the key exists.
+ * @return  false if the key does not exist.
+ * @param   pCfgIf      Pointer to configuration callback table.
+ * @param   pszName     Name of the key.
+ */
+DECLINLINE(bool) VDCFGIsKeyExisting(PVDINTERFACECONFIG pCfgIf, const char *pszName)
+{
+    size_t cb = 0;
+    int rc = pCfgIf->pfnQuerySize(pCfgIf->Core.pvUser, pszName, &cb);
+    return rc == VERR_CFGM_VALUE_NOT_FOUND ? false : true;
+}
+
+/**
  * Query configuration, unsigned 64-bit integer value with default.
  *
  * @return  VBox status code.
@@ -817,6 +899,27 @@ DECLINLINE(int) VDCFGQueryU64Def(PVDINTERFACECONFIG pCfgIf,
         rc = VINF_SUCCESS;
         *pu64 = u64Def;
     }
+    return rc;
+}
+
+/**
+ * Query configuration, unsigned 64-bit integer value.
+ *
+ * @return  VBox status code.
+ * @param   pCfgIf      Pointer to configuration callback table.
+ * @param   pszName     Name of an integer value
+ * @param   pu64        Where to store the value.
+ */
+DECLINLINE(int) VDCFGQueryU64(PVDINTERFACECONFIG pCfgIf, const char *pszName,
+                              uint64_t *pu64)
+{
+    char aszBuf[32];
+    int rc = pCfgIf->pfnQuery(pCfgIf->Core.pvUser, pszName, aszBuf, sizeof(aszBuf));
+    if (RT_SUCCESS(rc))
+    {
+        rc = RTStrToUInt64Full(aszBuf, 0, pu64);
+    }
+
     return rc;
 }
 
@@ -860,6 +963,24 @@ DECLINLINE(int) VDCFGQueryBoolDef(PVDINTERFACECONFIG pCfgIf,
 {
     uint64_t u64;
     int rc = VDCFGQueryU64Def(pCfgIf, pszName, &u64, fDef);
+    if (RT_SUCCESS(rc))
+        *pf = u64 ? true : false;
+    return rc;
+}
+
+/**
+ * Query configuration, bool value.
+ *
+ * @return  VBox status code.
+ * @param   pCfgIf      Pointer to configuration callback table.
+ * @param   pszName     Name of an integer value
+ * @param   pf          Where to store the value.
+ */
+DECLINLINE(int) VDCFGQueryBool(PVDINTERFACECONFIG pCfgIf, const char *pszName,
+                               bool *pf)
+{
+    uint64_t u64;
+    int rc = VDCFGQueryU64(pCfgIf, pszName, &u64);
     if (RT_SUCCESS(rc))
         *pf = u64 ? true : false;
     return rc;
@@ -1035,24 +1156,24 @@ typedef struct VDINTERFACETCPNET
      *
      * @return  iprt status code.
      * @retval  VERR_NOT_SUPPORTED if the combination of flags is not supported.
-     * @param   fFlags    Combination of the VD_INTERFACETCPNET_CONNECT_* #defines.
-     * @param   pSock     Where to store the handle.
+     * @param   fFlags    Combination of the VD_INTERFACETCPNET_CONNECT_* \#defines.
+     * @param   phVdSock  Where to store the handle.
      */
-    DECLR3CALLBACKMEMBER(int, pfnSocketCreate, (uint32_t fFlags, PVDSOCKET pSock));
+    DECLR3CALLBACKMEMBER(int, pfnSocketCreate, (uint32_t fFlags, PVDSOCKET phVdSock));
 
     /**
      * Destroys the socket.
      *
      * @return iprt status code.
-     * @param  Sock       Socket descriptor.
+     * @param  hVdSock    Socket handle (/ pointer).
      */
-    DECLR3CALLBACKMEMBER(int, pfnSocketDestroy, (VDSOCKET Sock));
+    DECLR3CALLBACKMEMBER(int, pfnSocketDestroy, (VDSOCKET hVdSock));
 
     /**
      * Connect as a client to a TCP port.
      *
      * @return  iprt status code.
-     * @param   Sock            Socket descriptor.
+     * @param   hVdSock         Socket handle (/ pointer)..
      * @param   pszAddress      The address to connect to.
      * @param   uPort           The port to connect to.
      * @param   cMillies        Number of milliseconds to wait for the connect attempt to complete.
@@ -1060,135 +1181,135 @@ typedef struct VDINTERFACETCPNET
      *                          Use RT_SOCKETCONNECT_DEFAULT_WAIT to wait for the default time
      *                          configured on the running system.
      */
-    DECLR3CALLBACKMEMBER(int, pfnClientConnect, (VDSOCKET Sock, const char *pszAddress, uint32_t uPort,
+    DECLR3CALLBACKMEMBER(int, pfnClientConnect, (VDSOCKET hVdSock, const char *pszAddress, uint32_t uPort,
                                                  RTMSINTERVAL cMillies));
 
     /**
      * Close a TCP connection.
      *
      * @return  iprt status code.
-     * @param   Sock            Socket descriptor.
+     * @param   hVdSock         Socket handle (/ pointer).
      */
-    DECLR3CALLBACKMEMBER(int, pfnClientClose, (VDSOCKET Sock));
+    DECLR3CALLBACKMEMBER(int, pfnClientClose, (VDSOCKET hVdSock));
 
     /**
      * Returns whether the socket is currently connected to the client.
      *
      * @returns true if the socket is connected.
      *          false otherwise.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      */
-    DECLR3CALLBACKMEMBER(bool, pfnIsClientConnected, (VDSOCKET Sock));
+    DECLR3CALLBACKMEMBER(bool, pfnIsClientConnected, (VDSOCKET hVdSock));
 
     /**
      * Socket I/O multiplexing.
      * Checks if the socket is ready for reading.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      * @param   cMillies    Number of milliseconds to wait for the socket.
      *                      Use RT_INDEFINITE_WAIT to wait for ever.
      */
-    DECLR3CALLBACKMEMBER(int, pfnSelectOne, (VDSOCKET Sock, RTMSINTERVAL cMillies));
+    DECLR3CALLBACKMEMBER(int, pfnSelectOne, (VDSOCKET hVdSock, RTMSINTERVAL cMillies));
 
     /**
      * Receive data from a socket.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      * @param   pvBuffer    Where to put the data we read.
      * @param   cbBuffer    Read buffer size.
      * @param   pcbRead     Number of bytes read.
      *                      If NULL the entire buffer will be filled upon successful return.
      *                      If not NULL a partial read can be done successfully.
      */
-    DECLR3CALLBACKMEMBER(int, pfnRead, (VDSOCKET Sock, void *pvBuffer, size_t cbBuffer, size_t *pcbRead));
+    DECLR3CALLBACKMEMBER(int, pfnRead, (VDSOCKET hVdSock, void *pvBuffer, size_t cbBuffer, size_t *pcbRead));
 
     /**
      * Send data to a socket.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      * @param   pvBuffer    Buffer to write data to socket.
      * @param   cbBuffer    How much to write.
      */
-    DECLR3CALLBACKMEMBER(int, pfnWrite, (VDSOCKET Sock, const void *pvBuffer, size_t cbBuffer));
+    DECLR3CALLBACKMEMBER(int, pfnWrite, (VDSOCKET hVdSock, const void *pvBuffer, size_t cbBuffer));
 
     /**
      * Send data from scatter/gather buffer to a socket.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
-     * @param   pSgBuffer   Scatter/gather buffer to write data to socket.
+     * @param   hVdSock     Socket handle (/ pointer).
+     * @param   pSgBuf      Scatter/gather buffer to write data to socket.
      */
-    DECLR3CALLBACKMEMBER(int, pfnSgWrite, (VDSOCKET Sock, PCRTSGBUF pSgBuffer));
+    DECLR3CALLBACKMEMBER(int, pfnSgWrite, (VDSOCKET hVdSock, PCRTSGBUF pSgBuf));
 
     /**
      * Receive data from a socket - not blocking.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      * @param   pvBuffer    Where to put the data we read.
      * @param   cbBuffer    Read buffer size.
      * @param   pcbRead     Number of bytes read.
      */
-    DECLR3CALLBACKMEMBER(int, pfnReadNB, (VDSOCKET Sock, void *pvBuffer, size_t cbBuffer, size_t *pcbRead));
+    DECLR3CALLBACKMEMBER(int, pfnReadNB, (VDSOCKET hVdSock, void *pvBuffer, size_t cbBuffer, size_t *pcbRead));
 
     /**
      * Send data to a socket - not blocking.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      * @param   pvBuffer    Buffer to write data to socket.
      * @param   cbBuffer    How much to write.
      * @param   pcbWritten  Number of bytes written.
      */
-    DECLR3CALLBACKMEMBER(int, pfnWriteNB, (VDSOCKET Sock, const void *pvBuffer, size_t cbBuffer, size_t *pcbWritten));
+    DECLR3CALLBACKMEMBER(int, pfnWriteNB, (VDSOCKET hVdSock, const void *pvBuffer, size_t cbBuffer, size_t *pcbWritten));
 
     /**
      * Send data from scatter/gather buffer to a socket - not blocking.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
-     * @param   pSgBuffer   Scatter/gather buffer to write data to socket.
+     * @param   hVdSock     Socket handle (/ pointer).
+     * @param   pSgBuf      Scatter/gather buffer to write data to socket.
      * @param   pcbWritten  Number of bytes written.
      */
-    DECLR3CALLBACKMEMBER(int, pfnSgWriteNB, (VDSOCKET Sock, PRTSGBUF pSgBuffer, size_t *pcbWritten));
+    DECLR3CALLBACKMEMBER(int, pfnSgWriteNB, (VDSOCKET hVdSock, PRTSGBUF pSgBuf, size_t *pcbWritten));
 
     /**
      * Flush socket write buffers.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      */
-    DECLR3CALLBACKMEMBER(int, pfnFlush, (VDSOCKET Sock));
+    DECLR3CALLBACKMEMBER(int, pfnFlush, (VDSOCKET hVdSock));
 
     /**
      * Enables or disables delaying sends to coalesce packets.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      * @param   fEnable     When set to true enables coalescing.
      */
-    DECLR3CALLBACKMEMBER(int, pfnSetSendCoalescing, (VDSOCKET Sock, bool fEnable));
+    DECLR3CALLBACKMEMBER(int, pfnSetSendCoalescing, (VDSOCKET hVdSock, bool fEnable));
 
     /**
      * Gets the address of the local side.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      * @param   pAddr       Where to store the local address on success.
      */
-    DECLR3CALLBACKMEMBER(int, pfnGetLocalAddress, (VDSOCKET Sock, PRTNETADDR pAddr));
+    DECLR3CALLBACKMEMBER(int, pfnGetLocalAddress, (VDSOCKET hVdSock, PRTNETADDR pAddr));
 
     /**
      * Gets the address of the other party.
      *
      * @return  iprt status code.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     Socket handle (/ pointer).
      * @param   pAddr       Where to store the peer address on success.
      */
-    DECLR3CALLBACKMEMBER(int, pfnGetPeerAddress, (VDSOCKET Sock, PRTNETADDR pAddr));
+    DECLR3CALLBACKMEMBER(int, pfnGetPeerAddress, (VDSOCKET hVdSock, PRTNETADDR pAddr));
 
     /**
      * Socket I/O multiplexing - extended version which can be woken up.
@@ -1196,22 +1317,22 @@ typedef struct VDINTERFACETCPNET
      *
      * @return  iprt status code.
      * @retval  VERR_INTERRUPTED if the thread was woken up by a pfnPoke call.
-     * @param   Sock        Socket descriptor.
+     * @param   hVdSock     VD Socket handle(/pointer).
      * @param   fEvents     Mask of events to wait for.
      * @param   pfEvents    Where to store the received events.
      * @param   cMillies    Number of milliseconds to wait for the socket.
      *                      Use RT_INDEFINITE_WAIT to wait for ever.
      */
-    DECLR3CALLBACKMEMBER(int, pfnSelectOneEx, (VDSOCKET Sock, uint32_t fEvents,
+    DECLR3CALLBACKMEMBER(int, pfnSelectOneEx, (VDSOCKET hVdSock, uint32_t fEvents,
                                                uint32_t *pfEvents, RTMSINTERVAL cMillies));
 
     /**
      * Wakes up the thread waiting in pfnSelectOneEx.
      *
      * @return iprt status code.
-     * @param  Sock        Socket descriptor.
+     * @param  hVdSock      VD Socket handle(/pointer).
      */
-    DECLR3CALLBACKMEMBER(int, pfnPoke, (VDSOCKET Sock));
+    DECLR3CALLBACKMEMBER(int, pfnPoke, (VDSOCKET hVdSock));
 
 } VDINTERFACETCPNET, *PVDINTERFACETCPNET;
 
@@ -1242,9 +1363,9 @@ DECLINLINE(PVDINTERFACETCPNET) VDIfTcpNetGet(PVDINTERFACE pVDIfs)
  * the HDD container has been created, and they must stop before destroying the
  * container. Opening or closing images is covered by the synchronization, but
  * that does not mean it is safe to close images while a thread executes
- * <link to="VDMerge"/> or <link to="VDCopy"/> operating on these images.
- * Making them safe would require the lock to be held during the entire
- * operation, which prevents other concurrent acitivities.
+ * #VDMerge or #VDCopy operating on these images. Making them safe would require
+ * the lock to be held during the entire operation, which prevents other
+ * concurrent acitivities.
  *
  * @note Right now this is kept as simple as possible, and does not even
  * attempt to provide enough information to allow e.g. concurrent write
@@ -1384,11 +1505,64 @@ typedef struct VDINTERFACECRYPTO
      * @param   pvUser          The opaque user data associated with this interface.
      * @param   pszId           The alias/id for the key to release.
      *
-     * @note: It is advised to release the key whenever it is not used anymore so the entity
-     *        storing the key can do anything to make retrieving the key from memory more
-     *        difficult like scrambling the memory buffer for instance.
+     * @note  It is advised to release the key whenever it is not used anymore so
+     *        the entity storing the key can do anything to make retrieving the key
+     *        from memory more difficult like scrambling the memory buffer for
+     *        instance.
      */
     DECLR3CALLBACKMEMBER(int, pfnKeyRelease, (void *pvUser, const char *pszId));
+
+    /**
+     * Gets a reference to the password identified by the given ID to open a key store supplied through the config interface.
+     *
+     * @returns VBox status code.
+     * @param   pvUser          The opaque user data associated with this interface.
+     * @param   pszId           The alias/id for the password to retain.
+     * @param   ppszPassword    Where to store the password to unlock the key store on success.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnKeyStorePasswordRetain, (void *pvUser, const char *pszId, const char **ppszPassword));
+
+    /**
+     * Releases a reference of the password previously acquired with VDINTERFACECRYPTO::pfnKeyStorePasswordRetain()
+     * identified by the given ID.
+     *
+     * @returns VBox status code.
+     * @param   pvUser          The opaque user data associated with this interface.
+     * @param   pszId           The alias/id for the password to release.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnKeyStorePasswordRelease, (void *pvUser, const char *pszId));
+
+    /**
+     * Saves a key store.
+     *
+     * @returns VBox status code.
+     * @param   pvUser          The opaque user data associated with this interface.
+     * @param   pvKeyStore      The key store to save.
+     * @param   cbKeyStore      Size of the key store in bytes.
+     *
+     * @note The format is filter specific and should be treated as binary data.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnKeyStoreSave, (void *pvUser, const void *pvKeyStore, size_t cbKeyStore));
+
+    /**
+     * Returns the parameters after the key store was loaded successfully.
+     *
+     * @returns VBox status code.
+     * @param   pvUser          The opaque user data associated with this interface.
+     * @param   pszCipher       The cipher identifier the DEK is used for.
+     * @param   pbDek           The raw DEK which was contained in the key store loaded by
+     *                          VDINTERFACECRYPTO::pfnKeyStoreLoad().
+     * @param   cbDek           The size of the DEK.
+     *
+     * @note The provided pointer to the DEK is only valid until this call returns.
+     *       The content might change afterwards with out notice (when scrambling the key
+     *       for further protection for example) or might be even freed.
+     *
+     * @note This method is optional and can be NULL if the caller does not require the
+     *       parameters.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnKeyStoreReturnParameters, (void *pvUser, const char *pszCipher,
+                                                            const uint8_t *pbDek, size_t cbDek));
 
 } VDINTERFACECRYPTO, *PVDINTERFACECRYPTO;
 
@@ -1413,7 +1587,14 @@ DECLINLINE(PVDINTERFACECRYPTO) VDIfCryptoGet(PVDINTERFACE pVDIfs)
 }
 
 /**
- * @copydoc VDINTERFACECRYPTOKEYS::pfnKeyRetain
+ * Retains a key identified by the ID. The caller will only hold a reference
+ * to the key and must not modify the key buffer in any way.
+ *
+ * @returns VBox status code.
+ * @param   pIfCrypto       Pointer to the crypto interface.
+ * @param   pszId           The alias/id for the key to retrieve.
+ * @param   ppbKey          Where to store the pointer to the key buffer on success.
+ * @param   pcbKey          Where to store the size of the key in bytes on success.
  */
 DECLINLINE(int) vdIfCryptoKeyRetain(PVDINTERFACECRYPTO pIfCrypto, const char *pszId, const uint8_t **ppbKey, size_t *pcbKey)
 {
@@ -1421,12 +1602,90 @@ DECLINLINE(int) vdIfCryptoKeyRetain(PVDINTERFACECRYPTO pIfCrypto, const char *ps
 }
 
 /**
- * @copydoc VDINTERFACECRYPTOKEYS::pfnKeyRelease
+ * Releases one reference of the key identified by the given identifier.
+ * The caller must not access the key buffer after calling this operation.
+ *
+ * @returns VBox status code.
+ * @param   pIfCrypto       Pointer to the crypto interface.
+ * @param   pszId           The alias/id for the key to release.
+ *
+ * @note  It is advised to release the key whenever it is not used anymore so
+ *        the entity storing the key can do anything to make retrieving the key
+ *        from memory more difficult like scrambling the memory buffer for
+ *        instance.
  */
 DECLINLINE(int) vdIfCryptoKeyRelease(PVDINTERFACECRYPTO pIfCrypto, const char *pszId)
 {
     return pIfCrypto->pfnKeyRelease(pIfCrypto->Core.pvUser, pszId);
 }
+
+/**
+ * Gets a reference to the password identified by the given ID to open a key store supplied through the config interface.
+ *
+ * @returns VBox status code.
+ * @param   pIfCrypto       Pointer to the crypto interface.
+ * @param   pszId           The alias/id for the password to retain.
+ * @param   ppszPassword    Where to store the password to unlock the key store on success.
+ */
+DECLINLINE(int) vdIfCryptoKeyStorePasswordRetain(PVDINTERFACECRYPTO pIfCrypto, const char *pszId, const char **ppszPassword)
+{
+    return pIfCrypto->pfnKeyStorePasswordRetain(pIfCrypto->Core.pvUser, pszId, ppszPassword);
+}
+
+/**
+ * Releases a reference of the password previously acquired with VDINTERFACECRYPTO::pfnKeyStorePasswordRetain()
+ * identified by the given ID.
+ *
+ * @returns VBox status code.
+ * @param   pIfCrypto       Pointer to the crypto interface.
+ * @param   pszId           The alias/id for the password to release.
+ */
+DECLINLINE(int) vdIfCryptoKeyStorePasswordRelease(PVDINTERFACECRYPTO pIfCrypto, const char *pszId)
+{
+    return pIfCrypto->pfnKeyStorePasswordRelease(pIfCrypto->Core.pvUser, pszId);
+}
+
+/**
+ * Saves a key store.
+ *
+ * @returns VBox status code.
+ * @param   pIfCrypto       Pointer to the crypto interface.
+ * @param   pvKeyStore      The key store to save.
+ * @param   cbKeyStore      Size of the key store in bytes.
+ *
+ * @note The format is filter specific and should be treated as binary data.
+ */
+DECLINLINE(int) vdIfCryptoKeyStoreSave(PVDINTERFACECRYPTO pIfCrypto, const void *pvKeyStore, size_t cbKeyStore)
+{
+    return pIfCrypto->pfnKeyStoreSave(pIfCrypto->Core.pvUser, pvKeyStore, cbKeyStore);
+}
+
+/**
+ * Returns the parameters after the key store was loaded successfully.
+ *
+ * @returns VBox status code.
+ * @param   pIfCrypto       Pointer to the crypto interface.
+ * @param   pszCipher       The cipher identifier the DEK is used for.
+ * @param   pbDek           The raw DEK which was contained in the key store loaded by
+ *                          VDINTERFACECRYPTO::pfnKeyStoreLoad().
+ * @param   cbDek           The size of the DEK.
+ *
+ * @note The provided pointer to the DEK is only valid until this call returns.
+ *       The content might change afterwards with out notice (when scrambling the key
+ *       for further protection for example) or might be even freed.
+ *
+ * @note This method is optional and can be NULL if the caller does not require the
+ *       parameters.
+ */
+DECLINLINE(int) vdIfCryptoKeyStoreReturnParameters(PVDINTERFACECRYPTO pIfCrypto, const char *pszCipher,
+                                                   const uint8_t *pbDek, size_t cbDek)
+{
+    if (pIfCrypto->pfnKeyStoreReturnParameters)
+        return pIfCrypto->pfnKeyStoreReturnParameters(pIfCrypto->Core.pvUser, pszCipher, pbDek, cbDek);
+
+    return VINF_SUCCESS;
+}
+
 
 RT_C_DECLS_END
 

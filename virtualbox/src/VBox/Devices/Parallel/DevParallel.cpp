@@ -7,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,9 +18,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_PARALLEL
 #include <VBox/vmm/pdmdev.h>
 #include <iprt/assert.h>
@@ -31,9 +32,9 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define PARALLEL_SAVED_STATE_VERSION 1
 
 /* defines for accessing the register bits */
@@ -84,9 +85,9 @@
 #define LPT_ECP_FIFO_DEPTH 2
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Parallel device state.
  *
@@ -149,17 +150,17 @@ typedef struct PARALLELPORT
 
 #ifndef VBOX_DEVICE_STRUCT_TESTCASE
 
-#define PDMIHOSTPARALLELPORT_2_PARALLELPORT(pInstance) ( (PARALLELPORT *)((uintptr_t)(pInterface) - RT_OFFSETOF(PARALLELPORT, IHostParallelPort)) )
-#define PDMIHOSTDEVICEPORT_2_PARALLELPORT(pInstance)   ( (PARALLELPORT *)((uintptr_t)(pInterface) - RT_OFFSETOF(PARALLELPORT, IHostDevicePort)) )
-#define PDMIBASE_2_PARALLELPORT(pInstance)             ( (PARALLELPORT *)((uintptr_t)(pInterface) - RT_OFFSETOF(PARALLELPORT, IBase)) )
+#define PDMIHOSTPARALLELPORT_2_PARALLELPORT(pInstance) ( (PARALLELPORT *)((uintptr_t)(pInterface) - RT_UOFFSETOF(PARALLELPORT, IHostParallelPort)) )
+#define PDMIHOSTDEVICEPORT_2_PARALLELPORT(pInstance)   ( (PARALLELPORT *)((uintptr_t)(pInterface) - RT_UOFFSETOF(PARALLELPORT, IHostDevicePort)) )
+#define PDMIBASE_2_PARALLELPORT(pInstance)             ( (PARALLELPORT *)((uintptr_t)(pInterface) - RT_UOFFSETOF(PARALLELPORT, IBase)) )
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 RT_C_DECLS_BEGIN
-PDMBOTHCBDECL(int) parallelIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t *pu32, unsigned cb);
-PDMBOTHCBDECL(int) parallelIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t u32, unsigned cb);
+PDMBOTHCBDECL(int) parallelIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t *pu32, unsigned cb);
+PDMBOTHCBDECL(int) parallelIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t u32, unsigned cb);
 #if 0
 PDMBOTHCBDECL(int) parallelIOPortReadECP(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t *pu32, unsigned cb);
 PDMBOTHCBDECL(int) parallelIOPortWriteECP(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t u32, unsigned cb);
@@ -299,7 +300,7 @@ static uint32_t parallel_ioport_read_ecp(void *opaque, uint32_t addr, int *pRC)
 
 #ifdef IN_RING3
 /**
- * @interface_methods_impl{PDMIHOSTPARALLELPORT,pfnNotifyInterrupt}
+ * @interface_method_impl{PDMIHOSTPARALLELPORT,pfnNotifyInterrupt}
  */
 static DECLCALLBACK(int) parallelR3NotifyInterrupt(PPDMIHOSTPARALLELPORT pInterface)
 {
@@ -317,19 +318,20 @@ static DECLCALLBACK(int) parallelR3NotifyInterrupt(PPDMIHOSTPARALLELPORT pInterf
 /**
  * @callback_method_impl{FNIOMIOPORTOUT}
  */
-PDMBOTHCBDECL(int) parallelIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t u32, unsigned cb)
+PDMBOTHCBDECL(int) parallelIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t u32, unsigned cb)
 {
     PARALLELPORT *pThis = PDMINS_2_DATA(pDevIns, PPARALLELPORT);
     int           rc = VINF_SUCCESS;
+    RT_NOREF_PV(pvUser);
 
     if (cb == 1)
     {
         uint8_t u8 = u32;
 
-        Log2(("%s: port %#06x val %#04x\n", __FUNCTION__, Port, u32));
+        Log2(("%s: port %#06x val %#04x\n", __FUNCTION__, uPort, u32));
 
-        Port &= 7;
-        switch (Port)
+        uPort &= 7;
+        switch (uPort)
         {
             case 0:
 #ifndef IN_RING3
@@ -355,16 +357,23 @@ PDMBOTHCBDECL(int) parallelIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPOR
 #ifndef IN_RING3
                     return VINF_IOM_R3_IOPORT_WRITE;
 #else
-                    /* Set data direction. */
-                    if (u8 & LPT_CONTROL_ENABLE_BIDIRECT)
-                        rc = pThis->pDrvHostParallelConnector->pfnSetPortDirection(pThis->pDrvHostParallelConnector, false /* fForward */);
-                    else
-                        rc = pThis->pDrvHostParallelConnector->pfnSetPortDirection(pThis->pDrvHostParallelConnector, true /* fForward */);
-                    AssertRC(rc);
-                    u8 &= ~LPT_CONTROL_ENABLE_BIDIRECT; /* Clear bit. */
+                    if (RT_LIKELY(pThis->pDrvHostParallelConnector))
+                    {
+                        /* Set data direction. */
+                        if (u8 & LPT_CONTROL_ENABLE_BIDIRECT)
+                            rc = pThis->pDrvHostParallelConnector->pfnSetPortDirection(pThis->pDrvHostParallelConnector, false /* fForward */);
+                        else
+                            rc = pThis->pDrvHostParallelConnector->pfnSetPortDirection(pThis->pDrvHostParallelConnector, true /* fForward */);
+                        AssertRC(rc);
 
-                    rc = pThis->pDrvHostParallelConnector->pfnWriteControl(pThis->pDrvHostParallelConnector, u8);
-                    AssertRC(rc);
+                        u8 &= ~LPT_CONTROL_ENABLE_BIDIRECT; /* Clear bit. */
+
+                        rc = pThis->pDrvHostParallelConnector->pfnWriteControl(pThis->pDrvHostParallelConnector, u8);
+                        AssertRC(rc);
+                    }
+                    else
+                        u8 &= ~LPT_CONTROL_ENABLE_BIDIRECT; /* Clear bit. */
+
                     pThis->regControl = u8;
 #endif
                 }
@@ -407,7 +416,7 @@ PDMBOTHCBDECL(int) parallelIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPOR
         }
     }
     else
-        AssertMsgFailed(("Port=%#x cb=%d u32=%#x\n", Port, cb, u32));
+        AssertMsgFailed(("Port=%#x cb=%d u32=%#x\n", uPort, cb, u32));
 
     return rc;
 }
@@ -416,15 +425,16 @@ PDMBOTHCBDECL(int) parallelIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPOR
 /**
  * @callback_method_impl{FNIOMIOPORTIN}
  */
-PDMBOTHCBDECL(int) parallelIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t *pu32, unsigned cb)
+PDMBOTHCBDECL(int) parallelIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t *pu32, unsigned cb)
 {
     PARALLELPORT *pThis = PDMINS_2_DATA(pDevIns, PARALLELPORT *);
     int           rc = VINF_SUCCESS;
+    RT_NOREF_PV(pvUser);
 
     if (cb == 1)
     {
-        Port &= 7;
-        switch (Port)
+        uPort &= 7;
+        switch (uPort)
         {
             case 0:
                 if (!(pThis->regControl & LPT_CONTROL_ENABLE_BIDIRECT))
@@ -460,11 +470,15 @@ PDMBOTHCBDECL(int) parallelIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT
                 break;
             case 2:
 #ifndef IN_RING3
-                 rc = VINF_IOM_R3_IOPORT_READ;
+                rc = VINF_IOM_R3_IOPORT_READ;
 #else
-                 rc = pThis->pDrvHostParallelConnector->pfnReadControl(pThis->pDrvHostParallelConnector, &pThis->regControl);
-                 AssertRC(rc);
-                 pThis->regControl |= LPT_CONTROL_BIT6 | LPT_CONTROL_BIT7;
+                if (RT_LIKELY(pThis->pDrvHostParallelConnector))
+                {
+                    rc = pThis->pDrvHostParallelConnector->pfnReadControl(pThis->pDrvHostParallelConnector, &pThis->regControl);
+                    AssertRC(rc);
+                    pThis->regControl |= LPT_CONTROL_BIT6 | LPT_CONTROL_BIT7;
+                }
+
                 *pu32 = pThis->regControl;
 #endif
                 break;
@@ -557,11 +571,12 @@ PDMBOTHCBDECL(int) parallelIOPortReadECP(PPDMDEVINS pDevIns, void *pvUser, RTIOP
  */
 static DECLCALLBACK(int) parallelR3LiveExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32_t uPass)
 {
+    RT_NOREF(uPass);
     PARALLELPORT *pThis = PDMINS_2_DATA(pDevIns, PARALLELPORT *);
 
     SSMR3PutS32(pSSM, pThis->iIrq);
     SSMR3PutU32(pSSM, pThis->IOBase);
-    SSMR3PutU32(pSSM, ~0); /* sanity/terminator */
+    SSMR3PutU32(pSSM, UINT32_MAX); /* sanity/terminator */
     return VINF_SSM_DONT_CALL_AGAIN;
 }
 
@@ -607,7 +622,7 @@ static DECLCALLBACK(int) parallelR3LoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM,
     int rc = SSMR3GetU32(pSSM, &u32);
     if (RT_FAILURE(rc))
         return rc;
-    AssertMsgReturn(u32 == ~0U, ("%#x\n", u32), VERR_SSM_DATA_UNIT_FORMAT_CHANGED);
+    AssertMsgReturn(u32 == UINT32_MAX, ("%#x\n", u32), VERR_SSM_DATA_UNIT_FORMAT_CHANGED);
 
     if (pThis->iIrq != iIrq)
         return SSMR3SetCfgError(pSSM, RT_SRC_POS, N_("IRQ changed: config=%#x state=%#x"), pThis->iIrq, iIrq);
@@ -650,11 +665,11 @@ static DECLCALLBACK(void) parallelR3Relocate(PPDMDEVINS pDevIns, RTGCINTPTR offD
  */
 static DECLCALLBACK(int) parallelR3Construct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
+    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
     int            rc;
     PARALLELPORT *pThis = PDMINS_2_DATA(pDevIns, PARALLELPORT*);
 
     Assert(iInstance < 4);
-    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
 
     /*
      * Init the data.
@@ -764,6 +779,12 @@ static DECLCALLBACK(int) parallelR3Construct(PPDMDEVINS pDevIns, int iInstance, 
     if (RT_SUCCESS(rc))
     {
         pThis->pDrvHostParallelConnector = PDMIBASE_QUERY_INTERFACE(pThis->pDrvBase, PDMIHOSTPARALLELCONNECTOR);
+
+        /* Set compatibility mode */
+        //pThis->pDrvHostParallelConnector->pfnSetMode(pThis->pDrvHostParallelConnector, PDM_PARALLEL_PORT_MODE_COMPAT);
+        /* Get status of control register */
+        pThis->pDrvHostParallelConnector->pfnReadControl(pThis->pDrvHostParallelConnector, &pThis->regControl);
+
         AssertMsgReturn(pThis->pDrvHostParallelConnector,
                         ("Configuration error: instance %d has no host parallel interface!\n", iInstance),
                         VERR_PDM_MISSING_INTERFACE);
@@ -781,11 +802,6 @@ static DECLCALLBACK(int) parallelR3Construct(PPDMDEVINS pDevIns, int iInstance, 
                                    N_("Parallel device %d cannot attach to host driver"), iInstance);
     }
 
-    /* Set compatibility mode */
-    //pThis->pDrvHostParallelConnector->pfnSetMode(pThis->pDrvHostParallelConnector, PDM_PARALLEL_PORT_MODE_COMPAT);
-    /* Get status of control register */
-    pThis->pDrvHostParallelConnector->pfnReadControl(pThis->pDrvHostParallelConnector, &pThis->regControl);
-
     return VINF_SUCCESS;
 }
 
@@ -799,7 +815,7 @@ const PDMDEVREG g_DeviceParallelPort =
     /* szName */
     "parallel",
     /* szRCMod */
-    "VBoxDDGC.gc",
+    "VBoxDDRC.rc",
     /* szR0Mod */
     "VBoxDDR0.r0",
     /* pszDescription */
@@ -809,7 +825,7 @@ const PDMDEVREG g_DeviceParallelPort =
     /* fClass */
     PDM_DEVREG_CLASS_PARALLEL,
     /* cMaxInstances */
-    1,
+    2,
     /* cbInstance */
     sizeof(PARALLELPORT),
     /* pfnConstruct */
@@ -844,6 +860,5 @@ const PDMDEVREG g_DeviceParallelPort =
     PDM_DEVREG_VERSION
 };
 #endif /* IN_RING3 */
-
-
 #endif /* !VBOX_DEVICE_STRUCT_TESTCASE */
+

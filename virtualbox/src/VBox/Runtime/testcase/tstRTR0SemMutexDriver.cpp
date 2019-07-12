@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/initterm.h>
 
 #include <iprt/err.h>
@@ -41,9 +42,10 @@
 # include "tstRTR0SemMutex.h"
 #endif
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct TSTRTR0SEMMUTEXREQ
 {
     SUPR0SERVICEREQHDR  Hdr;
@@ -52,9 +54,9 @@ typedef struct TSTRTR0SEMMUTEXREQ
 typedef TSTRTR0SEMMUTEXREQ *PTSTRTR0SEMMUTEXREQ;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTTEST g_hTest;
 
 
@@ -67,6 +69,7 @@ static RTTEST g_hTest;
  */
 static DECLCALLBACK(int) tstThreadFn(RTTHREAD hThreadSelf, void *pvUser)
 {
+    RT_NOREF1(hThreadSelf);
     uint32_t            u32   = (uint32_t)(uintptr_t)pvUser;
     TSTRTR0SEMMUTEX     enmDo = (TSTRTR0SEMMUTEX)RT_LOWORD(u32);
     uint32_t            cSecs = RT_HIWORD(u32);
@@ -173,6 +176,7 @@ static bool tstDoThreadedTest(TSTRTR0SEMMUTEX enmSetup, TSTRTR0SEMMUTEX enmDo, T
  */
 extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
+    RT_NOREF3(argc, argv, envp);
 #ifndef VBOX
     RTPrintf("tstSup: SKIPPED\n");
     return 0;

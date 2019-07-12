@@ -1,12 +1,10 @@
 /* $Id: QIDialog.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: QIDialog class implementation
+ * VBox Qt GUI - VirtualBox Qt extensions: QIDialog class implementation.
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,21 +15,24 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* GUI includes: */
-#include "QIDialog.h"
-#include "VBoxGlobal.h"
+# include "QIDialog.h"
+# include "VBoxGlobal.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 QIDialog::QIDialog(QWidget *pParent /* = 0 */, Qt::WindowFlags flags /* = 0 */)
     : QDialog(pParent, flags)
     , m_fPolished(false)
 {
-    /* No need to count that window as important for application,
+    /* Do not count that window as important for application,
      * it will NOT be taken into account when other top-level windows will be closed: */
     setAttribute(Qt::WA_QuitOnClose, false);
-}
-
-QIDialog::~QIDialog()
-{
 }
 
 void QIDialog::setVisible(bool fVisible)
@@ -39,25 +40,27 @@ void QIDialog::setVisible(bool fVisible)
     /* Call to base-class: */
     QDialog::setVisible(fVisible);
 
-    /* Exit from the event-loop if
-     * 1. there is any and
-     * 2. we are changing our state from visible to invisible: */
+    /* Exit from the event-loop if there is any and
+     * we are changing our state from visible to hidden. */
     if (m_pEventLoop && !fVisible)
         m_pEventLoop->exit();
 }
 
-int QIDialog::exec(bool fShow /* = true */, bool fApplicationModal /* = false*/)
+int QIDialog::execute(bool fShow /* = true */, bool fApplicationModal /* = false */)
 {
+    /* Check for the recursive run: */
+    AssertMsgReturn(!m_pEventLoop, ("QIDialog::execute() is called recursively!\n"), QDialog::Rejected);
+
     /* Reset the result-code: */
     setResult(QDialog::Rejected);
 
     /* Should we delete ourself on close in theory? */
-    bool fOldDeleteOnClose = testAttribute(Qt::WA_DeleteOnClose);
+    const bool fOldDeleteOnClose = testAttribute(Qt::WA_DeleteOnClose);
     /* For the exec() time, set this attribute to 'false': */
     setAttribute(Qt::WA_DeleteOnClose, false);
 
     /* Which is the current window-modality? */
-    Qt::WindowModality oldModality = windowModality();
+    const Qt::WindowModality oldModality = windowModality();
     /* For the exec() time, set this attribute to 'window-modal' or 'application-modal': */
     setWindowModality(!fApplicationModal ? Qt::WindowModal : Qt::ApplicationModal);
 
@@ -85,7 +88,7 @@ int QIDialog::exec(bool fShow /* = true */, bool fApplicationModal /* = false*/)
     }
 
     /* Save the result-code early (we can delete ourself on close): */
-    int iResultCode = result();
+    const int iResultCode = result();
 
     /* Return old modality: */
     setWindowModality(oldModality);
@@ -113,14 +116,14 @@ void QIDialog::showEvent(QShowEvent *pEvent)
     m_fPolished = true;
 }
 
-void QIDialog::polishEvent(QShowEvent*)
+void QIDialog::polishEvent(QShowEvent *)
 {
     /* Make sure layout is polished: */
     adjustSize();
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     /* And dialog have fixed size: */
     setFixedSize(size());
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 
     /* Explicit centering according to our parent: */
     VBoxGlobal::centerWidget(this, parentWidget(), false);

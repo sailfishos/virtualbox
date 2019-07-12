@@ -5,7 +5,7 @@
 #
 
 #
-# Copyright (C) 2008-2013 Oracle Corporation
+# Copyright (C) 2008-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -93,7 +93,7 @@ fi
 if test "$currentzone" = "global"; then
     # vboxguest.sh would've been installed, we just need to call it.
     echo "Configuring VirtualBox guest kernel module..."
-    # stop all previous moduels (vboxguest, vboxfs) and start only starts vboxguest
+    # stop all previous modules (vboxguest, vboxfs) and start only starts vboxguest
     $vboxadditions_path/vboxguest.sh stopall silentunload
     $vboxadditions_path/vboxguest.sh start
 
@@ -158,11 +158,9 @@ if test ! -z "$xorgbin"; then
         # Exit as partially failed installation
         retval=2
     elif test ! -f "$vboxadditions32_path/$vboxvideo_src" && test ! -f "$vboxadditions64_path/$vboxvideo_src"; then
-        echo "*** $vboxadditions32_path/$vboxvideo_src or $vboxadditions64_path/$vboxvideo_src not found!"
-        echo "*** Failed to install the VirtualBox X.org drivers."
-
-        # Exit as partially failed installation
-        retval=2
+        # Xorg 1.19 and later already contain a driver for vboxvideo.
+        echo "As of X.Org Server 1.19, the VirtualBox graphics driver (vboxvideo) is part"
+        echo "of Solaris.  Please install it from the package repository if necessary."
     else
         echo "Installing video driver for X.Org $xorgversion..."
 
@@ -241,8 +239,27 @@ if test ! -z "$xorgbin"; then
                 rm -f $vboxadditions_path/$xorgconf_unfit
             fi
 
-            # Adjust xorg.conf with video driver sections
-            $vboxadditions_path/x11config15sol.pl
+            # Check for VirtualBox graphics card
+            # S10u10's prtconf doesn't support the '-d' option, so let's use -v even though it's slower.
+            is_vboxgraphics=`prtconf -v | grep -i pci80ee,beef`
+            if test "$?" -eq 0; then
+                drivername="vboxvideo"
+            else
+                # Check for VMware graphics card
+                is_vmwaregraphics=`prtconf -v | grep -i pci15ad,405`
+                if test "$?" -eq 0; then
+                    echo "Configuring X.Org to use VMware SVGA graphics driver..."
+                    drivername="vmware"
+                fi
+            fi
+
+            # Adjust xorg.conf with video driver sections if a supported graphics card is found
+            if test ! -z "$drivername"; then
+                $vboxadditions_path/x11config15sol.pl "$drivername"
+            else
+                # No supported graphics card found, do nothing.
+                echo "## No supported graphics card found. Skipped configuring of X.org drivers."
+            fi
         fi
     fi
 
@@ -314,21 +331,6 @@ fi
 # be added to this group.
 groupadd vboxsf >/dev/null 2>&1
 
-# install openGL extensions for X.Org
-if test ! -z "$xorgbin"; then
-    # 32-bit crogl opengl library replacement
-    if test -f "/usr/lib/VBoxOGL.so"; then
-        cp -f /usr/X11/lib/mesa/libGL.so.1 /usr/X11/lib/mesa/libGL_original_.so.1
-        ln -sf /usr/lib/VBoxOGL.so /usr/X11/lib/mesa/libGL.so.1
-    fi
-
-    # 64-bit crogl opengl library replacement
-    if test -f "/usr/lib/amd64/VBoxOGL.so"; then
-        cp -f /usr/X11/lib/mesa/amd64/libGL.so.1 /usr/X11/lib/mesa/amd64/libGL_original_.so.1
-        ln -sf /usr/lib/amd64/VBoxOGL.so /usr/X11/lib/mesa/amd64/libGL.so.1
-    fi
-fi
-
 # Move the pointer integration module to kernel/drv & remove the unused module name from pkg and file from disk
 
 # Finalize
@@ -386,6 +388,9 @@ if test "$currentzone" = "global"; then
     fi
 fi
 
+# Set up our OpenGL pass-through library.
+ln -sf $vboxadditions_path/vbox_vendor_select /lib/opengl/ogl_select
+test "$currentzone" = "global" && /lib/svc/method/ogl-select start
 
 echo "Done."
 if test $retval -eq 0; then

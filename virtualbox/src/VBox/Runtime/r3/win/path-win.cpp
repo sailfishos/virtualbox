@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,12 +25,12 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_PATH
-#include <Windows.h>
-#include <Shlobj.h>
+#include <iprt/win/windows.h>
+#include <iprt/win/shlobj.h>
 
 #include <iprt/path.h>
 #include <iprt/assert.h>
@@ -62,29 +62,28 @@ RTDECL(int) RTPathReal(const char *pszPath, char *pszRealPath, size_t cchRealPat
      * Convert to UTF-16, call Win32 APIs, convert back.
      */
     PRTUTF16 pwszPath;
-    int rc = RTStrToUtf16(pszPath, &pwszPath);
-    if (!RT_SUCCESS(rc))
-        return (rc);
-
-    LPWSTR lpFile;
-    WCHAR  wsz[RTPATH_MAX];
-    rc = GetFullPathNameW((LPCWSTR)pwszPath, RT_ELEMENTS(wsz), &wsz[0], &lpFile);
-    if (rc > 0 && rc < RT_ELEMENTS(wsz))
+    int rc = RTPathWinFromUtf8(&pwszPath, pszPath, 0 /*fFlags*/);
+    if (RT_SUCCESS(rc))
     {
-        /* Check that it exists. (Use RTPathAbs() to just resolve the name.) */
-        DWORD dwAttr = GetFileAttributesW(wsz);
-        if (dwAttr != INVALID_FILE_ATTRIBUTES)
-            rc = RTUtf16ToUtf8Ex((PRTUTF16)&wsz[0], RTSTR_MAX, &pszRealPath, cchRealPath, NULL);
-        else
+        LPWSTR lpFile;
+        WCHAR  wsz[RTPATH_MAX];
+        rc = GetFullPathNameW((LPCWSTR)pwszPath, RT_ELEMENTS(wsz), &wsz[0], &lpFile);
+        if (rc > 0 && rc < RT_ELEMENTS(wsz))
+        {
+            /* Check that it exists. (Use RTPathAbs() to just resolve the name.) */
+            DWORD dwAttr = GetFileAttributesW(wsz);
+            if (dwAttr != INVALID_FILE_ATTRIBUTES)
+                rc = RTUtf16ToUtf8Ex((PRTUTF16)&wsz[0], RTSTR_MAX, &pszRealPath, cchRealPath, NULL);
+            else
+                rc = RTErrConvertFromWin32(GetLastError());
+        }
+        else if (rc <= 0)
             rc = RTErrConvertFromWin32(GetLastError());
+        else
+            rc = VERR_FILENAME_TOO_LONG;
+
+        RTPathWinFree(pwszPath);
     }
-    else if (rc <= 0)
-        rc = RTErrConvertFromWin32(GetLastError());
-    else
-        rc = VERR_FILENAME_TOO_LONG;
-
-    RTUtf16Free(pwszPath);
-
     return rc;
 }
 
@@ -247,10 +246,14 @@ RTDECL(int) RTPathUserDocuments(char *pszPath, size_t cchPath)
 }
 
 
+#if 0 /* use nt version of this */
+
 RTR3DECL(int) RTPathQueryInfo(const char *pszPath, PRTFSOBJINFO pObjInfo, RTFSOBJATTRADD enmAdditionalAttribs)
 {
     return RTPathQueryInfoEx(pszPath, pObjInfo, enmAdditionalAttribs, RTPATH_F_ON_LINK);
 }
+#endif
+#if 0
 
 
 RTR3DECL(int) RTPathQueryInfoEx(const char *pszPath, PRTFSOBJINFO pObjInfo, RTFSOBJATTRADD enmAdditionalAttribs, uint32_t fFlags)
@@ -270,6 +273,7 @@ RTR3DECL(int) RTPathQueryInfoEx(const char *pszPath, PRTFSOBJINFO pObjInfo, RTFS
     /*
      * Query file info.
      */
+    uint32_t uReparseTag = RTFSMODE_SYMLINK_REPARSE_TAG;
     WIN32_FILE_ATTRIBUTE_DATA Data;
     PRTUTF16 pwszPath;
     int rc = RTStrToUtf16(pszPath, &pwszPath);
@@ -296,6 +300,7 @@ RTR3DECL(int) RTPathQueryInfoEx(const char *pszPath, PRTFSOBJINFO pObjInfo, RTFS
             Data.ftLastWriteTime    = FindData.ftLastWriteTime;
             Data.nFileSizeHigh      = FindData.nFileSizeHigh;
             Data.nFileSizeLow       = FindData.nFileSizeLow;
+            uReparseTag             = FindData.dwReserved0;
         }
         else
         {
@@ -310,8 +315,8 @@ RTR3DECL(int) RTPathQueryInfoEx(const char *pszPath, PRTFSOBJINFO pObjInfo, RTFS
      * subject to the same access violation mess as above.. :/
      */
     /** @todo we're too lazy wrt to error paths here... */
-    if (   (fFlags & RTPATH_F_FOLLOW_LINK)
-        && (Data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+    if (   (Data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+        && ((fFlags & RTPATH_F_FOLLOW_LINK) || uReparseTag != RTFSMODE_SYMLINK_REPARSE_TAG))
     {
         HANDLE hFinal = CreateFileW(pwszPath,
                                     GENERIC_READ,
@@ -331,6 +336,7 @@ RTR3DECL(int) RTPathQueryInfoEx(const char *pszPath, PRTFSOBJINFO pObjInfo, RTFS
                 Data.ftLastWriteTime    = FileData.ftLastWriteTime;
                 Data.nFileSizeHigh      = FileData.nFileSizeHigh;
                 Data.nFileSizeLow       = FileData.nFileSizeLow;
+                uReparseTag             = 0;
             }
             CloseHandle(hFinal);
         }
@@ -358,7 +364,7 @@ RTR3DECL(int) RTPathQueryInfoEx(const char *pszPath, PRTFSOBJINFO pObjInfo, RTFS
     pObjInfo->ChangeTime  = pObjInfo->ModificationTime;
 
     pObjInfo->Attr.fMode  = rtFsModeFromDos((Data.dwFileAttributes << RTFS_DOS_SHIFT) & RTFS_DOS_MASK_NT,
-                                            pszPath, strlen(pszPath));
+                                            pszPath, strlen(pszPath), uReparseTag);
 
     /*
      * Requested attributes (we cannot provide anything actually).
@@ -406,6 +412,8 @@ RTR3DECL(int) RTPathQueryInfoEx(const char *pszPath, PRTFSOBJINFO pObjInfo, RTFS
     return VINF_SUCCESS;
 }
 
+#endif /* using NT version*/
+
 
 RTR3DECL(int) RTPathSetTimes(const char *pszPath, PCRTTIMESPEC pAccessTime, PCRTTIMESPEC pModificationTime,
                              PCRTTIMESPEC pChangeTime, PCRTTIMESPEC pBirthTime)
@@ -432,7 +440,7 @@ RTR3DECL(int) RTPathSetTimesEx(const char *pszPath, PCRTTIMESPEC pAccessTime, PC
      * Convert the path.
      */
     PRTUTF16 pwszPath;
-    int rc = RTStrToUtf16(pszPath, &pwszPath);
+    int rc = RTPathWinFromUtf8(&pwszPath, pszPath, 0 /*fFlags*/);
     if (RT_SUCCESS(rc))
     {
         HANDLE hFile;
@@ -513,7 +521,7 @@ RTR3DECL(int) RTPathSetTimesEx(const char *pszPath, PCRTTIMESPEC pAccessTime, PC
             Log(("RTPathSetTimes('%s',,,,): failed with %Rrc and lasterr=%u\n", pszPath, rc, Err));
         }
 
-        RTUtf16Free(pwszPath);
+        RTPathWinFree(pwszPath);
     }
 
     LogFlow(("RTPathSetTimes(%p:{%s}, %p:{%RDtimespec}, %p:{%RDtimespec}, %p:{%RDtimespec}, %p:{%RDtimespec}): return %Rrc\n",
@@ -543,11 +551,11 @@ DECLHIDDEN(int) rtPathWin32MoveRename(const char *pszSrc, const char *pszDst, ui
      * Convert the strings.
      */
     PRTUTF16 pwszSrc;
-    int rc = RTStrToUtf16(pszSrc, &pwszSrc);
+    int rc = RTPathWinFromUtf8(&pwszSrc, pszSrc, 0 /*fFlags*/);
     if (RT_SUCCESS(rc))
     {
         PRTUTF16 pwszDst;
-        rc = RTStrToUtf16(pszDst, &pwszDst);
+        rc = RTPathWinFromUtf8(&pwszDst, pszDst, 0 /*fFlags*/);
         if (RT_SUCCESS(rc))
         {
             /*
@@ -576,9 +584,9 @@ DECLHIDDEN(int) rtPathWin32MoveRename(const char *pszSrc, const char *pszDst, ui
                          pszSrc, pszDst, fFlags, fFileType, rc, Err));
                 }
             }
-            RTUtf16Free(pwszDst);
+            RTPathWinFree(pwszDst);
         }
-        RTUtf16Free(pwszSrc);
+        RTPathWinFree(pwszSrc);
     }
     return rc;
 }
@@ -607,6 +615,7 @@ RTR3DECL(int) RTPathRename(const char *pszSrc, const char *pszDst, unsigned fRen
 
 RTR3DECL(int) RTPathUnlink(const char *pszPath, uint32_t fUnlink)
 {
+    RT_NOREF_PV(pszPath); RT_NOREF_PV(fUnlink);
     return VERR_NOT_IMPLEMENTED;
 }
 
@@ -631,11 +640,11 @@ RTDECL(bool) RTPathExistsEx(const char *pszPath, uint32_t fFlags)
      */
     DWORD dwAttr;
     PRTUTF16 pwszPath;
-    int rc = RTStrToUtf16(pszPath, &pwszPath);
+    int rc = RTPathWinFromUtf8(&pwszPath, pszPath, 0 /*fFlags*/);
     if (RT_SUCCESS(rc))
     {
         dwAttr = GetFileAttributesW(pwszPath);
-        RTUtf16Free(pwszPath);
+        RTPathWinFree(pwszPath);
     }
     else
         dwAttr = INVALID_FILE_ATTRIBUTES;
@@ -691,7 +700,7 @@ RTDECL(int) RTPathSetCurrent(const char *pszPath)
      * This interface is almost identical to the Windows API.
      */
     PRTUTF16 pwszPath;
-    int rc = RTStrToUtf16(pszPath, &pwszPath);
+    int rc = RTPathWinFromUtf8(&pwszPath, pszPath, 0 /*fFlags*/);
     if (RT_SUCCESS(rc))
     {
         /** @todo improve the slash stripping a bit? */
@@ -705,7 +714,7 @@ RTDECL(int) RTPathSetCurrent(const char *pszPath)
         if (!SetCurrentDirectoryW(pwszPath))
             rc = RTErrConvertFromWin32(GetLastError());
 
-        RTUtf16Free(pwszPath);
+        RTPathWinFree(pwszPath);
     }
     return rc;
 }

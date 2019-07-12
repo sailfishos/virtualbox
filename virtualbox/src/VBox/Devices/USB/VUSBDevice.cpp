@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_VUSB
 #include <VBox/vmm/pdm.h>
 #include <VBox/vmm/vmapi.h>
@@ -33,10 +33,12 @@
 #include <iprt/asm.h>
 #include "VUSBInternal.h"
 
+#include "VUSBSniffer.h"
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Argument package of vusbDevResetThread().
  */
@@ -53,9 +55,9 @@ typedef struct vusb_reset_args
 } VUSBRESETARGS, *PVUSBRESETARGS;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Default message pipe. */
 const VUSBDESCENDPOINTEX g_Endpoint0 =
 {
@@ -108,7 +110,7 @@ static PVUSBINTERFACESTATE vusbDevFindIfState(PVUSBDEV pDev, int iIf)
     return NULL;
 }
 
-static PCVUSBDESCINTERFACEEX vusbDevFindAltIfDesc(PVUSBDEV pDev, PCVUSBINTERFACESTATE pIfState, int iAlt)
+static PCVUSBDESCINTERFACEEX vusbDevFindAltIfDesc(PCVUSBINTERFACESTATE pIfState, int iAlt)
 {
     for (uint32_t i = 0; i < pIfState->pIf->cSettings; i++)
         if (pIfState->pIf->paSettings[i].Core.bAlternateSetting == iAlt)
@@ -134,14 +136,6 @@ void vusbDevMapEndpoint(PVUSBDEV pDev, PCVUSBDESCENDPOINTEX pEndPtDesc)
     {
         Log(("vusb: map input pipe on address %u\n", i8Addr));
         pPipe->in = pEndPtDesc;
-
-#if defined(RT_OS_LINUX) || defined(RT_OS_SOLARIS) || defined(RT_OS_DARWIN)
-        /*
-         * For high-speed isochronous input endpoints, spin off a read-ahead buffering thread.
-         */
-        if ((pEndPtDesc->Core.bmAttributes & 0x03) == 1)
-            pPipe->hReadAhead = vusbReadAheadStart(pDev, pPipe);
-#endif
     }
     else
     {
@@ -174,14 +168,6 @@ static void unmap_endpoint(PVUSBDEV pDev, PCVUSBDESCENDPOINTEX pEndPtDesc)
     {
         Log(("vusb: unmap IN pipe from address %u (%#x)\n", EndPt, pEndPtDesc->Core.bEndpointAddress));
         pPipe->in = NULL;
-
-        /* If there was a read-ahead thread associated with this endpoint, tell it to go away. */
-        if (pPipe->hReadAhead)
-        {
-            Log(("vusb: and tell read-ahead thread for the endpoint to terminate\n"));
-            vusbReadAheadStop(pPipe->hReadAhead);
-            pPipe->hReadAhead = NULL;
-        }
     }
     else
     {
@@ -223,12 +209,6 @@ static void vusbDevResetPipeData(PVUSBPIPE pPipe)
 {
     vusbMsgFreeExtraData(pPipe->pCtrl);
     pPipe->pCtrl = NULL;
-
-    if (pPipe->hReadAhead)
-    {
-        vusbReadAheadStop(pPipe->hReadAhead);
-        pPipe->hReadAhead = NULL;
-    }
 
     RT_ZERO(pPipe->in);
     RT_ZERO(pPipe->out);
@@ -295,11 +275,12 @@ bool vusbDevDoSelectConfig(PVUSBDEV pDev, PCVUSBDESCCONFIGEX pCfgDesc)
  */
 static bool vusbDevStdReqSetConfig(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, uint8_t *pbBuf, uint32_t *pcbBuf)
 {
+    RT_NOREF(EndPt, pbBuf, pcbBuf);
     unsigned iCfg = pSetup->wValue & 0xff;
 
     if ((pSetup->bmRequestType & VUSB_RECIP_MASK) != VUSB_TO_DEVICE)
     {
-        Log(("vusb: error: %s: SET_CONFIGURATION - invalid request (dir) !!!\n", pDev->pUsbIns->pszName, iCfg));
+        Log(("vusb: error: %s: SET_CONFIGURATION - invalid request (dir) !!!\n", pDev->pUsbIns->pszName));
         return false;
     }
 
@@ -327,9 +308,11 @@ static bool vusbDevStdReqSetConfig(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, 
         vusbDevSetState(pDev, VUSB_DEVICE_STATE_CONFIGURED);
     if (pDev->pUsbIns->pReg->pfnUsbSetConfiguration)
     {
+        RTCritSectEnter(&pDev->pHub->pRootHub->CritSectDevices);
         int rc = vusbDevIoThreadExecSync(pDev, (PFNRT)pDev->pUsbIns->pReg->pfnUsbSetConfiguration, 5,
                                          pDev->pUsbIns, pNewCfgDesc->Core.bConfigurationValue,
                                          pDev->pCurCfgDesc, pDev->paIfStates, pNewCfgDesc);
+        RTCritSectLeave(&pDev->pHub->pRootHub->CritSectDevices);
         if (RT_FAILURE(rc))
         {
             Log(("vusb: error: %s: failed to set config %i (%Rrc) !!!\n", pDev->pUsbIns->pszName, iCfg, rc));
@@ -347,6 +330,7 @@ static bool vusbDevStdReqSetConfig(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, 
  */
 static bool vusbDevStdReqGetConfig(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, uint8_t *pbBuf, uint32_t *pcbBuf)
 {
+    RT_NOREF(EndPt);
     if ((pSetup->bmRequestType & VUSB_RECIP_MASK) != VUSB_TO_DEVICE)
     {
         Log(("vusb: error: %s: GET_CONFIGURATION - invalid request (dir) !!!\n", pDev->pUsbIns->pszName));
@@ -389,6 +373,7 @@ static bool vusbDevStdReqGetConfig(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, 
  */
 static bool vusbDevStdReqGetInterface(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, uint8_t *pbBuf, uint32_t *pcbBuf)
 {
+    RT_NOREF(EndPt);
     if ((pSetup->bmRequestType & VUSB_RECIP_MASK) != VUSB_TO_INTERFACE)
     {
         Log(("vusb: error: %s: GET_INTERFACE - invalid request (dir) !!!\n", pDev->pUsbIns->pszName));
@@ -435,6 +420,7 @@ static bool vusbDevStdReqGetInterface(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetu
  */
 static bool vusbDevStdReqSetInterface(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, uint8_t *pbBuf, uint32_t *pcbBuf)
 {
+    RT_NOREF(EndPt, pbBuf, pcbBuf);
     if ((pSetup->bmRequestType & VUSB_RECIP_MASK) != VUSB_TO_INTERFACE)
     {
         Log(("vusb: error: %s: SET_INTERFACE - invalid request (dir) !!!\n", pDev->pUsbIns->pszName));
@@ -463,7 +449,7 @@ static bool vusbDevStdReqSetInterface(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetu
         return false;
     }
     uint8_t iAlt = pSetup->wValue;
-    PCVUSBDESCINTERFACEEX pIfDesc = vusbDevFindAltIfDesc(pDev, pIfState, iAlt);
+    PCVUSBDESCINTERFACEEX pIfDesc = vusbDevFindAltIfDesc(pIfState, iAlt);
     if (!pIfDesc)
     {
         LogFlow(("vusbDevStdReqSetInterface: error: %s: couldn't find alt interface %u.%u !!!\n", pDev->pUsbIns->pszName, iIf, iAlt));
@@ -472,7 +458,9 @@ static bool vusbDevStdReqSetInterface(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetu
 
     if (pDev->pUsbIns->pReg->pfnUsbSetInterface)
     {
+        RTCritSectEnter(&pDev->pHub->pRootHub->CritSectDevices);
         int rc = vusbDevIoThreadExecSync(pDev, (PFNRT)pDev->pUsbIns->pReg->pfnUsbSetInterface, 3, pDev->pUsbIns, iIf, iAlt);
+        RTCritSectLeave(&pDev->pHub->pRootHub->CritSectDevices);
         if (RT_FAILURE(rc))
         {
             LogFlow(("vusbDevStdReqSetInterface: error: %s: couldn't find alt interface %u.%u (%Rrc)\n", pDev->pUsbIns->pszName, iIf, iAlt, rc));
@@ -497,6 +485,7 @@ static bool vusbDevStdReqSetInterface(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetu
  */
 static bool vusbDevStdReqSetAddress(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, uint8_t *pbBuf, uint32_t *pcbBuf)
 {
+    RT_NOREF(EndPt, pbBuf, pcbBuf);
     if ((pSetup->bmRequestType & VUSB_RECIP_MASK) != VUSB_TO_DEVICE)
     {
         Log(("vusb: error: %s: SET_ADDRESS - invalid request (dir) !!!\n", pDev->pUsbIns->pszName));
@@ -528,6 +517,7 @@ static bool vusbDevStdReqSetAddress(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup,
  */
 static bool vusbDevStdReqClearFeature(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, uint8_t *pbBuf, uint32_t *pcbBuf)
 {
+    RT_NOREF(pbBuf, pcbBuf);
     switch (pSetup->bmRequestType & VUSB_RECIP_MASK)
     {
         case VUSB_TO_DEVICE:
@@ -542,8 +532,10 @@ static bool vusbDevStdReqClearFeature(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetu
                 &&  pSetup->wValue == 0 /* ENDPOINT_HALT */
                 &&  pDev->pUsbIns->pReg->pfnUsbClearHaltedEndpoint)
             {
+                RTCritSectEnter(&pDev->pHub->pRootHub->CritSectDevices);
                 int rc = vusbDevIoThreadExecSync(pDev, (PFNRT)pDev->pUsbIns->pReg->pfnUsbClearHaltedEndpoint,
                                                  2, pDev->pUsbIns, pSetup->wIndex);
+                RTCritSectLeave(&pDev->pHub->pRootHub->CritSectDevices);
                 return RT_SUCCESS(rc);
             }
             break;
@@ -562,6 +554,7 @@ static bool vusbDevStdReqClearFeature(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetu
  */
 static bool vusbDevStdReqSetFeature(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, uint8_t *pbBuf, uint32_t *pcbBuf)
 {
+    RT_NOREF(pDev, EndPt, pbBuf, pcbBuf);
     switch (pSetup->bmRequestType & VUSB_RECIP_MASK)
     {
         case VUSB_TO_DEVICE:
@@ -586,6 +579,7 @@ static bool vusbDevStdReqSetFeature(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup,
 
 static bool vusbDevStdReqGetStatus(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, uint8_t *pbBuf, uint32_t *pcbBuf)
 {
+    RT_NOREF(EndPt);
     if (*pcbBuf != 2)
     {
         LogFlow(("vusbDevStdReqGetStatus: %s: buffer is too small! (%d)\n", pDev->pUsbIns->pszName, *pcbBuf));
@@ -650,7 +644,8 @@ static PCPDMUSBDESCCACHESTRING FindCachedString(PCPDMUSBDESCCACHELANG paLanguage
     do { \
         uint32_t cbSrc_ = cbSrc; \
         uint32_t cbCopy = RT_MIN(cbLeft, cbSrc_); \
-        memcpy(pbBuf, pvSrc, cbCopy); \
+        if (cbCopy) \
+            memcpy(pbBuf, pvSrc, cbCopy); \
         cbLeft -= cbCopy; \
         if (!cbLeft) \
             return; \
@@ -718,13 +713,14 @@ static void ReadCachedConfigDesc(PCVUSBDESCCONFIGEX pCfgDesc, uint8_t *pbBuf, ui
 {
     uint32_t cbLeft = *pcbBuf;
 
-/** @todo See @bugref{2693} */
     /*
      * Make a copy of the config descriptor and calculate the wTotalLength field.
      */
     VUSBDESCCONFIG CfgDesc;
     memcpy(&CfgDesc, pCfgDesc, VUSB_DT_CONFIG_MIN_LEN);
-    uint32_t cbTotal = pCfgDesc->Core.bLength;
+    uint32_t cbTotal = 0;
+    cbTotal += pCfgDesc->Core.bLength;
+    cbTotal += pCfgDesc->cbClass;
     for (unsigned i = 0; i < pCfgDesc->Core.bNumInterfaces; i++)
     {
         PCVUSBINTERFACE pIf = &pCfgDesc->paIfs[i];
@@ -736,6 +732,7 @@ static void ReadCachedConfigDesc(PCVUSBDESCCONFIGEX pCfgDesc, uint8_t *pbBuf, ui
             for (unsigned k = 0; k < pIf->paSettings[j].Core.bNumEndpoints; k++)
             {
                 cbTotal += pIf->paSettings[j].paEndpoints[k].Core.bLength;
+                cbTotal += pIf->paSettings[j].paEndpoints[k].cbSsepc;
                 cbTotal += pIf->paSettings[j].paEndpoints[k].cbClass;
             }
         }
@@ -747,6 +744,7 @@ static void ReadCachedConfigDesc(PCVUSBDESCCONFIGEX pCfgDesc, uint8_t *pbBuf, ui
      */
     COPY_DATA(pbBuf, cbLeft, &CfgDesc, VUSB_DT_CONFIG_MIN_LEN);
     COPY_DATA(pbBuf, cbLeft, pCfgDesc->pvMore, pCfgDesc->Core.bLength - VUSB_DT_CONFIG_MIN_LEN);
+    COPY_DATA(pbBuf, cbLeft, pCfgDesc->pvClass, pCfgDesc->cbClass);
 
     /*
      * Copy out all the interfaces for this configuration
@@ -774,6 +772,7 @@ static void ReadCachedConfigDesc(PCVUSBDESCCONFIGEX pCfgDesc, uint8_t *pbBuf, ui
 
                 COPY_DATA(pbBuf, cbLeft, &EndPtDesc, VUSB_DT_ENDPOINT_MIN_LEN);
                 COPY_DATA(pbBuf, cbLeft, pIfDesc->paEndpoints[k].pvMore, EndPtDesc.bLength - VUSB_DT_ENDPOINT_MIN_LEN);
+                COPY_DATA(pbBuf, cbLeft, pIfDesc->paEndpoints[k].pvSsepc, pIfDesc->paEndpoints[k].cbSsepc);
                 COPY_DATA(pbBuf, cbLeft, pIfDesc->paEndpoints[k].pvClass, pIfDesc->paEndpoints[k].cbClass);
             }
         }
@@ -816,6 +815,7 @@ static void ReadCachedDeviceDesc(PCVUSBDESCDEVICE pDevDesc, uint8_t *pbBuf, uint
  */
 static bool vusbDevStdReqGetDescriptor(PVUSBDEV pDev, int EndPt, PVUSBSETUP pSetup, uint8_t *pbBuf, uint32_t *pcbBuf)
 {
+    RT_NOREF(EndPt);
     if ((pSetup->bmRequestType & VUSB_RECIP_MASK) == VUSB_TO_DEVICE)
     {
         switch (pSetup->wValue >> 8)
@@ -950,6 +950,7 @@ static void vusbDevAddressUnHash(PVUSBDEV pDev)
     pDev->u8Address = VUSB_INVALID_ADDRESS;
     pDev->u8NewAddress = VUSB_INVALID_ADDRESS;
 
+    RTCritSectEnter(&pDev->pHub->pRootHub->CritSectDevices);
     PVUSBDEV pCur = pDev->pHub->pRootHub->apAddrHash[u8Hash];
     if (pCur == pDev)
     {
@@ -973,6 +974,7 @@ static void vusbDevAddressUnHash(PVUSBDEV pDev)
             }
         }
     }
+    RTCritSectLeave(&pDev->pHub->pRootHub->CritSectDevices);
 }
 
 /**
@@ -1020,7 +1022,7 @@ void vusbDevSetAddress(PVUSBDEV pDev, uint8_t u8Address)
         if (pRh->pDefaultAddress != NULL)
         {
             vusbDevAddressUnHash(pRh->pDefaultAddress);
-            vusbDevSetState(pRh->pDefaultAddress, VUSB_DEVICE_STATE_POWERED);
+            vusbDevSetStateCmp(pRh->pDefaultAddress, VUSB_DEVICE_STATE_POWERED, VUSB_DEVICE_STATE_DEFAULT);
             Log(("2 DEFAULT ADDRS\n"));
         }
 
@@ -1043,31 +1045,32 @@ static DECLCALLBACK(int) vusbDevCancelAllUrbsWorker(PVUSBDEV pDev, bool fDetachi
     /*
      * Iterate the URBs and cancel them.
      */
-    PVUSBURB pUrb = pDev->pAsyncUrbHead;
-    while (pUrb)
+    PVUSBURBVUSB pVUsbUrb, pVUsbUrbNext;
+    RTListForEachSafe(&pDev->LstAsyncUrbs, pVUsbUrb, pVUsbUrbNext, VUSBURBVUSBINT, NdLst)
     {
-        PVUSBURB pNext = pUrb->VUsb.pNext;
+        PVUSBURB pUrb = pVUsbUrb->pUrb;
 
-        Assert(pUrb->VUsb.pDev == pDev);
+        Assert(pUrb->pVUsb->pDev == pDev);
 
         LogFlow(("%s: vusbDevCancelAllUrbs: CANCELING URB\n", pUrb->pszDesc));
         int rc = vusbUrbCancelWorker(pUrb, CANCELMODE_FAIL);
         AssertRC(rc);
-        pUrb = pNext;
     }
 
     /*
      * Reap any URBs which became ripe during cancel now.
      */
+    RTCritSectEnter(&pDev->CritSectAsyncUrbs);
     unsigned cReaped;
     do
     {
         cReaped = 0;
-        pUrb = pDev->pAsyncUrbHead;
-        while (pUrb)
+        pVUsbUrb = RTListGetFirst(&pDev->LstAsyncUrbs, VUSBURBVUSBINT, NdLst);
+        while (pVUsbUrb)
         {
-            PVUSBURB pNext = pUrb->VUsb.pNext;
-            Assert(pUrb->VUsb.pDev == pDev);
+            PVUSBURBVUSB pNext = RTListGetNext(&pDev->LstAsyncUrbs, pVUsbUrb, VUSBURBVUSBINT, NdLst);
+            PVUSBURB pUrb = pVUsbUrb->pUrb;
+            Assert(pUrb->pVUsb->pDev == pDev);
 
             PVUSBURB pRipe = NULL;
             if (pUrb->enmState == VUSBURBSTATE_REAPED)
@@ -1083,13 +1086,14 @@ static DECLCALLBACK(int) vusbDevCancelAllUrbsWorker(PVUSBDEV pDev, bool fDetachi
                 AssertMsgFailed(("pUrb=%p enmState=%d\n", pUrb, pUrb->enmState));
             if (pRipe)
             {
-                if (pRipe == pNext)
-                    pNext = pNext->VUsb.pNext;
+                if (   pNext
+                    && pRipe == pNext->pUrb)
+                    pNext = RTListGetNext(&pDev->LstAsyncUrbs, pNext, VUSBURBVUSBINT, NdLst);
                 vusbUrbRipe(pRipe);
                 cReaped++;
             }
 
-            pUrb = pNext;
+            pVUsbUrb = pNext;
         }
     } while (cReaped > 0);
 
@@ -1098,11 +1102,10 @@ static DECLCALLBACK(int) vusbDevCancelAllUrbsWorker(PVUSBDEV pDev, bool fDetachi
      */
     if (fDetaching)
     {
-        pUrb = pDev->pAsyncUrbHead;
-        while (pUrb)
+        RTListForEachSafe(&pDev->LstAsyncUrbs, pVUsbUrb, pVUsbUrbNext, VUSBURBVUSBINT, NdLst)
         {
-            PVUSBURB pNext = pUrb->VUsb.pNext;
-            Assert(pUrb->VUsb.pDev == pDev);
+            PVUSBURB pUrb = pVUsbUrb->pUrb;
+            Assert(pUrb->pVUsb->pDev == pDev);
 
             AssertMsgFailed(("%s: Leaking left over URB! state=%d pDev=%p[%s]\n",
                              pUrb->pszDesc, pUrb->enmState, pDev, pDev->pUsbIns->pszName));
@@ -1111,11 +1114,10 @@ static DECLCALLBACK(int) vusbDevCancelAllUrbsWorker(PVUSBDEV pDev, bool fDetachi
              * It was tested with MSD & iphone attachment to vSMP guest, if
              * it breaks anything, please add comment here, why we should unlink only.
              */
-            pUrb->VUsb.pfnFree(pUrb);
-            pUrb = pNext;
+            pUrb->pVUsb->pfnFree(pUrb);
         }
     }
-
+    RTCritSectLeave(&pDev->CritSectAsyncUrbs);
     return VINF_SUCCESS;
 }
 
@@ -1124,10 +1126,12 @@ static DECLCALLBACK(int) vusbDevCancelAllUrbsWorker(PVUSBDEV pDev, bool fDetachi
  * on a device. This is typically done as part of a reset and
  * before detaching a device.
  *
+ * @returns nothing.
+ * @param   pDev        The VUSB device instance.
  * @param   fDetaching  If set, we will unconditionally unlink (and leak)
  *                      any URBs which isn't reaped.
  */
-static void vusbDevCancelAllUrbs(PVUSBDEV pDev, bool fDetaching)
+DECLHIDDEN(void) vusbDevCancelAllUrbs(PVUSBDEV pDev, bool fDetaching)
 {
     int rc = vusbDevIoThreadExecSync(pDev, (PFNRT)vusbDevCancelAllUrbsWorker, 2, pDev, fDetaching);
     AssertRC(rc);
@@ -1150,7 +1154,7 @@ static DECLCALLBACK(int) vusbDevUrbIoThread(RTTHREAD hThread, void *pvUser)
 
         /* Process any URBs waiting to be cancelled first. */
         int rc = RTReqQueueProcess(pDev->hReqQueueSync, 0); /* Don't wait if there is nothing to do. */
-        Assert(RT_SUCCESS(rc) || rc == VERR_TIMEOUT);
+        Assert(RT_SUCCESS(rc) || rc == VERR_TIMEOUT); NOREF(rc);
     }
 
     return VINF_SUCCESS;
@@ -1248,23 +1252,12 @@ int vusbDevDetach(PVUSBDEV pDev)
  * Destroys a device, detaching it from the hub if necessary.
  *
  * @param   pDev    The device.
- * @thread  EMT
+ * @thread any.
  */
 void vusbDevDestroy(PVUSBDEV pDev)
 {
     LogFlow(("vusbDevDestroy: pDev=%p[%s] enmState=%d\n", pDev, pDev->pUsbIns->pszName, pDev->enmState));
 
-    /*
-     * Deal with pending async reset.
-     * (anything but reset)
-     */
-    vusbDevSetStateCmp(pDev, VUSB_DEVICE_STATE_DEFAULT, VUSB_DEVICE_STATE_RESET);
-
-    /*
-     * Detach and free resources.
-     */
-    if (pDev->pHub)
-        vusbDevDetach(pDev);
     RTMemFree(pDev->paIfStates);
     TMR3TimerDestroy(pDev->pResetTimer);
     pDev->pResetTimer = NULL;
@@ -1283,9 +1276,16 @@ void vusbDevDestroy(PVUSBDEV pDev)
     int rc = RTReqQueueDestroy(pDev->hReqQueueSync);
     AssertRC(rc);
 
+    if (pDev->hSniffer != VUSBSNIFFER_NIL)
+        VUSBSnifferDestroy(pDev->hSniffer);
+
+    vusbUrbPoolDestroy(&pDev->UrbPool);
+
     RTCritSectDelete(&pDev->CritSectAsyncUrbs);
     /* Not using vusbDevSetState() deliberately here because it would assert on the state. */
     pDev->enmState = VUSB_DEVICE_STATE_DESTROYED;
+    pDev->pUsbIns->pvVUsbDev2 = NULL;
+    RTMemFree(pDev);
 }
 
 
@@ -1343,15 +1343,18 @@ static void vusbDevResetDone(PVUSBDEV pDev, int rc, PFNVUSBRESETDONE pfnDone, vo
  */
 static DECLCALLBACK(void) vusbDevResetDoneTimer(PPDMUSBINS pUsbIns, PTMTIMER pTimer, void *pvUser)
 {
+    RT_NOREF(pUsbIns, pTimer);
     PVUSBDEV        pDev  = (PVUSBDEV)pvUser;
     PVUSBRESETARGS  pArgs = (PVUSBRESETARGS)pDev->pvArgs;
     Assert(pDev->pUsbIns == pUsbIns);
 
+    AssertPtr(pArgs);
+
     /*
      * Reset-done processing and cleanup.
      */
-    vusbDevResetDone(pDev, pArgs->rc, pArgs->pfnDone, pArgs->pvUser);
     pDev->pvArgs = NULL;
+    vusbDevResetDone(pDev, pArgs->rc, pArgs->pfnDone, pArgs->pvUser);
     RTMemFree(pArgs);
 }
 
@@ -1369,6 +1372,12 @@ static int vusbDevResetWorker(PVUSBDEV pDev, bool fResetOnLinux, bool fUseTimer,
     if (pDev->pUsbIns->pReg->pfnUsbReset)
         rc = pDev->pUsbIns->pReg->pfnUsbReset(pDev->pUsbIns, fResetOnLinux);
 
+    if (pArgs)
+    {
+        pArgs->rc = rc;
+        rc = VINF_SUCCESS;
+    }
+
     if (fUseTimer)
     {
         /*
@@ -1378,12 +1387,6 @@ static int vusbDevResetWorker(PVUSBDEV pDev, bool fResetOnLinux, bool fUseTimer,
          */
         int rc2 = TMTimerSet(pDev->pResetTimer, u64EndTS);
         AssertReleaseRC(rc2);
-    }
-
-    if (pArgs)
-    {
-        pArgs->rc = rc;
-        rc = VINF_SUCCESS;
     }
 
     LogFlow(("vusbDevResetWorker: %s: returns %Rrc\n", pDev->pUsbIns->pszName, rc));
@@ -1407,17 +1410,20 @@ static int vusbDevResetWorker(PVUSBDEV pDev, bool fResetOnLinux, bool fUseTimer,
  *
  * @returns VBox status code.
  *
- * @param   pDev            Pointer to the VUSB device interface.
+ * @param   pDevice         Pointer to the VUSB device interface.
  * @param   fResetOnLinux   Whether it's safe to reset the device(s) on a linux
  *                          host system. See discussion of logical reconnects elsewhere.
  * @param   pfnDone         Pointer to the completion routine. If NULL a synchronous
  *                          reset is preformed not respecting the 10ms.
+ * @param   pvUser          Opaque user data to pass to the done callback.
  * @param   pVM             Pointer to the VM handle for performing the done function
  *                          on the EMT thread.
  * @thread  EMT
  */
-DECLCALLBACK(int) vusbIDeviceReset(PVUSBIDEVICE pDevice, bool fResetOnLinux, PFNVUSBRESETDONE pfnDone, void *pvUser, PVM pVM)
+static DECLCALLBACK(int) vusbIDeviceReset(PVUSBIDEVICE pDevice, bool fResetOnLinux,
+                                          PFNVUSBRESETDONE pfnDone, void *pvUser, PVM pVM)
 {
+    RT_NOREF(pVM);
     PVUSBDEV pDev = (PVUSBDEV)pDevice;
     Assert(!pfnDone || pVM);
     LogFlow(("vusb: reset: [%s]/%i\n", pDev->pUsbIns->pszName, pDev->i16Port));
@@ -1450,6 +1456,7 @@ DECLCALLBACK(int) vusbIDeviceReset(PVUSBIDEVICE pDevice, bool fResetOnLinux, PFN
             pArgs->pfnDone = pfnDone;
             pArgs->pvUser  = pvUser;
             pArgs->rc      = VINF_SUCCESS;
+            AssertPtrNull(pDev->pvArgs);
             pDev->pvArgs   = pArgs;
             int rc = vusbDevIoThreadExec(pDev, 0 /* fFlags */, (PFNRT)vusbDevResetWorker, 4, pDev, fResetOnLinux, true, pArgs);
             if (RT_SUCCESS(rc))
@@ -1475,7 +1482,7 @@ DECLCALLBACK(int) vusbIDeviceReset(PVUSBIDEVICE pDevice, bool fResetOnLinux, PFN
  * @returns VBox status code.
  * @param   pInterface      Pointer to the device interface structure.
  */
-DECLCALLBACK(int) vusbIDevicePowerOn(PVUSBIDEVICE pInterface)
+static DECLCALLBACK(int) vusbIDevicePowerOn(PVUSBIDEVICE pInterface)
 {
     PVUSBDEV pDev = (PVUSBDEV)pInterface;
     LogFlow(("vusbDevPowerOn: pDev=%p[%s]\n", pDev, pDev->pUsbIns->pszName));
@@ -1511,7 +1518,7 @@ DECLCALLBACK(int) vusbIDevicePowerOn(PVUSBIDEVICE pInterface)
  * @returns VBox status code.
  * @param   pInterface      Pointer to the device interface structure.
  */
-DECLCALLBACK(int) vusbIDevicePowerOff(PVUSBIDEVICE pInterface)
+static DECLCALLBACK(int) vusbIDevicePowerOff(PVUSBIDEVICE pInterface)
 {
     PVUSBDEV pDev = (PVUSBDEV)pInterface;
     LogFlow(("vusbDevPowerOff: pDev=%p[%s]\n", pDev, pDev->pUsbIns->pszName));
@@ -1552,9 +1559,37 @@ DECLCALLBACK(int) vusbIDevicePowerOff(PVUSBIDEVICE pInterface)
  * @returns Device state.
  * @param   pInterface      Pointer to the device interface structure.
  */
-DECLCALLBACK(VUSBDEVICESTATE) vusbIDeviceGetState(PVUSBIDEVICE pInterface)
+static DECLCALLBACK(VUSBDEVICESTATE) vusbIDeviceGetState(PVUSBIDEVICE pInterface)
 {
     return vusbDevGetState((PVUSBDEV)pInterface);
+}
+
+
+/**
+ * @interface_method_impl{VUSBIDEVICE,pfnIsSavedStateSupported}
+ */
+static DECLCALLBACK(bool) vusbIDeviceIsSavedStateSupported(PVUSBIDEVICE pInterface)
+{
+    PVUSBDEV pDev = (PVUSBDEV)pInterface;
+    bool fSavedStateSupported = RT_BOOL(pDev->pUsbIns->pReg->fFlags & PDM_USBREG_SAVED_STATE_SUPPORTED);
+
+    LogFlowFunc(("pInterface=%p\n", pInterface));
+
+    LogFlowFunc(("returns %RTbool\n", fSavedStateSupported));
+    return fSavedStateSupported;
+}
+
+
+/**
+ * @interface_method_impl{VUSBIDEVICE,pfnGetState}
+ */
+static DECLCALLBACK(VUSBSPEED) vusbIDeviceGetSpeed(PVUSBIDEVICE pInterface)
+{
+    PVUSBDEV pDev = (PVUSBDEV)pInterface;
+    VUSBSPEED enmSpeed = pDev->pUsbIns->enmSpeed;
+
+    LogFlowFunc(("pInterface=%p, returns %u\n", pInterface, enmSpeed));
+    return enmSpeed;
 }
 
 
@@ -1606,7 +1641,16 @@ DECLHIDDEN(int) vusbDevIoThreadExecV(PVUSBDEV pDev, uint32_t fFlags, PFNRT pfnFu
         rc = RTReqQueueCallV(pDev->hReqQueueSync, &hReq, 0 /* cMillies */, fReqFlags, pfnFunction, cArgs, Args);
         Assert(RT_SUCCESS(rc) || rc == VERR_TIMEOUT);
 
-        vusbDevUrbIoThreadWakeup(pDev);
+        /* In case we are called on the I/O thread just process the request. */
+        if (   pDev->hUrbIoThread == RTThreadSelf()
+            && (fFlags & VUSB_DEV_IO_THREAD_EXEC_FLAGS_SYNC))
+        {
+            int rc2 = RTReqQueueProcess(pDev->hReqQueueSync, 0);
+            Assert(RT_SUCCESS(rc2) || rc2 == VERR_TIMEOUT); NOREF(rc2);
+        }
+        else
+            vusbDevUrbIoThreadWakeup(pDev);
+
         if (   rc == VERR_TIMEOUT
             && (fFlags & VUSB_DEV_IO_THREAD_EXEC_FLAGS_SYNC))
         {
@@ -1679,10 +1723,11 @@ static DECLCALLBACK(int) vusbDevGetDescriptorCacheWorker(PPDMUSBINS pUsbIns, PCP
  * Initialize a new VUSB device.
  *
  * @returns VBox status code.
- * @param   pDev    The VUSB device to initialize.
- * @param   pUsbIns Pointer to the PDM USB Device instance.
+ * @param   pDev                  The VUSB device to initialize.
+ * @param   pUsbIns               Pointer to the PDM USB Device instance.
+ * @param   pszCaptureFilename    Optional fileame to capture the traffic to.
  */
-int vusbDevInit(PVUSBDEV pDev, PPDMUSBINS pUsbIns)
+int vusbDevInit(PVUSBDEV pDev, PPDMUSBINS pUsbIns, const char *pszCaptureFilename)
 {
     /*
      * Initialize the device data members.
@@ -1692,16 +1737,20 @@ int vusbDevInit(PVUSBDEV pDev, PPDMUSBINS pUsbIns)
     Assert(!pDev->IDevice.pfnPowerOn);
     Assert(!pDev->IDevice.pfnPowerOff);
     Assert(!pDev->IDevice.pfnGetState);
+    Assert(!pDev->IDevice.pfnIsSavedStateSupported);
 
     pDev->IDevice.pfnReset = vusbIDeviceReset;
     pDev->IDevice.pfnPowerOn = vusbIDevicePowerOn;
     pDev->IDevice.pfnPowerOff = vusbIDevicePowerOff;
     pDev->IDevice.pfnGetState = vusbIDeviceGetState;
+    pDev->IDevice.pfnIsSavedStateSupported = vusbIDeviceIsSavedStateSupported;
+    pDev->IDevice.pfnGetSpeed = vusbIDeviceGetSpeed;
     pDev->pUsbIns = pUsbIns;
     pDev->pNext = NULL;
     pDev->pNextHash = NULL;
     pDev->pHub = NULL;
     pDev->enmState = VUSB_DEVICE_STATE_DETACHED;
+    pDev->cRefs = 1;
     pDev->u8Address = VUSB_INVALID_ADDRESS;
     pDev->u8NewAddress = VUSB_INVALID_ADDRESS;
     pDev->i16Port = -1;
@@ -1709,6 +1758,7 @@ int vusbDevInit(PVUSBDEV pDev, PPDMUSBINS pUsbIns)
     pDev->pDescCache = NULL;
     pDev->pCurCfgDesc = NULL;
     pDev->paIfStates = NULL;
+    RTListInit(&pDev->LstAsyncUrbs);
     memset(&pDev->aPipes[0], 0, sizeof(pDev->aPipes));
     for (unsigned i = 0; i < RT_ELEMENTS(pDev->aPipes); i++)
     {
@@ -1716,8 +1766,13 @@ int vusbDevInit(PVUSBDEV pDev, PPDMUSBINS pUsbIns)
         AssertRCReturn(rc, rc);
     }
     pDev->pResetTimer = NULL;
+    pDev->hSniffer = VUSBSNIFFER_NIL;
 
     int rc = RTCritSectInit(&pDev->CritSectAsyncUrbs);
+    AssertRCReturn(rc, rc);
+
+    /* Create the URB pool. */
+    rc = vusbUrbPoolInit(&pDev->UrbPool);
     AssertRCReturn(rc, rc);
 
     /* Setup request queue executing synchronous tasks on the I/O thread. */
@@ -1734,6 +1789,12 @@ int vusbDevInit(PVUSBDEV pDev, PPDMUSBINS pUsbIns)
     rc = PDMUsbHlpTMTimerCreate(pDev->pUsbIns, TMCLOCK_VIRTUAL, vusbDevResetDoneTimer, pDev, 0 /*fFlags*/,
                                 "USB Device Reset Timer",  &pDev->pResetTimer);
     AssertRCReturn(rc, rc);
+
+    if (pszCaptureFilename)
+    {
+        rc = VUSBSnifferCreate(&pDev->hSniffer, 0, pszCaptureFilename, NULL, NULL);
+        AssertRCReturn(rc, rc);
+    }
 
     /*
      * Get the descriptor cache from the device. (shall cannot fail)

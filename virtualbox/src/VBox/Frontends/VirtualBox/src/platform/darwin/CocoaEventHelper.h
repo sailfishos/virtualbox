@@ -1,12 +1,11 @@
+/* $Id: CocoaEventHelper.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Declarations of utility functions for handling Darwin Cocoa specific event
- * handling tasks
+ * VBox Qt GUI - Declarations of utility functions for handling Darwin Cocoa
+ * specific event handling tasks.
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,6 +35,7 @@ unsigned long darwinEventModifierFlags(ConstNativeNSEventRef pEvent);
 uint32_t darwinEventModifierFlagsXlated(ConstNativeNSEventRef pEvent);
 const char *darwinEventTypeName(unsigned long eEvtType);
 void darwinPrintEvent(const char *pszPrefix, ConstNativeNSEventRef pEvent);
+void darwinPostStrippedMouseEvent(ConstNativeNSEventRef pEvent);
 
 RT_C_DECLS_END
 

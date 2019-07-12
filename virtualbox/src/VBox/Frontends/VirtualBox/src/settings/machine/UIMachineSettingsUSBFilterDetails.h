@@ -1,11 +1,10 @@
+/* $Id: UIMachineSettingsUSBFilterDetails.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIMachineSettingsUSBFilterDetails class declaration
+ * VBox Qt GUI - UIMachineSettingsUSBFilterDetails class declaration.
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

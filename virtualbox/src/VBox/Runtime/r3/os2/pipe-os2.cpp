@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define INCL_ERRORS
 #define INCL_DOSSEMAPHORES
 #include <os2.h>
@@ -49,16 +49,16 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The pipe buffer size we prefer. */
 #define RTPIPE_OS2_SIZE     _32K
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct RTPIPEINTERNAL
 {
     /** Magic value (RTPIPE_MAGIC). */
@@ -875,6 +875,35 @@ RTDECL(int) RTPipeQueryReadable(RTPIPE hPipe, size_t *pcbReadable)
 
     RTCritSectLeave(&pThis->CritSect);
     return rc;
+}
+
+
+RTDECL(int) RTPipeQueryInfo(RTPIPE hPipe, PRTFSOBJINFO pObjInfo, RTFSOBJATTRADD enmAddAttr)
+{
+    RTPIPEINTERNAL *pThis = hPipe;
+    AssertPtrReturn(pThis, 0);
+    AssertReturn(pThis->u32Magic == RTPIPE_MAGIC, 0);
+
+    int rc = RTCritSectEnter(&pThis->CritSect);
+    AssertRCReturn(rc, 0);
+
+    rtPipeFakeQueryInfo(pObjInfo, enmAddAttr, pThis->fRead);
+
+    if (pThis->fRead)
+    {
+        ULONG       cbActual = 0;
+        ULONG       ulState  = 0;
+        AVAILDATA   Avail    = { 0, 0 };
+        APIRET orc = DosPeekNPipe(pThis->hPipe, NULL, 0, &cbActual, &Avail, &ulState);
+        if (orc == NO_ERROR && (Avail.cbpipe > 0 || ulState == NP_STATE_CONNECTED))
+            pObjInfo->cbObject = Avail.cbpipe;
+    }
+    else
+        pObjInfo->cbObject = rtPipeOs2GetSpace(pThis);
+    pObjInfo->cbAllocated = RTPIPE_OS2_SIZE; /** @todo this isn't necessarily true if we didn't create it... but, whatever */
+
+    RTCritSectLeave(&pThis->CritSect);
+    return VINF_SUCCESS;
 }
 
 

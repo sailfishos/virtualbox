@@ -1,11 +1,10 @@
+/* $Id: UIMachineSettingsGeneral.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIMachineSettingsGeneral class declaration
+ * VBox Qt GUI - UIMachineSettingsGeneral class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,113 +15,129 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#ifndef __UIMachineSettingsGeneral_h__
-#define __UIMachineSettingsGeneral_h__
+#ifndef ___UIMachineSettingsGeneral_h___
+#define ___UIMachineSettingsGeneral_h___
 
-/* Local includes: */
+/* GUI includes: */
+#include "UIAddDiskEncryptionPasswordDialog.h"
 #include "UISettingsPage.h"
 #include "UIMachineSettingsGeneral.gen.h"
 
-/* Machine settings / General page / Data: */
-struct UIDataSettingsMachineGeneral
-{
-    /* Default constructor: */
-    UIDataSettingsMachineGeneral()
-        : m_strName(QString())
-        , m_strGuestOsTypeId(QString())
-        , m_fSaveMountedAtRuntime(false)
-        , m_fShowMiniToolBar(false)
-        , m_fMiniToolBarAtTop(false)
-        , m_strSnapshotsFolder(QString())
-        , m_strSnapshotsHomeDir(QString())
-        , m_clipboardMode(KClipboardMode_Disabled)
-        , m_dragAndDropMode(KDragAndDropMode_Disabled)
-        , m_strDescription(QString()) {}
-    /* Functions: */
-    bool equal(const UIDataSettingsMachineGeneral &other) const
-    {
-        return (m_strName == other.m_strName) &&
-               (m_strGuestOsTypeId == other.m_strGuestOsTypeId) &&
-               (m_fSaveMountedAtRuntime == other.m_fSaveMountedAtRuntime) &&
-               (m_fShowMiniToolBar == other.m_fShowMiniToolBar) &&
-               (m_fMiniToolBarAtTop == other.m_fMiniToolBarAtTop) &&
-               (m_strSnapshotsFolder == other.m_strSnapshotsFolder) &&
-               (m_strSnapshotsHomeDir == other.m_strSnapshotsHomeDir) &&
-               (m_clipboardMode == other.m_clipboardMode) &&
-               (m_dragAndDropMode == other.m_dragAndDropMode) &&
-               (m_strDescription == other.m_strDescription);
-    }
-    /* Operators: */
-    bool operator==(const UIDataSettingsMachineGeneral &other) const { return equal(other); }
-    bool operator!=(const UIDataSettingsMachineGeneral &other) const { return !equal(other); }
-    /* Variables: */
-    QString m_strName;
-    QString m_strGuestOsTypeId;
-    bool m_fSaveMountedAtRuntime;
-    bool m_fShowMiniToolBar;
-    bool m_fMiniToolBarAtTop;
-    QString m_strSnapshotsFolder;
-    QString m_strSnapshotsHomeDir;
-    KClipboardMode m_clipboardMode;
-    KDragAndDropMode m_dragAndDropMode;
-    QString m_strDescription;
-};
-typedef UISettingsCache<UIDataSettingsMachineGeneral> UICacheSettingsMachineGeneral;
+/* Forward declarations: */
+struct UIDataSettingsMachineGeneral;
+typedef UISettingsCache<UIDataSettingsMachineGeneral> UISettingsCacheMachineGeneral;
 
-/* Machine settings / General page: */
+
+/** Machine settings: General page. */
 class UIMachineSettingsGeneral : public UISettingsPageMachine,
-                              public Ui::UIMachineSettingsGeneral
+                                 public Ui::UIMachineSettingsGeneral
 {
     Q_OBJECT;
 
 public:
 
+    /** Constructs General settings page. */
     UIMachineSettingsGeneral();
+    /** Destructs General settings page. */
+    ~UIMachineSettingsGeneral();
 
+    /** Returns the VM OS type ID. */
     CGuestOSType guestOSType() const;
-    void setHWVirtExEnabled(bool fEnabled);
+    /** Returns whether 64bit OS type ID is selected. */
     bool is64BitOSTypeSelected() const;
 #ifdef VBOX_WITH_VIDEOHWACCEL
+    /** Returns whether Windows OS type ID is selected. */
     bool isWindowsOSTypeSelected() const;
 #endif /* VBOX_WITH_VIDEOHWACCEL */
 
+    /** Defines whether HW virtualization extension is enabled. */
+    void setHWVirtExEnabled(bool fEnabled);
+
 protected:
 
-    /* Load data to cache from corresponding external object(s),
-     * this task COULD be performed in other than GUI thread: */
-    void loadToCacheFrom(QVariant &data);
-    /* Load data to corresponding widgets from cache,
-     * this task SHOULD be performed in GUI thread only: */
-    void getFromCache();
+    /** Returns whether the page content was changed. */
+    virtual bool changed() const /* override */;
 
-    /* Page changed: */
-    bool changed() const { return m_cache.wasChanged(); }
+    /** Loads data into the cache from the corresponding external object(s).
+      * @note This task COULD be performed in other than GUI thread. */
+    virtual void loadToCacheFrom(QVariant &data) /* override */;
+    /** Loads data into the corresponding widgets from the cache,
+      * @note This task SHOULD be performed in GUI thread only! */
+    virtual void getFromCache() /* override */;
 
-    /* Save data from corresponding widgets to cache,
-     * this task SHOULD be performed in GUI thread only: */
-    void putToCache();
-    /* Save data from cache to corresponding external object(s),
-     * this task COULD be performed in other than GUI thread: */
-    void saveFromCacheTo(QVariant &data);
+    /** Saves the data from the corresponding widgets into the cache,
+      * @note This task SHOULD be performed in GUI thread only! */
+    virtual void putToCache() /* override */;
+    /** Save data from the cache into the corresponding external object(s).
+      * @note This task COULD be performed in other than GUI thread. */
+    virtual void saveFromCacheTo(QVariant &data) /* overrride */;
 
-    /* API: Validation stuff: */
-    bool validate(QList<UIValidationMessage> &messages);
+    /** Performs validation, updates @a messages list if something is wrong. */
+    virtual bool validate(QList<UIValidationMessage> &messages) /* override */;
 
-    void setOrderAfter (QWidget *aWidget);
+    /** Defines TAB order for passed @a pWidget. */
+    virtual void setOrderAfter(QWidget *pWidget) /* override */;
 
-    void retranslateUi();
+    /** Handles translation event. */
+    virtual void retranslateUi() /* override */;
+
+    /** Performs final page polishing. */
+    virtual void polishPage() /* override */;
+
+private slots:
+
+    /** Marks the encryption cipher as changed. */
+    void sltMarkEncryptionCipherChanged() { m_fEncryptionCipherChanged = true; }
+    /** Marks the encryption cipher and password as changed. */
+    void sltMarkEncryptionPasswordChanged() { m_fEncryptionCipherChanged = true; m_fEncryptionPasswordChanged = true; }
 
 private:
 
-    /* Helper: Prepare stuff: */
-    void prepareValidation();
+    /** Prepares all. */
+    void prepare();
+    /** Prepares 'Basic' tab. */
+    void prepareTabBasic();
+    /** Prepares 'Advanced' tab. */
+    void prepareTabAdvanced();
+    /** Prepares 'Description' tab. */
+    void prepareTabDescription();
+    /** Prepares 'Encryption' tab. */
+    void prepareTabEncryption();
+    /** Prepares connections. */
+    void prepareConnections();
+    /** Cleanups all. */
+    void cleanup();
 
-    void polishPage();
+    /** Saves existing general data from the cache. */
+    bool saveGeneralData();
+    /** Saves existing 'Basic' data from the cache. */
+    bool saveBasicData();
+    /** Saves existing 'Advanced' data from the cache. */
+    bool saveAdvancedData();
+    /** Saves existing 'Description' data from the cache. */
+    bool saveDescriptionData();
+    /** Saves existing 'Encryption' data from the cache. */
+    bool saveEncryptionData();
 
-    /* Cache: */
-    bool m_fHWVirtExEnabled;
-    UICacheSettingsMachineGeneral m_cache;
+    /** Holds whether HW virtualization extension is enabled. */
+    bool  m_fHWVirtExEnabled;
+
+    /** Holds whether the encryption cipher was changed.
+      * We are holding that argument here because we do not know
+      * the old <i>cipher</i> for sure to compare the new one with. */
+    bool  m_fEncryptionCipherChanged;
+    /** Holds whether the encryption password was changed.
+      * We are holding that argument here because we do not know
+      * the old <i>password</i> at all to compare the new one with. */
+    bool  m_fEncryptionPasswordChanged;
+
+    /** Holds the hard-coded encryption cipher list.
+      * We are hard-coding it because there is no place we can get it from. */
+    QStringList  m_encryptionCiphers;
+
+    /** Holds the page data cache instance. */
+    UISettingsCacheMachineGeneral *m_pCache;
 };
 
-#endif // __UIMachineSettingsGeneral_h__
+#endif /* !___UIMachineSettingsGeneral_h___ */
 

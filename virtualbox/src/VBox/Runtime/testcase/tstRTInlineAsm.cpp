@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/asm.h>
 #include <iprt/asm-math.h>
 
@@ -41,9 +42,11 @@
 
 #if !defined(GCC44_32BIT_PIC) && (defined(RT_ARCH_AMD64) || defined(RT_ARCH_X86))
 # include <iprt/asm-amd64-x86.h>
+# include <iprt/x86.h>
 #else
 # include <iprt/time.h>
 #endif
+#include <iprt/rand.h>
 #include <iprt/stream.h>
 #include <iprt/string.h>
 #include <iprt/param.h>
@@ -53,9 +56,9 @@
 
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define CHECKVAL(val, expect, fmt) \
     do \
     { \
@@ -97,9 +100,9 @@
     } while (0)
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The test instance. */
 static RTTEST g_hTest;
 
@@ -219,11 +222,48 @@ void tstASMCpuId(void)
         RTTestIPrintf(RTTESTLVL_ALWAYS, "%08x  %08x %08x %08x %08x%s\n",
                       iStd, s.uEAX, s.uEBX, s.uECX, s.uEDX, iStd <= cFunctions ? "" : "*");
 
-        /* Leaf 04 and leaf 0d output depend on the initial value of ECX
+        /* Some leafs output depend on the initial value of ECX.
          * The same seems to apply to invalid standard functions */
         if (iStd > cFunctions)
             continue;
-        if (iStd != 0x04 && iStd != 0x0b && iStd != 0x0d)
+        if (iStd == 0x04)       /* Deterministic Cache Parameters Leaf */
+            for (uint32_t uECX = 1; s.uEAX & 0x1f; uECX++)
+            {
+                ASMCpuId_Idx_ECX(iStd, uECX, &s.uEAX, &s.uEBX, &s.uECX, &s.uEDX);
+                RTTestIPrintf(RTTESTLVL_ALWAYS, "    [%02x]  %08x %08x %08x %08x\n", uECX, s.uEAX, s.uEBX, s.uECX, s.uEDX);
+                RTTESTI_CHECK_BREAK(uECX < 128);
+            }
+        else if (iStd == 0x07) /* Structured Extended Feature Flags */
+        {
+            uint32_t uMax = s.uEAX;
+            for (uint32_t uECX = 1; uECX < uMax; uECX++)
+            {
+                ASMCpuId_Idx_ECX(iStd, uECX, &s.uEAX, &s.uEBX, &s.uECX, &s.uEDX);
+                RTTestIPrintf(RTTESTLVL_ALWAYS, "    [%02x]  %08x %08x %08x %08x\n", uECX, s.uEAX, s.uEBX, s.uECX, s.uEDX);
+                RTTESTI_CHECK_BREAK(uECX < 128);
+            }
+        }
+        else if (iStd == 0x0b) /* Extended Topology Enumeration Leafs */
+            for (uint32_t uECX = 1; (s.uEAX & 0x1f) && (s.uEBX & 0xffff); uECX++)
+            {
+                ASMCpuId_Idx_ECX(iStd, uECX, &s.uEAX, &s.uEBX, &s.uECX, &s.uEDX);
+                RTTestIPrintf(RTTESTLVL_ALWAYS, "    [%02x]  %08x %08x %08x %08x\n", uECX, s.uEAX, s.uEBX, s.uECX, s.uEDX);
+                RTTESTI_CHECK_BREAK(uECX < 128);
+            }
+        else if (iStd == 0x0d) /* Extended State Enumeration Leafs */
+            for (uint32_t uECX = 1; s.uEAX != 0 || s.uEBX != 0 || s.uECX != 0 || s.uEDX != 0; uECX++)
+            {
+                ASMCpuId_Idx_ECX(iStd, uECX, &s.uEAX, &s.uEBX, &s.uECX, &s.uEDX);
+                RTTestIPrintf(RTTESTLVL_ALWAYS, "    [%02x]  %08x %08x %08x %08x\n", uECX, s.uEAX, s.uEBX, s.uECX, s.uEDX);
+                RTTESTI_CHECK_BREAK(uECX < 128);
+            }
+        else if (   iStd == 0x0f /* Platform qualifity of service monitoring (PQM)  */
+                 || iStd == 0x10 /* Platform qualifity of service enforcement (PQE) */
+                 || iStd == 0x14 /* Trace Enumeration Leafs */)
+        {
+            /** @todo  */
+        }
+        else
         {
             u32 = ASMCpuId_EAX(iStd);
             CHECKVAL(u32, s.uEAX, "%x");
@@ -244,29 +284,17 @@ void tstASMCpuId(void)
             ASMCpuId_ECX_EDX(iStd, &uECX2, &uEDX2);
             CHECKVAL(uECX2, s.uECX, "%x");
             CHECKVAL(uEDX2, s.uEDX, "%x");
-        }
 
-        if (iStd == 0x04)
-            for (uint32_t uECX = 1; s.uEAX & 0x1f; uECX++)
-            {
-                ASMCpuId_Idx_ECX(iStd, uECX, &s.uEAX, &s.uEBX, &s.uECX, &s.uEDX);
-                RTTestIPrintf(RTTESTLVL_ALWAYS, "    [%02x]  %08x %08x %08x %08x\n", uECX, s.uEAX, s.uEBX, s.uECX, s.uEDX);
-                RTTESTI_CHECK_BREAK(uECX < 128);
-            }
-        else if (iStd == 0x0b)
-            for (uint32_t uECX = 1; (s.uEAX & 0x1f) && (s.uEBX & 0xffff); uECX++)
-            {
-                ASMCpuId_Idx_ECX(iStd, uECX, &s.uEAX, &s.uEBX, &s.uECX, &s.uEDX);
-                RTTestIPrintf(RTTESTLVL_ALWAYS, "    [%02x]  %08x %08x %08x %08x\n", uECX, s.uEAX, s.uEBX, s.uECX, s.uEDX);
-                RTTESTI_CHECK_BREAK(uECX < 128);
-            }
-        else if (iStd == 0x0d)
-            for (uint32_t uECX = 1; s.uEAX != 0 || s.uEBX != 0 || s.uECX != 0 || s.uEDX != 0; uECX++)
-            {
-                ASMCpuId_Idx_ECX(iStd, uECX, &s.uEAX, &s.uEBX, &s.uECX, &s.uEDX);
-                RTTestIPrintf(RTTESTLVL_ALWAYS, "    [%02x]  %08x %08x %08x %08x\n", uECX, s.uEAX, s.uEBX, s.uECX, s.uEDX);
-                RTTESTI_CHECK_BREAK(uECX < 128);
-            }
+            uEAX2 = s.uEAX - 1;
+            uEBX2 = s.uEBX - 1;
+            uECX2 = s.uECX - 1;
+            uEDX2 = s.uEDX - 1;
+            ASMCpuId(iStd, &uEAX2, &uEBX2, &uECX2, &uEDX2);
+            CHECKVAL(uEAX2, s.uEAX, "%x");
+            CHECKVAL(uEBX2 & u32EbxMask, s.uEBX & u32EbxMask, "%x");
+            CHECKVAL(uECX2, s.uECX, "%x");
+            CHECKVAL(uEDX2, s.uEDX, "%x");
+        }
     }
 
     /*
@@ -393,6 +421,16 @@ void tstASMCpuId(void)
         uECX2 = s.uECX - 1;
         uEDX2 = s.uEDX - 1;
         ASMCpuId_ECX_EDX(iExt, &uECX2, &uEDX2);
+        CHECKVAL(uECX2, s.uECX, "%x");
+        CHECKVAL(uEDX2, s.uEDX, "%x");
+
+        uEAX2 = s.uEAX - 1;
+        uEBX2 = s.uEBX - 1;
+        uECX2 = s.uECX - 1;
+        uEDX2 = s.uEDX - 1;
+        ASMCpuId(iExt, &uEAX2, &uEBX2, &uECX2, &uEDX2);
+        CHECKVAL(uEAX2, s.uEAX, "%x");
+        CHECKVAL(uEBX2, s.uEBX, "%x");
         CHECKVAL(uECX2, s.uECX, "%x");
         CHECKVAL(uEDX2, s.uEDX, "%x");
     }
@@ -580,6 +618,41 @@ void tstASMCpuId(void)
      }
 }
 
+# if 0
+static void bruteForceCpuId(void)
+{
+    RTTestISub("brute force CPUID leafs");
+    uint32_t auPrevValues[4] = { 0, 0, 0, 0};
+    uint32_t uLeaf = 0;
+    do
+    {
+        uint32_t auValues[4];
+        ASMCpuIdExSlow(uLeaf, 0, 0, 0, &auValues[0], &auValues[1], &auValues[2], &auValues[3]);
+        if (   (auValues[0] != auPrevValues[0] && auValues[0] != uLeaf)
+            || (auValues[1] != auPrevValues[1] && auValues[1] != 0)
+            || (auValues[2] != auPrevValues[2] && auValues[2] != 0)
+            || (auValues[3] != auPrevValues[3] && auValues[3] != 0)
+            || (uLeaf & (UINT32_C(0x08000000) - UINT32_C(1))) == 0)
+        {
+            RTTestIPrintf(RTTESTLVL_ALWAYS,
+                          "%08x: %08x %08x %08x %08x\n", uLeaf,
+                          auValues[0], auValues[1], auValues[2], auValues[3]);
+        }
+        auPrevValues[0] = auValues[0];
+        auPrevValues[1] = auValues[1];
+        auPrevValues[2] = auValues[2];
+        auPrevValues[3] = auValues[3];
+
+        //uint32_t uSubLeaf = 0;
+        //do
+        //{
+        //
+        //
+        //} while (false);
+    } while (uLeaf++ < UINT32_MAX);
+}
+# endif
+
 #endif /* AMD64 || X86 */
 
 DECLINLINE(void) tstASMAtomicXchgU8Worker(uint8_t volatile *pu8)
@@ -591,10 +664,10 @@ DECLINLINE(void) tstASMAtomicXchgU8Worker(uint8_t volatile *pu8)
     CHECKOP(ASMAtomicXchgU8(pu8, 0), 1, "%#x", uint8_t);
     CHECKVAL(*pu8, 0, "%#x");
 
-    CHECKOP(ASMAtomicXchgU8(pu8, 0xff), 0, "%#x", uint8_t);
+    CHECKOP(ASMAtomicXchgU8(pu8, UINT8_C(0xff)), 0, "%#x", uint8_t);
     CHECKVAL(*pu8, 0xff, "%#x");
 
-    CHECKOP(ASMAtomicXchgU8(pu8, 0x87), 0xffff, "%#x", uint8_t);
+    CHECKOP(ASMAtomicXchgU8(pu8, UINT8_C(0x87)), UINT8_C(0xff), "%#x", uint8_t);
     CHECKVAL(*pu8, 0x87, "%#x");
 }
 
@@ -684,10 +757,10 @@ DECLINLINE(void) tstASMAtomicXchgPtrWorker(void * volatile *ppv)
     CHECKOP(ASMAtomicXchgPtr(ppv, (void *)(~(uintptr_t)0)), NULL, "%p", void *);
     CHECKVAL(*ppv, (void *)(~(uintptr_t)0), "%p");
 
-    CHECKOP(ASMAtomicXchgPtr(ppv, (void *)0x87654321), (void *)(~(uintptr_t)0), "%p", void *);
-    CHECKVAL(*ppv, (void *)0x87654321, "%p");
+    CHECKOP(ASMAtomicXchgPtr(ppv, (void *)(uintptr_t)0x87654321), (void *)(~(uintptr_t)0), "%p", void *);
+    CHECKVAL(*ppv, (void *)(uintptr_t)0x87654321, "%p");
 
-    CHECKOP(ASMAtomicXchgPtr(ppv, NULL), (void *)0x87654321, "%p", void *);
+    CHECKOP(ASMAtomicXchgPtr(ppv, NULL), (void *)(uintptr_t)0x87654321, "%p", void *);
     CHECKVAL(*ppv, NULL, "%p");
 }
 
@@ -912,9 +985,56 @@ DECLINLINE(void) tstASMAtomicAddS32Worker(int32_t *pi32)
 #undef MYCHECK
 }
 
+
 static void tstASMAtomicAddS32(void)
 {
     DO_SIMPLE_TEST(ASMAtomicAddS32, int32_t);
+}
+
+
+DECLINLINE(void) tstASMAtomicUoIncU32Worker(uint32_t volatile *pu32)
+{
+    *pu32 = 0;
+
+    CHECKOP(ASMAtomicUoIncU32(pu32), UINT32_C(1), "%#x", uint32_t);
+    CHECKVAL(*pu32, UINT32_C(1), "%#x");
+
+    *pu32 = ~UINT32_C(0);
+    CHECKOP(ASMAtomicUoIncU32(pu32), 0, "%#x", uint32_t);
+    CHECKVAL(*pu32, 0, "%#x");
+
+    *pu32 = UINT32_C(0x7fffffff);
+    CHECKOP(ASMAtomicUoIncU32(pu32), UINT32_C(0x80000000), "%#x", uint32_t);
+    CHECKVAL(*pu32, UINT32_C(0x80000000), "%#x");
+}
+
+
+static void tstASMAtomicUoIncU32(void)
+{
+    DO_SIMPLE_TEST(ASMAtomicUoIncU32, uint32_t);
+}
+
+
+DECLINLINE(void) tstASMAtomicUoDecU32Worker(uint32_t volatile *pu32)
+{
+    *pu32 = 0;
+
+    CHECKOP(ASMAtomicUoDecU32(pu32), ~UINT32_C(0), "%#x", uint32_t);
+    CHECKVAL(*pu32, ~UINT32_C(0), "%#x");
+
+    *pu32 = ~UINT32_C(0);
+    CHECKOP(ASMAtomicUoDecU32(pu32), UINT32_C(0xfffffffe), "%#x", uint32_t);
+    CHECKVAL(*pu32, UINT32_C(0xfffffffe), "%#x");
+
+    *pu32 = UINT32_C(0x80000000);
+    CHECKOP(ASMAtomicUoDecU32(pu32), UINT32_C(0x7fffffff), "%#x", uint32_t);
+    CHECKVAL(*pu32, UINT32_C(0x7fffffff), "%#x");
+}
+
+
+static void tstASMAtomicUoDecU32(void)
+{
+    DO_SIMPLE_TEST(ASMAtomicUoDecU32, uint32_t);
 }
 
 
@@ -1144,6 +1264,45 @@ static void tstASMAtomicAndOrU64(void)
 }
 
 
+DECLINLINE(void) tstASMAtomicUoAndOrU32Worker(uint32_t volatile *pu32)
+{
+    *pu32 = UINT32_C(0xffffffff);
+
+    ASMAtomicUoOrU32(pu32, UINT32_C(0xffffffff));
+    CHECKVAL(*pu32, UINT32_C(0xffffffff), "%#x");
+
+    ASMAtomicUoAndU32(pu32, UINT32_C(0xffffffff));
+    CHECKVAL(*pu32, UINT32_C(0xffffffff), "%#x");
+
+    ASMAtomicUoAndU32(pu32, UINT32_C(0x8f8f8f8f));
+    CHECKVAL(*pu32, UINT32_C(0x8f8f8f8f), "%#x");
+
+    ASMAtomicUoOrU32(pu32, UINT32_C(0x70707070));
+    CHECKVAL(*pu32, UINT32_C(0xffffffff), "%#x");
+
+    ASMAtomicUoAndU32(pu32, UINT32_C(1));
+    CHECKVAL(*pu32, UINT32_C(1), "%#x");
+
+    ASMAtomicUoOrU32(pu32, UINT32_C(0x80000000));
+    CHECKVAL(*pu32, UINT32_C(0x80000001), "%#x");
+
+    ASMAtomicUoAndU32(pu32, UINT32_C(0x80000000));
+    CHECKVAL(*pu32, UINT32_C(0x80000000), "%#x");
+
+    ASMAtomicUoAndU32(pu32, UINT32_C(0));
+    CHECKVAL(*pu32, UINT32_C(0), "%#x");
+
+    ASMAtomicUoOrU32(pu32, UINT32_C(0x42424242));
+    CHECKVAL(*pu32, UINT32_C(0x42424242), "%#x");
+}
+
+
+static void tstASMAtomicUoAndOrU32(void)
+{
+    DO_SIMPLE_TEST(ASMAtomicUoAndOrU32, uint32_t);
+}
+
+
 typedef struct
 {
     uint8_t ab[PAGE_SIZE];
@@ -1198,6 +1357,128 @@ void tstASMMemIsZeroPage(RTTEST hTest)
         ((uint8_t *)pvPage2)[off] = 0x80;
         RTTESTI_CHECK(!ASMMemIsZeroPage(pvPage2));
         ((uint8_t *)pvPage2)[off] = 0;
+    }
+
+    RTTestSubDone(hTest);
+}
+
+
+void tstASMMemFirstMismatchingU8(RTTEST hTest)
+{
+    RTTestSub(hTest, "ASMMemFirstMismatchingU8");
+
+    uint8_t *pbPage1 = (uint8_t *)RTTestGuardedAllocHead(hTest, PAGE_SIZE);
+    uint8_t *pbPage2 = (uint8_t *)RTTestGuardedAllocTail(hTest, PAGE_SIZE);
+    RTTESTI_CHECK_RETV(pbPage1 && pbPage2);
+
+    memset(pbPage1, 0, PAGE_SIZE);
+    memset(pbPage2, 0, PAGE_SIZE);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage1, PAGE_SIZE, 0) == NULL);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage2, PAGE_SIZE, 0) == NULL);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage1, PAGE_SIZE, 1) == pbPage1);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage2, PAGE_SIZE, 1) == pbPage2);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage1, PAGE_SIZE, 0x87) == pbPage1);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage2, PAGE_SIZE, 0x87) == pbPage2);
+    RTTESTI_CHECK(ASMMemIsZero(pbPage1, PAGE_SIZE));
+    RTTESTI_CHECK(ASMMemIsZero(pbPage2, PAGE_SIZE));
+    RTTESTI_CHECK(ASMMemIsAllU8(pbPage1, PAGE_SIZE, 0));
+    RTTESTI_CHECK(ASMMemIsAllU8(pbPage2, PAGE_SIZE, 0));
+    RTTESTI_CHECK(!ASMMemIsAllU8(pbPage1, PAGE_SIZE, 0x34));
+    RTTESTI_CHECK(!ASMMemIsAllU8(pbPage2, PAGE_SIZE, 0x88));
+    unsigned cbSub = 32;
+    while (cbSub-- > 0)
+    {
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(&pbPage1[PAGE_SIZE - cbSub], cbSub, 0) == NULL);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(&pbPage2[PAGE_SIZE - cbSub], cbSub, 0) == NULL);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage1, cbSub, 0) == NULL);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage2, cbSub, 0) == NULL);
+
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(&pbPage1[PAGE_SIZE - cbSub], cbSub, 0x34) == &pbPage1[PAGE_SIZE - cbSub] || !cbSub);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(&pbPage2[PAGE_SIZE - cbSub], cbSub, 0x99) == &pbPage2[PAGE_SIZE - cbSub] || !cbSub);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage1, cbSub, 0x42) == pbPage1 || !cbSub);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage2, cbSub, 0x88) == pbPage2 || !cbSub);
+    }
+
+    memset(pbPage1, 0xff, PAGE_SIZE);
+    memset(pbPage2, 0xff, PAGE_SIZE);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage1, PAGE_SIZE, 0xff) == NULL);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage2, PAGE_SIZE, 0xff) == NULL);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage1, PAGE_SIZE, 0xfe) == pbPage1);
+    RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage2, PAGE_SIZE, 0xfe) == pbPage2);
+    RTTESTI_CHECK(!ASMMemIsZero(pbPage1, PAGE_SIZE));
+    RTTESTI_CHECK(!ASMMemIsZero(pbPage2, PAGE_SIZE));
+    RTTESTI_CHECK(ASMMemIsAllU8(pbPage1, PAGE_SIZE, 0xff));
+    RTTESTI_CHECK(ASMMemIsAllU8(pbPage2, PAGE_SIZE, 0xff));
+    RTTESTI_CHECK(!ASMMemIsAllU8(pbPage1, PAGE_SIZE, 0));
+    RTTESTI_CHECK(!ASMMemIsAllU8(pbPage2, PAGE_SIZE, 0));
+    cbSub = 32;
+    while (cbSub-- > 0)
+    {
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(&pbPage1[PAGE_SIZE - cbSub], cbSub, 0xff) == NULL);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(&pbPage2[PAGE_SIZE - cbSub], cbSub, 0xff) == NULL);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage1, cbSub, 0xff) == NULL);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage2, cbSub, 0xff) == NULL);
+
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(&pbPage1[PAGE_SIZE - cbSub], cbSub, 0xfe) == &pbPage1[PAGE_SIZE - cbSub] || !cbSub);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(&pbPage2[PAGE_SIZE - cbSub], cbSub, 0xfe) == &pbPage2[PAGE_SIZE - cbSub] || !cbSub);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage1, cbSub, 0xfe) == pbPage1 || !cbSub);
+        RTTESTI_CHECK(ASMMemFirstMismatchingU8(pbPage2, cbSub, 0xfe) == pbPage2 || !cbSub);
+    }
+
+
+    /*
+     * Various alignments and sizes.
+     */
+    uint8_t const  bFiller1 = 0x00;
+    uint8_t const  bFiller2 = 0xf6;
+    size_t const   cbBuf    = 128;
+    uint8_t       *pbBuf1   = pbPage1;
+    uint8_t       *pbBuf2   = &pbPage2[PAGE_SIZE - cbBuf]; /* Put it up against the tail guard */
+    memset(pbPage1, ~bFiller1, PAGE_SIZE);
+    memset(pbPage2, ~bFiller2, PAGE_SIZE);
+    memset(pbBuf1, bFiller1, cbBuf);
+    memset(pbBuf2, bFiller2, cbBuf);
+    for (size_t offNonZero = 0; offNonZero < cbBuf; offNonZero++)
+    {
+        uint8_t bRand = (uint8_t)RTRandU32();
+        pbBuf1[offNonZero] = bRand | 1;
+        pbBuf2[offNonZero] = (0x80 | bRand) ^ 0xf6;
+
+        for (size_t offStart = 0; offStart < 32; offStart++)
+        {
+            size_t const  cbMax = cbBuf - offStart;
+            for (size_t cb = 0; cb < cbMax; cb++)
+            {
+                size_t const offEnd = offStart + cb;
+                uint8_t bSaved1, bSaved2;
+                if (offEnd < PAGE_SIZE)
+                {
+                    bSaved1 = pbBuf1[offEnd];
+                    bSaved2 = pbBuf2[offEnd];
+                    pbBuf1[offEnd] = 0xff;
+                    pbBuf2[offEnd] = 0xff;
+                }
+#ifdef _MSC_VER /* simple stupid compiler warnings */
+                else
+                    bSaved1 = bSaved2 = 0;
+#endif
+
+                uint8_t *pbRet = (uint8_t *)ASMMemFirstMismatchingU8(pbBuf1 + offStart, cb, bFiller1);
+                RTTESTI_CHECK(offNonZero - offStart < cb ? pbRet == &pbBuf1[offNonZero] : pbRet == NULL);
+
+                pbRet = (uint8_t *)ASMMemFirstMismatchingU8(pbBuf2 + offStart, cb, bFiller2);
+                RTTESTI_CHECK(offNonZero - offStart < cb ? pbRet == &pbBuf2[offNonZero] : pbRet == NULL);
+
+                if (offEnd < PAGE_SIZE)
+                {
+                    pbBuf1[offEnd] = bSaved1;
+                    pbBuf2[offEnd] = bSaved2;
+                }
+            }
+        }
+
+        pbBuf1[offNonZero] = 0;
+        pbBuf2[offNonZero] = 0xf6;
     }
 
     RTTestSubDone(hTest);
@@ -1313,6 +1594,21 @@ void tstASMMath(void)
     uint32_t u32 = ASMDivU64ByU32RetU32(UINT64_C(0x0800000000000000), UINT32_C(0x10000000));
     CHECKVAL(u32, UINT32_C(0x80000000), "%#010RX32");
 
+    u32 = ASMMultU32ByU32DivByU32(UINT32_C(0x00000001), UINT32_C(0x00000001), UINT32_C(0x00000001));
+    CHECKVAL(u32, UINT32_C(0x00000001), "%#018RX32");
+    u32 = ASMMultU32ByU32DivByU32(UINT32_C(0x10000000), UINT32_C(0x80000000), UINT32_C(0x20000000));
+    CHECKVAL(u32, UINT32_C(0x40000000), "%#018RX32");
+    u32 = ASMMultU32ByU32DivByU32(UINT32_C(0x76543210), UINT32_C(0xffffffff), UINT32_C(0xffffffff));
+    CHECKVAL(u32, UINT32_C(0x76543210), "%#018RX32");
+    u32 = ASMMultU32ByU32DivByU32(UINT32_C(0xffffffff), UINT32_C(0xffffffff), UINT32_C(0xffffffff));
+    CHECKVAL(u32, UINT32_C(0xffffffff), "%#018RX32");
+    u32 = ASMMultU32ByU32DivByU32(UINT32_C(0xffffffff), UINT32_C(0xfffffff0), UINT32_C(0xffffffff));
+    CHECKVAL(u32, UINT32_C(0xfffffff0), "%#018RX32");
+    u32 = ASMMultU32ByU32DivByU32(UINT32_C(0x10359583), UINT32_C(0x58734981), UINT32_C(0xf8694045));
+    CHECKVAL(u32, UINT32_C(0x05c584ce), "%#018RX32");
+    u32 = ASMMultU32ByU32DivByU32(UINT32_C(0x10359583), UINT32_C(0xf8694045), UINT32_C(0x58734981));
+    CHECKVAL(u32, UINT32_C(0x2d860795), "%#018RX32");
+
 #if defined(RT_ARCH_AMD64) || defined(RT_ARCH_X86)
     u64 = ASMMultU64ByU32DivByU32(UINT64_C(0x0000000000000001), UINT32_C(0x00000001), UINT32_C(0x00000001));
     CHECKVAL(u64, UINT64_C(0x0000000000000001), "%#018RX64");
@@ -1399,7 +1695,7 @@ void tstASMByteSwap(void)
     u64In  = 0;
     u64Out = ASMByteSwapU64(u64In);
     CHECKVAL(u64Out, u64In, "%#018RX64");
-    u64In  = ~(uint64_t)0;
+    u64In  = UINT64_MAX;
     u64Out = ASMByteSwapU64(u64In);
     CHECKVAL(u64Out, u64In, "%#018RX64");
 
@@ -1418,7 +1714,7 @@ void tstASMByteSwap(void)
     u32In  = 0;
     u32Out = ASMByteSwapU32(u32In);
     CHECKVAL(u32Out, u32In, "%#010RX32");
-    u32In  = ~(uint32_t)0;
+    u32In  = UINT32_MAX;
     u32Out = ASMByteSwapU32(u32In);
     CHECKVAL(u32Out, u32In, "%#010RX32");
 
@@ -1437,7 +1733,7 @@ void tstASMByteSwap(void)
     u16In  = 0;
     u16Out = ASMByteSwapU16(u16In);
     CHECKVAL(u16Out, u16In, "%#06RX16");
-    u16In  = ~(uint16_t)0;
+    u16In  = UINT16_MAX;
     u16Out = ASMByteSwapU16(u16In);
     CHECKVAL(u16Out, u16In, "%#06RX16");
 }
@@ -1457,7 +1753,7 @@ void tstASMBench(void)
     static uint64_t volatile s_u64;
     static int64_t  volatile s_i64;
     register unsigned i;
-    const unsigned cRounds = _2M;
+    const unsigned cRounds = _2M;       /* Must be multiple of 8 */
     register uint64_t u64Elapsed;
 
     RTTestSub(g_hTest, "Benchmarking");
@@ -1477,79 +1773,144 @@ void tstASMBench(void)
     do { \
         RTThreadYield(); \
         u64Elapsed = RTTimeNanoTS(); \
-        for (i = cRounds; i > 0; i--) \
+        for (i = cRounds / 8; i > 0; i--) \
+        { \
             op; \
+            op; \
+            op; \
+            op; \
+            op; \
+            op; \
+            op; \
+            op; \
+        } \
         u64Elapsed = RTTimeNanoTS() - u64Elapsed; \
         RTTestValue(g_hTest, str, u64Elapsed / cRounds, RTTESTUNIT_NS_PER_CALL); \
     } while (0)
 #endif
+#if (defined(RT_ARCH_AMD64) || defined(RT_ARCH_X86)) && !defined(GCC44_32BIT_PIC)
+# define BENCH_TSC(op, str) \
+    do { \
+        RTThreadYield(); \
+        u64Elapsed = ASMReadTSC(); \
+        for (i = cRounds / 8; i > 0; i--) \
+        { \
+            op; \
+            op; \
+            op; \
+            op; \
+            op; \
+            op; \
+            op; \
+            op; \
+        } \
+        u64Elapsed = ASMReadTSC() - u64Elapsed; \
+        RTTestValue(g_hTest, str, u64Elapsed / cRounds, /*RTTESTUNIT_TICKS_PER_CALL*/ RTTESTUNIT_NONE); \
+    } while (0)
+#else
+# define BENCH_TSC(op, str) BENCH(op, str)
+#endif
 
-    BENCH(s_u32 = 0,                            "s_u32 = 0");
-    BENCH(ASMAtomicUoReadU8(&s_u8),             "ASMAtomicUoReadU8");
-    BENCH(ASMAtomicUoReadS8(&s_i8),             "ASMAtomicUoReadS8");
-    BENCH(ASMAtomicUoReadU16(&s_u16),           "ASMAtomicUoReadU16");
-    BENCH(ASMAtomicUoReadS16(&s_i16),           "ASMAtomicUoReadS16");
-    BENCH(ASMAtomicUoReadU32(&s_u32),           "ASMAtomicUoReadU32");
-    BENCH(ASMAtomicUoReadS32(&s_i32),           "ASMAtomicUoReadS32");
-    BENCH(ASMAtomicUoReadU64(&s_u64),           "ASMAtomicUoReadU64");
-    BENCH(ASMAtomicUoReadS64(&s_i64),           "ASMAtomicUoReadS64");
-    BENCH(ASMAtomicReadU8(&s_u8),               "ASMAtomicReadU8");
-    BENCH(ASMAtomicReadS8(&s_i8),               "ASMAtomicReadS8");
-    BENCH(ASMAtomicReadU16(&s_u16),             "ASMAtomicReadU16");
-    BENCH(ASMAtomicReadS16(&s_i16),             "ASMAtomicReadS16");
-    BENCH(ASMAtomicReadU32(&s_u32),             "ASMAtomicReadU32");
-    BENCH(ASMAtomicReadS32(&s_i32),             "ASMAtomicReadS32");
-    BENCH(ASMAtomicReadU64(&s_u64),             "ASMAtomicReadU64");
-    BENCH(ASMAtomicReadS64(&s_i64),             "ASMAtomicReadS64");
-    BENCH(ASMAtomicUoWriteU8(&s_u8, 0),         "ASMAtomicUoWriteU8");
-    BENCH(ASMAtomicUoWriteS8(&s_i8, 0),         "ASMAtomicUoWriteS8");
-    BENCH(ASMAtomicUoWriteU16(&s_u16, 0),       "ASMAtomicUoWriteU16");
-    BENCH(ASMAtomicUoWriteS16(&s_i16, 0),       "ASMAtomicUoWriteS16");
-    BENCH(ASMAtomicUoWriteU32(&s_u32, 0),       "ASMAtomicUoWriteU32");
-    BENCH(ASMAtomicUoWriteS32(&s_i32, 0),       "ASMAtomicUoWriteS32");
-    BENCH(ASMAtomicUoWriteU64(&s_u64, 0),       "ASMAtomicUoWriteU64");
-    BENCH(ASMAtomicUoWriteS64(&s_i64, 0),       "ASMAtomicUoWriteS64");
-    BENCH(ASMAtomicWriteU8(&s_u8, 0),           "ASMAtomicWriteU8");
-    BENCH(ASMAtomicWriteS8(&s_i8, 0),           "ASMAtomicWriteS8");
-    BENCH(ASMAtomicWriteU16(&s_u16, 0),         "ASMAtomicWriteU16");
-    BENCH(ASMAtomicWriteS16(&s_i16, 0),         "ASMAtomicWriteS16");
-    BENCH(ASMAtomicWriteU32(&s_u32, 0),         "ASMAtomicWriteU32");
-    BENCH(ASMAtomicWriteS32(&s_i32, 0),         "ASMAtomicWriteS32");
-    BENCH(ASMAtomicWriteU64(&s_u64, 0),         "ASMAtomicWriteU64");
-    BENCH(ASMAtomicWriteS64(&s_i64, 0),         "ASMAtomicWriteS64");
-    BENCH(ASMAtomicXchgU8(&s_u8, 0),            "ASMAtomicXchgU8");
-    BENCH(ASMAtomicXchgS8(&s_i8, 0),            "ASMAtomicXchgS8");
-    BENCH(ASMAtomicXchgU16(&s_u16, 0),          "ASMAtomicXchgU16");
-    BENCH(ASMAtomicXchgS16(&s_i16, 0),          "ASMAtomicXchgS16");
-    BENCH(ASMAtomicXchgU32(&s_u32, 0),          "ASMAtomicXchgU32");
-    BENCH(ASMAtomicXchgS32(&s_i32, 0),          "ASMAtomicXchgS32");
-    BENCH(ASMAtomicXchgU64(&s_u64, 0),          "ASMAtomicXchgU64");
-    BENCH(ASMAtomicXchgS64(&s_i64, 0),          "ASMAtomicXchgS64");
-    BENCH(ASMAtomicCmpXchgU32(&s_u32, 0, 0),    "ASMAtomicCmpXchgU32");
-    BENCH(ASMAtomicCmpXchgS32(&s_i32, 0, 0),    "ASMAtomicCmpXchgS32");
-    BENCH(ASMAtomicCmpXchgU64(&s_u64, 0, 0),    "ASMAtomicCmpXchgU64");
-    BENCH(ASMAtomicCmpXchgS64(&s_i64, 0, 0),    "ASMAtomicCmpXchgS64");
-    BENCH(ASMAtomicCmpXchgU32(&s_u32, 0, 1),    "ASMAtomicCmpXchgU32/neg");
-    BENCH(ASMAtomicCmpXchgS32(&s_i32, 0, 1),    "ASMAtomicCmpXchgS32/neg");
-    BENCH(ASMAtomicCmpXchgU64(&s_u64, 0, 1),    "ASMAtomicCmpXchgU64/neg");
-    BENCH(ASMAtomicCmpXchgS64(&s_i64, 0, 1),    "ASMAtomicCmpXchgS64/neg");
-    BENCH(ASMAtomicIncU32(&s_u32),              "ASMAtomicIncU32");
-    BENCH(ASMAtomicIncS32(&s_i32),              "ASMAtomicIncS32");
-    BENCH(ASMAtomicDecU32(&s_u32),              "ASMAtomicDecU32");
-    BENCH(ASMAtomicDecS32(&s_i32),              "ASMAtomicDecS32");
-    BENCH(ASMAtomicAddU32(&s_u32, 5),           "ASMAtomicAddU32");
-    BENCH(ASMAtomicAddS32(&s_i32, 5),           "ASMAtomicAddS32");
+    BENCH(s_u32 = 0,                             "s_u32 = 0");
+    BENCH(ASMAtomicUoReadU8(&s_u8),              "ASMAtomicUoReadU8");
+    BENCH(ASMAtomicUoReadS8(&s_i8),              "ASMAtomicUoReadS8");
+    BENCH(ASMAtomicUoReadU16(&s_u16),            "ASMAtomicUoReadU16");
+    BENCH(ASMAtomicUoReadS16(&s_i16),            "ASMAtomicUoReadS16");
+    BENCH(ASMAtomicUoReadU32(&s_u32),            "ASMAtomicUoReadU32");
+    BENCH(ASMAtomicUoReadS32(&s_i32),            "ASMAtomicUoReadS32");
+    BENCH(ASMAtomicUoReadU64(&s_u64),            "ASMAtomicUoReadU64");
+    BENCH(ASMAtomicUoReadS64(&s_i64),            "ASMAtomicUoReadS64");
+    BENCH(ASMAtomicReadU8(&s_u8),                "ASMAtomicReadU8");
+    BENCH(ASMAtomicReadS8(&s_i8),                "ASMAtomicReadS8");
+    BENCH(ASMAtomicReadU16(&s_u16),              "ASMAtomicReadU16");
+    BENCH(ASMAtomicReadS16(&s_i16),              "ASMAtomicReadS16");
+    BENCH(ASMAtomicReadU32(&s_u32),              "ASMAtomicReadU32");
+    BENCH(ASMAtomicReadS32(&s_i32),              "ASMAtomicReadS32");
+    BENCH(ASMAtomicReadU64(&s_u64),              "ASMAtomicReadU64");
+    BENCH(ASMAtomicReadS64(&s_i64),              "ASMAtomicReadS64");
+    BENCH(ASMAtomicUoWriteU8(&s_u8, 0),          "ASMAtomicUoWriteU8");
+    BENCH(ASMAtomicUoWriteS8(&s_i8, 0),          "ASMAtomicUoWriteS8");
+    BENCH(ASMAtomicUoWriteU16(&s_u16, 0),        "ASMAtomicUoWriteU16");
+    BENCH(ASMAtomicUoWriteS16(&s_i16, 0),        "ASMAtomicUoWriteS16");
+    BENCH(ASMAtomicUoWriteU32(&s_u32, 0),        "ASMAtomicUoWriteU32");
+    BENCH(ASMAtomicUoWriteS32(&s_i32, 0),        "ASMAtomicUoWriteS32");
+    BENCH(ASMAtomicUoWriteU64(&s_u64, 0),        "ASMAtomicUoWriteU64");
+    BENCH(ASMAtomicUoWriteS64(&s_i64, 0),        "ASMAtomicUoWriteS64");
+    BENCH(ASMAtomicWriteU8(&s_u8, 0),            "ASMAtomicWriteU8");
+    BENCH(ASMAtomicWriteS8(&s_i8, 0),            "ASMAtomicWriteS8");
+    BENCH(ASMAtomicWriteU16(&s_u16, 0),          "ASMAtomicWriteU16");
+    BENCH(ASMAtomicWriteS16(&s_i16, 0),          "ASMAtomicWriteS16");
+    BENCH(ASMAtomicWriteU32(&s_u32, 0),          "ASMAtomicWriteU32");
+    BENCH(ASMAtomicWriteS32(&s_i32, 0),          "ASMAtomicWriteS32");
+    BENCH(ASMAtomicWriteU64(&s_u64, 0),          "ASMAtomicWriteU64");
+    BENCH(ASMAtomicWriteS64(&s_i64, 0),          "ASMAtomicWriteS64");
+    BENCH(ASMAtomicXchgU8(&s_u8, 0),             "ASMAtomicXchgU8");
+    BENCH(ASMAtomicXchgS8(&s_i8, 0),             "ASMAtomicXchgS8");
+    BENCH(ASMAtomicXchgU16(&s_u16, 0),           "ASMAtomicXchgU16");
+    BENCH(ASMAtomicXchgS16(&s_i16, 0),           "ASMAtomicXchgS16");
+    BENCH(ASMAtomicXchgU32(&s_u32, 0),           "ASMAtomicXchgU32");
+    BENCH(ASMAtomicXchgS32(&s_i32, 0),           "ASMAtomicXchgS32");
+    BENCH(ASMAtomicXchgU64(&s_u64, 0),           "ASMAtomicXchgU64");
+    BENCH(ASMAtomicXchgS64(&s_i64, 0),           "ASMAtomicXchgS64");
+    BENCH(ASMAtomicCmpXchgU32(&s_u32, 0, 0),     "ASMAtomicCmpXchgU32");
+    BENCH(ASMAtomicCmpXchgS32(&s_i32, 0, 0),     "ASMAtomicCmpXchgS32");
+    BENCH(ASMAtomicCmpXchgU64(&s_u64, 0, 0),     "ASMAtomicCmpXchgU64");
+    BENCH(ASMAtomicCmpXchgS64(&s_i64, 0, 0),     "ASMAtomicCmpXchgS64");
+    BENCH(ASMAtomicCmpXchgU32(&s_u32, 0, 1),     "ASMAtomicCmpXchgU32/neg");
+    BENCH(ASMAtomicCmpXchgS32(&s_i32, 0, 1),     "ASMAtomicCmpXchgS32/neg");
+    BENCH(ASMAtomicCmpXchgU64(&s_u64, 0, 1),     "ASMAtomicCmpXchgU64/neg");
+    BENCH(ASMAtomicCmpXchgS64(&s_i64, 0, 1),     "ASMAtomicCmpXchgS64/neg");
+    BENCH(ASMAtomicIncU32(&s_u32),               "ASMAtomicIncU32");
+    BENCH(ASMAtomicIncS32(&s_i32),               "ASMAtomicIncS32");
+    BENCH(ASMAtomicDecU32(&s_u32),               "ASMAtomicDecU32");
+    BENCH(ASMAtomicDecS32(&s_i32),               "ASMAtomicDecS32");
+    BENCH(ASMAtomicAddU32(&s_u32, 5),            "ASMAtomicAddU32");
+    BENCH(ASMAtomicAddS32(&s_i32, 5),            "ASMAtomicAddS32");
+    BENCH(ASMAtomicUoIncU32(&s_u32),             "ASMAtomicUoIncU32");
+    BENCH(ASMAtomicUoDecU32(&s_u32),             "ASMAtomicUoDecU32");
+    BENCH(ASMAtomicUoAndU32(&s_u32, 0xffffffff), "ASMAtomicUoAndU32");
+    BENCH(ASMAtomicUoOrU32(&s_u32, 0xffffffff),  "ASMAtomicUoOrU32");
+    BENCH_TSC(ASMSerializeInstructionCpuId(),    "ASMSerializeInstructionCpuId");
+    BENCH_TSC(ASMSerializeInstructionIRet(),     "ASMSerializeInstructionIRet");
+
     /* The Darwin gcc does not like this ... */
 #if !defined(RT_OS_DARWIN) && !defined(GCC44_32BIT_PIC) && (defined(RT_ARCH_AMD64) || defined(RT_ARCH_X86))
     BENCH(s_u8 = ASMGetApicId(),                "ASMGetApicId");
+#endif
+#if !defined(GCC44_32BIT_PIC) && (defined(RT_ARCH_AMD64) || defined(RT_ARCH_X86))
+    uint32_t uAux;
+    if (   ASMHasCpuId()
+        && ASMIsValidExtRange(ASMCpuId_EAX(0x80000000))
+        && (ASMCpuId_EDX(0x80000001) & X86_CPUID_EXT_FEATURE_EDX_RDTSCP) )
+    {
+        BENCH_TSC(ASMSerializeInstructionRdTscp(), "ASMSerializeInstructionRdTscp");
+        BENCH(s_u64 = ASMReadTscWithAux(&uAux),  "ASMReadTscWithAux");
+    }
+    BENCH(s_u64 = ASMReadTSC(),                 "ASMReadTSC");
+    union
+    {
+        uint64_t    u64[2];
+        RTIDTR      Unaligned;
+        struct
+        {
+            uint16_t abPadding[3];
+            RTIDTR   Aligned;
+        } s;
+    } uBuf;
+    Assert(((uintptr_t)&uBuf.Unaligned.pIdt & (sizeof(uintptr_t) - 1)) != 0);
+    BENCH(ASMGetIDTR(&uBuf.Unaligned),            "ASMGetIDTR/unaligned");
+    Assert(((uintptr_t)&uBuf.s.Aligned.pIdt & (sizeof(uintptr_t) - 1)) == 0);
+    BENCH(ASMGetIDTR(&uBuf.s.Aligned),            "ASMGetIDTR/aligned");
 #endif
 
 #undef BENCH
 }
 
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
+    RT_NOREF_PV(argc); RT_NOREF_PV(argv);
+
     int rc = RTTestInitAndCreate("tstRTInlineAsm", &g_hTest);
     if (rc)
         return rc;
@@ -1560,6 +1921,7 @@ int main(int argc, char *argv[])
      */
 #if !defined(GCC44_32BIT_PIC) && (defined(RT_ARCH_AMD64) || defined(RT_ARCH_X86))
     tstASMCpuId();
+    //bruteForceCpuId();
 #endif
 #if 1
     tstASMAtomicXchgU8();
@@ -1582,8 +1944,13 @@ int main(int argc, char *argv[])
     tstASMAtomicAndOrU32();
     tstASMAtomicAndOrU64();
 
+    tstASMAtomicUoIncU32();
+    tstASMAtomicUoDecU32();
+    tstASMAtomicUoAndOrU32();
+
     tstASMMemZeroPage();
     tstASMMemIsZeroPage(g_hTest);
+    tstASMMemFirstMismatchingU8(g_hTest);
     tstASMMemZero32();
     tstASMMemFill32();
 

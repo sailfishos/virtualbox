@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -140,9 +140,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SSM
 #include <VBox/vmm/ssm.h>
 #include <VBox/vmm/dbgf.h>
@@ -169,9 +169,9 @@
 #include <iprt/zip.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The max length of a unit name. */
 #define SSM_MAX_NAME_SIZE                       48
 
@@ -341,9 +341,9 @@ AssertCompile(SSM_ZIP_BLOCK_SIZE / _1K * _1K == SSM_ZIP_BLOCK_SIZE);
 
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** SSM state. */
 typedef enum SSMSTATE
 {
@@ -865,17 +865,19 @@ typedef SSMFILEFTR *PSSMFILEFTR;
 typedef SSMFILEFTR const *PCSSMFILEFTR;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+#ifndef SSM_STANDALONE
 /** Zeros used by the struct putter.
  * This must be at least 8 bytes or the code breaks. */
 static uint8_t const    g_abZero[_1K] = {0};
+#endif
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifndef SSM_STANDALONE
 static int                  ssmR3LazyInit(PVM pVM);
 static DECLCALLBACK(int)    ssmR3SelfLiveExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass);
@@ -900,7 +902,7 @@ static int                  ssmR3DataReadRecHdrV2(PSSMHANDLE pSSM);
 /**
  * Cleans up resources allocated by SSM on VM termination.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 VMMR3_INT_DECL(void) SSMR3Term(PVM pVM)
 {
@@ -916,7 +918,7 @@ VMMR3_INT_DECL(void) SSMR3Term(PVM pVM)
  * Performs lazy initialization of the SSM.
  *
  * @returns VBox status code.
- * @param   pVM         The VM.
+ * @param   pVM         The cross context VM structure.
  */
 static int ssmR3LazyInit(PVM pVM)
 {
@@ -954,7 +956,7 @@ static int ssmR3LazyInit(PVM pVM)
  * Do ssmR3SelfSaveExec in pass 0.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The SSM handle.
  * @param   uPass           The data pass number.
  */
@@ -977,7 +979,7 @@ static DECLCALLBACK(int) ssmR3SelfLiveExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uP
  * adding it to the header.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The SSM handle.
  */
 static DECLCALLBACK(int) ssmR3SelfSaveExec(PVM pVM, PSSMHANDLE pSSM)
@@ -1007,14 +1009,14 @@ static DECLCALLBACK(int) ssmR3SelfSaveExec(PVM pVM, PSSMHANDLE pSSM)
  * For load the version + revision and stuff.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The SSM handle.
  * @param   uVersion        The version (1).
  * @param   uPass           The pass.
  */
 static DECLCALLBACK(int) ssmR3SelfLoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass)
 {
-    AssertLogRelMsgReturn(uVersion == 1, ("%d", uVersion), VERR_SSM_UNSUPPORTED_DATA_UNIT_VERSION);
+    AssertLogRelMsgReturn(uVersion == 1, ("%d\n", uVersion), VERR_SSM_UNSUPPORTED_DATA_UNIT_VERSION);
     NOREF(pVM); NOREF(uPass);
 
     /*
@@ -1071,14 +1073,14 @@ static DECLCALLBACK(int) ssmR3SelfLoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uV
  * This is saved by ssmR3LiveControlEmit().
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The SSM handle.
  * @param   uVersion        The version (1).
  * @param   uPass           The pass.
  */
 static DECLCALLBACK(int) ssmR3LiveControlLoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass)
 {
-    AssertLogRelMsgReturn(uVersion == 1, ("%d", uVersion), VERR_SSM_UNSUPPORTED_DATA_UNIT_VERSION);
+    AssertLogRelMsgReturn(uVersion == 1, ("%d\n", uVersion), VERR_SSM_UNSUPPORTED_DATA_UNIT_VERSION);
     NOREF(uPass);
 
     uint16_t uPartsPerTenThousand;
@@ -1105,7 +1107,7 @@ static DECLCALLBACK(int) ssmR3LiveControlLoadExec(PVM pVM, PSSMHANDLE pSSM, uint
  * Internal registration worker.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pszName         Data unit name.
  * @param   uInstance       The instance id.
  * @param   uVersion        The data unit version.
@@ -1171,7 +1173,7 @@ static int ssmR3Register(PVM pVM, const char *pszName, uint32_t uInstance,
     /*
      * Allocate new node.
      */
-    pUnit = (PSSMUNIT)MMR3HeapAllocZ(pVM, MM_TAG_SSM, RT_OFFSETOF(SSMUNIT, szName[cchName + 1]));
+    pUnit = (PSSMUNIT)MMR3HeapAllocZ(pVM, MM_TAG_SSM, RT_UOFFSETOF_DYN(SSMUNIT, szName[cchName + 1]));
     if (!pUnit)
         return VERR_NO_MEMORY;
 
@@ -1209,9 +1211,9 @@ static int ssmR3Register(PVM pVM, const char *pszName, uint32_t uInstance,
 /**
  * Register a PDM Devices data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pDevIns         Device instance.
  * @param   pszName         Data unit name.
  * @param   uInstance       The instance identifier of the data unit.
@@ -1265,9 +1267,9 @@ SSMR3RegisterDevice(PVM pVM, PPDMDEVINS pDevIns, const char *pszName,
 /**
  * Register a PDM driver data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pDrvIns         Driver instance.
  * @param   pszName         Data unit name.
  * @param   uInstance       The instance identifier of the data unit.
@@ -1315,11 +1317,63 @@ SSMR3RegisterDriver(PVM pVM, PPDMDRVINS pDrvIns, const char *pszName, uint32_t u
 
 
 /**
+ * Register a PDM USB device data unit.
+ *
+ * @returns VBox status code.
+ *
+ * @param   pVM             The cross context VM structure.
+ * @param   pUsbIns         USB instance.
+ * @param   pszName         Data unit name.
+ * @param   uInstance       The instance identifier of the data unit.
+ *                          This must together with the name be unique.
+ * @param   uVersion        Data layout version number.
+ * @param   cbGuess         The approximate amount of data in the unit.
+ *                          Only for progress indicators.
+ *
+ * @param   pfnLivePrep     Prepare live save callback, optional.
+ * @param   pfnLiveExec     Execute live save callback, optional.
+ * @param   pfnLiveVote     Vote live save callback, optional.
+ *
+ * @param   pfnSavePrep     Prepare save callback, optional.
+ * @param   pfnSaveExec     Execute save callback, optional.
+ * @param   pfnSaveDone     Done save callback, optional.
+ *
+ * @param   pfnLoadPrep     Prepare load callback, optional.
+ * @param   pfnLoadExec     Execute load callback, optional.
+ * @param   pfnLoadDone     Done load callback, optional.
+ */
+VMMR3_INT_DECL(int)
+SSMR3RegisterUsb(PVM pVM, PPDMUSBINS pUsbIns, const char *pszName, uint32_t uInstance, uint32_t uVersion, size_t cbGuess,
+                 PFNSSMUSBLIVEPREP pfnLivePrep, PFNSSMUSBLIVEEXEC pfnLiveExec, PFNSSMUSBLIVEVOTE pfnLiveVote,
+                 PFNSSMUSBSAVEPREP pfnSavePrep, PFNSSMUSBSAVEEXEC pfnSaveExec, PFNSSMUSBSAVEDONE pfnSaveDone,
+                 PFNSSMUSBLOADPREP pfnLoadPrep, PFNSSMUSBLOADEXEC pfnLoadExec, PFNSSMUSBLOADDONE pfnLoadDone)
+{
+    PSSMUNIT pUnit;
+    int rc = ssmR3Register(pVM, pszName, uInstance, uVersion, cbGuess, NULL, &pUnit);
+    if (RT_SUCCESS(rc))
+    {
+        pUnit->enmType = SSMUNITTYPE_USB;
+        pUnit->u.Usb.pfnLivePrep = pfnLivePrep;
+        pUnit->u.Usb.pfnLiveExec = pfnLiveExec;
+        pUnit->u.Usb.pfnLiveVote = pfnLiveVote;
+        pUnit->u.Usb.pfnSavePrep = pfnSavePrep;
+        pUnit->u.Usb.pfnSaveExec = pfnSaveExec;
+        pUnit->u.Usb.pfnSaveDone = pfnSaveDone;
+        pUnit->u.Usb.pfnLoadPrep = pfnLoadPrep;
+        pUnit->u.Usb.pfnLoadExec = pfnLoadExec;
+        pUnit->u.Usb.pfnLoadDone = pfnLoadDone;
+        pUnit->u.Usb.pUsbIns = pUsbIns;
+    }
+    return rc;
+}
+
+
+/**
  * Register a internal data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pszName         Data unit name.
  * @param   uInstance       The instance identifier of the data unit.
  *                          This must together with the name be unique.
@@ -1345,7 +1399,7 @@ VMMR3DECL(int) SSMR3RegisterInternal(PVM pVM, const char *pszName, uint32_t uIns
     PFNSSMINTLOADPREP pfnLoadPrep, PFNSSMINTLOADEXEC pfnLoadExec, PFNSSMINTLOADDONE pfnLoadDone)
 {
     PSSMUNIT pUnit;
-    int rc = ssmR3Register(pVM, pszName, uInstance, uVersion, cbGuess, NULL, &pUnit);
+    int rc = ssmR3Register(pVM, pszName, uInstance, uVersion, cbGuess, NULL /* pszBefore */, &pUnit);
     if (RT_SUCCESS(rc))
     {
         pUnit->enmType = SSMUNITTYPE_INTERNAL;
@@ -1366,7 +1420,7 @@ VMMR3DECL(int) SSMR3RegisterInternal(PVM pVM, const char *pszName, uint32_t uIns
 /**
  * Register an external data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
  * @param   pUVM            The user mode VM handle.
  * @param   pszName         Data unit name.
@@ -1399,7 +1453,7 @@ VMMR3DECL(int) SSMR3RegisterExternal(PUVM pUVM, const char *pszName, uint32_t uI
     VM_ASSERT_VALID_EXT_RETURN(pVM, VERR_INVALID_VM_HANDLE);
 
     PSSMUNIT pUnit;
-    int rc = ssmR3Register(pVM, pszName, uInstance, uVersion, cbGuess, NULL, &pUnit);
+    int rc = ssmR3Register(pVM, pszName, uInstance, uVersion, cbGuess, NULL /* pszBefore */, &pUnit);
     if (RT_SUCCESS(rc))
     {
         pUnit->enmType = SSMUNITTYPE_EXTERNAL;
@@ -1436,7 +1490,7 @@ static DECLCALLBACK(int) ssmR3LoadExecStub(PVM pVM, PSSMHANDLE pSSM, uint32_t uV
  * mode and when built without raw-mode.
  *
  * @returns VBox status code.
- * @param   pVM                 The VM handle.
+ * @param   pVM                 The cross context VM structure.
  * @param   pszName             Data unit name.
  * @param   uInstance           Instance number.
  */
@@ -1452,9 +1506,9 @@ VMMR3DECL(int) SSMR3RegisterStub(PVM pVM, const char *pszName, uint32_t uInstanc
 /**
  * Deregister one or more PDM Device data units.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pDevIns         Device instance.
  * @param   pszName         Data unit name.
  *                          Use NULL to deregister all data units for that device instance.
@@ -1529,8 +1583,8 @@ VMMR3_INT_DECL(int) SSMR3DeregisterDevice(PVM pVM, PPDMDEVINS pDevIns, const cha
 /**
  * Deregister one ore more PDM Driver data units.
  *
- * @returns VBox status.
- * @param   pVM             Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM             The cross context VM structure.
  * @param   pDrvIns         Driver instance.
  * @param   pszName         Data unit name.
  *                          Use NULL to deregister all data units for that driver instance.
@@ -1601,10 +1655,80 @@ VMMR3_INT_DECL(int) SSMR3DeregisterDriver(PVM pVM, PPDMDRVINS pDrvIns, const cha
 
 
 /**
+ * Deregister one or more PDM USB device data units.
+ *
+ * @returns VBox status code.
+ * @param   pVM             The cross context VM structure.
+ * @param   pUsbIns         USB device instance.
+ * @param   pszName         Data unit name.
+ *                          Use NULL to deregister all data units for that driver instance.
+ * @param   uInstance       The instance identifier of the data unit.
+ *                          This must together with the name be unique. Ignored if pszName is NULL.
+ * @remark  Only for dynamic data units and dynamic unloaded modules.
+ */
+VMMR3_INT_DECL(int) SSMR3DeregisterUsb(PVM pVM, PPDMUSBINS pUsbIns, const char *pszName, uint32_t uInstance)
+{
+    /*
+     * Validate input.
+     */
+    AssertMsgReturn(VALID_PTR(pUsbIns), ("pUsbIns is NULL!\n"), VERR_INVALID_PARAMETER);
+
+    /*
+     * Search the list.
+     */
+    size_t      cchName = pszName ? strlen(pszName) : 0;
+    int         rc = pszName ? VERR_SSM_UNIT_NOT_FOUND : VINF_SUCCESS;
+    PSSMUNIT    pUnitPrev = NULL;
+    PSSMUNIT    pUnit = pVM->ssm.s.pHead;
+    while (pUnit)
+    {
+        if (    pUnit->enmType == SSMUNITTYPE_USB
+            &&  (   !pszName
+                 || (   pUnit->cchName == cchName
+                     && !memcmp(pUnit->szName, pszName, cchName)
+                     && pUnit->u32Instance == uInstance))
+            )
+        {
+            if (pUnit->u.Usb.pUsbIns == pUsbIns)
+            {
+                /*
+                 * Unlink it, advance pointer, and free the node.
+                 */
+                PSSMUNIT pFree = pUnit;
+                pUnit = pUnit->pNext;
+                if (pUnitPrev)
+                    pUnitPrev->pNext = pUnit;
+                else
+                    pVM->ssm.s.pHead = pUnit;
+                pVM->ssm.s.cUnits--;
+                Log(("SSM: Removed data unit '%s' (pdm drv).\n", pFree->szName));
+                MMR3HeapFree(pFree);
+
+                if (pszName)
+                    return VINF_SUCCESS;
+                rc = VINF_SUCCESS;
+                continue;
+            }
+
+            AssertMsgReturn(!pszName,
+                            ("Caller is not owner! Owner=%p Caller=%p %s\n", pUnit->u.Usb.pUsbIns, pUsbIns, pszName),
+                            VERR_SSM_UNIT_NOT_OWNER);
+        }
+
+        /* next */
+        pUnitPrev = pUnit;
+        pUnit = pUnit->pNext;
+    }
+
+    return rc;
+}
+
+
+/**
  * Deregister a data unit.
  *
- * @returns VBox status.
- * @param   pVM             Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM             The cross context VM structure.
  * @param   enmType         Unit type
  * @param   pszName         Data unit name.
  * @remark  Only for dynamic data units.
@@ -1660,8 +1784,8 @@ static int ssmR3DeregisterByNameAndType(PVM pVM, const char *pszName, SSMUNITTYP
 /**
  * Deregister an internal data unit.
  *
- * @returns VBox status.
- * @param   pVM             Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM             The cross context VM structure.
  * @param   pszName         Data unit name.
  * @remark  Only for dynamic data units.
  */
@@ -1674,8 +1798,8 @@ VMMR3DECL(int) SSMR3DeregisterInternal(PVM pVM, const char *pszName)
 /**
  * Deregister an external data unit.
  *
- * @returns VBox status.
- * @param   pVM             Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pUVM            The user mode VM structure.
  * @param   pszName         Data unit name.
  * @remark  Only for dynamic data units.
  */
@@ -2064,7 +2188,8 @@ static PSSMSTRMBUF ssmR3StrmGetFreeBuf(PSSMSTRM pStrm)
 /**
  * Puts a buffer onto the queue.
  *
- * @param   pBuf        The buffer.
+ * @param   pStrm           The stream handle.
+ * @param   pBuf            The stream buffer to put.
  *
  * @thread  The producer.
  */
@@ -2109,7 +2234,7 @@ static PSSMSTRMBUF ssmR3StrmReverseList(PSSMSTRMBUF pHead)
  * necessary.
  *
  * @returns Pointer to the buffer on success. NULL if we're terminating.
- * @param   pBuf        The buffer.
+ * @param   pStrm           The stream handle.
  *
  * @thread  The consumer.
  */
@@ -2705,6 +2830,8 @@ static int ssmR3StrmCheckAndFlush(PSSMSTRM pStrm)
 }
 #endif /* !SSM_STANDALONE */
 
+
+#if !defined(SSM_STANDALONE) || defined(LOG_ENABLED)
 /**
  * Tell current stream position.
  *
@@ -2715,6 +2842,7 @@ static uint64_t ssmR3StrmTell(PSSMSTRM pStrm)
 {
     return pStrm->offCurStream + pStrm->off;
 }
+#endif
 
 
 /**
@@ -2793,6 +2921,16 @@ static int ssmR3StrmSeek(PSSMSTRM pStrm, int64_t off, uint32_t uMethod, uint32_t
         {
             ssmR3StrmPutFreeBuf(pStrm, pStrm->pCur);
             pStrm->pCur = NULL;
+        }
+        if (pStrm->pPending)
+        {
+            ssmR3StrmDestroyBufList(pStrm->pPending);
+            pStrm->pPending = NULL;
+        }
+        if (pStrm->pHead)
+        {
+            ssmR3StrmDestroyBufList(pStrm->pHead);
+            pStrm->pHead = NULL;
         }
     }
     return rc;
@@ -3000,6 +3138,38 @@ static void ssmR3StrmStartIoThread(PSSMSTRM pStrm)
     ASMAtomicWriteHandle(&pStrm->hIoThread, hThread); /* paranoia */
 }
 
+
+/**
+ * Stops the I/O thread.
+ *
+ * @param   pStrm       The stream handle.
+ */
+static void ssmR3StrmStopIoThread(PSSMSTRM pStrm)
+{
+    LogFlow(("ssmR3StrmStopIoThread: %p\n", pStrm->hIoThread));
+    if (pStrm->hIoThread != NIL_RTTHREAD)
+    {
+        /*
+         * Signal the I/O thread and wait for it to complete.
+         */
+        ASMAtomicWriteBool(&pStrm->fTerminating, true);
+        if (pStrm->fWrite)
+        {
+            int rc1 = RTSemEventSignal(pStrm->hEvtHead);
+            AssertLogRelRC(rc1);
+        }
+        else
+        {
+            int rc2 = RTSemEventSignal(pStrm->hEvtFree);
+            AssertLogRelRC(rc2);
+        }
+        int rc3 = RTThreadWait(pStrm->hIoThread, RT_INDEFINITE_WAIT, NULL);
+        AssertLogRelRC(rc3);
+        pStrm->hIoThread = NIL_RTTHREAD;
+        pStrm->fTerminating = false; /* Can't read stuff otherwise. */
+    }
+}
+
 #endif /* !SSM_STANDALONE */
 
 /**
@@ -3037,7 +3207,7 @@ static void ssmR3ProgressByByte(PSSMHANDLE pSSM, uint64_t cbAdvance)
 /**
  * Makes the SSM operation cancellable or not (via SSMR3Cancel).
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The saved state handle. (SSMHANDLE::rc may be set.)
  * @param   fCancellable    The new state.
  */
@@ -3106,7 +3276,7 @@ DECLINLINE(bool) ssmR3IsHostMsc32(PSSMHANDLE pSSM)
  * Finishes a data unit.
  * All buffers and compressor instances are flushed and destroyed.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  */
 static int ssmR3DataWriteFinish(PSSMHANDLE pSSM)
@@ -3580,7 +3750,7 @@ VMMR3DECL(int) SSMR3PutStructEx(PSSMHANDLE pSSM, const void *pvStruct, size_t cb
     /*
      * Begin marker.
      */
-    if (!(fFlags & SSMSTRUCT_FLAGS_NO_MARKERS))
+    if (!(fFlags & (SSMSTRUCT_FLAGS_NO_MARKERS | SSMSTRUCT_FLAGS_NO_LEAD_MARKER)))
     {
         rc = SSMR3PutU32(pSSM, SSMR3STRUCT_BEGIN);
         if (RT_FAILURE(rc))
@@ -3591,7 +3761,7 @@ VMMR3DECL(int) SSMR3PutStructEx(PSSMHANDLE pSSM, const void *pvStruct, size_t cb
      * Put the fields
      */
     rc = VINF_SUCCESS;
-    uint32_t    off          = 0;
+    uint32_t off = 0;
     for (PCSSMFIELD pCur = paFields;
          pCur->cb != UINT32_MAX && pCur->off != UINT32_MAX;
          pCur++)
@@ -3813,7 +3983,7 @@ VMMR3DECL(int) SSMR3PutStructEx(PSSMHANDLE pSSM, const void *pvStruct, size_t cb
     /*
      * End marker
      */
-    if (!(fFlags & SSMSTRUCT_FLAGS_NO_MARKERS))
+    if (!(fFlags & (SSMSTRUCT_FLAGS_NO_MARKERS | SSMSTRUCT_FLAGS_NO_TAIL_MARKER)))
     {
         rc = SSMR3PutU32(pSSM, SSMR3STRUCT_END);
         if (RT_FAILURE(rc))
@@ -3827,7 +3997,7 @@ VMMR3DECL(int) SSMR3PutStructEx(PSSMHANDLE pSSM, const void *pvStruct, size_t cb
 /**
  * Saves a boolean item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   fBool           Item to save.
  */
@@ -3843,7 +4013,7 @@ VMMR3DECL(int) SSMR3PutBool(PSSMHANDLE pSSM, bool fBool)
 /**
  * Saves a 8-bit unsigned integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   u8              Item to save.
  */
@@ -3858,7 +4028,7 @@ VMMR3DECL(int) SSMR3PutU8(PSSMHANDLE pSSM, uint8_t u8)
 /**
  * Saves a 8-bit signed integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   i8              Item to save.
  */
@@ -3873,7 +4043,7 @@ VMMR3DECL(int) SSMR3PutS8(PSSMHANDLE pSSM, int8_t i8)
 /**
  * Saves a 16-bit unsigned integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   u16             Item to save.
  */
@@ -3888,7 +4058,7 @@ VMMR3DECL(int) SSMR3PutU16(PSSMHANDLE pSSM, uint16_t u16)
 /**
  * Saves a 16-bit signed integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   i16             Item to save.
  */
@@ -3903,7 +4073,7 @@ VMMR3DECL(int) SSMR3PutS16(PSSMHANDLE pSSM, int16_t i16)
 /**
  * Saves a 32-bit unsigned integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   u32             Item to save.
  */
@@ -3918,7 +4088,7 @@ VMMR3DECL(int) SSMR3PutU32(PSSMHANDLE pSSM, uint32_t u32)
 /**
  * Saves a 32-bit signed integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   i32             Item to save.
  */
@@ -3933,7 +4103,7 @@ VMMR3DECL(int) SSMR3PutS32(PSSMHANDLE pSSM, int32_t i32)
 /**
  * Saves a 64-bit unsigned integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   u64             Item to save.
  */
@@ -3948,7 +4118,7 @@ VMMR3DECL(int) SSMR3PutU64(PSSMHANDLE pSSM, uint64_t u64)
 /**
  * Saves a 64-bit signed integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   i64             Item to save.
  */
@@ -3963,7 +4133,7 @@ VMMR3DECL(int) SSMR3PutS64(PSSMHANDLE pSSM, int64_t i64)
 /**
  * Saves a 128-bit unsigned integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   u128            Item to save.
  */
@@ -3978,7 +4148,7 @@ VMMR3DECL(int) SSMR3PutU128(PSSMHANDLE pSSM, uint128_t u128)
 /**
  * Saves a 128-bit signed integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   i128            Item to save.
  */
@@ -3993,7 +4163,7 @@ VMMR3DECL(int) SSMR3PutS128(PSSMHANDLE pSSM, int128_t i128)
 /**
  * Saves a VBox unsigned integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   u               Item to save.
  */
@@ -4008,7 +4178,7 @@ VMMR3DECL(int) SSMR3PutUInt(PSSMHANDLE pSSM, RTUINT u)
 /**
  * Saves a VBox signed integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   i               Item to save.
  */
@@ -4023,7 +4193,7 @@ VMMR3DECL(int) SSMR3PutSInt(PSSMHANDLE pSSM, RTINT i)
 /**
  * Saves a GC natural unsigned integer item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   u               Item to save.
  *
@@ -4040,7 +4210,7 @@ VMMR3DECL(int) SSMR3PutGCUInt(PSSMHANDLE pSSM, RTGCUINT u)
 /**
  * Saves a GC unsigned integer register item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   u               Item to save.
  */
@@ -4055,7 +4225,7 @@ VMMR3DECL(int) SSMR3PutGCUIntReg(PSSMHANDLE pSSM, RTGCUINTREG u)
 /**
  * Saves a 32 bits GC physical address item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   GCPhys          The item to save
  */
@@ -4070,7 +4240,7 @@ VMMR3DECL(int) SSMR3PutGCPhys32(PSSMHANDLE pSSM, RTGCPHYS32 GCPhys)
 /**
  * Saves a 64 bits GC physical address item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   GCPhys          The item to save
  */
@@ -4085,7 +4255,7 @@ VMMR3DECL(int) SSMR3PutGCPhys64(PSSMHANDLE pSSM, RTGCPHYS64 GCPhys)
 /**
  * Saves a GC physical address item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   GCPhys          The item to save
  */
@@ -4100,7 +4270,7 @@ VMMR3DECL(int) SSMR3PutGCPhys(PSSMHANDLE pSSM, RTGCPHYS GCPhys)
 /**
  * Saves a GC virtual address item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   GCPtr           The item to save.
  */
@@ -4115,7 +4285,7 @@ VMMR3DECL(int) SSMR3PutGCPtr(PSSMHANDLE pSSM, RTGCPTR GCPtr)
 /**
  * Saves an RC virtual address item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   RCPtr           The item to save.
  */
@@ -4130,7 +4300,7 @@ VMMR3DECL(int) SSMR3PutRCPtr(PSSMHANDLE pSSM, RTRCPTR RCPtr)
 /**
  * Saves a GC virtual address (represented as an unsigned integer) item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   GCPtr           The item to save.
  */
@@ -4145,7 +4315,7 @@ VMMR3DECL(int) SSMR3PutGCUIntPtr(PSSMHANDLE pSSM, RTGCUINTPTR GCPtr)
 /**
  * Saves a I/O port address item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   IOPort          The item to save.
  */
@@ -4160,7 +4330,7 @@ VMMR3DECL(int) SSMR3PutIOPort(PSSMHANDLE pSSM, RTIOPORT IOPort)
 /**
  * Saves a selector item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   Sel             The item to save.
  */
@@ -4175,7 +4345,7 @@ VMMR3DECL(int) SSMR3PutSel(PSSMHANDLE pSSM, RTSEL Sel)
 /**
  * Saves a memory item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pv              Item to save.
  * @param   cb              Size of the item.
@@ -4191,7 +4361,7 @@ VMMR3DECL(int) SSMR3PutMem(PSSMHANDLE pSSM, const void *pv, size_t cb)
 /**
  * Saves a zero terminated string item to the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   psz             Item to save.
  */
@@ -4249,10 +4419,10 @@ static int ssmR3LiveControlEmit(PSSMHANDLE pSSM, long double lrdPct, uint32_t uP
     UnitHdr.fFlags          = 0;
     UnitHdr.cbName          = sizeof("SSMLiveControl");
     memcpy(&UnitHdr.szName[0], "SSMLiveControl", UnitHdr.cbName);
-    UnitHdr.u32CRC          = RTCrc32(&UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
+    UnitHdr.u32CRC          = RTCrc32(&UnitHdr, RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
     Log(("SSM: Unit at %#9llx: '%s', instance %u, pass %#x, version %u\n",
          UnitHdr.offStream, UnitHdr.szName, UnitHdr.u32Instance, UnitHdr.u32Pass, UnitHdr.u32Version));
-    int rc = ssmR3StrmWrite(&pSSM->Strm, &UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
+    int rc = ssmR3StrmWrite(&pSSM->Strm, &UnitHdr, RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
     if (RT_SUCCESS(rc))
     {
         /*
@@ -4340,7 +4510,7 @@ DECLINLINE(void) ssmR3UnitCritSectLeave(PSSMUNIT pUnit)
  * Do the pfnSaveDone run.
  *
  * @returns VBox status code (pSSM->rc).
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int ssmR3SaveDoDoneRun(PVM pVM, PSSMHANDLE pSSM)
@@ -4367,6 +4537,9 @@ static int ssmR3SaveDoDoneRun(PVM pVM, PSSMHANDLE pSSM)
                     break;
                 case SSMUNITTYPE_DRV:
                     rc = pUnit->u.Drv.pfnSaveDone(pUnit->u.Drv.pDrvIns, pSSM);
+                    break;
+                case SSMUNITTYPE_USB:
+                    rc = pUnit->u.Usb.pfnSaveDone(pUnit->u.Usb.pUsbIns, pSSM);
                     break;
                 case SSMUNITTYPE_INTERNAL:
                     rc = pUnit->u.Internal.pfnSaveDone(pVM, pSSM);
@@ -4398,7 +4571,7 @@ static int ssmR3SaveDoDoneRun(PVM pVM, PSSMHANDLE pSSM)
  * saved state file on failure.
  *
  * @returns VBox status code (pSSM->rc).
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int ssmR3SaveDoClose(PVM pVM, PSSMHANDLE pSSM)
@@ -4460,7 +4633,7 @@ static int ssmR3SaveDoClose(PVM pVM, PSSMHANDLE pSSM)
  *
  * This must always be called on a handled returned by SSMR3LiveSave.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
  * @param   pSSM            The SSM handle returned by SSMR3LiveSave.
  *
@@ -4497,7 +4670,7 @@ VMMR3_INT_DECL(int) SSMR3LiveDone(PSSMHANDLE pSSM)
  * Writes the directory.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The SSM handle.
  * @param   pcEntries           Where to return the number of directory entries.
  */
@@ -4508,7 +4681,7 @@ static int ssmR3WriteDirectory(PVM pVM, PSSMHANDLE pSSM, uint32_t *pcEntries)
     /*
      * Grab some temporary memory for the dictionary.
      */
-    size_t      cbDir = RT_OFFSETOF(SSMFILEDIR, aEntries[pVM->ssm.s.cUnits]);
+    size_t      cbDir = RT_UOFFSETOF_DYN(SSMFILEDIR, aEntries[pVM->ssm.s.cUnits]);
     PSSMFILEDIR pDir  = (PSSMFILEDIR)RTMemTmpAlloc(cbDir);
     if (!pDir)
     {
@@ -4539,7 +4712,7 @@ static int ssmR3WriteDirectory(PVM pVM, PSSMHANDLE pSSM, uint32_t *pcEntries)
      * out to the stream.
      */
     *pcEntries = pDir->cEntries;
-    cbDir = RT_OFFSETOF(SSMFILEDIR, aEntries[pDir->cEntries]);
+    cbDir = RT_UOFFSETOF_DYN(SSMFILEDIR, aEntries[pDir->cEntries]);
     pDir->u32CRC = RTCrc32(pDir, cbDir);
     int rc = ssmR3StrmWrite(&pSSM->Strm, pDir, cbDir);
     RTMemTmpFree(pDir);
@@ -4552,7 +4725,7 @@ static int ssmR3WriteDirectory(PVM pVM, PSSMHANDLE pSSM, uint32_t *pcEntries)
  * and footer.
  *
  * @returns VBox status code (pSSM->rc).
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int ssmR3SaveDoFinalization(PVM pVM, PSSMHANDLE pSSM)
@@ -4573,9 +4746,9 @@ static int ssmR3SaveDoFinalization(PVM pVM, PSSMHANDLE pSSM)
     UnitHdr.u32Pass         = SSM_PASS_FINAL;
     UnitHdr.fFlags          = 0;
     UnitHdr.cbName          = 0;
-    UnitHdr.u32CRC          = RTCrc32(&UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[0]));
+    UnitHdr.u32CRC          = RTCrc32(&UnitHdr, RT_UOFFSETOF(SSMFILEUNITHDRV2, szName[0]));
     Log(("SSM: Unit at %#9llx: END UNIT\n", UnitHdr.offStream));
-    int rc = ssmR3StrmWrite(&pSSM->Strm, &UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[0]));
+    int rc = ssmR3StrmWrite(&pSSM->Strm, &UnitHdr, RT_UOFFSETOF(SSMFILEUNITHDRV2, szName[0]));
     if (RT_FAILURE(rc))
     {
         LogRel(("SSM: Failed writing the end unit: %Rrc\n", rc));
@@ -4643,7 +4816,7 @@ static void ssmR3ProgressByUnit(PSSMHANDLE pSSM, uint32_t iUnit)
  * Do the pfnSaveExec run.
  *
  * @returns VBox status code (pSSM->rc).
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int ssmR3SaveDoExecRun(PVM pVM, PSSMHANDLE pSSM)
@@ -4694,10 +4867,10 @@ static int ssmR3SaveDoExecRun(PVM pVM, PSSMHANDLE pSSM)
         UnitHdr.fFlags          = 0;
         UnitHdr.cbName          = (uint32_t)pUnit->cchName + 1;
         memcpy(&UnitHdr.szName[0], &pUnit->szName[0], UnitHdr.cbName);
-        UnitHdr.u32CRC          = RTCrc32(&UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
+        UnitHdr.u32CRC          = RTCrc32(&UnitHdr, RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
         Log(("SSM: Unit at %#9llx: '%s', instance %u, pass %#x, version %u\n",
              UnitHdr.offStream, UnitHdr.szName, UnitHdr.u32Instance, UnitHdr.u32Pass, UnitHdr.u32Version));
-        int rc = ssmR3StrmWrite(&pSSM->Strm, &UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
+        int rc = ssmR3StrmWrite(&pSSM->Strm, &UnitHdr, RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
         if (RT_FAILURE(rc))
         {
             LogRel(("SSM: Failed to write unit header. rc=%Rrc\n", rc));
@@ -4716,6 +4889,9 @@ static int ssmR3SaveDoExecRun(PVM pVM, PSSMHANDLE pSSM)
                 break;
             case SSMUNITTYPE_DRV:
                 rc = pUnit->u.Drv.pfnSaveExec(pUnit->u.Drv.pDrvIns, pSSM);
+                break;
+            case SSMUNITTYPE_USB:
+                rc = pUnit->u.Usb.pfnSaveExec(pUnit->u.Usb.pUsbIns, pSSM);
                 break;
             case SSMUNITTYPE_INTERNAL:
                 rc = pUnit->u.Internal.pfnSaveExec(pVM, pSSM);
@@ -4785,7 +4961,7 @@ static int ssmR3SaveDoExecRun(PVM pVM, PSSMHANDLE pSSM)
  * Do the pfnSavePrep run.
  *
  * @returns VBox status code (pSSM->rc).
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int ssmR3SaveDoPrepRun(PVM pVM, PSSMHANDLE pSSM)
@@ -4806,6 +4982,9 @@ static int ssmR3SaveDoPrepRun(PVM pVM, PSSMHANDLE pSSM)
                     break;
                 case SSMUNITTYPE_DRV:
                     rc = pUnit->u.Drv.pfnSavePrep(pUnit->u.Drv.pDrvIns, pSSM);
+                    break;
+                case SSMUNITTYPE_USB:
+                    rc = pUnit->u.Usb.pfnSavePrep(pUnit->u.Usb.pUsbIns, pSSM);
                     break;
                 case SSMUNITTYPE_INTERNAL:
                     rc = pUnit->u.Internal.pfnSavePrep(pVM, pSSM);
@@ -4848,7 +5027,7 @@ static int ssmR3SaveDoPrepRun(PVM pVM, PSSMHANDLE pSSM)
  * Common worker for SSMR3Save and SSMR3LiveSave.
  *
  * @returns VBox status code (no need to check pSSM->rc).
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The state handle.
  *
  * @thread  EMT(0)
@@ -4879,7 +5058,7 @@ static int ssmR3SaveDoCommon(PVM pVM, PSSMHANDLE pSSM)
 /**
  * Saves the rest of the state on EMT0.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
  * @param   pSSM            The SSM handle returned by SSMR3LiveSave.
  *
@@ -4915,7 +5094,7 @@ VMMR3_INT_DECL(int) SSMR3LiveDoStep2(PSSMHANDLE pSSM)
  * Writes the file header and clear the per-unit data.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The SSM handle.
  */
 static int ssmR3WriteHeaderAndClearPerUnitData(PVM pVM, PSSMHANDLE pSSM)
@@ -4961,7 +5140,7 @@ static int ssmR3WriteHeaderAndClearPerUnitData(PVM pVM, PSSMHANDLE pSSM)
  * Creates a new saved state file.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pszFilename         The name of the file.  NULL if pStreamOps is
  *                              used.
  * @param   pStreamOps          The stream methods.  NULL if pszFilename is
@@ -5025,9 +5204,9 @@ static int ssmR3SaveDoCreateFile(PVM pVM, const char *pszFilename, PCSSMSTRMOPS 
 /**
  * Start VM save operation.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pszFilename     Name of the file to save the state in. NULL if pStreamOps is used.
  * @param   pStreamOps      The stream method table. NULL if pszFilename is
  *                          used.
@@ -5121,7 +5300,7 @@ VMMR3DECL(void) SSMR3HandleReportLivePercent(PSSMHANDLE pSSM, unsigned uPercent)
  * @retval  VINF_SUCCESS if we can pass on to step 2.
  * @retval  VINF_SSM_VOTE_FOR_ANOTHER_PASS if we need another pass.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  * @param   uPass               The current pass.
  */
@@ -5149,6 +5328,9 @@ static int ssmR3LiveDoVoteRun(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass)
                     break;
                 case SSMUNITTYPE_DRV:
                     rc = pUnit->u.Drv.pfnLiveVote(pUnit->u.Drv.pDrvIns, pSSM, uPass);
+                    break;
+                case SSMUNITTYPE_USB:
+                    rc = pUnit->u.Usb.pfnLiveVote(pUnit->u.Usb.pUsbIns, pSSM, uPass);
                     break;
                 case SSMUNITTYPE_INTERNAL:
                     rc = pUnit->u.Internal.pfnLiveVote(pVM, pSSM, uPass);
@@ -5224,7 +5406,7 @@ static int ssmR3LiveDoVoteRun(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass)
  *
  * @returns VBox status code (no need to check pSSM->rc).
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  * @param   uPass               The current pass.
  */
@@ -5267,10 +5449,10 @@ static int ssmR3LiveDoExecRun(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass)
         UnitHdr.fFlags          = 0;
         UnitHdr.cbName          = (uint32_t)pUnit->cchName + 1;
         memcpy(&UnitHdr.szName[0], &pUnit->szName[0], UnitHdr.cbName);
-        UnitHdr.u32CRC          = RTCrc32(&UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
+        UnitHdr.u32CRC          = RTCrc32(&UnitHdr, RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
         Log(("SSM: Unit at %#9llx: '%s', instance %u, pass %#x, version %u\n",
              UnitHdr.offStream, UnitHdr.szName, UnitHdr.u32Instance, UnitHdr.u32Pass, UnitHdr.u32Version));
-        int rc = ssmR3StrmWrite(&pSSM->Strm, &UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
+        int rc = ssmR3StrmWrite(&pSSM->Strm, &UnitHdr, RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]));
         if (RT_FAILURE(rc))
         {
             LogRel(("SSM: Failed to write unit header. rc=%Rrc\n", rc));
@@ -5289,6 +5471,9 @@ static int ssmR3LiveDoExecRun(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass)
                 break;
             case SSMUNITTYPE_DRV:
                 rc = pUnit->u.Drv.pfnLiveExec(pUnit->u.Drv.pDrvIns, pSSM, uPass);
+                break;
+            case SSMUNITTYPE_USB:
+                rc = pUnit->u.Usb.pfnLiveExec(pUnit->u.Usb.pUsbIns, pSSM, uPass);
                 break;
             case SSMUNITTYPE_INTERNAL:
                 rc = pUnit->u.Internal.pfnLiveExec(pVM, pSSM, uPass);
@@ -5353,7 +5538,7 @@ static int ssmR3LiveDoExecRun(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass)
  * Implements the live exec+vote loop.
  *
  * @returns VBox status code (no need to check pSSM->rc).
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int ssmR3DoLiveExecVoteLoop(PVM pVM, PSSMHANDLE pSSM)
@@ -5425,7 +5610,7 @@ static int ssmR3DoLiveExecVoteLoop(PVM pVM, PSSMHANDLE pSSM)
  * Calls pfnLivePrep for all units.
  *
  * @returns VBox status code (no need to check pSSM->rc).
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int ssmR3DoLivePrepRun(PVM pVM, PSSMHANDLE pSSM)
@@ -5448,6 +5633,9 @@ static int ssmR3DoLivePrepRun(PVM pVM, PSSMHANDLE pSSM)
                     break;
                 case SSMUNITTYPE_DRV:
                     rc = pUnit->u.Drv.pfnLivePrep(pUnit->u.Drv.pDrvIns, pSSM);
+                    break;
+                case SSMUNITTYPE_USB:
+                    rc = pUnit->u.Usb.pfnLivePrep(pUnit->u.Usb.pUsbIns, pSSM);
                     break;
                 case SSMUNITTYPE_INTERNAL:
                     rc = pUnit->u.Internal.pfnLivePrep(pVM, pSSM);
@@ -5489,7 +5677,7 @@ static int ssmR3DoLivePrepRun(PVM pVM, PSSMHANDLE pSSM)
 /**
  * Continue a live state saving operation on the worker thread.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
  * @param   pSSM            The SSM handle returned by SSMR3LiveSave.
  *
@@ -5531,9 +5719,9 @@ VMMR3_INT_DECL(int) SSMR3LiveDoStep1(PSSMHANDLE pSSM)
  * SSMR3LiveDone should be called even if SSMR3LiveDoStep1 or SSMR3LiveDoStep2
  * fails.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   cMsMaxDowntime  The maximum downtime given as milliseconds.
  * @param   pszFilename     Name of the file to save the state in. This string
  *                          must remain valid until SSMR3LiveDone is called.
@@ -5544,6 +5732,7 @@ VMMR3_INT_DECL(int) SSMR3LiveDoStep1(PSSMHANDLE pSSM)
  * @param   enmAfter        What is planned after a successful save operation.
  * @param   pfnProgress     Progress callback. Optional.
  * @param   pvProgressUser  User argument for the progress callback.
+ * @param   ppSSM           Where to return the saved state handle on success.
  *
  * @thread  EMT0
  */
@@ -5805,7 +5994,7 @@ static int ssmR3DataReadFinishV2(PSSMHANDLE pSSM)
  * @returns VBox status code. Does NOT set pSSM->rc.
  * @param   pSSM            The saved state handle.
  * @param   pvBuf           Where to put the bits
- * @param   cbBuf           How many bytes to read.
+ * @param   cbToRead        How many bytes to read.
  */
 DECLINLINE(int) ssmR3DataReadV2Raw(PSSMHANDLE pSSM, void *pvBuf, size_t cbToRead)
 {
@@ -5863,7 +6052,7 @@ DECLINLINE(int) ssmR3DataReadV2RawLzfHdr(PSSMHANDLE pSSM, uint32_t *pcbDecompr)
  * buffer.
  *
  * @returns VBox status code. Sets pSSM->rc on error.
- * @param   SSM             The saved state handle.
+ * @param   pSSM            The saved state handle.
  * @param   pvDst           Pointer to the output buffer.
  * @param   cbDecompr       The size of the decompressed data.
  */
@@ -5913,7 +6102,7 @@ static int ssmR3DataReadV2RawLzf(PSSMHANDLE pSSM, void *pvDst, size_t cbDecompr)
  *
  * @returns VBox status code. Sets pSSM->rc on error.
  * @param   pSSM            The saved state handle..
- * @param   pcbDecompr      Where to store the size of the zero data.
+ * @param   pcbZero         Where to store the size of the zero data.
  */
 DECLINLINE(int) ssmR3DataReadV2RawZeroHdr(PSSMHANDLE pSSM, uint32_t *pcbZero)
 {
@@ -6030,12 +6219,16 @@ static int ssmR3DataReadRecHdrV2(PSSMHANDLE pSSM)
         {
             case 6:
                 AssertLogRelMsgReturn((abHdr[6] & 0xc0) == 0x80, ("6/%u: %.*Rhxs\n", cb, cb + 1, &abHdr[0]), VERR_SSM_INTEGRITY_REC_HDR);
+                RT_FALL_THRU();
             case 5:
                 AssertLogRelMsgReturn((abHdr[5] & 0xc0) == 0x80, ("5/%u: %.*Rhxs\n", cb, cb + 1, &abHdr[0]), VERR_SSM_INTEGRITY_REC_HDR);
+                RT_FALL_THRU();
             case 4:
                 AssertLogRelMsgReturn((abHdr[4] & 0xc0) == 0x80, ("4/%u: %.*Rhxs\n", cb, cb + 1, &abHdr[0]), VERR_SSM_INTEGRITY_REC_HDR);
+                RT_FALL_THRU();
             case 3:
                 AssertLogRelMsgReturn((abHdr[3] & 0xc0) == 0x80, ("3/%u: %.*Rhxs\n", cb, cb + 1, &abHdr[0]), VERR_SSM_INTEGRITY_REC_HDR);
+                RT_FALL_THRU();
             case 2:
                 AssertLogRelMsgReturn((abHdr[2] & 0xc0) == 0x80, ("2/%u: %.*Rhxs\n", cb, cb + 1, &abHdr[0]), VERR_SSM_INTEGRITY_REC_HDR);
                 break;
@@ -6148,7 +6341,7 @@ static int ssmR3DataReadUnbufferedV2(PSSMHANDLE pSSM, void *pvBuf, size_t cbBuf)
             if (RT_FAILURE(rc))
                 return pSSM->rc = rc;
         }
-        AssertLogRelMsgReturn(!pSSM->u.Read.fEndOfData, ("cbBuf=%zu", cbBuf), pSSM->rc = VERR_SSM_LOADED_TOO_MUCH);
+        AssertLogRelMsgReturn(!pSSM->u.Read.fEndOfData, ("cbBuf=%zu\n", cbBuf), pSSM->rc = VERR_SSM_LOADED_TOO_MUCH);
 
         /*
          * Read data from the current record.
@@ -6269,7 +6462,7 @@ static int ssmR3DataReadBufferedV2(PSSMHANDLE pSSM, void *pvBuf, size_t cbBuf)
             if (RT_FAILURE(rc))
                 return pSSM->rc = rc;
         }
-        AssertLogRelMsgReturn(!pSSM->u.Read.fEndOfData, ("cbBuf=%zu", cbBuf), pSSM->rc = VERR_SSM_LOADED_TOO_MUCH);
+        AssertLogRelMsgReturn(!pSSM->u.Read.fEndOfData, ("cbBuf=%zu\n", cbBuf), pSSM->rc = VERR_SSM_LOADED_TOO_MUCH);
 
         /*
          * Read data from the current record.
@@ -6346,33 +6539,36 @@ DECLINLINE(int) ssmR3DataRead(PSSMHANDLE pSSM, void *pvBuf, size_t cbBuf)
     /*
      * Fend off previous errors and V1 data units.
      */
-    if (RT_FAILURE(pSSM->rc))
-        return pSSM->rc;
-    if (RT_UNLIKELY(pSSM->u.Read.uFmtVerMajor == 1))
-        return ssmR3DataReadV1(pSSM, pvBuf, cbBuf);
-
-    /*
-     * Check if the requested data is buffered.
-     */
-    uint32_t off = pSSM->u.Read.offDataBuffer;
-    if (    off + cbBuf > pSSM->u.Read.cbDataBuffer
-        ||  cbBuf > sizeof(pSSM->u.Read.abDataBuffer))
+    if (RT_SUCCESS(pSSM->rc))
     {
-        if (cbBuf <= sizeof(pSSM->u.Read.abDataBuffer) / 8)
-            return ssmR3DataReadBufferedV2(pSSM, pvBuf, cbBuf);
-        return ssmR3DataReadUnbufferedV2(pSSM, pvBuf, cbBuf);
+        if (RT_LIKELY(pSSM->u.Read.uFmtVerMajor != 1))
+        {
+            /*
+             * Check if the requested data is buffered.
+             */
+            uint32_t off = pSSM->u.Read.offDataBuffer;
+            if (   off + cbBuf > pSSM->u.Read.cbDataBuffer
+                || cbBuf > sizeof(pSSM->u.Read.abDataBuffer))
+            {
+                if (cbBuf <= sizeof(pSSM->u.Read.abDataBuffer) / 8)
+                    return ssmR3DataReadBufferedV2(pSSM, pvBuf, cbBuf);
+                return ssmR3DataReadUnbufferedV2(pSSM, pvBuf, cbBuf);
+            }
+
+            memcpy(pvBuf, &pSSM->u.Read.abDataBuffer[off], cbBuf);
+            pSSM->u.Read.offDataBuffer = off + (uint32_t)cbBuf;
+            pSSM->offUnitUser += cbBuf;
+            Log4((cbBuf
+                  ? "ssmR3DataRead: %08llx|%08llx/%08x/%08x: cbBuf=%#x %.*Rhxs%s\n"
+                  : "ssmR3DataRead: %08llx|%08llx/%08x/%08x: cbBuf=%#x\n",
+                  ssmR3StrmTell(&pSSM->Strm), pSSM->offUnit, pSSM->u.Read.cbRecLeft, pSSM->u.Read.cbDataBuffer - pSSM->u.Read.offDataBuffer,
+                  cbBuf, RT_MIN(SSM_LOG_BYTES, cbBuf), pvBuf, cbBuf > SSM_LOG_BYTES ? "..." : ""));
+
+            return VINF_SUCCESS;
+        }
+        return ssmR3DataReadV1(pSSM, pvBuf, cbBuf);
     }
-
-    memcpy(pvBuf, &pSSM->u.Read.abDataBuffer[off], cbBuf);
-    pSSM->u.Read.offDataBuffer = off + (uint32_t)cbBuf;
-    pSSM->offUnitUser += cbBuf;
-    Log4((cbBuf
-          ? "ssmR3DataRead: %08llx|%08llx/%08x/%08x: cbBuf=%#x %.*Rhxs%s\n"
-          : "ssmR3DataRead: %08llx|%08llx/%08x/%08x: cbBuf=%#x\n",
-          ssmR3StrmTell(&pSSM->Strm), pSSM->offUnit, pSSM->u.Read.cbRecLeft, pSSM->u.Read.cbDataBuffer - pSSM->u.Read.offDataBuffer,
-          cbBuf, RT_MIN(SSM_LOG_BYTES, cbBuf), pvBuf, cbBuf > SSM_LOG_BYTES ? "..." : ""));
-
-    return VINF_SUCCESS;
+    return pSSM->rc;
 }
 
 
@@ -6404,46 +6600,49 @@ VMMR3DECL(int) SSMR3GetStruct(PSSMHANDLE pSSM, void *pvStruct, PCSSMFIELD paFiel
          pCur->cb != UINT32_MAX && pCur->off != UINT32_MAX;
          pCur++)
     {
-        uint8_t *pbField = (uint8_t *)pvStruct + pCur->off;
-        switch ((uintptr_t)pCur->pfnGetPutOrTransformer)
+        if (pCur->uFirstVer <= pSSM->u.Read.uCurUnitVer)
         {
-            case SSMFIELDTRANS_NO_TRANSFORMATION:
-                rc = ssmR3DataRead(pSSM, pbField, pCur->cb);
-                break;
-
-            case SSMFIELDTRANS_GCPTR:
-                AssertMsgBreakStmt(pCur->cb == sizeof(RTGCPTR), ("%#x (%s)\n", pCur->cb, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3GetGCPtr(pSSM, (PRTGCPTR)pbField);
-                break;
-
-            case SSMFIELDTRANS_GCPHYS:
-                AssertMsgBreakStmt(pCur->cb == sizeof(RTGCPHYS), ("%#x (%s)\n", pCur->cb, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3GetGCPhys(pSSM, (PRTGCPHYS)pbField);
-                break;
-
-            case SSMFIELDTRANS_RCPTR:
-                AssertMsgBreakStmt(pCur->cb == sizeof(RTRCPTR), ("%#x (%s)\n", pCur->cb, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3GetRCPtr(pSSM, (PRTRCPTR)pbField);
-                break;
-
-            case SSMFIELDTRANS_RCPTR_ARRAY:
+            uint8_t *pbField = (uint8_t *)pvStruct + pCur->off;
+            switch ((uintptr_t)pCur->pfnGetPutOrTransformer)
             {
-                uint32_t const cEntries = pCur->cb / sizeof(RTRCPTR);
-                AssertMsgBreakStmt(pCur->cb == cEntries * sizeof(RTRCPTR) && cEntries, ("%#x (%s)\n", pCur->cb, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = VINF_SUCCESS;
-                for (uint32_t i = 0; i < cEntries && RT_SUCCESS(rc); i++)
-                    rc = SSMR3GetRCPtr(pSSM, &((PRTRCPTR)pbField)[i]);
-                break;
-            }
+                case SSMFIELDTRANS_NO_TRANSFORMATION:
+                    rc = ssmR3DataRead(pSSM, pbField, pCur->cb);
+                    break;
 
-            default:
-                AssertMsgFailedBreakStmt(("%#x\n", pCur->pfnGetPutOrTransformer), rc = VERR_SSM_FIELD_COMPLEX);
-        }
-        if (RT_FAILURE(rc))
-        {
-            if (RT_SUCCESS(pSSM->rc))
-                pSSM->rc = rc;
-            return rc;
+                case SSMFIELDTRANS_GCPTR:
+                    AssertMsgBreakStmt(pCur->cb == sizeof(RTGCPTR), ("%#x (%s)\n", pCur->cb, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3GetGCPtr(pSSM, (PRTGCPTR)pbField);
+                    break;
+
+                case SSMFIELDTRANS_GCPHYS:
+                    AssertMsgBreakStmt(pCur->cb == sizeof(RTGCPHYS), ("%#x (%s)\n", pCur->cb, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3GetGCPhys(pSSM, (PRTGCPHYS)pbField);
+                    break;
+
+                case SSMFIELDTRANS_RCPTR:
+                    AssertMsgBreakStmt(pCur->cb == sizeof(RTRCPTR), ("%#x (%s)\n", pCur->cb, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3GetRCPtr(pSSM, (PRTRCPTR)pbField);
+                    break;
+
+                case SSMFIELDTRANS_RCPTR_ARRAY:
+                {
+                    uint32_t const cEntries = pCur->cb / sizeof(RTRCPTR);
+                    AssertMsgBreakStmt(pCur->cb == cEntries * sizeof(RTRCPTR) && cEntries, ("%#x (%s)\n", pCur->cb, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = VINF_SUCCESS;
+                    for (uint32_t i = 0; i < cEntries && RT_SUCCESS(rc); i++)
+                        rc = SSMR3GetRCPtr(pSSM, &((PRTRCPTR)pbField)[i]);
+                    break;
+                }
+
+                default:
+                    AssertMsgFailedBreakStmt(("%#x\n", pCur->pfnGetPutOrTransformer), rc = VERR_SSM_FIELD_COMPLEX);
+            }
+            if (RT_FAILURE(rc))
+            {
+                if (RT_SUCCESS(pSSM->rc))
+                    pSSM->rc = rc;
+                return rc;
+            }
         }
     }
 
@@ -6501,7 +6700,7 @@ DECLINLINE(int) ssmR3GetHCPtrNI(PSSMHANDLE pSSM, void **ppv, uint32_t fFlags)
 
 
 /**
- * Guts a structure, extended API.
+ * Gets a structure, extended API.
  *
  * @returns VBox status code.
  * @param   pSSM            The saved state handle.
@@ -6531,7 +6730,7 @@ VMMR3DECL(int) SSMR3GetStructEx(PSSMHANDLE pSSM, void *pvStruct, size_t cbStruct
     /*
      * Begin marker.
      */
-    if (!(fFlags & SSMSTRUCT_FLAGS_NO_MARKERS))
+    if (!(fFlags & (SSMSTRUCT_FLAGS_NO_MARKERS | SSMSTRUCT_FLAGS_NO_LEAD_MARKER)))
     {
         rc = SSMR3GetU32(pSSM, &u32Magic);
         if (RT_FAILURE(rc))
@@ -6567,182 +6766,185 @@ VMMR3DECL(int) SSMR3GetStructEx(PSSMHANDLE pSSM, void *pvStruct, size_t cbStruct
                         ("off=%#x offField=%#x (%s)\n", off, offField, pCur->pszName),
                         pSSM->rc = VERR_SSM_FIELD_NOT_CONSECUTIVE);
 
-        rc = VINF_SUCCESS;
-        uint8_t       *pbField  = (uint8_t *)pvStruct + offField;
-        switch ((uintptr_t)pCur->pfnGetPutOrTransformer)
+        if (pCur->uFirstVer <= pSSM->u.Read.uCurUnitVer)
         {
-            case SSMFIELDTRANS_NO_TRANSFORMATION:
-                rc = ssmR3DataRead(pSSM, pbField, cbField);
-                break;
-
-            case SSMFIELDTRANS_GCPHYS:
-                AssertMsgBreakStmt(cbField == sizeof(RTGCPHYS), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3GetGCPhys(pSSM, (PRTGCPHYS)pbField);
-                break;
-
-            case SSMFIELDTRANS_GCPTR:
-                AssertMsgBreakStmt(cbField == sizeof(RTGCPTR), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3GetGCPtr(pSSM, (PRTGCPTR)pbField);
-                break;
-
-            case SSMFIELDTRANS_RCPTR:
-                AssertMsgBreakStmt(cbField == sizeof(RTRCPTR), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3GetRCPtr(pSSM, (PRTRCPTR)pbField);
-                break;
-
-            case SSMFIELDTRANS_RCPTR_ARRAY:
+            rc = VINF_SUCCESS;
+            uint8_t       *pbField  = (uint8_t *)pvStruct + offField;
+            switch ((uintptr_t)pCur->pfnGetPutOrTransformer)
             {
-                uint32_t const cEntries = cbField / sizeof(RTRCPTR);
-                AssertMsgBreakStmt(cbField == cEntries * sizeof(RTRCPTR) && cEntries, ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = VINF_SUCCESS;
-                for (uint32_t i = 0; i < cEntries && RT_SUCCESS(rc); i++)
-                    rc = SSMR3GetRCPtr(pSSM, &((PRTRCPTR)pbField)[i]);
-                break;
-            }
+                case SSMFIELDTRANS_NO_TRANSFORMATION:
+                    rc = ssmR3DataRead(pSSM, pbField, cbField);
+                    break;
 
-            case SSMFIELDTRANS_HCPTR_NI:
-                AssertMsgBreakStmt(cbField == sizeof(void *), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = ssmR3GetHCPtrNI(pSSM, (void **)pbField, fFlags);
-                break;
+                case SSMFIELDTRANS_GCPHYS:
+                    AssertMsgBreakStmt(cbField == sizeof(RTGCPHYS), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3GetGCPhys(pSSM, (PRTGCPHYS)pbField);
+                    break;
 
-            case SSMFIELDTRANS_HCPTR_NI_ARRAY:
-            {
-                uint32_t const cEntries = cbField / sizeof(void *);
-                AssertMsgBreakStmt(cbField == cEntries * sizeof(void *) && cEntries, ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = VINF_SUCCESS;
-                for (uint32_t i = 0; i < cEntries && RT_SUCCESS(rc); i++)
-                    rc = ssmR3GetHCPtrNI(pSSM, &((void **)pbField)[i], fFlags);
-                break;
-            }
+                case SSMFIELDTRANS_GCPTR:
+                    AssertMsgBreakStmt(cbField == sizeof(RTGCPTR), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3GetGCPtr(pSSM, (PRTGCPTR)pbField);
+                    break;
 
-            case SSMFIELDTRANS_HCPTR_HACK_U32:
-                AssertMsgBreakStmt(cbField == sizeof(void *), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                *(uintptr_t *)pbField = 0;
-                rc = ssmR3DataRead(pSSM, pbField, sizeof(uint32_t));
-                if ((fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE) && ssmR3GetHostBits(pSSM) == 64)
+                case SSMFIELDTRANS_RCPTR:
+                    AssertMsgBreakStmt(cbField == sizeof(RTRCPTR), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3GetRCPtr(pSSM, (PRTRCPTR)pbField);
+                    break;
+
+                case SSMFIELDTRANS_RCPTR_ARRAY:
                 {
-                    uint32_t u32;
-                    rc = ssmR3DataRead(pSSM, &u32, sizeof(uint32_t));
-                    AssertMsgBreakStmt(RT_FAILURE(rc) || u32 == 0 || (fFlags & SSMSTRUCT_FLAGS_SAVED_AS_MEM),
-                                       ("high=%#x low=%#x (%s)\n", u32, *(uint32_t *)pbField, pCur->pszName),
-                                       rc = VERR_SSM_FIELD_INVALID_VALUE);
+                    uint32_t const cEntries = cbField / sizeof(RTRCPTR);
+                    AssertMsgBreakStmt(cbField == cEntries * sizeof(RTRCPTR) && cEntries, ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = VINF_SUCCESS;
+                    for (uint32_t i = 0; i < cEntries && RT_SUCCESS(rc); i++)
+                        rc = SSMR3GetRCPtr(pSSM, &((PRTRCPTR)pbField)[i]);
+                    break;
                 }
-                break;
 
-            case SSMFIELDTRANS_U32_ZX_U64:
-                AssertMsgBreakStmt(cbField == sizeof(uint64_t), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                ((uint32_t *)pbField)[1] = 0;
-                rc = SSMR3GetU32(pSSM, (uint32_t *)pbField);
-                break;
+                case SSMFIELDTRANS_HCPTR_NI:
+                    AssertMsgBreakStmt(cbField == sizeof(void *), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = ssmR3GetHCPtrNI(pSSM, (void **)pbField, fFlags);
+                    break;
 
+                case SSMFIELDTRANS_HCPTR_NI_ARRAY:
+                {
+                    uint32_t const cEntries = cbField / sizeof(void *);
+                    AssertMsgBreakStmt(cbField == cEntries * sizeof(void *) && cEntries, ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = VINF_SUCCESS;
+                    for (uint32_t i = 0; i < cEntries && RT_SUCCESS(rc); i++)
+                        rc = ssmR3GetHCPtrNI(pSSM, &((void **)pbField)[i], fFlags);
+                    break;
+                }
 
-            case SSMFIELDTRANS_IGNORE:
-                if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
-                    rc = SSMR3Skip(pSSM, cbField);
-                break;
+                case SSMFIELDTRANS_HCPTR_HACK_U32:
+                    AssertMsgBreakStmt(cbField == sizeof(void *), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    *(uintptr_t *)pbField = 0;
+                    rc = ssmR3DataRead(pSSM, pbField, sizeof(uint32_t));
+                    if ((fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE) && ssmR3GetHostBits(pSSM) == 64)
+                    {
+                        uint32_t u32;
+                        rc = ssmR3DataRead(pSSM, &u32, sizeof(uint32_t));
+                        AssertMsgBreakStmt(RT_FAILURE(rc) || u32 == 0 || (fFlags & SSMSTRUCT_FLAGS_SAVED_AS_MEM),
+                                           ("high=%#x low=%#x (%s)\n", u32, *(uint32_t *)pbField, pCur->pszName),
+                                           rc = VERR_SSM_FIELD_INVALID_VALUE);
+                    }
+                    break;
 
-            case SSMFIELDTRANS_IGN_GCPHYS:
-                AssertMsgBreakStmt(cbField == sizeof(RTGCPHYS), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
-                    rc = SSMR3Skip(pSSM, pSSM->u.Read.cbGCPhys);
-                break;
-
-            case SSMFIELDTRANS_IGN_GCPTR:
-                AssertMsgBreakStmt(cbField == sizeof(RTGCPTR), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
-                    rc = SSMR3Skip(pSSM, pSSM->u.Read.cbGCPtr);
-                break;
-
-            case SSMFIELDTRANS_IGN_RCPTR:
-                AssertMsgBreakStmt(cbField == sizeof(RTRCPTR), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
-                    rc = SSMR3Skip(pSSM, sizeof(RTRCPTR));
-                break;
-
-            case SSMFIELDTRANS_IGN_HCPTR:
-                AssertMsgBreakStmt(cbField == sizeof(void *), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
-                    rc = SSMR3Skip(pSSM, ssmR3GetHostBits(pSSM) / 8);
-                break;
+                case SSMFIELDTRANS_U32_ZX_U64:
+                    AssertMsgBreakStmt(cbField == sizeof(uint64_t), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    ((uint32_t *)pbField)[1] = 0;
+                    rc = SSMR3GetU32(pSSM, (uint32_t *)pbField);
+                    break;
 
 
-            case SSMFIELDTRANS_OLD:
-                AssertMsgBreakStmt(pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3Skip(pSSM, pCur->cb);
-                break;
+                case SSMFIELDTRANS_IGNORE:
+                    if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
+                        rc = SSMR3Skip(pSSM, cbField);
+                    break;
 
-            case SSMFIELDTRANS_OLD_GCPHYS:
-                AssertMsgBreakStmt(pCur->cb == sizeof(RTGCPHYS) && pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3Skip(pSSM, pSSM->u.Read.cbGCPhys);
-                break;
+                case SSMFIELDTRANS_IGN_GCPHYS:
+                    AssertMsgBreakStmt(cbField == sizeof(RTGCPHYS), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
+                        rc = SSMR3Skip(pSSM, pSSM->u.Read.cbGCPhys);
+                    break;
 
-            case SSMFIELDTRANS_OLD_GCPTR:
-                AssertMsgBreakStmt(pCur->cb == sizeof(RTGCPTR) && pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3Skip(pSSM, pSSM->u.Read.cbGCPtr);
-                break;
+                case SSMFIELDTRANS_IGN_GCPTR:
+                    AssertMsgBreakStmt(cbField == sizeof(RTGCPTR), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
+                        rc = SSMR3Skip(pSSM, pSSM->u.Read.cbGCPtr);
+                    break;
 
-            case SSMFIELDTRANS_OLD_RCPTR:
-                AssertMsgBreakStmt(pCur->cb == sizeof(RTRCPTR) && pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3Skip(pSSM, sizeof(RTRCPTR));
-                break;
+                case SSMFIELDTRANS_IGN_RCPTR:
+                    AssertMsgBreakStmt(cbField == sizeof(RTRCPTR), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
+                        rc = SSMR3Skip(pSSM, sizeof(RTRCPTR));
+                    break;
 
-            case SSMFIELDTRANS_OLD_HCPTR:
-                AssertMsgBreakStmt(pCur->cb == sizeof(void *) && pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3Skip(pSSM, ssmR3GetHostBits(pSSM) / 8);
-                break;
+                case SSMFIELDTRANS_IGN_HCPTR:
+                    AssertMsgBreakStmt(cbField == sizeof(void *), ("%#x (%s)\n", cbField, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
+                        rc = SSMR3Skip(pSSM, ssmR3GetHostBits(pSSM) / 8);
+                    break;
 
-            case SSMFIELDTRANS_OLD_PAD_HC:
-                AssertMsgBreakStmt(pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                rc = SSMR3Skip(pSSM, ssmR3GetHostBits(pSSM) == 64 ? RT_HIWORD(pCur->cb) : RT_LOWORD(pCur->cb));
-                break;
 
-            case SSMFIELDTRANS_OLD_PAD_MSC32:
-                AssertMsgBreakStmt(pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
-                if (ssmR3IsHostMsc32(pSSM))
+                case SSMFIELDTRANS_OLD:
+                    AssertMsgBreakStmt(pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
                     rc = SSMR3Skip(pSSM, pCur->cb);
-                break;
+                    break;
+
+                case SSMFIELDTRANS_OLD_GCPHYS:
+                    AssertMsgBreakStmt(pCur->cb == sizeof(RTGCPHYS) && pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3Skip(pSSM, pSSM->u.Read.cbGCPhys);
+                    break;
+
+                case SSMFIELDTRANS_OLD_GCPTR:
+                    AssertMsgBreakStmt(pCur->cb == sizeof(RTGCPTR) && pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3Skip(pSSM, pSSM->u.Read.cbGCPtr);
+                    break;
+
+                case SSMFIELDTRANS_OLD_RCPTR:
+                    AssertMsgBreakStmt(pCur->cb == sizeof(RTRCPTR) && pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3Skip(pSSM, sizeof(RTRCPTR));
+                    break;
+
+                case SSMFIELDTRANS_OLD_HCPTR:
+                    AssertMsgBreakStmt(pCur->cb == sizeof(void *) && pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3Skip(pSSM, ssmR3GetHostBits(pSSM) / 8);
+                    break;
+
+                case SSMFIELDTRANS_OLD_PAD_HC:
+                    AssertMsgBreakStmt(pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    rc = SSMR3Skip(pSSM, ssmR3GetHostBits(pSSM) == 64 ? RT_HIWORD(pCur->cb) : RT_LOWORD(pCur->cb));
+                    break;
+
+                case SSMFIELDTRANS_OLD_PAD_MSC32:
+                    AssertMsgBreakStmt(pCur->off == UINT32_MAX / 2, ("%#x %#x (%s)\n", pCur->cb, pCur->off, pCur->pszName), rc = VERR_SSM_FIELD_INVALID_SIZE);
+                    if (ssmR3IsHostMsc32(pSSM))
+                        rc = SSMR3Skip(pSSM, pCur->cb);
+                    break;
 
 
-            case SSMFIELDTRANS_PAD_HC:
-            case SSMFIELDTRANS_PAD_HC32:
-            case SSMFIELDTRANS_PAD_HC64:
-            case SSMFIELDTRANS_PAD_HC_AUTO:
-            case SSMFIELDTRANS_PAD_MSC32_AUTO:
-            {
-                uint32_t cb32    = RT_BYTE1(pCur->cb);
-                uint32_t cb64    = RT_BYTE2(pCur->cb);
-                uint32_t cbCtx   =    HC_ARCH_BITS == 64
-                                   || (   (uintptr_t)pCur->pfnGetPutOrTransformer == SSMFIELDTRANS_PAD_MSC32_AUTO
-                                       && !SSM_HOST_IS_MSC_32)
-                                 ? cb64 : cb32;
-                uint32_t cbSaved =    ssmR3GetHostBits(pSSM) == 64
-                                   || (   (uintptr_t)pCur->pfnGetPutOrTransformer == SSMFIELDTRANS_PAD_MSC32_AUTO
-                                       && !ssmR3IsHostMsc32(pSSM))
-                                 ? cb64 : cb32;
-                AssertMsgBreakStmt(    cbField == cbCtx
-                                   &&  (   (   pCur->off == UINT32_MAX / 2
-                                            && (   cbField == 0
-                                                || (uintptr_t)pCur->pfnGetPutOrTransformer == SSMFIELDTRANS_PAD_HC_AUTO
-                                                || (uintptr_t)pCur->pfnGetPutOrTransformer == SSMFIELDTRANS_PAD_MSC32_AUTO
+                case SSMFIELDTRANS_PAD_HC:
+                case SSMFIELDTRANS_PAD_HC32:
+                case SSMFIELDTRANS_PAD_HC64:
+                case SSMFIELDTRANS_PAD_HC_AUTO:
+                case SSMFIELDTRANS_PAD_MSC32_AUTO:
+                {
+                    uint32_t cb32    = RT_BYTE1(pCur->cb);
+                    uint32_t cb64    = RT_BYTE2(pCur->cb);
+                    uint32_t cbCtx   =    HC_ARCH_BITS == 64
+                                       || (   (uintptr_t)pCur->pfnGetPutOrTransformer == SSMFIELDTRANS_PAD_MSC32_AUTO
+                                           && !SSM_HOST_IS_MSC_32)
+                                     ? cb64 : cb32;
+                    uint32_t cbSaved =    ssmR3GetHostBits(pSSM) == 64
+                                       || (   (uintptr_t)pCur->pfnGetPutOrTransformer == SSMFIELDTRANS_PAD_MSC32_AUTO
+                                           && !ssmR3IsHostMsc32(pSSM))
+                                     ? cb64 : cb32;
+                    AssertMsgBreakStmt(    cbField == cbCtx
+                                       &&  (   (   pCur->off == UINT32_MAX / 2
+                                                && (   cbField == 0
+                                                    || (uintptr_t)pCur->pfnGetPutOrTransformer == SSMFIELDTRANS_PAD_HC_AUTO
+                                                    || (uintptr_t)pCur->pfnGetPutOrTransformer == SSMFIELDTRANS_PAD_MSC32_AUTO
+                                                   )
                                                )
-                                           )
-                                        || (pCur->off != UINT32_MAX / 2 && cbField != 0)
-                                        )
-                                   , ("cbField=%#x cb32=%#x cb64=%#x HC_ARCH_BITS=%u cbCtx=%#x cbSaved=%#x off=%#x\n",
-                                      cbField, cb32, cb64, HC_ARCH_BITS, cbCtx, cbSaved, pCur->off),
-                                   rc = VERR_SSM_FIELD_INVALID_PADDING_SIZE);
-                if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
-                    rc = SSMR3Skip(pSSM, cbSaved);
-                break;
-            }
+                                            || (pCur->off != UINT32_MAX / 2 && cbField != 0)
+                                            )
+                                       , ("cbField=%#x cb32=%#x cb64=%#x HC_ARCH_BITS=%u cbCtx=%#x cbSaved=%#x off=%#x\n",
+                                          cbField, cb32, cb64, HC_ARCH_BITS, cbCtx, cbSaved, pCur->off),
+                                       rc = VERR_SSM_FIELD_INVALID_PADDING_SIZE);
+                    if (fFlags & SSMSTRUCT_FLAGS_DONT_IGNORE)
+                        rc = SSMR3Skip(pSSM, cbSaved);
+                    break;
+                }
 
-            default:
-                AssertBreakStmt(pCur->pfnGetPutOrTransformer, rc = VERR_SSM_FIELD_INVALID_CALLBACK);
-                rc = pCur->pfnGetPutOrTransformer(pSSM, pCur, pvStruct, fFlags, true /*fGetOrPut*/, pvUser);
+                default:
+                    AssertBreakStmt(pCur->pfnGetPutOrTransformer, rc = VERR_SSM_FIELD_INVALID_CALLBACK);
+                    rc = pCur->pfnGetPutOrTransformer(pSSM, pCur, pvStruct, fFlags, true /*fGetOrPut*/, pvUser);
+                    break;
+            }
+            if (RT_FAILURE(rc))
                 break;
         }
-        if (RT_FAILURE(rc))
-            break;
 
         off = offField + cbField;
     }
@@ -6763,7 +6965,7 @@ VMMR3DECL(int) SSMR3GetStructEx(PSSMHANDLE pSSM, void *pvStruct, size_t cbStruct
     /*
      * End marker
      */
-    if (!(fFlags & SSMSTRUCT_FLAGS_NO_MARKERS))
+    if (!(fFlags & (SSMSTRUCT_FLAGS_NO_MARKERS | SSMSTRUCT_FLAGS_NO_TAIL_MARKER)))
     {
         rc = SSMR3GetU32(pSSM, &u32Magic);
         if (RT_FAILURE(rc))
@@ -6778,7 +6980,7 @@ VMMR3DECL(int) SSMR3GetStructEx(PSSMHANDLE pSSM, void *pvStruct, size_t cbStruct
 /**
  * Loads a boolean item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pfBool          Where to store the item.
  */
@@ -6800,7 +7002,7 @@ VMMR3DECL(int) SSMR3GetBool(PSSMHANDLE pSSM, bool *pfBool)
 /**
  * Loads a 8-bit unsigned integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pu8             Where to store the item.
  */
@@ -6815,7 +7017,7 @@ VMMR3DECL(int) SSMR3GetU8(PSSMHANDLE pSSM, uint8_t *pu8)
 /**
  * Loads a 8-bit signed integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pi8             Where to store the item.
  */
@@ -6830,7 +7032,7 @@ VMMR3DECL(int) SSMR3GetS8(PSSMHANDLE pSSM, int8_t *pi8)
 /**
  * Loads a 16-bit unsigned integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pu16            Where to store the item.
  */
@@ -6845,7 +7047,7 @@ VMMR3DECL(int) SSMR3GetU16(PSSMHANDLE pSSM, uint16_t *pu16)
 /**
  * Loads a 16-bit signed integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pi16            Where to store the item.
  */
@@ -6860,7 +7062,7 @@ VMMR3DECL(int) SSMR3GetS16(PSSMHANDLE pSSM, int16_t *pi16)
 /**
  * Loads a 32-bit unsigned integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pu32            Where to store the item.
  */
@@ -6875,7 +7077,7 @@ VMMR3DECL(int) SSMR3GetU32(PSSMHANDLE pSSM, uint32_t *pu32)
 /**
  * Loads a 32-bit signed integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pi32            Where to store the item.
  */
@@ -6890,7 +7092,7 @@ VMMR3DECL(int) SSMR3GetS32(PSSMHANDLE pSSM, int32_t *pi32)
 /**
  * Loads a 64-bit unsigned integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pu64            Where to store the item.
  */
@@ -6905,7 +7107,7 @@ VMMR3DECL(int) SSMR3GetU64(PSSMHANDLE pSSM, uint64_t *pu64)
 /**
  * Loads a 64-bit signed integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pi64            Where to store the item.
  */
@@ -6920,7 +7122,7 @@ VMMR3DECL(int) SSMR3GetS64(PSSMHANDLE pSSM, int64_t *pi64)
 /**
  * Loads a 128-bit unsigned integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pu128           Where to store the item.
  */
@@ -6935,7 +7137,7 @@ VMMR3DECL(int) SSMR3GetU128(PSSMHANDLE pSSM, uint128_t *pu128)
 /**
  * Loads a 128-bit signed integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pi128           Where to store the item.
  */
@@ -6950,7 +7152,7 @@ VMMR3DECL(int) SSMR3GetS128(PSSMHANDLE pSSM, int128_t *pi128)
 /**
  * Loads a VBox unsigned integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pu              Where to store the integer.
  */
@@ -6965,7 +7167,7 @@ VMMR3DECL(int) SSMR3GetUInt(PSSMHANDLE pSSM, PRTUINT pu)
 /**
  * Loads a VBox signed integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pi              Where to store the integer.
  */
@@ -6980,7 +7182,7 @@ VMMR3DECL(int) SSMR3GetSInt(PSSMHANDLE pSSM, PRTINT pi)
 /**
  * Loads a GC natural unsigned integer item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pu              Where to store the integer.
  *
@@ -6996,7 +7198,7 @@ VMMR3DECL(int) SSMR3GetGCUInt(PSSMHANDLE pSSM, PRTGCUINT pu)
 /**
  * Loads a GC unsigned integer register item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pu              Where to store the integer.
  */
@@ -7010,7 +7212,7 @@ VMMR3DECL(int) SSMR3GetGCUIntReg(PSSMHANDLE pSSM, PRTGCUINTREG pu)
 /**
  * Loads a 32 bits GC physical address item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pGCPhys         Where to store the GC physical address.
  */
@@ -7025,7 +7227,7 @@ VMMR3DECL(int) SSMR3GetGCPhys32(PSSMHANDLE pSSM, PRTGCPHYS32 pGCPhys)
 /**
  * Loads a 64 bits GC physical address item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pGCPhys         Where to store the GC physical address.
  */
@@ -7040,7 +7242,7 @@ VMMR3DECL(int) SSMR3GetGCPhys64(PSSMHANDLE pSSM, PRTGCPHYS64 pGCPhys)
 /**
  * Loads a GC physical address item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pGCPhys         Where to store the GC physical address.
  */
@@ -7090,7 +7292,7 @@ VMMR3DECL(int) SSMR3GetGCPhys(PSSMHANDLE pSSM, PRTGCPHYS pGCPhys)
  *
  * Put functions are not affected.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   cbGCPtr         Size of RTGCPTR
  *
@@ -7118,7 +7320,7 @@ VMMR3_INT_DECL(int) SSMR3HandleSetGCPtrSize(PSSMHANDLE pSSM, unsigned cbGCPtr)
 /**
  * Loads a GC virtual address item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pGCPtr          Where to store the GC virtual address.
  */
@@ -7160,7 +7362,7 @@ VMMR3DECL(int) SSMR3GetGCPtr(PSSMHANDLE pSSM, PRTGCPTR pGCPtr)
 /**
  * Loads a GC virtual address (represented as unsigned integer) item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pGCPtr          Where to store the GC virtual address.
  */
@@ -7174,7 +7376,7 @@ VMMR3DECL(int) SSMR3GetGCUIntPtr(PSSMHANDLE pSSM, PRTGCUINTPTR pGCPtr)
 /**
  * Loads an RC virtual address item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pRCPtr          Where to store the RC virtual address.
  */
@@ -7189,7 +7391,7 @@ VMMR3DECL(int) SSMR3GetRCPtr(PSSMHANDLE pSSM, PRTRCPTR pRCPtr)
 /**
  * Loads a I/O port address item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pIOPort         Where to store the I/O port address.
  */
@@ -7204,7 +7406,7 @@ VMMR3DECL(int) SSMR3GetIOPort(PSSMHANDLE pSSM, PRTIOPORT pIOPort)
 /**
  * Loads a selector item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pSel            Where to store the selector.
  */
@@ -7219,7 +7421,7 @@ VMMR3DECL(int) SSMR3GetSel(PSSMHANDLE pSSM, PRTSEL pSel)
 /**
  * Loads a memory item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   pv              Where to store the item.
  * @param   cb              Size of the item.
@@ -7235,7 +7437,7 @@ VMMR3DECL(int) SSMR3GetMem(PSSMHANDLE pSSM, void *pv, size_t cb)
 /**
  * Loads a string item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   psz             Where to store the item.
  * @param   cbMax           Max size of the item (including '\\0').
@@ -7249,7 +7451,7 @@ VMMR3DECL(int) SSMR3GetStrZ(PSSMHANDLE pSSM, char *psz, size_t cbMax)
 /**
  * Loads a string item from the current data unit.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM            The saved state handle.
  * @param   psz             Where to store the item.
  * @param   cbMax           Max size of the item (including '\\0').
@@ -7356,7 +7558,7 @@ VMMR3DECL(int) SSMR3SkipToEndOfUnit(PSSMHANDLE pSSM)
 /**
  * Calculate the checksum of a file portion.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pStrm       The stream handle
  * @param   off         Where to start checksumming.
  * @param   cb          How much to checksum.
@@ -7532,7 +7734,7 @@ static int ssmR3ValidateHeaderInfo(PSSMHANDLE pSSM, bool fHaveHostBits, bool fHa
  * Reads the header, detects the format version and performs integrity
  * validations.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pSSM                The saved state handle.  A number of field will
  *                              be updated, mostly header related information.
  *                              fLiveSave is also set if appropriate.
@@ -7541,7 +7743,6 @@ static int ssmR3ValidateHeaderInfo(PSSMHANDLE pSSM, bool fHaveHostBits, bool fHa
  * @param   fChecksumOnRead     Whether to validate the checksum while reading
  *                              the stream instead of up front. If not possible,
  *                              verify the checksum up front.
- * @param   pHdr                Where to store the file header.
  */
 static int ssmR3HeaderAndValidate(PSSMHANDLE pSSM, bool fChecksumIt, bool fChecksumOnRead)
 {
@@ -7782,7 +7983,7 @@ static int ssmR3HeaderAndValidate(PSSMHANDLE pSSM, bool fChecksumIt, bool fCheck
         {
             uint32_t u32CRC;
             rc = ssmR3CalcChecksum(&pSSM->Strm,
-                                   RT_OFFSETOF(SSMFILEHDRV11, u32CRC) + sizeof(uHdr.v1_1.u32CRC),
+                                   RT_UOFFSETOF(SSMFILEHDRV11, u32CRC) + sizeof(uHdr.v1_1.u32CRC),
                                    cbFile - pSSM->u.Read.cbFileHdr,
                                    &u32CRC);
             if (RT_FAILURE(rc))
@@ -7806,7 +8007,7 @@ static int ssmR3HeaderAndValidate(PSSMHANDLE pSSM, bool fChecksumIt, bool fCheck
  *
  * @returns VBox status code.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pszFilename         The filename. NULL if pStreamOps is used.
  * @param   pStreamOps          The stream method table. NULL if pszFilename is
  *                              used.
@@ -7917,7 +8118,7 @@ static int ssmR3ValidateDirectory(PSSMFILEDIR pDir, size_t cbDir, uint64_t offDi
     AssertLogRelMsgReturn(pDir->cEntries == cDirEntries,
                           ("Bad directory entry count: %#x, expected %#x (from the footer)\n", pDir->cEntries, cDirEntries),
                            VERR_SSM_INTEGRITY_DIR);
-    AssertLogRelReturn(RT_UOFFSETOF(SSMFILEDIR, aEntries[pDir->cEntries]) == cbDir, VERR_SSM_INTEGRITY_DIR);
+    AssertLogRelReturn(RT_UOFFSETOF_DYN(SSMFILEDIR, aEntries[pDir->cEntries]) == cbDir, VERR_SSM_INTEGRITY_DIR);
 
     for (uint32_t i = 0; i < pDir->cEntries; i++)
     {
@@ -7934,12 +8135,160 @@ static int ssmR3ValidateDirectory(PSSMFILEDIR pDir, size_t cbDir, uint64_t offDi
 #ifndef SSM_STANDALONE
 
 /**
+ * LogRel the unit content.
+ *
+ * @param   pSSM                The save state handle.
+ * @param   pUnitHdr            The unit head (for cbName).
+ * @param   offUnit             The offset of the unit header.
+ * @param   offStart            Where to start.
+ * @param   offEnd              Where to end.
+ */
+static void ssmR3StrmLogUnitContent(PSSMHANDLE pSSM, SSMFILEUNITHDRV2 const *pUnitHdr, uint64_t offUnit,
+                                    uint64_t offStart, uint64_t offEnd)
+{
+    /*
+     * Stop the I/O thread (if present).
+     */
+    ssmR3StrmStopIoThread(&pSSM->Strm);
+
+    /*
+     * Save the current status, resetting it so we can read + log the unit bytes.
+     */
+    int rcSaved = pSSM->rc;
+    pSSM->rc = VINF_SUCCESS;
+
+    /*
+     * Reverse back to the start of the unit if we can.
+     */
+    uint32_t cbUnitHdr = RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[pUnitHdr->cbName]);
+    int rc = ssmR3StrmSeek(&pSSM->Strm, offUnit/* + cbUnitHdr*/, RTFILE_SEEK_BEGIN, pUnitHdr->u32CurStreamCRC);
+    if (RT_SUCCESS(rc))
+    {
+        SSMFILEUNITHDRV2 UnitHdr2;
+        rc = ssmR3StrmRead(&pSSM->Strm, &UnitHdr2, cbUnitHdr);
+        if (   RT_SUCCESS(rc)
+            && memcmp(&UnitHdr2, pUnitHdr, cbUnitHdr) == 0)
+        {
+            pSSM->u.Read.cbDataBuffer = 0; /* avoid assertions */
+            pSSM->u.Read.cbRecLeft    = 0;
+            ssmR3DataReadBeginV2(pSSM);
+
+            /*
+             * Read the unit, dumping the requested bits.
+             */
+            uint8_t     cbLine = 0;
+            uint8_t     abLine[16];
+            uint64_t    offCur = 0;
+            offStart &= ~(uint64_t)(sizeof(abLine) - 1);
+            Assert(offStart < offEnd);
+            LogRel(("SSM: Unit '%s' contents:\n", pUnitHdr->szName));
+
+            do
+            {
+                /*
+                 * Read the next 16 bytes into abLine.  We have to take some care to
+                 * get all the bytes in the unit, since we don't really know its size.
+                 */
+                while (   cbLine < sizeof(abLine)
+                       && !pSSM->u.Read.fEndOfData
+                       && RT_SUCCESS(pSSM->rc))
+                {
+                    uint32_t cbToRead = sizeof(abLine) - cbLine;
+                    if (cbToRead > 1)
+                    {
+                        int32_t cbInBuffer = pSSM->u.Read.cbDataBuffer - pSSM->u.Read.offDataBuffer;
+                        if ((int32_t)cbToRead > cbInBuffer)
+                        {
+                            if (cbInBuffer > 0)
+                                cbToRead = cbInBuffer;
+                            else if (pSSM->u.Read.cbRecLeft)
+                                cbToRead = 1;
+                            else
+                            {
+                                rc = ssmR3DataReadRecHdrV2(pSSM);
+                                if (RT_FAILURE(rc))
+                                {
+                                    pSSM->rc = rc;
+                                    break;
+                                }
+                                if (pSSM->u.Read.fEndOfData)
+                                    break;
+                            }
+                        }
+                    }
+                    rc = ssmR3DataRead(pSSM, &abLine[cbLine], cbToRead);
+                    if (RT_SUCCESS(rc))
+                        cbLine += cbToRead;
+                    else
+                        break;
+                }
+
+                /*
+                 * Display the bytes if in the requested range.
+                 */
+                if (   offCur >= offStart
+                    && offCur <= offEnd)
+                {
+                    char    szLine[132];
+                    char   *pchDst = szLine;
+                    uint8_t offSrc = 0;
+                    while (offSrc < cbLine)
+                    {
+                        static char const s_szHex[17] = "0123456789abcdef";
+                        uint8_t const b = abLine[offSrc++];
+                        *pchDst++ = s_szHex[b >> 4];
+                        *pchDst++ = s_szHex[b & 0xf];
+                        *pchDst++ = offSrc != 8 ? ' ' : '-';
+                    }
+                    while (offSrc < sizeof(abLine))
+                    {
+                        *pchDst++ = ' ';
+                        *pchDst++ = ' ';
+                        *pchDst++ = offSrc != 7 ? ' ' : '-';
+                        offSrc++;
+                    }
+                    *pchDst++ = ' ';
+
+                    offSrc = 0;
+                    while (offSrc < cbLine)
+                    {
+                        char const ch = (int8_t)abLine[offSrc++];
+                        if (ch < 0x20 || ch >= 0x7f)
+                            *pchDst++ = '.';
+                        else
+                            *pchDst++ = ch;
+                    }
+                    *pchDst = '\0';
+                    Assert((uintptr_t)(pchDst - &szLine[0]) < sizeof(szLine));
+                    Assert(strchr(szLine, '\0') == pchDst);
+
+                    LogRel(("%#010llx: %s\n", offCur, szLine));
+                }
+                offCur += cbLine;
+                cbLine = 0;
+            } while (   !pSSM->u.Read.fEndOfData
+                     && RT_SUCCESS(pSSM->rc));
+            LogRel(("SSM: offCur=%#llx fEndOfData=%d (rc=%Rrc)\n", offCur, pSSM->u.Read.fEndOfData, rc));
+        }
+        else if (RT_SUCCESS(rc))
+            LogRel(("SSM: Cannot dump unit - mismatching unit head\n"));
+        else
+            LogRel(("SSM: Cannot dump unit - unit header read error: %Rrc\n", rc));
+    }
+    else
+        LogRel(("SSM: Cannot dump unit - ssmR3StrmSeek error: %Rrc\n", rc));
+
+    pSSM->rc = rcSaved;
+}
+
+
+/**
  * Find a data unit by name.
  *
  * @returns Pointer to the unit.
  * @returns NULL if not found.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pszName         Data unit name.
  * @param   uInstance       The data unit instance id.
  */
@@ -7960,7 +8309,7 @@ static PSSMUNIT ssmR3Find(PVM pVM, const char *pszName, uint32_t uInstance)
  * Executes the loading of a V1.X file.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int ssmR3LoadExecV1(PVM pVM, PSSMHANDLE pSSM)
@@ -7976,7 +8325,7 @@ static int ssmR3LoadExecV1(PVM pVM, PSSMHANDLE pSSM)
          */
         uint64_t         offUnit = ssmR3StrmTell(&pSSM->Strm);
         SSMFILEUNITHDRV1 UnitHdr;
-        rc = ssmR3StrmRead(&pSSM->Strm, &UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV1, szName));
+        rc = ssmR3StrmRead(&pSSM->Strm, &UnitHdr, RT_UOFFSETOF(SSMFILEUNITHDRV1, szName));
         if (RT_SUCCESS(rc))
         {
             /*
@@ -8030,7 +8379,7 @@ static int ssmR3LoadExecV1(PVM pVM, PSSMHANDLE pSSM)
                         /*
                          * Call the execute handler.
                          */
-                        pSSM->cbUnitLeftV1 = UnitHdr.cbUnit - RT_OFFSETOF(SSMFILEUNITHDRV1, szName[UnitHdr.cchName]);
+                        pSSM->cbUnitLeftV1 = UnitHdr.cbUnit - RT_UOFFSETOF_DYN(SSMFILEUNITHDRV1, szName[UnitHdr.cchName]);
                         pSSM->offUnit      = 0;
                         pSSM->offUnitUser  = 0;
                         pSSM->u.Read.uCurUnitVer  = UnitHdr.u32Version;
@@ -8050,6 +8399,9 @@ static int ssmR3LoadExecV1(PVM pVM, PSSMHANDLE pSSM)
                                 break;
                             case SSMUNITTYPE_DRV:
                                 rc = pUnit->u.Drv.pfnLoadExec(pUnit->u.Drv.pDrvIns, pSSM, UnitHdr.u32Version, SSM_PASS_FINAL);
+                                break;
+                            case SSMUNITTYPE_USB:
+                                rc = pUnit->u.Usb.pfnLoadExec(pUnit->u.Usb.pUsbIns, pSSM, UnitHdr.u32Version, SSM_PASS_FINAL);
                                 break;
                             case SSMUNITTYPE_INTERNAL:
                                 rc = pUnit->u.Internal.pfnLoadExec(pVM, pSSM, UnitHdr.u32Version, SSM_PASS_FINAL);
@@ -8178,7 +8530,7 @@ static int ssmR3LoadDirectoryAndFooter(PSSMHANDLE pSSM)
      * entries and pass the combined block to the validation function.
      */
     uint64_t        off      = ssmR3StrmTell(&pSSM->Strm);
-    size_t const    cbDirHdr = RT_OFFSETOF(SSMFILEDIR, aEntries);
+    size_t const    cbDirHdr = RT_UOFFSETOF(SSMFILEDIR, aEntries);
     SSMFILEDIR      DirHdr;
     int rc = ssmR3StrmRead(&pSSM->Strm, &DirHdr, cbDirHdr);
     if (RT_FAILURE(rc))
@@ -8190,7 +8542,7 @@ static int ssmR3LoadDirectoryAndFooter(PSSMHANDLE pSSM)
                           ("Too many directory entries at %#llx (%lld): %#x\n", off, off, DirHdr.cEntries),
                           VERR_SSM_INTEGRITY_DIR);
 
-    size_t      cbDir = RT_OFFSETOF(SSMFILEDIR, aEntries[DirHdr.cEntries]);
+    size_t      cbDir = RT_UOFFSETOF_DYN(SSMFILEDIR, aEntries[DirHdr.cEntries]);
     PSSMFILEDIR pDir  = (PSSMFILEDIR)RTMemTmpAlloc(cbDir);
     if (!pDir)
         return VERR_NO_TMP_MEMORY;
@@ -8220,7 +8572,7 @@ static int ssmR3LoadDirectoryAndFooter(PSSMHANDLE pSSM)
  *
  * @returns VBox status code.  May or may not set pSSM->rc, the returned
  *          status code is ALWAYS the more accurate of the two.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pSSM                The saved state handle.
  */
 static int ssmR3LoadExecV2(PVM pVM, PSSMHANDLE pSSM)
@@ -8234,7 +8586,7 @@ static int ssmR3LoadExecV2(PVM pVM, PSSMHANDLE pSSM)
         uint64_t            offUnit         = ssmR3StrmTell(&pSSM->Strm);
         uint32_t            u32CurStreamCRC = ssmR3StrmCurCRC(&pSSM->Strm);
         SSMFILEUNITHDRV2    UnitHdr;
-        int rc = ssmR3StrmRead(&pSSM->Strm, &UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName));
+        int rc = ssmR3StrmRead(&pSSM->Strm, &UnitHdr, RT_UOFFSETOF(SSMFILEUNITHDRV2, szName));
         if (RT_FAILURE(rc))
             return rc;
         if (RT_UNLIKELY(    memcmp(&UnitHdr.szMagic[0], SSMFILEUNITHDR_MAGIC, sizeof(UnitHdr.szMagic))
@@ -8260,7 +8612,7 @@ static int ssmR3LoadExecV2(PVM pVM, PSSMHANDLE pSSM)
                                    offUnit, offUnit, UnitHdr.cbName, UnitHdr.szName),
                                   VERR_SSM_INTEGRITY_UNIT);
         }
-        SSM_CHECK_CRC32_RET(&UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]),
+        SSM_CHECK_CRC32_RET(&UnitHdr, RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]),
                             ("Unit at %#llx (%lld): CRC mismatch: %08x, correct is %08x\n", offUnit, offUnit, u32CRC, u32ActualCRC));
         AssertLogRelMsgReturn(UnitHdr.offStream == offUnit,
                               ("Unit at %#llx (%lld): offStream=%#llx, expected %#llx\n", offUnit, offUnit, UnitHdr.offStream, offUnit),
@@ -8316,6 +8668,9 @@ static int ssmR3LoadExecV2(PVM pVM, PSSMHANDLE pSSM)
                 case SSMUNITTYPE_DRV:
                     rc = pUnit->u.Drv.pfnLoadExec(pUnit->u.Drv.pDrvIns, pSSM, UnitHdr.u32Version, UnitHdr.u32Pass);
                     break;
+                case SSMUNITTYPE_USB:
+                    rc = pUnit->u.Usb.pfnLoadExec(pUnit->u.Usb.pUsbIns, pSSM, UnitHdr.u32Version, UnitHdr.u32Pass);
+                    break;
                 case SSMUNITTYPE_INTERNAL:
                     rc = pUnit->u.Internal.pfnLoadExec(pVM, pSSM, UnitHdr.u32Version, UnitHdr.u32Pass);
                     break;
@@ -8340,6 +8695,9 @@ static int ssmR3LoadExecV2(PVM pVM, PSSMHANDLE pSSM)
             {
                 LogRel(("SSM: LoadExec failed for '%s' instance #%u (version %u, pass %#x): %Rrc\n",
                         UnitHdr.szName, UnitHdr.u32Instance, UnitHdr.u32Version, UnitHdr.u32Pass, rc));
+                LogRel(("SSM: Unit at %#llx, current position: offUnit=%#llx offUnitUser=%#llx\n",
+                        offUnit, pSSM->offUnit, pSSM->offUnitUser));
+
                 if (!ASMAtomicXchgBool(&pSSM->u.Read.fHaveSetError, true))
                 {
                     if (rc == VERR_SSM_UNSUPPORTED_DATA_UNIT_VERSION)
@@ -8348,6 +8706,12 @@ static int ssmR3LoadExecV2(PVM pVM, PSSMHANDLE pSSM)
                     else
                         rc = VMSetError(pVM, rc, RT_SRC_POS, N_("Failed to load unit '%s'"), UnitHdr.szName);
                 }
+
+                /* Try log the unit content, unless it's too big. */
+                if (pSSM->offUnitUser < _512K)
+                    ssmR3StrmLogUnitContent(pSSM, &UnitHdr, offUnit, 0, pSSM->offUnitUser + _16K);
+                else
+                    ssmR3StrmLogUnitContent(pSSM, &UnitHdr, offUnit, pSSM->offUnitUser - _256K, pSSM->offUnitUser + _16K);
                 return rc;
             }
         }
@@ -8387,9 +8751,9 @@ static int ssmR3LoadExecV2(PVM pVM, PSSMHANDLE pSSM)
 /**
  * Load VM save operation.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pszFilename     The name of the saved state file. NULL if pStreamOps
  *                          is used.
  * @param   pStreamOps      The stream method table. NULL if pszFilename is
@@ -8488,6 +8852,9 @@ VMMR3DECL(int) SSMR3Load(PVM pVM, const char *pszFilename, PCSSMSTRMOPS pStreamO
                     case SSMUNITTYPE_DRV:
                         rc = pUnit->u.Drv.pfnLoadPrep(pUnit->u.Drv.pDrvIns, &Handle);
                         break;
+                    case SSMUNITTYPE_USB:
+                        rc = pUnit->u.Usb.pfnLoadPrep(pUnit->u.Usb.pUsbIns, &Handle);
+                        break;
                     case SSMUNITTYPE_INTERNAL:
                         rc = pUnit->u.Internal.pfnLoadPrep(pVM, &Handle);
                         break;
@@ -8561,6 +8928,9 @@ VMMR3DECL(int) SSMR3Load(PVM pVM, const char *pszFilename, PCSSMSTRMOPS pStreamO
                     case SSMUNITTYPE_DRV:
                         rc = pUnit->u.Drv.pfnLoadDone(pUnit->u.Drv.pDrvIns, &Handle);
                         break;
+                    case SSMUNITTYPE_USB:
+                        rc = pUnit->u.Usb.pfnLoadDone(pUnit->u.Usb.pUsbIns, &Handle);
+                        break;
                     case SSMUNITTYPE_INTERNAL:
                         rc = pUnit->u.Internal.pfnLoadDone(pVM, &Handle);
                         break;
@@ -8617,7 +8987,7 @@ VMMR3DECL(int) SSMR3Load(PVM pVM, const char *pszFilename, PCSSMSTRMOPS pStreamO
  * @returns rc.
  * @param   pSSM                The saved state handle.
  * @param   rc                  The status code of the error. Use RT_SRC_POS.
- * @param   RT_SRC_POS_DECL     The source location.
+ * @param   SRC_POS             The source location.
  * @param   pszFormat           The message format string.
  * @param   ...                 Variable argument list.
  */
@@ -8637,7 +9007,7 @@ VMMR3DECL(int) SSMR3SetLoadError(PSSMHANDLE pSSM, int rc, RT_SRC_POS_DECL, const
  * @returns rc.
  * @param   pSSM                The saved state handle.
  * @param   rc                  The status code of the error.
- * @param   RT_SRC_POS_DECL     The error location, use RT_SRC_POS.
+ * @param   SRC_POS             The error location, use RT_SRC_POS.
  * @param   pszFormat           The message format string.
  * @param   va                  Variable argument list.
  */
@@ -8697,9 +9067,9 @@ VMMR3DECL(int) SSMR3SetLoadErrorV(PSSMHANDLE pSSM, int rc, RT_SRC_POS_DECL, cons
  *
  * @returns VERR_SSM_LOAD_CONFIG_MISMATCH.
  * @param   pSSM                The saved state handle.
- * @param   RT_SRC_POS_DECL     The error location, use RT_SRC_POS.
+ * @param   SRC_POS             The error location, use RT_SRC_POS.
  * @param   pszFormat           The message format string.
- * @param   va                  Variable argument list.
+ * @param   ...                 Variable argument list.
  */
 VMMR3DECL(int) SSMR3SetCfgError(PSSMHANDLE pSSM, RT_SRC_POS_DECL, const char *pszFormat, ...)
 {
@@ -8851,7 +9221,7 @@ static int ssmR3FileSeekV1(PSSMHANDLE pSSM, const char *pszUnit, uint32_t iInsta
         /*
          * Read the unit header and verify it.
          */
-        int rc = ssmR3StrmPeekAt(&pSSM->Strm, off, &UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV1, szName), NULL);
+        int rc = ssmR3StrmPeekAt(&pSSM->Strm, off, &UnitHdr, RT_UOFFSETOF(SSMFILEUNITHDRV1, szName), NULL);
         AssertRCReturn(rc, rc);
         if (!memcmp(&UnitHdr.achMagic[0], SSMFILEUNITHDR_MAGIC, sizeof(SSMFILEUNITHDR_MAGIC)))
         {
@@ -8861,7 +9231,7 @@ static int ssmR3FileSeekV1(PSSMHANDLE pSSM, const char *pszUnit, uint32_t iInsta
             if (    UnitHdr.u32Instance == iInstance
                 &&  UnitHdr.cchName     == cbUnitNm)
             {
-                rc = ssmR3StrmPeekAt(&pSSM->Strm, off + RT_OFFSETOF(SSMFILEUNITHDRV1, szName), szName, cbUnitNm, NULL);
+                rc = ssmR3StrmPeekAt(&pSSM->Strm, off + RT_UOFFSETOF(SSMFILEUNITHDRV1, szName), szName, cbUnitNm, NULL);
                 AssertRCReturn(rc, rc);
                 AssertLogRelMsgReturn(!szName[UnitHdr.cchName - 1],
                                       (" Unit name '%.*s' was not properly terminated.\n", cbUnitNm, szName),
@@ -8872,8 +9242,8 @@ static int ssmR3FileSeekV1(PSSMHANDLE pSSM, const char *pszUnit, uint32_t iInsta
                  */
                 if (!memcmp(szName, pszUnit, cbUnitNm))
                 {
-                    rc = ssmR3StrmSeek(&pSSM->Strm, off + RT_OFFSETOF(SSMFILEUNITHDRV1, szName) + cbUnitNm, RTFILE_SEEK_BEGIN, 0);
-                    pSSM->cbUnitLeftV1 = UnitHdr.cbUnit - RT_OFFSETOF(SSMFILEUNITHDRV1, szName[cbUnitNm]);
+                    rc = ssmR3StrmSeek(&pSSM->Strm, off + RT_UOFFSETOF(SSMFILEUNITHDRV1, szName) + cbUnitNm, RTFILE_SEEK_BEGIN, 0);
+                    pSSM->cbUnitLeftV1 = UnitHdr.cbUnit - RT_UOFFSETOF_DYN(SSMFILEUNITHDRV1, szName[cbUnitNm]);
                     pSSM->offUnit      = 0;
                     pSSM->offUnitUser  = 0;
                     if (piVersion)
@@ -8953,13 +9323,13 @@ static int ssmR3FileSeekSubV2(PSSMHANDLE pSSM, PSSMFILEDIR pDir, size_t cbDir, u
                                   ("Bad unit header: i=%d off=%lld u32Instance=%u Dir.u32Instance=%u\n",
                                    i, pDir->aEntries[i].off, UnitHdr.u32Instance, pDir->aEntries[i].u32Instance),
                                   VERR_SSM_INTEGRITY_UNIT);
-            uint32_t cbUnitHdr = RT_UOFFSETOF(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]);
+            uint32_t cbUnitHdr = RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]);
             AssertLogRelMsgReturn(   UnitHdr.cbName > 0
                                   && UnitHdr.cbName < sizeof(UnitHdr)
                                   && cbUnitHdr <= cbToRead,
                                   ("Bad unit header: i=%u off=%lld cbName=%#x cbToRead=%#x\n", i, pDir->aEntries[i].off, UnitHdr.cbName, cbToRead),
                                   VERR_SSM_INTEGRITY_UNIT);
-            SSM_CHECK_CRC32_RET(&UnitHdr, RT_OFFSETOF(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]),
+            SSM_CHECK_CRC32_RET(&UnitHdr, RT_UOFFSETOF_DYN(SSMFILEUNITHDRV2, szName[UnitHdr.cbName]),
                                 ("Bad unit header CRC: i=%u off=%lld u32CRC=%#x u32ActualCRC=%#x\n",
                                  i, pDir->aEntries[i].off, u32CRC, u32ActualCRC));
 
@@ -9006,7 +9376,7 @@ static int ssmR3FileSeekV2(PSSMHANDLE pSSM, const char *pszUnit, uint32_t iInsta
     AssertLogRelReturn(!memcmp(Footer.szMagic, SSMFILEFTR_MAGIC, sizeof(Footer.szMagic)), VERR_SSM_INTEGRITY);
     SSM_CHECK_CRC32_RET(&Footer, sizeof(Footer), ("Bad footer CRC: %08x, actual %08x\n", u32CRC, u32ActualCRC));
 
-    size_t const    cbDir = RT_OFFSETOF(SSMFILEDIR, aEntries[Footer.cDirEntries]);
+    size_t const    cbDir = RT_UOFFSETOF_DYN(SSMFILEDIR, aEntries[Footer.cDirEntries]);
     PSSMFILEDIR     pDir  = (PSSMFILEDIR)RTMemTmpAlloc(cbDir);
     if (RT_UNLIKELY(!pDir))
         return VERR_NO_TMP_MEMORY;

@@ -1,11 +1,10 @@
+/* $Id: VBoxMediaComboBox.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VBoxMediaComboBox class declaration
+ * VBox Qt GUI - VBoxMediaComboBox class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

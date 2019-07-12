@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,17 +24,18 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SUP
 #ifdef IN_SUP_HARDENED_R3
 # undef DEBUG /* Warning: disables RT_STRICT */
-# define LOG_DISABLED
-  /** @todo RTLOGREL_DISABLED */
+# ifndef LOG_DISABLED
+#  define LOG_DISABLED
+# endif
+# define RTLOG_REL_DISABLED
 # include <iprt/log.h>
-# undef LogRelIt
-# define LogRelIt(pvInst, fFlags, iGroup, fmtargs) do { } while (0)
 #endif
 
 #include <VBox/types.h>
@@ -58,9 +59,9 @@
 #include <IOKit/IOKitLib.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** System device name. */
 #define DEVICE_NAME_SYS "/dev/vboxdrv"
 /** User device name. */
@@ -169,8 +170,8 @@ static int suplibDarwinOpenService(PSUPLIBDATA pThis)
      * This will cause the user client class in SUPDrv-darwin.cpp to be
      * instantiated and create a session for this process.
      */
-    io_connect_t Connection = NULL;
-    kr = IOServiceOpen(ServiceObject, mach_task_self(), 0, &Connection);
+    io_connect_t Connection = 0;
+    kr = IOServiceOpen(ServiceObject, mach_task_self(), SUP_DARWIN_IOSERVICE_COOKIE, &Connection);
     IOObjectRelease(ServiceObject);
     if (kr != kIOReturnSuccess)
     {
@@ -187,6 +188,8 @@ static int suplibDarwinOpenService(PSUPLIBDATA pThis)
 
 int suplibOsInit(PSUPLIBDATA pThis, bool fPreInited, bool fUnrestricted, SUPINITOP *penmWhat, PRTERRINFO pErrInfo)
 {
+    RT_NOREF(penmWhat, pErrInfo);
+
     /*
      * Nothing to do if pre-inited.
      */
@@ -216,8 +219,6 @@ int suplibOsInit(PSUPLIBDATA pThis, bool fPreInited, bool fUnrestricted, SUPINIT
     return rc;
 }
 
-
-#ifndef IN_SUP_HARDENED_R3
 
 int suplibOsTerm(PSUPLIBDATA pThis)
 {
@@ -250,6 +251,8 @@ int suplibOsTerm(PSUPLIBDATA pThis)
 }
 
 
+#ifndef IN_SUP_HARDENED_R3
+
 int suplibOsInstall(void)
 {
     return VERR_NOT_IMPLEMENTED;
@@ -264,6 +267,7 @@ int suplibOsUninstall(void)
 
 int suplibOsIOCtl(PSUPLIBDATA pThis, uintptr_t uFunction, void *pvReq, size_t cbReq)
 {
+    RT_NOREF(cbReq);
     if (RT_LIKELY(ioctl(pThis->hDevice, uFunction, pvReq) >= 0))
         return VINF_SUCCESS;
     return RTErrConvertFromErrno(errno);

@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOGGROUP LOGGROUP_DEFAULT
 #include <VBox/vddbg.h>
 #include <VBox/err.h>
@@ -30,9 +31,10 @@
 #include <iprt/semaphore.h>
 #include <iprt/asm.h>
 
-/*******************************************************************************
-*   Structures in a I/O log file, little endian                                *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures in a I/O log file, little endian                                                                                  *
+*********************************************************************************************************************************/
 
 /**
  * I/O log header.
@@ -120,9 +122,10 @@ typedef struct IoLogEntryDiscard
 } IoLogEntryDiscard;
 #pragma pack()
 
-/*******************************************************************************
-*   Constants And Macros, Structures and Typedefs                              *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Constants And Macros, Structures and Typedefs                                                                                *
+*********************************************************************************************************************************/
 
 /**
  * I/O logger instance data.
@@ -166,9 +169,10 @@ typedef struct VDIOLOGENTINT
 /** Pointer to the internal I/O log entry data. */
 typedef VDIOLOGENTINT *PVDIOLOGENTINT;
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 /**
  * Creates a new empty I/O logger.
@@ -486,7 +490,7 @@ VBOXDDU_DECL(int) VDDbgIoLogStartDiscard(VDIOLOGGER hIoLogger, bool fAsync, PCRT
             for (unsigned i = 0; i < cRanges; i++)
             {
                 DiscardRange.u64Off = RT_H2LE_U64(paRanges[i].offStart);
-                DiscardRange.u32Discard = RT_H2LE_U32(paRanges[i].cbRange);
+                DiscardRange.u32Discard = RT_H2LE_U32((uint32_t)paRanges[i].cbRange);
                 rc = RTFileWriteAt(pIoLogger->hFile, pIoLogger->offWriteNext + i*sizeof(DiscardRange),
                                    &DiscardRange, sizeof(DiscardRange), NULL);
                 if (RT_FAILURE(rc))
@@ -665,7 +669,7 @@ VBOXDDU_DECL(int) VDDbgIoLogEventGetStart(VDIOLOGGER hIoLogger, uint64_t *pidEve
         rc = RTFileReadAt(pIoLogger->hFile, pIoLogger->offReadNext, &Entry, sizeof(Entry), NULL);
         if (RT_SUCCESS(rc))
         {
-            *pfAsync   = (bool)Entry.u8AsyncIo;
+            *pfAsync   = RT_BOOL(Entry.u8AsyncIo);
             *pidEvent  = RT_LE2H_U64(Entry.u64Id);
             *poff      = RT_LE2H_U64(Entry.Io.u64Off);
             *pcbIo     = RT_LE2H_U64(Entry.Io.u64IoSize);
@@ -720,7 +724,7 @@ VBOXDDU_DECL(int) VDDbgIoLogEventGetStartDiscard(VDIOLOGGER hIoLogger, uint64_t 
             IoLogEntryDiscard DiscardRange;
 
             pIoLogger->offReadNext += sizeof(Entry);
-            *pfAsync   = (bool)Entry.u8AsyncIo;
+            *pfAsync   = RT_BOOL(Entry.u8AsyncIo);
             *pidEvent  = RT_LE2H_U64(Entry.u64Id);
             *pcRanges  = RT_LE2H_U32(Entry.Discard.cRanges);
 
@@ -744,7 +748,10 @@ VBOXDDU_DECL(int) VDDbgIoLogEventGetStartDiscard(VDIOLOGGER hIoLogger, uint64_t 
                     *ppaRanges = paRanges;
                 }
                 else
+                {
                     pIoLogger->offReadNext -= sizeof(Entry);
+                    RTMemFree(paRanges);
+                }
             }
             else
                 rc = VERR_NO_MEMORY;

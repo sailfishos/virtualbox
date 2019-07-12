@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -63,7 +63,6 @@
 
 #include <slirp.h>
 #include "ip_icmp.h"
-#include "ctl.h"
 
 
 /*
@@ -123,7 +122,7 @@ udp_input(PNATState pData, register struct mbuf *m, int iphlen)
      * If not enough data to reflect UDP length, drop.
      */
     len = RT_N2H_U16((u_int16_t)uh->uh_ulen);
-    Assert((ip->ip_len + iphlen == m_length(m, NULL)));
+    Assert(ip->ip_len + iphlen == (ssize_t)m_length(m, NULL));
 
     if (ip->ip_len != len)
     {
@@ -178,25 +177,37 @@ udp_input(PNATState pData, register struct mbuf *m, int iphlen)
         goto done_free_mbuf;
     }
 
-    LogFunc(("uh src: %RTnaipv4:%d, dst: %RTnaipv4:%d\n", ip->ip_src, RT_H2N_U16_C(uh->uh_sport), ip->ip_dst, RT_H2N_U16_C(uh->uh_dport)));
+    LogFunc(("uh src: %RTnaipv4:%d, dst: %RTnaipv4:%d\n",
+             ip->ip_src.s_addr, RT_N2H_U16(uh->uh_sport),
+             ip->ip_dst.s_addr, RT_N2H_U16(uh->uh_dport)));
+
+    /*
+     * handle DNS host resolver without creating a socket
+     */
     if (   pData->fUseHostResolver
         && uh->uh_dport == RT_H2N_U16_C(53)
         && CTL_CHECK(ip->ip_dst.s_addr, CTL_DNS))
     {
         struct sockaddr_in dst, src;
+
         src.sin_addr.s_addr = ip->ip_dst.s_addr;
         src.sin_port = uh->uh_dport;
         dst.sin_addr.s_addr = ip->ip_src.s_addr;
         dst.sin_port = uh->uh_sport;
 
+        m_adj(m, sizeof(struct udpiphdr));
+
+        m = hostresolver(pData, m, ip->ip_src.s_addr, uh->uh_sport);
+        if (m == NULL)
+            goto done_free_mbuf;
+
         slirpMbufTagService(pData, m, CTL_DNS);
-        /* udp_output2() expects a pointer to the body of UDP packet. */
-        m->m_data += sizeof(struct udpiphdr);
-        m->m_len -= sizeof(struct udpiphdr);
+
         udp_output2(pData, NULL, m, &src, &dst, IPTOS_LOWDELAY);
         LogFlowFuncLeave();
         return;
     }
+
     /*
      *  handle TFTP
      */
@@ -206,6 +217,18 @@ udp_input(PNATState pData, register struct mbuf *m, int iphlen)
         if (pData->pvTftpSessions)
             slirpTftpInput(pData, m);
         goto done_free_mbuf;
+    }
+
+    /*
+     * XXX: DNS proxy currently relies on the fact that each socket
+     * only serves one request.
+     */
+    if (   pData->fUseDnsProxy
+        && CTL_CHECK(ip->ip_dst.s_addr, CTL_DNS)
+        && (uh->uh_dport == RT_H2N_U16_C(53)))
+    {
+        so = NULL;
+        goto new_socket;
     }
 
     /*
@@ -235,6 +258,7 @@ udp_input(PNATState pData, register struct mbuf *m, int iphlen)
         }
     }
 
+  new_socket:
     if (so == NULL)
     {
         /*
@@ -246,6 +270,14 @@ udp_input(PNATState pData, register struct mbuf *m, int iphlen)
             Log2(("NAT: IP(id: %hd) failed to create socket\n", ip->ip_id));
             goto bad_free_mbuf;
         }
+
+        /*
+         * Setup fields
+         */
+        so->so_laddr = ip->ip_src;
+        so->so_lport = uh->uh_sport;
+        so->so_iptos = ip->ip_tos;
+
         if (udp_attach(pData, so) <= 0)
         {
             Log2(("NAT: IP(id: %hd) udp_attach errno = %d (%s)\n",
@@ -254,15 +286,7 @@ udp_input(PNATState pData, register struct mbuf *m, int iphlen)
             goto bad_free_mbuf;
         }
 
-        /*
-         * Setup fields
-         */
         /* udp_last_so = so; */
-        so->so_laddr = ip->ip_src;
-        so->so_lport = uh->uh_sport;
-
-        so->so_iptos = ip->ip_tos;
-
         /*
          * XXXXX Here, check if it's in udpexec_list,
          * and if it is, do the fork_exec() etc.
@@ -309,9 +333,8 @@ udp_input(PNATState pData, register struct mbuf *m, int iphlen)
          * Different OSes have different socket options for DF.  We
          * can't use IP_HDRINCL here as it's only valid for SOCK_RAW.
          */
-#     define USE_DF_OPTION(_Optname)                    \
-        const int dfopt = _Optname;                     \
-        const char * const dfoptname = #_Optname;
+#     define USE_DF_OPTION(_Optname) \
+        const int dfopt = _Optname
 #if   defined(IP_MTU_DISCOVER)
         USE_DF_OPTION(IP_MTU_DISCOVER);
 #elif defined(IP_DONTFRAG)      /* Solaris 11+, FreeBSD */
@@ -344,7 +367,7 @@ udp_input(PNATState pData, register struct mbuf *m, int iphlen)
         *ip = save_ip;
         Log2(("NAT: UDP tx errno = %d (%s) on sent to %RTnaipv4\n",
               errno, strerror(errno), ip->ip_dst));
-	icmp_error(pData, m, ICMP_UNREACH, ICMP_UNREACH_NET, 0, strerror(errno));
+        icmp_error(pData, m, ICMP_UNREACH, ICMP_UNREACH_NET, 0, strerror(errno));
         so->so_m = NULL;
         LogFlowFuncLeave();
         return;
@@ -370,7 +393,8 @@ done_free_mbuf:
      * and create new m'buffers to send them to guest, so we'll free their incomming
      * buffers here.
      */
-    m_freem(pData, m);
+    if (m != NULL)
+        m_freem(pData, m);
     LogFlowFuncLeave();
     return;
 }
@@ -408,7 +432,7 @@ int udp_output2(PNATState pData, struct socket *so, struct mbuf *m,
     ui = mtod(m, struct udpiphdr *);
     memset(ui->ui_x1, 0, 9);
     ui->ui_pr = IPPROTO_UDP;
-    ui->ui_len = RT_H2N_U16(mlen - sizeof(struct ip));
+    ui->ui_len = RT_H2N_U16((uint16_t)(mlen - sizeof(struct ip)));
     /* XXXXX Check for from-one-location sockets, or from-any-location sockets */
     ui->ui_src = saddr->sin_addr;
     ui->ui_dst = daddr->sin_addr;
@@ -443,12 +467,25 @@ int udp_output(PNATState pData, struct socket *so, struct mbuf *m,
                struct sockaddr_in *addr)
 {
     struct sockaddr_in saddr, daddr;
-#ifdef VBOX_WITH_NAT_UDP_SOCKET_CLONE
-    struct socket *pSocketClone = NULL;
-#endif
+
     Assert(so->so_type == IPPROTO_UDP);
-    LogFlowFunc(("ENTER: so = %R[natsock], m = %p, saddr = %RTnaipv4\n",
-                 so, (long)m, addr->sin_addr.s_addr));
+    LogFlowFunc(("ENTER: so = %R[natsock], m = %p, saddr = %RTnaipv4\n", so, m, addr->sin_addr.s_addr));
+
+    if (so->so_laddr.s_addr == INADDR_ANY)
+    {
+        if (pData->guest_addr_guess.s_addr != INADDR_ANY)
+        {
+            LogRel2(("NAT: port-forward: using %RTnaipv4 for %R[natsock]\n",
+                     pData->guest_addr_guess.s_addr, so));
+            so->so_laddr = pData->guest_addr_guess;
+        }
+        else
+        {
+            LogRel2(("NAT: port-forward: guest address unknown for %R[natsock]\n", so));
+            m_freem(pData, m);
+            return 0;
+        }
+    }
 
     saddr = *addr;
     if ((so->so_faddr.s_addr & RT_H2N_U32(pData->netmask)) == pData->special_addr.s_addr)
@@ -469,17 +506,7 @@ int udp_output(PNATState pData, struct socket *so, struct mbuf *m,
                 saddr.sin_addr.s_addr = alias_addr.s_addr;
             else
                 saddr.sin_addr.s_addr = addr->sin_addr.s_addr;
-            /* we shouldn't override initial socket */
-#ifdef VBOX_WITH_NAT_UDP_SOCKET_CLONE
-            if (so->so_cCloneCounter)
-                pSocketClone = soLookUpClonedUDPSocket(pData, so, addr->sin_addr.s_addr);
-            if (!pSocketClone)
-                pSocketClone = soCloneUDPSocketWithForegnAddr(pData, false, so, addr->sin_addr.s_addr);
-            Assert((pSocketClone));
-            so = pSocketClone;
-#else
             so->so_faddr.s_addr = addr->sin_addr.s_addr;
-#endif
         }
     }
 
@@ -498,62 +525,49 @@ int udp_output(PNATState pData, struct socket *so, struct mbuf *m,
 int
 udp_attach(PNATState pData, struct socket *so)
 {
-    struct sockaddr_in *addr;
     struct sockaddr sa_addr;
     socklen_t socklen = sizeof(struct sockaddr);
     int status;
     int opt = 1;
 
-    /* We attaching some olready attched socket ??? */
-    Assert(so->so_type == 0);
-    if ((so->s = socket(AF_INET, SOCK_DGRAM, 0)) == -1)
+    AssertReturn(so->so_type == 0, -1);
+    so->so_type = IPPROTO_UDP;
+
+    so->s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (so->s == -1)
         goto error;
+    fd_nonblock(so->s);
+
     so->so_sottl = 0;
     so->so_sotos = 0;
     so->so_sodf = -1;
-    /*
-     * Here, we bind() the socket.  Although not really needed
-     * (sendto() on an unbound socket will bind it), it's done
-     * here so that emulation of ytalk etc. don't have to do it
-     */
-    memset(&sa_addr, 0, sizeof(struct sockaddr));
-    addr = (struct sockaddr_in *)&sa_addr;
-#ifdef RT_OS_DARWIN
-    addr->sin_len = sizeof(struct sockaddr_in);
-#endif
-    addr->sin_family = AF_INET;
-    addr->sin_addr.s_addr = pData->bindIP.s_addr;
-    fd_nonblock(so->s);
-    if (bind(so->s, &sa_addr, sizeof(struct sockaddr_in)) < 0)
-    {
-        int lasterrno = errno;
-        closesocket(so->s);
-        so->s = -1;
-#ifdef RT_OS_WINDOWS
-        WSASetLastError(lasterrno);
-#else
-        errno = lasterrno;
-#endif
-        goto error;
-    }
+
+    status = sobind(pData, so);
+    if (status != 0)
+        return status;
+
     /* success, insert in queue */
     so->so_expire = curtime + SO_EXPIRE;
+
     /* enable broadcast for later use */
     setsockopt(so->s, SOL_SOCKET, SO_BROADCAST, (const char *)&opt, sizeof(opt));
+
     status = getsockname(so->s, &sa_addr, &socklen);
-    Assert(status == 0 && sa_addr.sa_family == AF_INET);
-    so->so_hlport = ((struct sockaddr_in *)&sa_addr)->sin_port;
-    so->so_hladdr.s_addr = ((struct sockaddr_in *)&sa_addr)->sin_addr.s_addr;
+    if (status == 0)
+    {
+        Assert(sa_addr.sa_family == AF_INET);
+        so->so_hlport = ((struct sockaddr_in *)&sa_addr)->sin_port;
+        so->so_hladdr.s_addr = ((struct sockaddr_in *)&sa_addr)->sin_addr.s_addr;
+    }
 
     SOCKET_LOCK_CREATE(so);
     QSOCKET_LOCK(udb);
     insque(pData, so, &udb);
     NSOCK_INC();
     QSOCKET_UNLOCK(udb);
-    so->so_type = IPPROTO_UDP;
     return so->s;
 error:
-    Log2(("NAT: can't create datagramm socket\n"));
+    Log2(("NAT: can't create datagram socket\n"));
     return -1;
 }
 
@@ -566,16 +580,6 @@ udp_detach(PNATState pData, struct socket *so)
         QSOCKET_LOCK(udb);
         SOCKET_LOCK(so);
         QSOCKET_UNLOCK(udb);
-#ifdef VBOX_WITH_NAT_UDP_SOCKET_CLONE
-        if (so->so_cloneOf)
-            so->so_cloneOf->so_cCloneCounter--;
-        else if (so->so_cCloneCounter > 0)
-        {
-            /* we can't close socket yet */
-            SOCKET_UNLOCK(so);
-            return;
-        }
-#endif
         closesocket(so->s);
         sofree(pData, so);
         SOCKET_UNLOCK(so);
@@ -628,7 +632,8 @@ udp_listen(PNATState pData, u_int32_t bind_addr, u_int port, u_int32_t laddr, u_
 
     if (bind(so->s,(struct sockaddr *)&addr, addrlen) < 0)
     {
-        LogRel(("NAT: bind to %RTnaipv4 has been failed\n", addr.sin_addr));
+        LogRel(("NAT: udp bind to %RTnaipv4:%d failed, error %d\n",
+                addr.sin_addr, RT_N2H_U16(port), errno));
         udp_detach(pData, so);
         LogFlowFunc(("LEAVE: NULL\n"));
         return NULL;
@@ -637,16 +642,21 @@ udp_listen(PNATState pData, u_int32_t bind_addr, u_int port, u_int32_t laddr, u_
 /*  setsockopt(so->s, SOL_SOCKET, SO_OOBINLINE,(char *)&opt, sizeof(int)); */
 
     getsockname(so->s,(struct sockaddr *)&addr,&addrlen);
+    so->so_hladdr = addr.sin_addr;
+    so->so_hlport = addr.sin_port;
+
+    /* XXX: wtf are we setting so_faddr/so_fport here? */
     so->so_fport = addr.sin_port;
+#if 0
     /* The original check was completely broken, as the commented out
      * if statement was always true (INADDR_ANY=0). */
-    /* if (addr.sin_addr.s_addr == 0 || addr.sin_addr.s_addr == loopback_addr.s_addr) */
-    /* @todo: vvl - alias_addr should be set (if required)
+    /** @todo vvl - alias_addr should be set (if required)
      * later by liabalias module.
      */
-    if (1 == 0)                 /* always use the else part */
+    if (addr.sin_addr.s_addr == 0 || addr.sin_addr.s_addr == loopback_addr.s_addr)
         so->so_faddr = alias_addr;
     else
+#endif
         so->so_faddr = addr.sin_addr;
 
     so->so_lport = lport;

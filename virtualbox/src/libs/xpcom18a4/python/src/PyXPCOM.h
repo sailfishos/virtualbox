@@ -132,6 +132,24 @@ inline PyObject *PyBool_FromLong(long ok)
 }
 # endif
 
+# if PY_MAJOR_VERSION >= 3
+#  define PyInt_FromLong(l) PyLong_FromLong(l)
+#  define PyInt_Check(o) PyLong_Check(o)
+#  define PyInt_AsLong(o) PyLong_AsLong(o)
+#  define PyNumber_Int(o) PyNumber_Long(o)
+#  ifndef PyUnicode_AsUTF8
+#   define PyUnicode_AsUTF8(o) _PyUnicode_AsString(o)
+#  endif
+#  ifndef PyUnicode_AsUTF8AndSize
+#   define PyUnicode_AsUTF8AndSize(o,s) _PyUnicode_AsStringAndSize(o,s)
+#  endif
+typedef struct PyMethodChain
+{
+    PyMethodDef *methods;
+    struct PyMethodChain *link;
+} PyMethodChain;
+# endif
+
 #endif /* VBOX_PYXPCOM */
 
 #ifdef BUILD_PYXPCOM
@@ -267,7 +285,12 @@ public:
 	static PyObject *Py_getattr(PyObject *self, char *name);
 	static int Py_setattr(PyObject *op, char *name, PyObject *v);
 	static int Py_cmp(PyObject *ob1, PyObject *ob2);
+	static PyObject *Py_richcmp(PyObject *ob1, PyObject *ob2, int op);
+#if PY_VERSION_HEX >= 0x03020000
+	static Py_hash_t Py_hash(PyObject *self);
+#else
 	static long Py_hash(PyObject *self);
+#endif
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -376,7 +399,7 @@ protected:
 	static PyObject *MakeDefaultWrapper(PyObject *pyis, const nsIID &iid);
 
 #ifdef VBOX_DEBUG_LIFETIMES
-	static DECLCALLBACK(int) initOnceCallback(void *pvUser1, void *pvUser2);
+	static DECLCALLBACK(int32_t) initOnceCallback(void *pvUser1);
 
 	RTLISTNODE              m_ListEntry; /**< List entry. */
 
@@ -418,9 +441,16 @@ public:
 	static PRBool IIDFromPyObject(PyObject *ob, nsIID *pRet);
 	/* Python support */
 	static PyObject *PyTypeMethod_getattr(PyObject *self, char *name);
+#if PY_MAJOR_VERSION <= 2
 	static int PyTypeMethod_compare(PyObject *self, PyObject *ob);
+#endif
+	static PyObject *PyTypeMethod_richcompare(PyObject *self, PyObject *ob, int op);
 	static PyObject *PyTypeMethod_repr(PyObject *self);
+#if PY_VERSION_HEX >= 0x03020000
+	static Py_hash_t PyTypeMethod_hash(PyObject *self);
+#else
 	static long PyTypeMethod_hash(PyObject *self);
+#endif
 	static PyObject *PyTypeMethod_str(PyObject *self);
 	static void PyTypeMethod_dealloc(PyObject *self);
 	static NS_EXPORT_STATIC_MEMBER_(PyTypeObject) type;

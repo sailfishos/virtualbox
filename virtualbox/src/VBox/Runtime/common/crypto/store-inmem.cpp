@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/crypto/store.h>
 
@@ -39,9 +39,9 @@
 #include "store-internal.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * A certificate entry in the in-memory store.
  */
@@ -119,7 +119,7 @@ static int rtCrStoreInMemCreateCertEntry(PRTCRSTOREINMEM pThis, uint32_t fEnc, u
                                          PRTERRINFO pErrInfo, PRTCRSTOREINMEMCERT *ppEntry)
 {
     int                 rc;
-    PRTCRSTOREINMEMCERT pEntry    = (PRTCRSTOREINMEMCERT)RTMemAllocZ(RT_UOFFSETOF(RTCRSTOREINMEMCERT, abEncoded[cbSrc]));
+    PRTCRSTOREINMEMCERT pEntry    = (PRTCRSTOREINMEMCERT)RTMemAllocZ(RT_UOFFSETOF_DYN(RTCRSTOREINMEMCERT, abEncoded[cbSrc]));
     if (pEntry)
     {
         memcpy(pEntry->abEncoded, pbSrc, cbSrc);
@@ -201,7 +201,7 @@ static int rtCrStoreInMemGrow(PRTCRSTOREINMEM pThis, uint32_t cMin)
 
 
 
-/** @interface_method_impl{RTCRSTOREPROVIDER, pfnDestroyStore} */
+/** @interface_method_impl{RTCRSTOREPROVIDER,pfnDestroyStore} */
 static DECLCALLBACK(void) rtCrStoreInMem_DestroyStore(void *pvProvider)
 {
     PRTCRSTOREINMEM pThis = (PRTCRSTOREINMEM)pvProvider;
@@ -223,19 +223,19 @@ static DECLCALLBACK(void) rtCrStoreInMem_DestroyStore(void *pvProvider)
 }
 
 
-/** @interface_method_impl{RTCRSTOREPROVIDER, pfnCertCtxQueryPrivateKey} */
+/** @interface_method_impl{RTCRSTOREPROVIDER,pfnCertCtxQueryPrivateKey} */
 static DECLCALLBACK(int) rtCrStoreInMem_CertCtxQueryPrivateKey(void *pvProvider, PRTCRCERTCTXINT pCertCtx,
                                                                uint8_t *pbKey, size_t cbKey, size_t *pcbKeyRet)
 {
+    RT_NOREF_PV(pvProvider); RT_NOREF_PV(pCertCtx); RT_NOREF_PV(pbKey); RT_NOREF_PV(cbKey); RT_NOREF_PV(pcbKeyRet);
     //PRTCRSTOREINMEM pThis = (PRTCRSTOREINMEM)pvProvider;
     return VERR_NOT_FOUND;
 }
 
 
-/** @interface_method_impl{RTCRSTOREPROVIDER, pfnCertFindAll} */
+/** @interface_method_impl{RTCRSTOREPROVIDER,pfnCertFindAll} */
 static DECLCALLBACK(int) rtCrStoreInMem_CertFindAll(void *pvProvider, PRTCRSTORECERTSEARCH pSearch)
 {
-    PRTCRSTOREINMEM pThis = (PRTCRSTOREINMEM)pvProvider;
     pSearch->auOpaque[0] = ~(uintptr_t)pvProvider;
     pSearch->auOpaque[1] = 0;
     pSearch->auOpaque[2] = ~(uintptr_t)0;  /* For the front-end API. */
@@ -244,7 +244,7 @@ static DECLCALLBACK(int) rtCrStoreInMem_CertFindAll(void *pvProvider, PRTCRSTORE
 }
 
 
-/** @interface_method_impl{RTCRSTOREPROVIDER, pfnCertSearchNext} */
+/** @interface_method_impl{RTCRSTOREPROVIDER,pfnCertSearchNext} */
 static DECLCALLBACK(PCRTCRCERTCTX) rtCrStoreInMem_CertSearchNext(void *pvProvider, PRTCRSTORECERTSEARCH pSearch)
 {
     PRTCRSTOREINMEM pThis = (PRTCRSTOREINMEM)pvProvider;
@@ -262,7 +262,7 @@ static DECLCALLBACK(PCRTCRCERTCTX) rtCrStoreInMem_CertSearchNext(void *pvProvide
 }
 
 
-/** @interface_method_impl{RTCRSTOREPROVIDER, pfnCertSearchDestroy} */
+/** @interface_method_impl{RTCRSTOREPROVIDER,pfnCertSearchDestroy} */
 static DECLCALLBACK(void) rtCrStoreInMem_CertSearchDestroy(void *pvProvider, PRTCRSTORECERTSEARCH pSearch)
 {
     NOREF(pvProvider);
@@ -274,25 +274,47 @@ static DECLCALLBACK(void) rtCrStoreInMem_CertSearchDestroy(void *pvProvider, PRT
 }
 
 
-/** @interface_method_impl{RTCRSTOREPROVIDER, pfnCertSearchDestroy} */
+/** @interface_method_impl{RTCRSTOREPROVIDER,pfnCertSearchDestroy} */
 static DECLCALLBACK(int) rtCrStoreInMem_CertAddEncoded(void *pvProvider, uint32_t fFlags,
                                                        uint8_t const *pbEncoded, uint32_t cbEncoded, PRTERRINFO pErrInfo)
 {
     PRTCRSTOREINMEM pThis = (PRTCRSTOREINMEM)pvProvider;
     int rc;
 
-    AssertMsgReturn(   fFlags == RTCRCERTCTX_F_ENC_X509_DER
-                    || fFlags == RTCRCERTCTX_F_ENC_TAF_DER
+    AssertMsgReturn(   (fFlags & RTCRCERTCTX_F_ENC_MASK) == RTCRCERTCTX_F_ENC_X509_DER
+                    || (fFlags & RTCRCERTCTX_F_ENC_MASK) == RTCRCERTCTX_F_ENC_TAF_DER
                     , ("Only X.509 and TAF DER are supported: %#x\n", fFlags), VERR_INVALID_FLAGS);
 
-    if (pThis->cCerts + 1 > pThis->cCertsAlloc)
+    /*
+     * Check for duplicates if specified.
+     */
+    if (fFlags & RTCRCERTCTX_F_ADD_IF_NOT_FOUND)
+    {
+        uint32_t iCert = pThis->cCerts;
+        while (iCert-- > 0)
+        {
+            PRTCRSTOREINMEMCERT pCert = pThis->papCerts[iCert];
+            if (   pCert->Core.Public.cbEncoded == cbEncoded
+                && pCert->Core.Public.fFlags == (fFlags & RTCRCERTCTX_F_ENC_MASK)
+                && memcmp(pCert->Core.Public.pabEncoded, pbEncoded, cbEncoded) == 0)
+                return VWRN_ALREADY_EXISTS;
+        }
+    }
+
+    /*
+     * Add it.
+     */
+    if (pThis->cCerts + 1 <= pThis->cCertsAlloc)
+    { /* likely */ }
+    else
     {
         rc = rtCrStoreInMemGrow(pThis, pThis->cCerts + 1);
         if (RT_FAILURE(rc))
             return rc;
     }
 
-    rc = rtCrStoreInMemCreateCertEntry(pThis, fFlags, pbEncoded, cbEncoded, pErrInfo, &pThis->papCerts[pThis->cCerts]);
+    rc = rtCrStoreInMemCreateCertEntry(pThis, fFlags & RTCRCERTCTX_F_ENC_MASK, pbEncoded, cbEncoded,
+                                       pErrInfo, &pThis->papCerts[pThis->cCerts]);
     if (RT_SUCCESS(rc))
     {
         pThis->cCerts++;
@@ -359,4 +381,5 @@ RTDECL(int) RTCrStoreCreateInMem(PRTCRSTORE phStore, uint32_t cSizeHint)
     }
     return rc;
 }
+RT_EXPORT_SYMBOL(RTCrStoreCreateInMem);
 

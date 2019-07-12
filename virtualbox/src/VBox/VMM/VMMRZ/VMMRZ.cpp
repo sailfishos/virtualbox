@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/vmm/vmm.h>
 #include "VMMInternal.h"
 #include <VBox/vmm/vm.h>
@@ -38,8 +38,8 @@
  *          needs to change it into an assertion.
  *
  *
- * @param   pVM             Pointer to the VM.
- * @param   pVCpu           Pointer to the VMCPU of the calling EMT.
+ * @param   pVM             The cross context VM structure.
+ * @param   pVCpu           The cross context virtual CPU structure of the calling EMT.
  * @param   enmOperation    The operation.
  * @param   uArg            The argument to the operation.
  */
@@ -69,10 +69,12 @@ VMMRZDECL(int) VMMRZCallRing3(PVM pVM, PVMCPU pVCpu, VMMCALLRING3 enmOperation, 
 #endif
 #ifdef IN_RC
         RTStrPrintf(g_szRTAssertMsg1, sizeof(pVM->vmm.s.szRing0AssertMsg1),
-                    "VMMRZCallRing3: enmOperation=%d uArg=%#llx idCpu=%#x\n", enmOperation, uArg, pVCpu->idCpu);
+                    "VMMRZCallRing3: enmOperation=%d uArg=%#llx idCpu=%#x cCallRing3Disabled=%#x\n",
+                    enmOperation, uArg, pVCpu->idCpu, pVCpu->vmm.s.cCallRing3Disabled);
 #endif
         RTStrPrintf(pVM->vmm.s.szRing0AssertMsg1, sizeof(pVM->vmm.s.szRing0AssertMsg1),
-                    "VMMRZCallRing3: enmOperation=%d uArg=%#llx idCpu=%#x\n", enmOperation, uArg, pVCpu->idCpu);
+                    "VMMRZCallRing3: enmOperation=%d uArg=%#llx idCpu=%#x cCallRing3Disabled=%#x\n",
+                    enmOperation, uArg, pVCpu->idCpu, pVCpu->vmm.s.cCallRing3Disabled);
         enmOperation = VMMCALLRING3_VM_R0_ASSERTION;
     }
 
@@ -109,7 +111,7 @@ VMMRZDECL(int) VMMRZCallRing3(PVM pVM, PVMCPU pVCpu, VMMCALLRING3 enmOperation, 
  *          be passed up the stack, or if that isn't possible then VMMRZCallRing3
  *          needs to change it into an assertion.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   enmOperation    The operation.
  * @param   uArg            The argument to the operation.
  */
@@ -122,7 +124,7 @@ VMMRZDECL(int) VMMRZCallRing3NoCpu(PVM pVM, VMMCALLRING3 enmOperation, uint64_t 
 /**
  * Disables all host calls, except certain fatal ones.
  *
- * @param   pVCpu               The CPU struct for the calling EMT.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  * @thread  EMT.
  */
 VMMRZDECL(void) VMMRZCallRing3Disable(PVMCPU pVCpu)
@@ -133,7 +135,7 @@ VMMRZDECL(void) VMMRZCallRing3Disable(PVMCPU pVCpu)
 #endif
 
     Assert(pVCpu->vmm.s.cCallRing3Disabled < 16);
-    if (ASMAtomicIncU32(&pVCpu->vmm.s.cCallRing3Disabled) == 1) /** @todo replace with unordered variant (ASMAtomicUoIncU32). */
+    if (ASMAtomicUoIncU32(&pVCpu->vmm.s.cCallRing3Disabled) == 1)
     {
         /** @todo it might make more sense to just disable logging here, then we
          * won't flush away important bits... but that goes both ways really. */
@@ -154,9 +156,9 @@ VMMRZDECL(void) VMMRZCallRing3Disable(PVMCPU pVCpu)
 
 
 /**
- * Counters VMMRZCallRing3Disable and re-enables host calls.
+ * Counters VMMRZCallRing3Disable() and re-enables host calls.
  *
- * @param   pVCpu               The CPU struct for the calling EMT.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  * @thread  EMT.
  */
 VMMRZDECL(void) VMMRZCallRing3Enable(PVMCPU pVCpu)
@@ -167,7 +169,7 @@ VMMRZDECL(void) VMMRZCallRing3Enable(PVMCPU pVCpu)
 #endif
 
     Assert(pVCpu->vmm.s.cCallRing3Disabled > 0);
-    if (ASMAtomicDecU32(&pVCpu->vmm.s.cCallRing3Disabled) == 0) /** @todo replace with unordered variant (ASMAtomicUoDecU32). */
+    if (ASMAtomicUoDecU32(&pVCpu->vmm.s.cCallRing3Disabled) == 0)
     {
 #ifdef IN_RC
         pVCpu->pVMRC->vmm.s.fRCLoggerFlushingDisabled = false;
@@ -189,7 +191,7 @@ VMMRZDECL(void) VMMRZCallRing3Enable(PVMCPU pVCpu)
  * Checks whether its possible to call host context or not.
  *
  * @returns true if it's safe, false if it isn't.
- * @param   pVCpu               The CPU struct for the calling EMT.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  */
 VMMRZDECL(bool) VMMRZCallRing3IsEnabled(PVMCPU pVCpu)
 {
@@ -202,7 +204,7 @@ VMMRZDECL(bool) VMMRZCallRing3IsEnabled(PVMCPU pVCpu)
 /**
  * Sets the ring-0 callback before doing the ring-3 call.
  *
- * @param   pVCpu         Pointer to the VMCPU.
+ * @param   pVCpu         The cross context virtual CPU structure.
  * @param   pfnCallback   Pointer to the callback.
  * @param   pvUser        The user argument.
  *
@@ -225,7 +227,7 @@ VMMRZDECL(int) VMMRZCallRing3SetNotification(PVMCPU pVCpu, R0PTRTYPE(PFNVMMR0CAL
 /**
  * Removes the ring-0 callback.
  *
- * @param   pVCpu   Pointer to the VMCPU.
+ * @param   pVCpu   The cross context virtual CPU structure.
  */
 VMMRZDECL(void) VMMRZCallRing3RemoveNotification(PVMCPU pVCpu)
 {
@@ -236,7 +238,7 @@ VMMRZDECL(void) VMMRZCallRing3RemoveNotification(PVMCPU pVCpu)
 /**
  * Checks whether there is a ring-0 callback notification active.
  *
- * @param   pVCpu   Pointer to the VMCPU.
+ * @param   pVCpu   The cross context virtual CPU structure.
  * @returns true if there the notification is active, false otherwise.
  */
 VMMRZDECL(bool) VMMRZCallRing3IsNotificationSet(PVMCPU pVCpu)

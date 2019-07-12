@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,9 +20,10 @@
  * to VirtualBox under the MIT license by the author.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_MAIN
 #include <sys/types.h>
 
@@ -174,6 +175,29 @@ void extractAddressesToNetInfo(int iAddrMask, caddr_t cp, caddr_t cplim, PNETIFI
 }
 
 
+static bool isWireless(const char *pszName)
+{
+    bool fWireless = false;
+    int iSock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (iSock >= 0)
+    {
+        struct ieee80211req WReq;
+        uint8_t abData[32];
+
+        RT_ZERO(WReq);
+        strncpy(WReq.i_name, pszName, sizeof(WReq.i_name));
+        WReq.i_type = IEEE80211_IOC_SSID;
+        WReq.i_val = -1;
+        WReq.i_data = abData;
+        WReq.i_len = sizeof(abData);
+
+        fWireless = ioctl(iSock, SIOCG80211, &WReq) >= 0;
+        close(iSock);
+    }
+
+    return fWireless;
+}
+
 int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
 {
     int rc = VINF_SUCCESS;
@@ -235,7 +259,7 @@ int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
         struct sockaddr_dl *pSdl = (struct sockaddr_dl *)(pIfMsg + 1);
 
         size_t cbNameLen = pSdl->sdl_nlen + 1;
-        PNETIFINFO pNew = (PNETIFINFO)RTMemAllocZ(RT_OFFSETOF(NETIFINFO, szName[cbNameLen]));
+        PNETIFINFO pNew = (PNETIFINFO)RTMemAllocZ(RT_UOFFSETOF_DYN(NETIFINFO, szName[cbNameLen]));
         if (!pNew)
         {
             rc = VERR_NO_MEMORY;
@@ -287,15 +311,19 @@ int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
             else
                 enmType = HostNetworkInterfaceType_HostOnly;
 
+            pNew->wireless = isWireless(pNew->szName);
+
             ComObjPtr<HostNetworkInterface> IfObj;
             IfObj.createObject();
             if (SUCCEEDED(IfObj->init(Bstr(pNew->szName), enmType, pNew)))
+            {
                 /* Make sure the default interface gets to the beginning. */
                 if (   fDefaultIfaceExistent
                     && pIfMsg->ifm_index == u16DefaultIface)
                     list.push_front(IfObj);
                 else
                     list.push_back(IfObj);
+            }
         }
         RTMemFree(pNew);
     }

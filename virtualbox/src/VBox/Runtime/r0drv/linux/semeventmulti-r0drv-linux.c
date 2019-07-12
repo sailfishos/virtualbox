@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define RTSEMEVENTMULTI_WITHOUT_REMAPPING
 #include "the-linux-kernel.h"
 #include "internal/iprt.h"
@@ -43,9 +43,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @name fStateAndGen values
  * @{ */
 /** The state bit number. */
@@ -61,9 +61,9 @@
 /** @}  */
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Linux event semaphore.
  */
@@ -95,6 +95,8 @@ RTDECL(int)  RTSemEventMultiCreateEx(PRTSEMEVENTMULTI phEventMultiSem, uint32_t 
                                      const char *pszNameFmt, ...)
 {
     PRTSEMEVENTMULTIINTERNAL pThis;
+    IPRT_LINUX_SAVE_EFL_AC();
+    RT_NOREF_PV(hClass); RT_NOREF_PV(pszNameFmt);
 
     AssertReturn(!(fFlags & ~RTSEMEVENTMULTI_FLAGS_NO_LOCK_VAL), VERR_INVALID_PARAMETER);
     pThis = (PRTSEMEVENTMULTIINTERNAL)RTMemAlloc(sizeof(*pThis));
@@ -106,8 +108,10 @@ RTDECL(int)  RTSemEventMultiCreateEx(PRTSEMEVENTMULTI phEventMultiSem, uint32_t 
         init_waitqueue_head(&pThis->Head);
 
         *phEventMultiSem = pThis;
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VINF_SUCCESS;
     }
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VERR_NO_MEMORY;
 }
 RT_EXPORT_SYMBOL(RTSemEventMultiCreate);
@@ -143,6 +147,8 @@ DECLINLINE(void) rtR0SemEventMultiLnxRelease(PRTSEMEVENTMULTIINTERNAL pThis)
 
 RTDECL(int) RTSemEventMultiDestroy(RTSEMEVENTMULTI hEventMultiSem)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
+
     /*
      * Validate input.
      */
@@ -161,6 +167,8 @@ RTDECL(int) RTSemEventMultiDestroy(RTSEMEVENTMULTI hEventMultiSem)
     Assert(!waitqueue_active(&pThis->Head));
     wake_up_all(&pThis->Head);
     rtR0SemEventMultiLnxRelease(pThis);
+
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 RT_EXPORT_SYMBOL(RTSemEventMultiDestroy);
@@ -168,6 +176,7 @@ RT_EXPORT_SYMBOL(RTSemEventMultiDestroy);
 
 RTDECL(int) RTSemEventMultiSignal(RTSEMEVENTMULTI hEventMultiSem)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     uint32_t fNew;
     uint32_t fOld;
 
@@ -197,6 +206,7 @@ RTDECL(int) RTSemEventMultiSignal(RTSEMEVENTMULTI hEventMultiSem)
     wake_up_all(&pThis->Head);
 
     rtR0SemEventMultiLnxRelease(pThis);
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 RT_EXPORT_SYMBOL(RTSemEventMultiSignal);
@@ -239,6 +249,7 @@ static int rtR0SemEventMultiLnxWait(PRTSEMEVENTMULTIINTERNAL pThis, uint32_t fFl
 {
     uint32_t    fOrgStateAndGen;
     int         rc;
+    RT_NOREF_PV(pSrcPos);
 
     /*
      * Validate the input.
@@ -260,6 +271,7 @@ static int rtR0SemEventMultiLnxWait(PRTSEMEVENTMULTIINTERNAL pThis, uint32_t fFl
          * We have to wait.
          */
         RTR0SEMLNXWAIT Wait;
+        IPRT_LINUX_SAVE_EFL_AC();
         rc = rtR0SemLnxWaitInit(&Wait, fFlags, uTimeout, &pThis->Head);
         if (RT_SUCCESS(rc))
         {
@@ -295,6 +307,7 @@ static int rtR0SemEventMultiLnxWait(PRTSEMEVENTMULTIINTERNAL pThis, uint32_t fFl
             rtR0SemLnxWaitDelete(&Wait);
             IPRT_DEBUG_SEMS_STATE_RC(pThis, 'E', rc);
         }
+        IPRT_LINUX_RESTORE_EFL_AC();
     }
 
     rtR0SemEventMultiLnxRelease(pThis);

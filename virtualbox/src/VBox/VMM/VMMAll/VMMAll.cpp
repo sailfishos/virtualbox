@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,22 +16,23 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VMM
 #include <VBox/vmm/vmm.h>
 #include "VMMInternal.h"
 #include <VBox/vmm/vm.h>
+#include <VBox/vmm/hm.h>
 #include <VBox/vmm/vmcpuset.h>
 #include <VBox/param.h>
 #include <iprt/thread.h>
 #include <iprt/mp.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** User counter for the vmmInitFormatTypes function (pro forma). */
 static volatile uint32_t g_cFormatTypeUsers = 0;
 
@@ -41,7 +42,7 @@ static volatile uint32_t g_cFormatTypeUsers = 0;
  *
  * @returns The length of the formatted number.
  * @param   pszBuf              Output buffer with sufficient space.
- * @param   uNum                The number to format.
+ * @param   uNumber             The number to format.
  */
 static unsigned vmmFormatTypeShortNumber(char *pszBuf, uint32_t uNumber)
 {
@@ -70,6 +71,8 @@ static DECLCALLBACK(size_t) vmmFormatTypeVmCpuSet(PFNRTSTROUTPUT pfnOutput, void
                                                   int cchWidth, int cchPrecision, unsigned fFlags,
                                                   void *pvUser)
 {
+    NOREF(pszType); NOREF(cchWidth); NOREF(cchPrecision); NOREF(fFlags);
+
     PCVMCPUSET  pSet   = (PCVMCPUSET)pvValue;
     uint32_t    cCpus  = 0;
     uint32_t    iCpu   = RT_ELEMENTS(pSet->au32Bitmap) * 32;
@@ -112,13 +115,17 @@ static DECLCALLBACK(size_t) vmmFormatTypeVmCpuSet(PFNRTSTROUTPUT pfnOutput, void
             int off = 0;
             if (cCpus != 0)
                 szTmp[off++] = ',';
+            cCpus++;
             off += vmmFormatTypeShortNumber(&szTmp[off], iCpu);
 
             /* Check for sequence. */
             uint32_t const iStart = ++iCpu;
             while (   iCpu < RT_ELEMENTS(pSet->au32Bitmap) * 32
                    && VMCPUSET_IS_PRESENT(pSet, iCpu))
+            {
                 iCpu++;
+                cCpus++;
+            }
             if (iCpu != iStart)
             {
                 szTmp[off++] = '-';
@@ -171,7 +178,7 @@ void vmmTermFormatTypes(void)
  * by a push/ret/whatever does it become writable.)
  *
  * @returns bottom of the stack.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  */
 VMM_INT_DECL(RTRCPTR) VMMGetStackRC(PVMCPU pVCpu)
 {
@@ -184,7 +191,7 @@ VMM_INT_DECL(RTRCPTR) VMMGetStackRC(PVMCPU pVCpu)
  *
  * @returns The CPU ID. NIL_VMCPUID if the thread isn't an EMT.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @internal
  */
 VMMDECL(VMCPUID) VMMGetCpuId(PVM pVM)
@@ -241,7 +248,7 @@ VMMDECL(VMCPUID) VMMGetCpuId(PVM pVM)
  *
  * @returns The VMCPU pointer. NULL if not an EMT.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @internal
  */
 VMMDECL(PVMCPU) VMMGetCpu(PVM pVM)
@@ -281,7 +288,8 @@ VMMDECL(PVMCPU) VMMGetCpu(PVM pVM)
     /* RTThreadGetNativeSelf had better be cheap. */
     RTNATIVETHREAD hThread = RTThreadNativeSelf();
 
-    /** @todo optimize for large number of VCPUs when that becomes more common. */
+    /** @todo optimize for large number of VCPUs when that becomes more common.
+     * Use a map like GIP does that's indexed by the host CPU index.  */
     for (VMCPUID idCpu = 0; idCpu < pVM->cCpus; idCpu++)
     {
         PVMCPU pVCpu = &pVM->aCpus[idCpu];
@@ -301,7 +309,7 @@ VMMDECL(PVMCPU) VMMGetCpu(PVM pVM)
  * Returns the VMCPU of the first EMT thread.
  *
  * @returns The VMCPU pointer.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @internal
  */
 VMMDECL(PVMCPU) VMMGetCpu0(PVM pVM)
@@ -316,7 +324,7 @@ VMMDECL(PVMCPU) VMMGetCpu0(PVM pVM)
  *
  * @returns The VMCPU pointer. NULL if idCpu is invalid.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   idCpu       The ID of the virtual CPU.
  * @internal
  */
@@ -345,7 +353,7 @@ VMM_INT_DECL(uint32_t) VMMGetSvnRev(void)
  * Queries the current switcher
  *
  * @returns active switcher
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  */
 VMM_INT_DECL(VMMSWITCHER) VMMGetSwitcher(PVM pVM)
 {
@@ -357,7 +365,7 @@ VMM_INT_DECL(VMMSWITCHER) VMMGetSwitcher(PVM pVM)
  * Checks whether we're in a ring-3 call or not.
  *
  * @returns true / false.
- * @param   pVCpu               The caller's cross context VM structure.
+ * @param   pVCpu   The cross context virtual CPU structure of the calling EMT.
  * @thread  EMT
  */
 VMM_INT_DECL(bool) VMMIsInRing3Call(PVMCPU pVCpu)
@@ -385,5 +393,92 @@ uint32_t vmmGetBuildType(void)
     uRet |= RT_BIT_32(1);
 #endif
     return uRet;
+}
+
+
+/**
+ * Patches the instructions necessary for making a hypercall to the hypervisor.
+ * Used by GIM.
+ *
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
+ * @param   pvBuf       The buffer in the hypercall page(s) to be patched.
+ * @param   cbBuf       The size of the buffer.
+ * @param   pcbWritten  Where to store the number of bytes patched. This
+ *                      is reliably updated only when this function returns
+ *                      VINF_SUCCESS.
+ */
+VMM_INT_DECL(int) VMMPatchHypercall(PVM pVM, void *pvBuf, size_t cbBuf, size_t *pcbWritten)
+{
+    AssertReturn(pvBuf, VERR_INVALID_POINTER);
+    AssertReturn(pcbWritten, VERR_INVALID_POINTER);
+
+    CPUMCPUVENDOR enmHostCpu = CPUMGetHostCpuVendor(pVM);
+    switch (enmHostCpu)
+    {
+        case CPUMCPUVENDOR_AMD:
+        {
+            uint8_t abHypercall[] = { 0x0F, 0x01, 0xD9 };   /* VMMCALL */
+            if (RT_LIKELY(cbBuf >= sizeof(abHypercall)))
+            {
+                memcpy(pvBuf, abHypercall, sizeof(abHypercall));
+                *pcbWritten = sizeof(abHypercall);
+                return VINF_SUCCESS;
+            }
+            return VERR_BUFFER_OVERFLOW;
+        }
+
+        case CPUMCPUVENDOR_INTEL:
+        case CPUMCPUVENDOR_VIA:
+        case CPUMCPUVENDOR_SHANGHAI:
+        {
+            uint8_t abHypercall[] = { 0x0F, 0x01, 0xC1 };   /* VMCALL */
+            if (RT_LIKELY(cbBuf >= sizeof(abHypercall)))
+            {
+                memcpy(pvBuf, abHypercall, sizeof(abHypercall));
+                *pcbWritten = sizeof(abHypercall);
+                return VINF_SUCCESS;
+            }
+            return VERR_BUFFER_OVERFLOW;
+        }
+
+        default:
+            AssertFailed();
+            return VERR_UNSUPPORTED_CPU;
+    }
+}
+
+
+/**
+ * Notifies VMM that paravirtualized hypercalls are now enabled.
+ *
+ * @param   pVCpu   The cross context virtual CPU structure.
+ */
+VMM_INT_DECL(void) VMMHypercallsEnable(PVMCPU pVCpu)
+{
+    /* If there is anything to do for raw-mode, do it here. */
+#ifndef IN_RC
+    if (HMIsEnabled(pVCpu->CTX_SUFF(pVM)))
+        HMHypercallsEnable(pVCpu);
+#else
+    RT_NOREF_PV(pVCpu);
+#endif
+}
+
+
+/**
+ * Notifies VMM that paravirtualized hypercalls are now disabled.
+ *
+ * @param   pVCpu   The cross context virtual CPU structure.
+ */
+VMM_INT_DECL(void) VMMHypercallsDisable(PVMCPU pVCpu)
+{
+    /* If there is anything to do for raw-mode, do it here. */
+#ifndef IN_RC
+    if (HMIsEnabled(pVCpu->CTX_SUFF(pVM)))
+        HMHypercallsDisable(pVCpu);
+#else
+    RT_NOREF_PV(pVCpu);
+#endif
 }
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/message.h>
 
@@ -36,9 +37,9 @@
 #include "internal/process.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The program name we're using. */
 static const char * volatile g_pszProgName = NULL;
 /** Custom program name set via RTMsgSetProgName. */
@@ -136,7 +137,7 @@ RTDECL(RTEXITCODE) RTMsgErrorExit(RTEXITCODE enmExitCode, const char *pszFormat,
     va_end(va);
     return enmExitCode;
 }
-RT_EXPORT_SYMBOL(RTMsgErrorExitV);
+RT_EXPORT_SYMBOL(RTMsgErrorExit);
 
 
 RTDECL(RTEXITCODE) RTMsgErrorExitV(RTEXITCODE enmExitCode, const char *pszFormat, va_list va)
@@ -145,6 +146,25 @@ RTDECL(RTEXITCODE) RTMsgErrorExitV(RTEXITCODE enmExitCode, const char *pszFormat
     return enmExitCode;
 }
 RT_EXPORT_SYMBOL(RTMsgErrorExitV);
+
+
+RTDECL(RTEXITCODE) RTMsgErrorExitFailure(const char *pszFormat, ...)
+{
+    va_list va;
+    va_start(va, pszFormat);
+    RTMsgErrorV(pszFormat, va);
+    va_end(va);
+    return RTEXITCODE_FAILURE;
+}
+RT_EXPORT_SYMBOL(RTMsgErrorExitFailure);
+
+
+RTDECL(RTEXITCODE) RTMsgErrorExitFailureV(const char *pszFormat, va_list va)
+{
+    RTMsgErrorV(pszFormat, va);
+    return RTEXITCODE_FAILURE;
+}
+RT_EXPORT_SYMBOL(RTMsgErrorExitFailureV);
 
 
 RTDECL(int) RTMsgErrorRc(int rcRet, const char *pszFormat, ...)

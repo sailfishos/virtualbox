@@ -28,10 +28,10 @@ void crInitTSDF(CRtsd *tsd, void (*destructor)(void *))
     }
     (void) destructor;
 #else
-    if (pthread_key_create(&tsd->key, destructor) != 0) {
-        perror(INIT_TSD_ERROR);
-        crError("crInitTSD failed!");
-    }
+    if (pthread_key_create(&tsd->key, destructor) != 0)
+        crDebug("crServer: failed to allocate TLS key.");
+    else
+        crDebug("crServer: TLS key %d allocated.", tsd->key);
 #endif
     tsd->initMagic = INIT_MAGIC;
 }
@@ -52,10 +52,9 @@ void crFreeTSD(CRtsd *tsd)
     }
 #else
     if (pthread_key_delete(tsd->key) != 0)
-    {
-//        perror(FREE_TSD_ERROR);
-//        crError("crFreeTSD failed!");
-    }
+        crDebug("crServer: failed to delete TLS key %d.", tsd->key);
+    else
+        crDebug("crServer: TLS key %d deleted.", tsd->key);
 #endif
     tsd->initMagic = 0x0;
 }
@@ -250,6 +249,7 @@ void crInitBarrier(CRbarrier *b, unsigned int count)
 void crFreeBarrier(CRbarrier *b)
 {
     /* XXX anything to do? */
+    (void)b;
 }
 
 
@@ -258,6 +258,7 @@ void crWaitBarrier(CRbarrier *b)
 #ifdef WINDOWS
     DWORD dwEvent
         = WaitForMultipleObjects( b->count, b->hEvents, FALSE, INFINITE );
+    (void)dwEvent;
 #else
     pthread_mutex_lock( &(b->mutex) );
     b->waiting++;
@@ -276,6 +277,7 @@ void crWaitBarrier(CRbarrier *b)
 void crInitSemaphore(CRsemaphore *s, unsigned int count)
 {
 #ifdef WINDOWS
+    (void) s; (void) count;
     crWarning("CRsemaphore functions not implemented on Windows");
 #else
     sem_init(s, 0, count);
@@ -287,6 +289,7 @@ void crWaitSemaphore(CRsemaphore *s)
 {
 #ifdef WINDOWS
     /* to do */
+    (void) s;
 #else
     sem_wait(s);
 #endif
@@ -297,6 +300,7 @@ void crSignalSemaphore(CRsemaphore *s)
 {
 #ifdef WINDOWS
     /* to do */
+    (void) s;
 #else
     sem_post(s);
 #endif

@@ -1,11 +1,10 @@
+/* $Id: UIGChooserModel.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGChooserModel class declaration
+ * VBox Qt GUI - UIGChooserModel class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -42,6 +41,8 @@ class QGraphicsSceneContextMenuEvent;
 class QTimer;
 class QPaintDevice;
 class UIVMItem;
+class UIGChooser;
+class UIActionPool;
 class UIGChooserHandlerMouse;
 class UIGChooserHandlerKeyboard;
 class CMachine;
@@ -59,10 +60,6 @@ class UIGChooserModel : public QObject
     Q_OBJECT;
 
 signals:
-
-    /* Notifiers: Status-bar stuff: */
-    void sigShowStatusMessage(const QString &strStatusMessage);
-    void sigClearStatusMessage();
 
     /* Notifier: Current-item stuff: */
     void sigSelectionChanged();
@@ -86,12 +83,17 @@ signals:
 public:
 
     /* Constructor/destructor: */
-    UIGChooserModel(QObject *pParent);
+    UIGChooserModel(UIGChooser *pParent);
     ~UIGChooserModel();
 
     /* API: Prepare/cleanup stuff: */
     void prepare();
     void cleanup();
+
+    /** Returns the chooser reference. */
+    UIGChooser* chooser() const { return m_pChooser; }
+    /** Returns the action-pool reference. */
+    UIActionPool* actionPool() const;
 
     /* API: Scene stuff: */
     QGraphicsScene* scene() const;
@@ -117,6 +119,7 @@ public:
     void unsetCurrentItem();
     void addToCurrentItems(UIGChooserItem *pItem);
     void removeFromCurrentItems(UIGChooserItem *pItem);
+    void makeSureSomeItemIsSelected();
     void notifyCurrentItemChanged();
     bool isSingleGroupSelected() const;
     bool isAllItemsOfOneGroupSelected() const;
@@ -188,9 +191,6 @@ private slots:
     void sltStartScrolling();
     void sltCurrentDragObjectDestroyed();
 
-    /* Handler: Context-menu stuff: */
-    void sltActionHovered(QAction *pAction);
-
     /* Handler: Item lookup stuff: */
     void sltEraseLookupTimer();
 
@@ -253,6 +253,7 @@ private:
 
     /* Handler: Drag&drop event: */
     bool processDragMoveEvent(QGraphicsSceneDragDropEvent *pEvent);
+    bool processDragLeaveEvent(QGraphicsSceneDragDropEvent *pEvent);
 
     /* Helpers: Loading stuff: */
     void loadGroupTree();
@@ -270,6 +271,9 @@ private:
     void gatherGroupOrders(QMap<QString, QStringList> &groups, UIGChooserItem *pParentItem);
     void makeSureGroupDefinitionsSaveIsFinished();
     void makeSureGroupOrdersSaveIsFinished();
+
+    /** Holds the chooser reference. */
+    UIGChooser *m_pChooser;
 
     /* Variables: */
     QGraphicsScene *m_pScene;
@@ -295,6 +299,9 @@ private:
     /* Variables: Lookup stuff: */
     QTimer *m_pLookupTimer;
     QString m_strLookupString;
+
+    /** Holds the Id of last VM created from the GUI side. */
+    QString m_strLastCreatedMachineId;
 };
 
 /* Allows to save group definitions asynchronously: */

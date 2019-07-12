@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/thread.h>
 
 #include <iprt/asm-amd64-x86.h>
@@ -64,6 +65,8 @@ DECLEXPORT(int) TSTR0DbgKrnlInfoSrvReqHandler(PSUPDRVSESSION pSession, uint32_t 
     /*
      * The big switch.
      */
+    bool fSavedMayPanic = RTAssertSetMayPanic(false); /* Don't crash the host with strict builds! */
+    RTDBGKRNLINFO hKrnlInfo = NIL_RTDBGKRNLINFO;
     switch (uOperation)
     {
         case TSTRTR0DBGKRNLINFO_SANITY_OK:
@@ -75,21 +78,25 @@ DECLEXPORT(int) TSTR0DbgKrnlInfoSrvReqHandler(PSUPDRVSESSION pSession, uint32_t 
 
         case TSTRTR0DBGKRNLINFO_BASIC:
         {
-            RTDBGKRNLINFO hKrnlInfo;
             RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoOpen(&hKrnlInfo, 1), VERR_INVALID_PARAMETER);
             RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoOpen(NULL, 0), VERR_INVALID_PARAMETER);
             RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoOpen(&hKrnlInfo, 0), VINF_SUCCESS);
 
             size_t offMemb;
-            RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQueryMember(NULL, "Test", "Test", &offMemb), VERR_INVALID_HANDLE);
-            RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQueryMember(hKrnlInfo, NULL, "Test", &offMemb), VERR_INVALID_PARAMETER);
-            RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQueryMember(hKrnlInfo, "Test", NULL, &offMemb), VERR_INVALID_PARAMETER);
-            RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQueryMember(hKrnlInfo, "Test", "Test", NULL), VERR_INVALID_PARAMETER);
+            RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQueryMember(NULL, NULL, "Test", "Test", &offMemb), VERR_INVALID_HANDLE);
+            RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQueryMember(hKrnlInfo, NULL, NULL, "Test", &offMemb), VERR_INVALID_PARAMETER);
+            RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQueryMember(hKrnlInfo, NULL, "Test", NULL, &offMemb), VERR_INVALID_PARAMETER);
+            RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQueryMember(hKrnlInfo, NULL, "Test", "Test", NULL), VERR_INVALID_PARAMETER);
 
             void *pvSymbol;
             RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQuerySymbol(NULL, "Test", "Test", &pvSymbol), VERR_INVALID_HANDLE);
             RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQuerySymbol(hKrnlInfo, "TestModule", "Test", &pvSymbol), VERR_MODULE_NOT_FOUND);
             RTR0TESTR0_CHECK_RC_BREAK(RTR0DbgKrnlInfoQuerySymbol(hKrnlInfo, NULL, NULL, &pvSymbol), VERR_INVALID_PARAMETER);
+
+            RTR0DbgKrnlInfoRelease(hKrnlInfo);
+            hKrnlInfo = NIL_RTDBGKRNLINFO;
+            uint32_t cRefs;
+            RTR0TESTR0_CHECK_MSG((cRefs = RTR0DbgKrnlInfoRelease(NIL_RTDBGKRNLINFO)) == 0, ("cRefs=%#x", cRefs));
             break;
         }
 
@@ -100,6 +107,9 @@ DECLEXPORT(int) TSTR0DbgKrnlInfoSrvReqHandler(PSUPDRVSESSION pSession, uint32_t 
             RTStrPrintf(pszErr, cchErr, "!Unknown test #%d", uOperation);
             break;
     }
+    if (hKrnlInfo != NIL_RTDBGKRNLINFO)
+        RTR0DbgKrnlInfoRelease(hKrnlInfo);
+    RTAssertSetMayPanic(fSavedMayPanic);
 
     /* The error indicator is the '!' in the message buffer. */
     return VINF_SUCCESS;

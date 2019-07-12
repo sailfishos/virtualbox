@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/asm-amd64-x86.h>
 #include <iprt/asm.h>
 #include <iprt/getopt.h>
@@ -38,9 +39,9 @@
 #include <iprt/time.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct TSCDATA
 {
     /** The TSC.  */
@@ -56,9 +57,9 @@ typedef struct TSCDATA
 } TSCDATA, *PTSCDATA;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The number of CPUs waiting on their user event semaphore. */
 static volatile uint32_t g_cWaiting;
 /** The number of CPUs ready (in spin) to do the TSC read. */
@@ -77,9 +78,9 @@ static volatile uint32_t g_cFailed;
 static volatile bool g_fDone;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int) ThreadFunction(RTTHREAD Thread, void *pvUser);
 
 
@@ -417,7 +418,6 @@ int main(int argc, char **argv)
         { "--duration",         'd', RTGETOPT_REQ_UINT32 },
         { "--calc-frequency",   'f', RTGETOPT_REQ_NOTHING },
     };
-    int iArg = 1;
     int ch;
     RTGETOPTUNION Value;
     RTGETOPTSTATE GetState;
@@ -437,7 +437,7 @@ int main(int argc, char **argv)
                 return 1;
 
             case 'V':
-                RTPrintf("$Revision: 89632 $\n");
+                RTPrintf("$Revision: 118412 $\n");
                 return 0;
 
             default:

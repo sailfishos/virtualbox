@@ -1,43 +1,46 @@
-;;
-;; Copyright (C) 2006-2011 Oracle Corporation
-;;
-;; This file is part of VirtualBox Open Source Edition (OSE), as
-;; available from http://www.virtualbox.org. This file is free software;
-;; you can redistribute it and/or modify it under the terms of the GNU
-;; General Public License (GPL) as published by the Free Software
-;; Foundation, in version 2 as it comes in the "COPYING" file of the
-;; VirtualBox OSE distribution. VirtualBox OSE is distributed in the
-;; hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
-;; --------------------------------------------------------------------
-;;
-;; This code is based on:
-;;
-;;  ROM BIOS for use with Bochs/Plex86/QEMU emulation environment
-;;
-;;  Copyright (C) 2002  MandrakeSoft S.A.
-;;
-;;    MandrakeSoft S.A.
-;;    43, rue d'Aboukir
-;;    75002 Paris - France
-;;    http://www.linux-mandrake.com/
-;;    http://www.mandrakesoft.com/
-;;
-;;  This library is free software; you can redistribute it and/or
-;;  modify it under the terms of the GNU Lesser General Public
-;;  License as published by the Free Software Foundation; either
-;;  version 2 of the License, or (at your option) any later version.
-;;
-;;  This library is distributed in the hope that it will be useful,
-;;  but WITHOUT ANY WARRANTY; without even the implied warranty of
-;;  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-;;  Lesser General Public License for more details.
-;;
-;;  You should have received a copy of the GNU Lesser General Public
-;;  License along with this library; if not, write to the Free Software
-;;  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
-;;
-;;
+; $Id: pcibios.inc $
+;; @file
+; ???
+;
 
+;
+; Copyright (C) 2006-2017 Oracle Corporation
+;
+; This file is part of VirtualBox Open Source Edition (OSE), as
+; available from http://www.virtualbox.org. This file is free software;
+; you can redistribute it and/or modify it under the terms of the GNU
+; General Public License (GPL) as published by the Free Software
+; Foundation, in version 2 as it comes in the "COPYING" file of the
+; VirtualBox OSE distribution. VirtualBox OSE is distributed in the
+; hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+; --------------------------------------------------------------------
+;
+; This code is based on:
+;
+;  ROM BIOS for use with Bochs/Plex86/QEMU emulation environment
+;
+;  Copyright (C) 2002  MandrakeSoft S.A.
+;
+;    MandrakeSoft S.A.
+;    43, rue d'Aboukir
+;    75002 Paris - France
+;    http://www.linux-mandrake.com/
+;    http://www.mandrakesoft.com/
+;
+;  This library is free software; you can redistribute it and/or
+;  modify it under the terms of the GNU Lesser General Public
+;  License as published by the Free Software Foundation; either
+;  version 2 of the License, or (at your option) any later version.
+;
+;  This library is distributed in the hope that it will be useful,
+;  but WITHOUT ANY WARRANTY; without even the implied warranty of
+;  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+;  Lesser General Public License for more details.
+;
+;  You should have received a copy of the GNU Lesser General Public
+;  License along with this library; if not, write to the Free Software
+;  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301 USA
+;
 
 ; Oracle LGPL Disclaimer: For the avoidance of doubt, except that if any license choice
 ; other than GPL or LGPL is available it will apply instead, Oracle elects to use only
@@ -45,6 +48,7 @@
 ; a choice of LGPL license versions is made available with the language indicating
 ; that LGPLv2 or any later version may be used, or where a choice of which version
 ; of the LGPL is applied is otherwise unspecified.
+
 
 include	pcicfg.inc
 
@@ -78,7 +82,7 @@ endif
 
 if not BX_ROMBIOS32
 pci_irq_list:
-		db 11, 10, 9, 11 
+		db 11, 10, 9, 11
 
 pcibios_init_sel_reg:
 		push	eax
@@ -95,6 +99,16 @@ pcibios_init_sel_reg:
 pcibios_init_iomem_bases:
 		push	bp
 		mov	bp, sp
+ifdef VBOX
+		mov	eax,19200509
+		mov	dx,410h
+		out	dx,  eax
+else
+; This incomplete PCI resource setup code is less functional than the PCI
+; resource assignment created by the fake PCI BIOS and is therefore disabled.
+; Blindly enabling everything on the root bus (including bus mastering!) can
+; only be called buggy. It causes the trouble with AMD PCNet which it then
+; tries to work around, but that still contains a race.
 		mov	eax, 0E0000000h	; base for memory init
 		push	eax
 		mov	ax, 0D000h	; base for i/o init
@@ -110,7 +124,7 @@ pci_init_io_loop1:
 		cmp	ax, 0FFFFh
 		jz	next_pci_dev
 
-ifndef VBOX ; This currently breaks restoring a previously saved state. */
+ifndef VBOX ; This currently breaks restoring a previously saved state.
 		mov	dl, 4	; disable i/o and memory space access
 		call	pcibios_init_sel_reg
 		mov	dx, PCI_CFG2
@@ -194,12 +208,13 @@ ifdef VBOX
 		mov	dx, cx
 		add	dx, 18h	; reset register if PCNet is in word I/O mode
 		in	eax, dx	; reset is performed by reading the reset register
-endif ; VBOX 
+endif ; VBOX
 next_pci_dev:
 		mov	byte ptr[bp-8], 10h
 		inc	bx
 		cmp	bx, 0100h
 		jne	pci_init_io_loop1
+endif ; !VBOX
 		mov	sp, bp
 		pop	bp
 		ret
@@ -229,6 +244,9 @@ pcibios_init_irqs:
 		push	bp
 		mov	ax, 0F000h
 		mov	ds, ax
+ifndef VBOX
+; this code works OK, but it's unnecessary effort since the fake PCI BIOS
+; already configured the IRQ lines and the ELCR correctly
 		mov	dx, 04D0h ;; reset ELCR1 + ELCR2
 		mov	al, 0
 		out	dx, al
@@ -281,7 +299,7 @@ pci_init_irq_loop2:
 pci_test_int_pin:
 		mov	dl, 3Ch
 		call pcibios_init_sel_reg
-		mov	dx, PCI_CFG2 + 1 ; TODO: was #0x0cfd - is that right?
+		mov	dx, PCI_CFG2 + 1 ; access config space at 3Dh
 		in	al, dx
 		and	al, 7
 		jz	next_pci_func
@@ -331,13 +349,14 @@ next_pir_entry:
 		mov	sp, bp
 		pop	bx
 pci_init_end:
+endif
 		pop		bp
 		pop		ds
 		ret
 
-.286
-
 endif		 ; !BX_ROMBIOS32
 
 endif		 ; BX_PCIBIOS
+
+SET_DEFAULT_CPU_286
 

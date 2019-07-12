@@ -1,12 +1,10 @@
 /* $Id: UIMachineSettingsPortForwardingDlg.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIMachineSettingsPortForwardingDlg class implementation
+ * VBox Qt GUI - UIMachineSettingsPortForwardingDlg class implementation.
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,14 +15,22 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QVBoxLayout>
-#include <QPushButton>
+# include <QVBoxLayout>
+# include <QPushButton>
 
 /* GUI includes: */
-#include "UIMachineSettingsPortForwardingDlg.h"
-#include "UIIconPool.h"
-#include "QIDialogButtonBox.h"
+# include "UIMachineSettingsPortForwardingDlg.h"
+# include "UIIconPool.h"
+# include "UIMessageCenter.h"
+# include "QIDialogButtonBox.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIMachineSettingsPortForwardingDlg::UIMachineSettingsPortForwardingDlg(QWidget *pParent,
                                                                        const UIPortForwardingDataList &rules)
@@ -33,13 +39,17 @@ UIMachineSettingsPortForwardingDlg::UIMachineSettingsPortForwardingDlg(QWidget *
     , m_pButtonBox(0)
 {
     /* Set dialog icon: */
-    setWindowIcon(UIIconPool::iconSetFull(QSize(32, 32), QSize(16, 16), ":/nw_32px.png", ":/nw_16px.png"));
+    setWindowIcon(UIIconPool::iconSetFull(":/nw_32px.png", ":/nw_16px.png"));
 
     /* Create layout: */
     QVBoxLayout *pMainLayout = new QVBoxLayout(this);
     {
         /* Create table: */
-        m_pTable = new UIPortForwardingTable(rules, false);
+        m_pTable = new UIPortForwardingTable(rules, false, true);
+        {
+            /* Configure table: */
+            m_pTable->layout()->setContentsMargins(0, 0, 0, 0);
+        }
         /* Create button-box: */
         m_pButtonBox = new QIDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, Qt::Horizontal);
         {
@@ -56,13 +66,15 @@ UIMachineSettingsPortForwardingDlg::UIMachineSettingsPortForwardingDlg(QWidget *
     retranslateUi();
 }
 
-const UIPortForwardingDataList& UIMachineSettingsPortForwardingDlg::rules() const
+const UIPortForwardingDataList UIMachineSettingsPortForwardingDlg::rules() const
 {
     return m_pTable->rules();
 }
 
 void UIMachineSettingsPortForwardingDlg::accept()
 {
+    /* Make sure table has own data committed: */
+    m_pTable->makeSureEditorDataCommitted();
     /* Validate table: */
     bool fPassed = m_pTable->validate();
     if (!fPassed)
@@ -73,9 +85,9 @@ void UIMachineSettingsPortForwardingDlg::accept()
 
 void UIMachineSettingsPortForwardingDlg::reject()
 {
-    /* Discard table: */
-    bool fPassed = m_pTable->discard();
-    if (!fPassed)
+    /* Ask user to discard table changes if necessary: */
+    if (   m_pTable->isChanged()
+        && !msgCenter().confirmCancelingPortForwardingDialog(window()))
         return;
     /* Call to base-class: */
     QIWithRetranslateUI<QIDialog>::reject();

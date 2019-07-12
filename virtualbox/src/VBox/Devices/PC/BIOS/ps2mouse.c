@@ -1,5 +1,10 @@
+/* $Id: ps2mouse.c $ */
+/** @file
+ * PC BIOS - ???
+ */
+
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,6 +43,15 @@
  *
  */
 
+/*
+ * Oracle LGPL Disclaimer: For the avoidance of doubt, except that if any license choice
+ * other than GPL or LGPL is available it will apply instead, Oracle elects to use only
+ * the Lesser General Public License version 2.1 (LGPLv2) at this time for any software where
+ * a choice of LGPL license versions is made available with the language indicating
+ * that LGPLv2 or any later version may be used, or where a choice of which version
+ * of the LGPL is applied is otherwise unspecified.
+ */
+
 
 #include <stdint.h>
 #include "biosint.h"
@@ -74,11 +88,17 @@ uint8_t send_to_mouse_ctrl(uint8_t sendbyte)
 
 uint8_t get_mouse_data(uint8_t __far *data)
 {
-    int         retries = 10000;
+    int         retries = 10000;    /* ~150ms timeout */
     uint8_t     response;
 
     while ((inb(0x64) & 0x21) != 0x21 && retries)
+    {
+        /* Wait until the 15us refresh counter toggles. */
+        response = inb(0x61) & 0x10;
+        while((inb(0x61) & 0x10) == response)
+            ;
         --retries;
+    }
 
     if (!retries)
         return(1);

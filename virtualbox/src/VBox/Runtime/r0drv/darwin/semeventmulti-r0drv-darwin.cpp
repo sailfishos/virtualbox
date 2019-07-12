@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define RTSEMEVENTMULTI_WITHOUT_REMAPPING
 #include "the-darwin-kernel.h"
 #include "internal/iprt.h"
@@ -48,9 +48,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @name fStateAndGen values
  * @{ */
 /** The state bit number. */
@@ -66,9 +66,9 @@
 /** @}  */
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Darwin multiple release event semaphore.
  */
@@ -99,10 +99,12 @@ RTDECL(int)  RTSemEventMultiCreate(PRTSEMEVENTMULTI phEventMultiSem)
 RTDECL(int)  RTSemEventMultiCreateEx(PRTSEMEVENTMULTI phEventMultiSem, uint32_t fFlags, RTLOCKVALCLASS hClass,
                                      const char *pszNameFmt, ...)
 {
+    RT_NOREF(hClass, pszNameFmt);
     AssertReturn(!(fFlags & ~RTSEMEVENTMULTI_FLAGS_NO_LOCK_VAL), VERR_INVALID_PARAMETER);
     AssertCompile(sizeof(RTSEMEVENTMULTIINTERNAL) > sizeof(void *));
     AssertPtrReturn(phEventMultiSem, VERR_INVALID_POINTER);
     RT_ASSERT_PREEMPTIBLE();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     PRTSEMEVENTMULTIINTERNAL pThis = (PRTSEMEVENTMULTIINTERNAL)RTMemAlloc(sizeof(*pThis));
     if (pThis)
@@ -116,12 +118,14 @@ RTDECL(int)  RTSemEventMultiCreateEx(PRTSEMEVENTMULTI phEventMultiSem, uint32_t 
         if (pThis->pSpinlock)
         {
             *phEventMultiSem = pThis;
+            IPRT_DARWIN_RESTORE_EFL_AC();
             return VINF_SUCCESS;
         }
 
         pThis->u32Magic = 0;
         RTMemFree(pThis);
     }
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VERR_NO_MEMORY;
 }
 
@@ -135,6 +139,7 @@ DECLINLINE(void) rtR0SemEventMultiDarwinRetain(PRTSEMEVENTMULTIINTERNAL pThis)
 {
     uint32_t cRefs = ASMAtomicIncU32(&pThis->cRefs);
     Assert(cRefs && cRefs < 100000);
+    RT_NOREF_PV(cRefs);
 }
 
 
@@ -147,9 +152,13 @@ DECLINLINE(void) rtR0SemEventMultiDarwinRelease(PRTSEMEVENTMULTIINTERNAL pThis)
 {
     if (RT_UNLIKELY(ASMAtomicDecU32(&pThis->cRefs) == 0))
     {
+        IPRT_DARWIN_SAVE_EFL_AC();
         Assert(pThis->u32Magic != RTSEMEVENTMULTI_MAGIC);
+
         lck_spin_destroy(pThis->pSpinlock, g_pDarwinLockGroup);
         RTMemFree(pThis);
+
+        IPRT_DARWIN_RESTORE_EFL_AC();
     }
 }
 
@@ -163,6 +172,7 @@ RTDECL(int)  RTSemEventMultiDestroy(RTSEMEVENTMULTI hEventMultiSem)
     AssertMsgReturn(pThis->u32Magic == RTSEMEVENTMULTI_MAGIC, ("pThis=%p u32Magic=%#x\n", pThis, pThis->u32Magic), VERR_INVALID_HANDLE);
     Assert(pThis->cRefs > 0);
     RT_ASSERT_INTS_ON();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     lck_spin_lock(pThis->pSpinlock);
 
@@ -177,6 +187,7 @@ RTDECL(int)  RTSemEventMultiDestroy(RTSEMEVENTMULTI hEventMultiSem)
     lck_spin_unlock(pThis->pSpinlock);
     rtR0SemEventMultiDarwinRelease(pThis);
 
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -188,6 +199,7 @@ RTDECL(int)  RTSemEventMultiSignal(RTSEMEVENTMULTI hEventMultiSem)
     AssertMsgReturn(pThis->u32Magic == RTSEMEVENTMULTI_MAGIC, ("pThis=%p u32Magic=%#x\n", pThis, pThis->u32Magic), VERR_INVALID_HANDLE);
     RT_ASSERT_PREEMPT_CPUID_VAR();
     RT_ASSERT_INTS_ON();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     rtR0SemEventMultiDarwinRetain(pThis);
     lck_spin_lock(pThis->pSpinlock);
@@ -213,6 +225,7 @@ RTDECL(int)  RTSemEventMultiSignal(RTSEMEVENTMULTI hEventMultiSem)
     rtR0SemEventMultiDarwinRelease(pThis);
 
     RT_ASSERT_PREEMPT_CPUID();
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -224,6 +237,7 @@ RTDECL(int)  RTSemEventMultiReset(RTSEMEVENTMULTI hEventMultiSem)
     AssertMsgReturn(pThis->u32Magic == RTSEMEVENTMULTI_MAGIC, ("pThis=%p u32Magic=%#x\n", pThis, pThis->u32Magic), VERR_INVALID_HANDLE);
     RT_ASSERT_PREEMPT_CPUID_VAR();
     RT_ASSERT_INTS_ON();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     rtR0SemEventMultiDarwinRetain(pThis);
     lck_spin_lock(pThis->pSpinlock);
@@ -234,6 +248,7 @@ RTDECL(int)  RTSemEventMultiReset(RTSEMEVENTMULTI hEventMultiSem)
     rtR0SemEventMultiDarwinRelease(pThis);
 
     RT_ASSERT_PREEMPT_CPUID();
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -250,6 +265,8 @@ RTDECL(int)  RTSemEventMultiReset(RTSEMEVENTMULTI hEventMultiSem)
 static int rtR0SemEventMultiDarwinWait(PRTSEMEVENTMULTIINTERNAL pThis, uint32_t fFlags, uint64_t uTimeout,
                                        PCRTLOCKVALSRCPOS pSrcPos)
 {
+    RT_NOREF(pSrcPos);
+
     /*
      * Validate input.
      */
@@ -258,6 +275,7 @@ static int rtR0SemEventMultiDarwinWait(PRTSEMEVENTMULTIINTERNAL pThis, uint32_t 
     AssertReturn(RTSEMWAIT_FLAGS_ARE_VALID(fFlags), VERR_INVALID_PARAMETER);
     if (uTimeout != 0 || (fFlags & RTSEMWAIT_FLAGS_INDEFINITE))
         RT_ASSERT_PREEMPTIBLE();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     rtR0SemEventMultiDarwinRetain(pThis);
     lck_spin_lock(pThis->pSpinlock);
@@ -381,6 +399,8 @@ static int rtR0SemEventMultiDarwinWait(PRTSEMEVENTMULTIINTERNAL pThis, uint32_t 
 
     lck_spin_unlock(pThis->pSpinlock);
     rtR0SemEventMultiDarwinRelease(pThis);
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return rc;
 }
 

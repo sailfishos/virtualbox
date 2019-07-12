@@ -1,29 +1,40 @@
+/* $Id: pointer.c $ */
 /** @file
  * VirtualBox X11 Additions graphics driver utility functions
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
- * This file is part of VirtualBox Open Source Edition (OSE), as
- * available from http://www.virtualbox.org. This file is free software;
- * you can redistribute it and/or modify it under the terms of the GNU
- * General Public License (GPL) as published by the Free Software
- * Foundation, in version 2 as it comes in the "COPYING" file of the
- * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
- * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <VBox/VBoxGuestLib.h>
-
 #ifndef PCIACCESS
-# include <xf86Pci.h>
+# include "xf86Pci.h"
 # include <Pci.h>
 #endif
 
 #include "xf86.h"
 #define NEED_XF86_TYPES
-#include <iprt/string.h>
 #include "compiler.h"
 #include "cursorstr.h"
 #include "servermd.h"
@@ -32,6 +43,7 @@
 
 #ifdef XORG_7X
 # include <stdlib.h>
+# include <string.h>
 #endif
 
 #define VBOX_MAX_CURSOR_WIDTH 64
@@ -113,8 +125,7 @@ vbox_show_shape(unsigned short w, unsigned short h, CARD32 bg, unsigned char *im
 * Main functions                                                          *
 **************************************************************************/
 
-void
-vbox_close(ScrnInfoPtr pScrn, VBOXPtr pVBox)
+void vbvxCursorTerm(VBOXPtr pVBox)
 {
     TRACE_ENTRY();
 
@@ -127,21 +138,23 @@ static void
 vbox_vmm_hide_cursor(ScrnInfoPtr pScrn, VBOXPtr pVBox)
 {
     int rc;
+    RT_NOREF(pScrn);
 
     rc = VBoxHGSMIUpdatePointerShape(&pVBox->guestCtx, 0, 0, 0, 0, 0, NULL, 0);
-    VBVXASSERT(rc == VINF_SUCCESS, ("Could not hide the virtual mouse pointer, VBox error %d.\n", rc));
+    AssertMsg(rc == VINF_SUCCESS, ("Could not hide the virtual mouse pointer, VBox error %d.\n", rc));
 }
 
 static void
 vbox_vmm_show_cursor(ScrnInfoPtr pScrn, VBOXPtr pVBox)
 {
     int rc;
+    RT_NOREF(pScrn);
 
     if (!pVBox->fUseHardwareCursor)
         return;
     rc = VBoxHGSMIUpdatePointerShape(&pVBox->guestCtx, VBOX_MOUSE_POINTER_VISIBLE,
                                      0, 0, 0, 0, NULL, 0);
-    VBVXASSERT(rc == VINF_SUCCESS, ("Could not unhide the virtual mouse pointer.\n"));
+    AssertMsg(rc == VINF_SUCCESS, ("Could not unhide the virtual mouse pointer.\n"));
 }
 
 static void
@@ -151,6 +164,7 @@ vbox_vmm_load_cursor_image(ScrnInfoPtr pScrn, VBOXPtr pVBox,
     int rc;
     struct vboxCursorImage *pImage;
     pImage = (struct vboxCursorImage *)pvImage;
+    RT_NOREF(pScrn);
 
 #ifdef DEBUG_POINTER
     vbox_show_shape(pImage->cWidth, pImage->cHeight, 0, pvImage);
@@ -159,15 +173,15 @@ vbox_vmm_load_cursor_image(ScrnInfoPtr pScrn, VBOXPtr pVBox,
     rc = VBoxHGSMIUpdatePointerShape(&pVBox->guestCtx, pImage->fFlags,
              pImage->cHotX, pImage->cHotY, pImage->cWidth, pImage->cHeight,
              pImage->pPixels, pImage->cbLength);
-    VBVXASSERT(rc == VINF_SUCCESS, ("Unable to set the virtual mouse pointer image.\n"));
+    AssertMsg(rc == VINF_SUCCESS, ("Unable to set the virtual mouse pointer image.\n"));
 }
 
 static void
 vbox_set_cursor_colors(ScrnInfoPtr pScrn, int bg, int fg)
 {
-    NOREF(pScrn);
-    NOREF(bg);
-    NOREF(fg);
+    RT_NOREF(pScrn);
+    RT_NOREF(bg);
+    RT_NOREF(fg);
     /* ErrorF("vbox_set_cursor_colors NOT IMPLEMENTED\n"); */
 }
 
@@ -210,6 +224,7 @@ vbox_use_hw_cursor(ScreenPtr pScreen, CursorPtr pCurs)
 {
     ScrnInfoPtr pScrn = xf86Screens[pScreen->myNum];
     VBOXPtr pVBox = pScrn->driverPrivate;
+    RT_NOREF(pCurs);
     return pVBox->fUseHardwareCursor;
 }
 
@@ -228,7 +243,7 @@ vbox_realize_cursor(xf86CursorInfoPtr infoPtr, CursorPtr pCurs)
     unsigned char *c, *p, *pm, *ps, *m;
     size_t sizeRequest, sizeRgba, sizeMask, srcPitch, dstPitch;
     CARD32 fc, bc, *cp;
-    int rc, scrnIndex = infoPtr->pScrn->scrnIndex;
+    int scrnIndex = infoPtr->pScrn->scrnIndex;
     struct vboxCursorImage *pImage;
 
     pVBox = infoPtr->pScrn->driverPrivate;
@@ -359,7 +374,6 @@ static void
 vbox_load_cursor_argb(ScrnInfoPtr pScrn, CursorPtr pCurs)
 {
     VBOXPtr pVBox;
-    VMMDevReqMousePointer *reqp;
     CursorBitsPtr bitsp;
     unsigned short w, h;
     unsigned short cx, cy;
@@ -370,7 +384,6 @@ vbox_load_cursor_argb(ScrnInfoPtr pScrn, CursorPtr pCurs)
     int scrnIndex;
     uint32_t fFlags =   VBOX_MOUSE_POINTER_VISIBLE | VBOX_MOUSE_POINTER_SHAPE
                       | VBOX_MOUSE_POINTER_ALPHA;
-    int rc;
 
     pVBox = pScrn->driverPrivate;
     bitsp = pCurs->bits;
@@ -437,8 +450,7 @@ vbox_load_cursor_argb(ScrnInfoPtr pScrn, CursorPtr pCurs)
 }
 #endif
 
-Bool
-vbox_cursor_init(ScreenPtr pScreen)
+Bool vbvxCursorInit(ScreenPtr pScreen)
 {
     ScrnInfoPtr pScrn = xf86Screens[pScreen->myNum];
     VBOXPtr pVBox = pScrn->driverPrivate;
@@ -457,7 +469,8 @@ vbox_cursor_init(ScreenPtr pScreen)
         pCurs->MaxHeight = VBOX_MAX_CURSOR_HEIGHT;
         pCurs->Flags =   HARDWARE_CURSOR_TRUECOLOR_AT_8BPP
                        | HARDWARE_CURSOR_SOURCE_MASK_INTERLEAVE_1
-                       | HARDWARE_CURSOR_BIT_ORDER_MSBFIRST;
+                       | HARDWARE_CURSOR_BIT_ORDER_MSBFIRST
+                       | HARDWARE_CURSOR_UPDATE_UNHIDDEN;
 
         pCurs->SetCursorColors   = vbox_set_cursor_colors;
         pCurs->SetCursorPosition = vbox_set_cursor_position;

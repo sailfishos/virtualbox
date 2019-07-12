@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
-"http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+"http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd">
 <chapter id="Introduction">
   <title>First steps</title>
 
-  <para>Welcome to $VBOX_PRODUCT!</para>
+  <para>Welcome to @VBOX_PRODUCT@!</para>
 
   <para>VirtualBox is a cross-platform virtualization application. What does
   that mean? For one thing, it installs on your existing Intel or AMD-based
@@ -22,7 +22,7 @@
   up to datacenter deployments and even Cloud environments.</para>
 
   <para>The following screenshot shows you how VirtualBox, installed on a Mac
-  computer, is running Windows 7 in a virtual machine window:</para>
+  computer, is running Windows 8 in a virtual machine window:</para>
 
   <para><mediaobject>
       <imageobject>
@@ -324,7 +324,7 @@
 
       <listitem>
         <para><emphasis role="bold">VM groups.</emphasis> VirtualBox provides a
-        groups feature that enables the user to organize virtual machines
+        groups feature that enables the user to organize and control virtual machines
         collectively, as well as individually. In addition to basic groups, it
         is also possible for any VM to be in more than one group, and for
         groups to be nested in a hierarchy -- i.e. groups of groups. In
@@ -397,24 +397,19 @@
 
     <itemizedlist>
       <listitem>
-        <para><emphasis role="bold">Windows</emphasis> hosts:<itemizedlist>
+        <para><emphasis role="bold">Windows</emphasis> hosts:<footnote>
+          <para>Support for 64-bit Windows was added with VirtualBox
+          1.5. Support for Windows XP was removed with VirtualBox 5.0.
+          Support for Windows Vista was removed with VirtualBox 5.2.</para>
+          </footnote>
+
+          <itemizedlist>
             <listitem>
-              <para>Windows XP, all service packs (32-bit)</para>
+              <para>Windows Server 2008 (64-bit)</para>
             </listitem>
 
             <listitem>
-              <para>Windows Server 2003 (32-bit)</para>
-            </listitem>
-
-            <listitem>
-              <para>Windows Vista (32-bit and 64-bit<footnote>
-                  <para>Support for 64-bit Windows was added with VirtualBox
-                  1.5.</para>
-                </footnote>).</para>
-            </listitem>
-
-            <listitem>
-              <para>Windows Server 2008 (32-bit and 64-bit)</para>
+              <para>Windows Server 2008 R2 (64-bit)</para>
             </listitem>
 
             <listitem>
@@ -424,36 +419,56 @@
             <listitem>
               <para>Windows 8 (32-bit and 64-bit)</para>
             </listitem>
-            
+
+            <listitem>
+              <para>Windows 8.1 (32-bit and 64-bit)</para>
+            </listitem>
+
+            <listitem>
+              <para>Windows 10 RTM build 10240 (32-bit and 64-bit)</para>
+            </listitem>
+
             <listitem>
               <para>Windows Server 2012 (64-bit)</para>
+            </listitem>
+
+            <listitem>
+              <para>Windows Server 2012 R2 (64-bit)</para>
+            </listitem>
+
+            <listitem>
+              <para>Windows Server 2016 (64-bit)</para>
             </listitem>
 
           </itemizedlist></para>
       </listitem>
 
       <listitem>
-        <para><emphasis role="bold">Mac OS X</emphasis> hosts:<footnote>
+        <para><emphasis role="bold">Mac OS X</emphasis> hosts (64-bit):<footnote>
             <para>Preliminary Mac OS X support (beta stage) was added with
             VirtualBox 1.4, full support with 1.6. Mac OS X 10.4 (Tiger)
-            support was removed with VirtualBox 3.1.</para>
+            support was removed with VirtualBox 3.1. Support for Mac OS X 10.7
+            (Lion) and earlier was removed with VirtualBox 5.0. Support for Mac
+            OS X 10.8 (Mountain Lion) was removed with VirtualBox 5.1. Support
+            for Mac OS X 10.9 (Mavericks) was removed with VirtualBox 5.2.</para>
           </footnote></para>
 
         <itemizedlist>
+
           <listitem>
-            <para>10.6 (Snow Leopard, 32-bit and 64-bit)</para>
+            <para>10.10 (Yosemite)</para>
           </listitem>
 
           <listitem>
-            <para>10.7 (Lion, 32-bit and 64-bit)</para>
+            <para>10.11 (El Capitan)</para>
           </listitem>
 
           <listitem>
-            <para>10.8 (Mountain Lion, 64-bit)</para>
+            <para>10.12 (Sierra)</para>
           </listitem>
 
           <listitem>
-            <para>10.9 (Mavericks, 64-bit)</para>
+            <para>10.13 (High Sierra)</para>
           </listitem>
 
         </itemizedlist>
@@ -469,26 +484,23 @@
             1.4.</para>
           </footnote>). Among others, this includes:<itemizedlist>
             <listitem>
-              <para>10.04 ("Lucid Lynx"), 10.10 ("Maverick Meerkat),
-              11.04 ("Natty Narwhal"), 11.10 ("Oneiric Oncelot"),
-              12.04 ("Precise Pangolin"), 12.10 ("Quantal Quetzal"),
-              13.04 ("Raring Ringtail"), 13.10 ("Saucy Salamander")</para>
+              <para>Ubuntu 14.04 LTS, 16.04 LTS, and 17.04</para>
             </listitem>
 
             <listitem>
-              <para>Debian GNU/Linux 6.0 ("squeeze") and 7.0 ("wheezy")</para>
+              <para>Debian GNU/Linux 7 ("Wheezy"), 8 ("Jessie") and 9 ("Stretch")</para>
             </listitem>
 
             <listitem>
-              <para>Oracle Enterprise Linux 5, Oracle Linux 6</para>
+              <para>Oracle Enterprise Linux 5, Oracle Linux 6 and 7</para>
             </listitem>
 
             <listitem>
-              <para>Redhat Enterprise Linux 5 and 6</para>
+              <para>Redhat Enterprise Linux 5, 6 and 7</para>
             </listitem>
 
             <listitem>
-              <para>Fedora Core 6 to 19</para>
+              <para>Fedora 25 and 26</para>
             </listitem>
 
             <listitem>
@@ -496,12 +508,9 @@
             </listitem>
 
             <listitem>
-              <para>openSUSE 11.0, 11.1, 11.2, 11.3, 11.4, 12.1, 12.2</para>
+              <para>openSUSE 13.2</para>
             </listitem>
 
-            <listitem>
-              <para>Mandriva 2010 and 2011</para>
-            </listitem>
           </itemizedlist></para>
 
         <para>It should be possible to use VirtualBox on most systems based on
@@ -519,11 +528,11 @@
         supported with the restrictions listed in <xref
         linkend="KnownIssues" />:<itemizedlist>
             <listitem>
-              <para>Solaris 11 including Solaris 11 Express</para>
+              <para>Solaris 11</para>
             </listitem>
 
             <listitem>
-              <para>Solaris 10 (u8 and higher)</para>
+              <para>Solaris 10 (U10 and higher)</para>
             </listitem>
           </itemizedlist></para>
       </listitem>
@@ -533,6 +542,13 @@
     operating systems. Also, any feature which is marked as  <emphasis
     role="bold">experimental</emphasis> is not supported. Feedback and
     suggestions about such features are welcome.</para>
+  </sect1>
+
+  <sect1 id="hostcpurequirements">
+    <title>Host CPU Requirements</title>
+
+    <para>SSE2 is required starting with VirtualBox version 5.2.10 and version 5.1.24.</para>
+
   </sect1>
 
   <sect1 id="intro-installing">
@@ -565,6 +581,11 @@
               </listitem>
 
               <listitem>
+                <para>The virtual USB 3.0 (xHCI) device; see <xref
+                linkend="settings-usb" />.</para>
+              </listitem>
+
+              <listitem>
                 <para>VirtualBox Remote Desktop Protocol (VRDP) support; see
                 <xref linkend="vrde" />.</para>
               </listitem>
@@ -581,6 +602,11 @@
               <listitem>
                 <para>Experimental support for PCI passthrough on Linux hosts;
                   see <xref linkend="pcipassthrough" />.</para>
+              </listitem>
+
+              <listitem>
+                <para>Disk image encryption with AES algorithm;
+                  see <xref linkend="diskencryption" />.</para>
               </listitem>
             </orderedlist></para>
 
@@ -813,7 +839,8 @@
           large enough to hold the contents of your operating system and the
           applications you want to install -- for a modern Windows or Linux
           guest, you will probably need several gigabytes for any serious
-          use:</para>
+          use. The limit of the image file size can be changed later (see <xref
+          linkend="vboxmanage-modifyvdi"/> for details).</para>
 
           <mediaobject>
             <imageobject>
@@ -1065,9 +1092,9 @@
 
           <itemizedlist>
             <listitem>
-              <para>Use the items in the "Machine" menu of the virtual machine
-              window. There you will find "Insert Ctrl+Alt+Delete" and
-              "Ctrl+Alt+Backspace"; the latter will only have an effect with
+              <para>Use the items in the "Input" &rarr; "Keyboard" menu of the
+              virtual machine window. There you will find "Insert Ctrl+Alt+Delete"
+              and "Ctrl+Alt+Backspace"; the latter will only have an effect with
               Linux or Solaris guests, however.</para>
             </listitem>
 
@@ -1104,7 +1131,7 @@
           VirtualBox allows you to configure whether these combinations will
           affect the host or the guest, if a virtual machine currently has the
           focus. This is a global setting for all virtual machines and can be
-          found under "File" -&gt; "Preferences" -&gt; "Input" -&gt;
+          found under "File" &rarr; "Preferences" &rarr; "Input" &rarr;
           "Auto-capture keyboard".</para>
         </listitem>
       </itemizedlist>
@@ -1248,15 +1275,15 @@
   <sect1 id="gui-vmgroups">
     <title>Using VM groups</title>
 
-    <para>VM groups enable the user to create ad hoc groups of VMs, and to 
-    manage and perform functions on them collectively, as well as individually. 
+    <para>VM groups enable the user to create ad hoc groups of VMs, and to
+    manage and perform functions on them collectively, as well as individually.
     There are a number of features relating to groups:</para>
- 
+
     <orderedlist>
         <listitem>
           <para>
             Create a group using GUI option 1) Drag one VM on top of another
-            VM. 
+            VM.
           </para>
           <para>
             Create a group using GUI option 2) Select multiple VMs and select
@@ -1273,24 +1300,30 @@
         </listitem>
         <listitem>
           <para>
-            Command line option 1) Create group and assign VM:
+            Command line option 1) Create a group and assign a VM:
             <screen>VBoxManage modifyvm "Fred" --groups "/TestGroup"</screen>
+            creates a group "TestGroup" and attaches the VM "Fred" to that group.
           </para>
           <para>
-            Command line option 2) Detach VM from group, and delete group if
-            empty: <screen>VBoxManage modifyvm "Fred" --groups ""</screen>
+            Command line option 2) Detach a VM from the group, and delete the group
+            if empty: <screen>VBoxManage modifyvm "Fred" --groups ""</screen>
+            It detaches all groups from the VM "Fred" and deletes the empty group.
           </para>
         </listitem>
         <listitem>
           <para>
             Multiple groups e.g.:
             <screen>VBoxManage modifyvm "Fred" --groups "/TestGroup,/TestGroup2"</screen>
+            It creates the groups "TestGroup" and "TestGroup2" (if they don't exist yet)
+            and attaches the VM "Fred" to both of them.
           </para>
         </listitem>
         <listitem>
           <para>
             Nested groups -- hierarchy of groups e.g.:
             <screen>VBoxManage modifyvm "Fred" --groups "/TestGroup/TestGroup2"</screen>
+            It attaches the VM "Fred" to the subgroup "TestGroup2" of the "TestGroup"
+            group.
           </para>
         </listitem>
         <listitem>
@@ -1557,9 +1590,9 @@
 
     <para>To experiment with a VM configuration, test different guest OS levels
     or to simply backup a VM, VirtualBox can create a full or a linked copy of
-    an existing VM.<footnote>Cloning support was introduced with VirtualBox
-    4.1.</footnote></para>
-    
+    an existing VM.<footnote><para>Cloning support was introduced with VirtualBox
+    4.1.</para></footnote></para>
+
     <para>A wizard will guide you through the clone process:</para>
 
     <mediaobject>
@@ -1568,7 +1601,7 @@
                    width="10cm" />
       </imageobject>
     </mediaobject>
-    
+
     <para>This wizard can be invoked from the context menu of the Manager's VM
     list (select "Clone") or the "Snapshots" view of the selected VM. First
     choose a new name for the clone. When you select <emphasis
@@ -1597,7 +1630,7 @@
          </para>
       </listitem>
     </itemizedlist>
-        
+
     <para>After selecting the clone mode, you need to decide about what exactly
     should be cloned. You can always create a clone of the <emphasis
         role="italic">current state</emphasis> only or <emphasis
@@ -1606,7 +1639,7 @@
     snapshots are cloned. Have you started from a snapshot which has additional
     children, you can also clone the <emphasis role="italic">current state and
         all children</emphasis>. This creates a clone starting with this
-    snapshot and includes all child snaphots.</para>
+    snapshot and includes all child snapshots.</para>
 
     <para>The clone operation itself can be a lengthy operation depending on
     the size and count of the attached disk images. Also keep in mind that
@@ -1670,7 +1703,7 @@
         <para>Starting with version 4.0, VirtualBox creates file type
         associations for OVF and OVA files on your host operating
         system.</para>
-      </footnote> Alternatively, select "File" -&gt; "Import appliance" from
+      </footnote> Alternatively, select "File" &rarr; "Import appliance" from
     the Manager window. In the file dialog that comes up, navigate to the file
     with either the <computeroutput>.ovf</computeroutput> or the
     <computeroutput>.ova</computeroutput> file extension.</para>
@@ -1700,7 +1733,7 @@
     linkend="vboxmanage-import" />.</para>
 
     <para>Conversely, to <emphasis role="bold">export</emphasis> virtual
-    machines that you already have in VirtualBox, select "File" -&gt; "Export
+    machines that you already have in VirtualBox, select "File" &rarr; "Export
     appliance". A different dialog window shows up that allows you to combine
     several virtual machines into an OVF appliance. Then, select the target
     location where the target files should be stored, and the conversion
@@ -1810,8 +1843,9 @@
         <listitem>
           <para>Finally, <computeroutput>VBoxHeadless</computeroutput> is yet
           another front-end that produces no visible output on the host at
-          all, but merely acts as a RDP server if the VirtualBox Remote
-          Desktop Extension (VRDE) is installed. As opposed to the other
+          all, but can act as a RDP server if the VirtualBox Remote
+          Desktop Extension (VRDE) is installed and enabled for the VM.
+          As opposed to the other
           graphical interfaces, the headless front-end requires no graphics
           support. This is useful, for example, if you want to host your
           virtual machines on a headless Linux server that has no X Window

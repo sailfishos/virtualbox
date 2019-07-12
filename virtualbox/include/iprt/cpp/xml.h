@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -315,7 +315,7 @@ private:
     Data *m;
 
     /* auto_ptr data doesn't have proper copy semantics */
-    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP (File)
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(File);
 };
 
 /**
@@ -342,7 +342,7 @@ private:
     Data *m;
 
     /* auto_ptr data doesn't have proper copy semantics */
-    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(MemoryBuf)
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(MemoryBuf);
 };
 
 
@@ -600,11 +600,11 @@ public:
      * @param   pcszPath            The attribute name.  Slashes can be used to make a
      *                              simple path to any decendant.
      * @param   pcszAttribute       The attribute name.
-     * @param   pcszPathNamespace   The namespace to match @pcszPath with, NULL
+     * @param   pcszPathNamespace   The namespace to match @a pcszPath with, NULL
      *                              (default) match any namespace.  When using a
      *                              path, this matches all elements along the way.
-     * @param   pcszAttribNamespace The namespace prefix to apply to the attribute,
-     *                              NULL (default) match any namespace.
+     * @param   pcszAttributeNamespace  The namespace prefix to apply to the
+     *                              attribute, NULL (default) match any namespace.
      * @see     findChildElementP and findAttributeValue
      */
     const char *findChildElementAttributeValueP(const char *pcszPath, const char *pcszAttribute,
@@ -830,6 +830,12 @@ public:
         return addContent(strContent.c_str());
     }
 
+    ContentNode *setContent(const char *pcszContent);
+    ContentNode *setContent(const RTCString &strContent)
+    {
+        return setContent(strContent.c_str());
+    }
+
     AttributeNode *setAttribute(const char *pcszName, const char *pcszValue);
     AttributeNode *setAttribute(const char *pcszName, const RTCString &strValue)
     {
@@ -948,6 +954,7 @@ private:
     friend class XmlMemParser;
     friend class XmlFileParser;
     friend class XmlMemWriter;
+    friend class XmlStringWriter;
     friend class XmlFileWriter;
 
     void refreshInternals();
@@ -1007,11 +1014,9 @@ private:
     static int CloseCallback (void *aCtxt);
 };
 
-/*
- * XmlMemParser
- *
+/**
+ * XmlMemWriter
  */
-
 class RT_DECL_CLASS XmlMemWriter
 {
 public:
@@ -1024,11 +1029,32 @@ private:
     void* m_pBuf;
 };
 
-/*
- * XmlFileWriter
- *
- */
 
+/**
+ * XmlStringWriter - writes the XML to an RTCString instance.
+ */
+class RT_DECL_CLASS XmlStringWriter
+{
+public:
+    XmlStringWriter();
+
+    int write(const Document &rDoc, RTCString *pStrDst);
+
+private:
+    static int WriteCallbackForSize(void *pvUser, const char *pachBuf, int cbToWrite);
+    static int WriteCallbackForReal(void *pvUser, const char *pachBuf, int cbToWrite);
+    static int CloseCallback(void *pvUser);
+
+    /** Pointer to the destination string while we're in the write() call.   */
+    RTCString  *m_pStrDst;
+    /** Set by WriteCallback if we cannot grow the destination string. */
+    bool        m_fOutOfMemory;
+};
+
+
+/**
+ * XmlFileWriter
+ */
 class RT_DECL_CLASS XmlFileWriter
 {
 public:

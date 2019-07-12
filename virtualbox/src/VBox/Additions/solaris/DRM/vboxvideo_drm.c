@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,12 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#ifdef DEBUG_ramshankar
-# define LOG_INSTANCE       RTLogRelDefaultInstance()
-#endif
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #undef offsetof     /* This gets redefined in drmP.h */
 #include "include/drmP.h"
 #include "include/drm.h"
@@ -41,9 +38,9 @@
 #include <VBox/version.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define VBOXSOLQUOTE2(x)                #x
 #define VBOXSOLQUOTE(x)                 VBOXSOLQUOTE2(x)
 /** The module name. */
@@ -63,9 +60,9 @@
                                         { 0, 0, 0, NULL }
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int VBoxVideoSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd);
 static int VBoxVideoSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd);
 static int VBoxVideoSolarisGetInfo(dev_info_t *pDip, ddi_info_cmd_t enmCmd, void *pvArg, void **ppvResult);
@@ -73,9 +70,9 @@ static int VBoxVideoSolarisGetInfo(dev_info_t *pDip, ddi_info_cmd_t enmCmd, void
 static void vboxVideoSolarisConfigure(drm_driver_t *pDriver);
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 extern struct cb_ops drm_cb_ops;
 
 /**
@@ -126,9 +123,9 @@ static drm_pci_id_list_t vboxvideo_pciidlist[] = {
 static drm_driver_t	g_VBoxVideoSolarisDRMDriver = { 0 };
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Device handle (we support only one instance). */
 static dev_info_t *g_pDip;
 
@@ -158,7 +155,8 @@ int _fini(void)
     LogFlow((DEVICE_NAME ":_fini flow\n"));
     cmn_err(CE_NOTE, DEVICE_NAME ":_fini\n");
     int rc = mod_remove(&g_VBoxVideoSolarisModLinkage);
-    ddi_soft_state_fini(&g_pVBoxVideoSolarisState);
+    if (!rc)
+        ddi_soft_state_fini(&g_pVBoxVideoSolarisState);
     return rc;
 }
 
@@ -184,7 +182,6 @@ static int VBoxVideoSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd)
     LogFlow((DEVICE_NAME ":VBoxVideoSolarisAttach pDip=%p enmCmd=%d\n", pDip, enmCmd));
     cmn_err(CE_NOTE, DEVICE_NAME ":attach\n");
 
-    int rc = -1;
     switch (enmCmd)
     {
         case DDI_ATTACH:

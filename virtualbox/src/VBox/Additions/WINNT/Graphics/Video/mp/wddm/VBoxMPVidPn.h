@@ -1,11 +1,10 @@
 /* $Id: VBoxMPVidPn.h $ */
-
 /** @file
  * VBox WDDM Miniport driver
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -47,6 +46,8 @@ void VBoxVidPnStCleanup(PVBOXWDDM_SOURCE paSources, PVBOXWDDM_TARGET paTargets, 
 void VBoxVidPnStTIterInit(PVBOXWDDM_SOURCE pSource, PVBOXWDDM_TARGET paTargets, uint32_t cTargets, VBOXWDDM_TARGET_ITER *pIter);
 PVBOXWDDM_TARGET VBoxVidPnStTIterNext(VBOXWDDM_TARGET_ITER *pIter);
 
+void VBoxDumpSourceTargetArrays(VBOXWDDM_SOURCE *paSources, VBOXWDDM_TARGET *paTargets, uint32_t cScreens);
+
 /* !!!NOTE: The callback is responsible for releasing the path */
 typedef DECLCALLBACK(BOOLEAN) FNVBOXVIDPNENUMPATHS(D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology, const DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface,
         const D3DKMDT_VIDPN_PRESENT_PATH *pNewVidPnPresentPathInfo, PVOID pContext);
@@ -73,7 +74,7 @@ typedef FNVBOXVIDPNENUMTARGETSFORSOURCE *PFNVBOXVIDPNENUMTARGETSFORSOURCE;
 
 NTSTATUS VBoxVidPnCommitSourceModeForSrcId(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hDesiredVidPn, const DXGK_VIDPN_INTERFACE* pVidPnInterface,
         PVBOXWDDM_ALLOCATION pAllocation,
-        D3DDDI_VIDEO_PRESENT_SOURCE_ID  VidPnSourceId, VBOXWDDM_SOURCE *paSources, VBOXWDDM_TARGET *paTargets);
+        D3DDDI_VIDEO_PRESENT_SOURCE_ID  VidPnSourceId, VBOXWDDM_SOURCE *paSources, VBOXWDDM_TARGET *paTargets, BOOLEAN bPathPowerTransition);
 
 NTSTATUS VBoxVidPnCommitAll(PVBOXMP_DEVEXT pDevExt, const D3DKMDT_HVIDPN hDesiredVidPn, const DXGK_VIDPN_INTERFACE* pVidPnInterface,
         PVBOXWDDM_ALLOCATION pAllocation,
@@ -102,7 +103,7 @@ void VBoxVidPnDumpSourceMode(const char *pPrefix, const D3DKMDT_VIDPN_SOURCE_MOD
 void VBoxVidPnDumpCofuncModalityInfo(const char *pPrefix, D3DKMDT_ENUMCOFUNCMODALITY_PIVOT_TYPE enmEnumPivotType, const DXGK_ENUM_PIVOT *pPivot, const char *pSuffix);
 
 void vboxVidPnDumpVidPn(const char * pPrefix, PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPN hVidPn, const DXGK_VIDPN_INTERFACE* pVidPnInterface, const char * pSuffix);
-void vboxVidPnDumpCofuncModalityArg(const char *pPrefix, CONST DXGKARG_ENUMVIDPNCOFUNCMODALITY* CONST  pEnumCofuncModalityArg, const char *pSuffix);
+void vboxVidPnDumpCofuncModalityArg(const char *pPrefix, D3DKMDT_ENUMCOFUNCMODALITY_PIVOT_TYPE enmPivot, const DXGK_ENUM_PIVOT *pPivot, const char *pSuffix);
 DECLCALLBACK(BOOLEAN) vboxVidPnDumpSourceModeSetEnum(D3DKMDT_HVIDPNSOURCEMODESET hNewVidPnSourceModeSet, const DXGK_VIDPNSOURCEMODESET_INTERFACE *pVidPnSourceModeSetInterface,
         const D3DKMDT_VIDPN_SOURCE_MODE *pNewVidPnSourceModeInfo, PVOID pContext);
 DECLCALLBACK(BOOLEAN) vboxVidPnDumpTargetModeSetEnum(D3DKMDT_HVIDPNTARGETMODESET hNewVidPnTargetModeSet, const DXGK_VIDPNTARGETMODESET_INTERFACE *pVidPnTargetModeSetInterface,

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -60,6 +60,12 @@ RTASN1TMPL_MEMBER_DYN(          uValues,    pSigningTime,   RTASN1SETOFTIMES,   
     enmType, RTCRPKCS7ATTRIBUTETYPE_SIGNING_TIME,   RTAsn1ObjId_CompareWithString(&pThis->Type, RTCR_PKCS9_ID_SIGNING_TIME_OID) == 0);
 RTASN1TMPL_MEMBER_DYN(          uValues,    pContentInfos,  RTCRPKCS7SETOFCONTENTINFOS, RTCrPkcs7SetOfContentInfos, Allocation,
     enmType, RTCRPKCS7ATTRIBUTETYPE_MS_TIMESTAMP,   RTAsn1ObjId_CompareWithString(&pThis->Type, RTCR_PKCS9_ID_MS_TIMESTAMP) == 0);
+RTASN1TMPL_MEMBER_DYN(          uValues,    pContentInfos,  RTCRPKCS7SETOFCONTENTINFOS, RTCrPkcs7SetOfContentInfos, Allocation,
+    enmType, RTCRPKCS7ATTRIBUTETYPE_MS_NESTED_SIGNATURE, RTAsn1ObjId_CompareWithString(&pThis->Type, RTCR_PKCS9_ID_MS_NESTED_SIGNATURE) == 0);
+RTASN1TMPL_MEMBER_DYN(          uValues,    pObjIdSeqs,     RTASN1SETOFOBJIDSEQS,       RTAsn1SetOfObjIdSeqs,       Allocation,
+    enmType, RTCRPKCS7ATTRIBUTETYPE_MS_STATEMENT_TYPE, RTAsn1ObjId_CompareWithString(&pThis->Type, RTCR_PKCS9_ID_MS_STATEMENT_TYPE) == 0);
+RTASN1TMPL_MEMBER_DYN(          uValues,    pOctetStrings,  RTASN1SETOFOCTETSTRINGS,    RTAsn1SetOfOctetStrings,    Allocation,
+    enmType, RTCRPKCS7ATTRIBUTETYPE_APPLE_MULTI_CD_PLIST,  RTAsn1ObjId_CompareWithString(&pThis->Type, RTCR_PKCS9_ID_APPLE_MULTI_CD_PLIST) == 0);
 RTASN1TMPL_MEMBER_DYN_DEFAULT(  uValues,    pCores,         RTASN1SETOFCORES,           RTAsn1SetOfCores,           Allocation,
     enmType, RTCRPKCS7ATTRIBUTETYPE_UNKNOWN);
 RTASN1TMPL_MEMBER_DYN_END(RTCRPKCS7ATTRIBUTETYPE, enmType, Allocation);

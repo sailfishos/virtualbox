@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,9 +30,10 @@
 #define HAVE_FWRITE_UNLOCKED
 #endif
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/stream.h>
 #include "internal/iprt.h"
 
@@ -57,7 +58,11 @@
 # include <fcntl.h>
 #endif
 #ifdef RT_OS_WINDOWS
-# include <Windows.h>
+# include <iprt/win/windows.h>
+#else
+# include <termios.h>
+# include <unistd.h>
+# include <sys/ioctl.h>
 #endif
 
 #ifdef RT_OS_OS2
@@ -66,9 +71,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * File stream.
  */
@@ -84,7 +89,7 @@ typedef struct RTSTREAM
     bool                fCurrentCodeSet;
     /** Whether the stream was opened in binary mode. */
     bool                fBinary;
-    /** Whether to recheck the stream mode before writing.. */
+    /** Whether to recheck the stream mode before writing. */
     bool                fRecheckMode;
 #ifndef HAVE_FWRITE_UNLOCKED
     /** Critical section for serializing access to the stream. */
@@ -93,9 +98,9 @@ typedef struct RTSTREAM
 } RTSTREAM;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The standard input stream. */
 static RTSTREAM    g_StdIn =
 {
@@ -152,7 +157,7 @@ RTDATADECL(PRTSTREAM)   g_pStdOut = &g_StdOut;
 /**
  * Allocates and acquires the lock for the stream.
  *
- * @returns IPRT status.
+ * @returns IPRT status code.
  * @param   pStream     The stream (valid).
  */
 static int rtStrmAllocLock(PRTSTREAM pStream)
@@ -462,6 +467,157 @@ RTR3DECL(int) RTStrmSetMode(PRTSTREAM pStream, int fBinary, int fCurrentCodeSet)
 
     return VINF_SUCCESS;
 }
+
+
+RTR3DECL(int) RTStrmInputGetEchoChars(PRTSTREAM pStream, bool *pfEchoChars)
+{
+    int rc = VINF_SUCCESS;
+
+    AssertPtrReturn(pStream, VERR_INVALID_HANDLE);
+    AssertReturn(pStream->u32Magic == RTSTREAM_MAGIC, VERR_INVALID_HANDLE);
+    AssertPtrReturn(pfEchoChars, VERR_INVALID_POINTER);
+
+    int fh = fileno(pStream->pFile);
+    if (isatty(fh))
+    {
+#ifdef RT_OS_WINDOWS
+        DWORD dwMode;
+        HANDLE hCon = (HANDLE)_get_osfhandle(fh);
+        if (GetConsoleMode(hCon, &dwMode))
+            *pfEchoChars = RT_BOOL(dwMode & ENABLE_ECHO_INPUT);
+        else
+            rc = RTErrConvertFromWin32(GetLastError());
+#else
+        struct termios Termios;
+
+        int rcPosix = tcgetattr(fh, &Termios);
+        if (!rcPosix)
+            *pfEchoChars = RT_BOOL(Termios.c_lflag & ECHO);
+        else
+            rc = RTErrConvertFromErrno(errno);
+#endif
+    }
+    else
+        rc = VERR_INVALID_HANDLE;
+
+    return rc;
+}
+
+
+RTR3DECL(int) RTStrmInputSetEchoChars(PRTSTREAM pStream, bool fEchoChars)
+{
+    int rc = VINF_SUCCESS;
+
+    AssertPtrReturn(pStream, VERR_INVALID_HANDLE);
+    AssertReturn(pStream->u32Magic == RTSTREAM_MAGIC, VERR_INVALID_HANDLE);
+
+    int fh = fileno(pStream->pFile);
+    if (isatty(fh))
+    {
+#ifdef RT_OS_WINDOWS
+        DWORD dwMode;
+        HANDLE hCon = (HANDLE)_get_osfhandle(fh);
+        if (GetConsoleMode(hCon, &dwMode))
+        {
+            if (fEchoChars)
+                dwMode |= ENABLE_ECHO_INPUT;
+            else
+                dwMode &= ~ENABLE_ECHO_INPUT;
+            if (!SetConsoleMode(hCon, dwMode))
+                rc = RTErrConvertFromWin32(GetLastError());
+        }
+        else
+            rc = RTErrConvertFromWin32(GetLastError());
+#else
+        struct termios Termios;
+
+        int rcPosix = tcgetattr(fh, &Termios);
+        if (!rcPosix)
+        {
+            if (fEchoChars)
+                Termios.c_lflag |= ECHO;
+            else
+                Termios.c_lflag &= ~ECHO;
+
+            rcPosix = tcsetattr(fh, TCSAFLUSH, &Termios);
+            if (rcPosix != 0)
+                rc = RTErrConvertFromErrno(errno);
+        }
+        else
+            rc = RTErrConvertFromErrno(errno);
+#endif
+    }
+    else
+        rc = VERR_INVALID_HANDLE;
+
+    return rc;
+}
+
+
+RTR3DECL(bool) RTStrmIsTerminal(PRTSTREAM pStream)
+{
+    AssertPtrReturn(pStream, false);
+    AssertReturn(pStream->u32Magic == RTSTREAM_MAGIC, false);
+
+    if (pStream->pFile)
+    {
+        int fh = fileno(pStream->pFile);
+        if (isatty(fh))
+        {
+#ifdef RT_OS_WINDOWS
+            DWORD  dwMode;
+            HANDLE hCon = (HANDLE)_get_osfhandle(fh);
+            if (GetConsoleMode(hCon, &dwMode))
+                return true;
+#else
+            return true;
+#endif
+        }
+    }
+    return false;
+}
+
+
+RTR3DECL(int) RTStrmQueryTerminalWidth(PRTSTREAM pStream, uint32_t *pcchWidth)
+{
+    AssertPtrReturn(pcchWidth, VERR_INVALID_HANDLE);
+    *pcchWidth = 80;
+
+    AssertPtrReturn(pStream, VERR_INVALID_HANDLE);
+    AssertReturn(pStream->u32Magic == RTSTREAM_MAGIC, VERR_INVALID_HANDLE);
+
+    if (pStream->pFile)
+    {
+        int fh = fileno(pStream->pFile);
+        if (isatty(fh))
+        {
+#ifdef RT_OS_WINDOWS
+            CONSOLE_SCREEN_BUFFER_INFO Info;
+            HANDLE hCon = (HANDLE)_get_osfhandle(fh);
+            RT_ZERO(Info);
+            if (GetConsoleScreenBufferInfo(hCon, &Info))
+            {
+                *pcchWidth = Info.dwSize.X ? Info.dwSize.X : 80;
+                return VINF_SUCCESS;
+            }
+            return RTErrConvertFromWin32(GetLastError());
+
+#elif defined(TIOCGWINSZ) || !defined(RT_OS_OS2) /* only OS/2 should currently miss this */
+            struct winsize Info;
+            RT_ZERO(Info);
+            int rc = ioctl(fh, TIOCGWINSZ, &Info);
+            if (rc >= 0)
+            {
+                *pcchWidth = Info.ws_col ? Info.ws_col : 80;
+                return VINF_SUCCESS;
+            }
+            return RTErrConvertFromErrno(errno);
+#endif
+        }
+    }
+    return VERR_INVALID_FUNCTION;
+}
+
 
 
 /**

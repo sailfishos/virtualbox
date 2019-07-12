@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_TUN
 #include <VBox/log.h>
 #include <VBox/vmm/pdmdrv.h>
@@ -66,9 +67,9 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * TAP driver instance data.
  *
@@ -132,12 +133,12 @@ typedef struct DRVTAP
 
 
 /** Converts a pointer to TAP::INetworkUp to a PRDVTAP. */
-#define PDMINETWORKUP_2_DRVTAP(pInterface) ( (PDRVTAP)((uintptr_t)pInterface - RT_OFFSETOF(DRVTAP, INetworkUp)) )
+#define PDMINETWORKUP_2_DRVTAP(pInterface) ( (PDRVTAP)((uintptr_t)pInterface - RT_UOFFSETOF(DRVTAP, INetworkUp)) )
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef RT_OS_SOLARIS
 static int              SolarisTAPAttach(PDRVTAP pThis);
 #endif
@@ -149,6 +150,7 @@ static int              SolarisTAPAttach(PDRVTAP pThis);
  */
 static DECLCALLBACK(int) drvTAPNetworkUp_BeginXmit(PPDMINETWORKUP pInterface, bool fOnWorkerThread)
 {
+    RT_NOREF(fOnWorkerThread);
     PDRVTAP pThis = PDMINETWORKUP_2_DRVTAP(pInterface);
     int rc = RTCritSectTryEnter(&pThis->XmitLock);
     if (RT_FAILURE(rc))
@@ -166,8 +168,11 @@ static DECLCALLBACK(int) drvTAPNetworkUp_BeginXmit(PPDMINETWORKUP pInterface, bo
 static DECLCALLBACK(int) drvTAPNetworkUp_AllocBuf(PPDMINETWORKUP pInterface, size_t cbMin,
                                                   PCPDMNETWORKGSO pGso, PPPDMSCATTERGATHER ppSgBuf)
 {
+    RT_NOREF(pInterface);
+#ifdef VBOX_STRICT
     PDRVTAP pThis = PDMINETWORKUP_2_DRVTAP(pInterface);
     Assert(RTCritSectIsOwner(&pThis->XmitLock));
+#endif
 
     /*
      * Allocate a scatter / gather buffer descriptor that is immediately
@@ -211,8 +216,12 @@ static DECLCALLBACK(int) drvTAPNetworkUp_AllocBuf(PPDMINETWORKUP pInterface, siz
  */
 static DECLCALLBACK(int) drvTAPNetworkUp_FreeBuf(PPDMINETWORKUP pInterface, PPDMSCATTERGATHER pSgBuf)
 {
+    RT_NOREF(pInterface);
+#ifdef VBOX_STRICT
     PDRVTAP pThis = PDMINETWORKUP_2_DRVTAP(pInterface);
     Assert(RTCritSectIsOwner(&pThis->XmitLock));
+#endif
+
     if (pSgBuf)
     {
         Assert((pSgBuf->fFlags & PDMSCATTERGATHER_FLAGS_MAGIC_MASK) == PDMSCATTERGATHER_FLAGS_MAGIC);
@@ -228,6 +237,7 @@ static DECLCALLBACK(int) drvTAPNetworkUp_FreeBuf(PPDMINETWORKUP pInterface, PPDM
  */
 static DECLCALLBACK(int) drvTAPNetworkUp_SendBuf(PPDMINETWORKUP pInterface, PPDMSCATTERGATHER pSgBuf, bool fOnWorkerThread)
 {
+    RT_NOREF(fOnWorkerThread);
     PDRVTAP pThis = PDMINETWORKUP_2_DRVTAP(pInterface);
     STAM_COUNTER_INC(&pThis->StatPktSent);
     STAM_COUNTER_ADD(&pThis->StatPktSentBytes, pSgBuf->cbUsed);
@@ -299,6 +309,7 @@ static DECLCALLBACK(void) drvTAPNetworkUp_EndXmit(PPDMINETWORKUP pInterface)
  */
 static DECLCALLBACK(void) drvTAPNetworkUp_SetPromiscuousMode(PPDMINETWORKUP pInterface, bool fPromiscuous)
 {
+    RT_NOREF(pInterface, fPromiscuous);
     LogFlow(("drvTAPNetworkUp_SetPromiscuousMode: fPromiscuous=%d\n", fPromiscuous));
     /* nothing to do */
 }
@@ -313,6 +324,7 @@ static DECLCALLBACK(void) drvTAPNetworkUp_SetPromiscuousMode(PPDMINETWORKUP pInt
  */
 static DECLCALLBACK(void) drvTAPNetworkUp_NotifyLinkChanged(PPDMINETWORKUP pInterface, PDMNETWORKLINKSTATE enmLinkState)
 {
+    RT_NOREF(pInterface, enmLinkState);
     LogFlow(("drvTAPNetworkUp_NotifyLinkChanged: enmLinkState=%d\n", enmLinkState));
     /** @todo take action on link down and up. Stop the polling and such like. */
 }
@@ -465,6 +477,7 @@ static DECLCALLBACK(int) drvTAPAsyncIoThread(PPDMDRVINS pDrvIns, PPDMTHREAD pThr
  */
 static DECLCALLBACK(int) drvTapAsyncIoWakeup(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
 {
+    RT_NOREF(pThread);
     PDRVTAP pThis = PDMINS_2_DATA(pDrvIns, PDRVTAP);
 
     size_t cbIgnored;
@@ -650,7 +663,7 @@ static DECLCALLBACK(int) SolarisTAPAttach(PDRVTAP pThis)
     if (ioctl(InterfaceFD, SIOCGLIFFLAGS, &ifReq) == -1)
         LogRel(("TAP#%d: Failed to get interface flags after setting PPA. errno=%d\n", pThis->pDrvIns->iInstance, errno));
 
-#ifdef VBOX_SOLARIS_TAP_ARP
+# ifdef VBOX_SOLARIS_TAP_ARP
     /* Interface */
     if (ioctl(InterfaceFD, I_PUSH, "arp") == -1)
         LogRel(("TAP#%d: Failed to push ARP to Interface FD. errno=%d\n", pThis->pDrvIns->iInstance, errno));
@@ -676,7 +689,7 @@ static DECLCALLBACK(int) SolarisTAPAttach(PDRVTAP pThis)
     ioIF.ic_dp = (char *)&ifReq;
     if (ioctl(ARPFileDes, I_STR, &ioIF) == -1)
         LogRel(("TAP#%d: Failed to set interface name to ARP.\n", pThis->pDrvIns->iInstance));
-#endif
+# endif
 
     /* We must use I_LINK and not I_PLINK as I_PLINK makes the link persistent.
      * Then we would not be able unlink the interface if we reuse it.
@@ -686,36 +699,36 @@ static DECLCALLBACK(int) SolarisTAPAttach(PDRVTAP pThis)
     if (IPMuxID == -1)
     {
         close(InterfaceFD);
-#ifdef VBOX_SOLARIS_TAP_ARP
+# ifdef VBOX_SOLARIS_TAP_ARP
         close(ARPFileDes);
-#endif
+# endif
         LogRel(("TAP#%d: Cannot link TAP device to IP.\n", pThis->pDrvIns->iInstance));
         return PDMDrvHlpVMSetError(pThis->pDrvIns, VERR_HOSTIF_IOCTL, RT_SRC_POS,
                     N_("Failed to link TAP device to IP. Check TAP interface name. errno=%d"), errno);
     }
 
-#ifdef VBOX_SOLARIS_TAP_ARP
+# ifdef VBOX_SOLARIS_TAP_ARP
     int ARPMuxID = ioctl(IPFileDes, I_LINK, ARPFileDes);
     if (ARPMuxID == -1)
         LogRel(("TAP#%d: Failed to link TAP device to ARP\n", pThis->pDrvIns->iInstance));
 
     close(ARPFileDes);
-#endif
+# endif
     close(InterfaceFD);
 
     /* Reuse ifReq */
     memset(&ifReq, 0, sizeof(ifReq));
     RTStrCopy(ifReq.lifr_name, sizeof(ifReq.lifr_name), pThis->pszDeviceName);
     ifReq.lifr_ip_muxid  = IPMuxID;
-#ifdef VBOX_SOLARIS_TAP_ARP
+# ifdef VBOX_SOLARIS_TAP_ARP
     ifReq.lifr_arp_muxid = ARPMuxID;
-#endif
+# endif
 
     if (ioctl(IPFileDes, SIOCSLIFMUXID, &ifReq) == -1)
     {
-#ifdef VBOX_SOLARIS_TAP_ARP
+# ifdef VBOX_SOLARIS_TAP_ARP
         ioctl(IPFileDes, I_PUNLINK, ARPMuxID);
-#endif
+# endif
         ioctl(IPFileDes, I_PUNLINK, IPMuxID);
         close(IPFileDes);
         LogRel(("TAP#%d: Failed to set Mux ID.\n", pThis->pDrvIns->iInstance));
@@ -725,7 +738,7 @@ static DECLCALLBACK(int) SolarisTAPAttach(PDRVTAP pThis)
 
     int rc = RTFileFromNative(&pThis->hFileDevice, TapFileDes);
     AssertLogRelRC(rc);
-    if (RT_FAILURE(rc)))
+    if (RT_FAILURE(rc))
     {
         close(IPFileDes);
         close(TapFileDes);
@@ -841,8 +854,9 @@ static DECLCALLBACK(void) drvTAPDestruct(PPDMDRVINS pDrvIns)
  */
 static DECLCALLBACK(int) drvTAPConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uint32_t fFlags)
 {
-    PDRVTAP pThis = PDMINS_2_DATA(pDrvIns, PDRVTAP);
+    RT_NOREF(fFlags);
     PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
+    PDRVTAP pThis = PDMINS_2_DATA(pDrvIns, PDRVTAP);
 
     /*
      * Init the static parts.
@@ -977,7 +991,7 @@ static DECLCALLBACK(int) drvTAPConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uin
         return PDMDrvHlpVMSetError(pDrvIns, VERR_HOSTIF_IOCTL, RT_SRC_POS,
                                    N_("Configuration error: Failed to configure /dev/net/tun. errno=%d"), errno);
     /** @todo determine device name. This can be done by reading the link /proc/<pid>/fd/<fd> */
-    Log(("drvTAPContruct: %d (from fd)\n", pThis->hFileDevice));
+    Log(("drvTAPContruct: %d (from fd)\n", (intptr_t)pThis->hFileDevice));
     rc = VINF_SUCCESS;
 
     /*

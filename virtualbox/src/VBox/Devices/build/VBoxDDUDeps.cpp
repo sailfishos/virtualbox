@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2010 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/types.h>
 #include <VBox/vd.h>
 #ifdef VBOX_WITH_USB
@@ -36,14 +37,15 @@ PFNRT g_apfnVBoxDDUDeps[] =
 {
     (PFNRT)VDInit,
     (PFNRT)VDIfCreateVfsStream,
+    (PFNRT)VDIfCreateFromVfsStream,
+    (PFNRT)VDCreateVfsFileFromDisk,
 #ifdef VBOX_WITH_USB
     (PFNRT)USBFilterInit,
     (PFNRT)USBLibHashSerial,
 # ifdef RT_OS_OS2
     (PFNRT)UsbOpen,
 # endif
-# if (defined(RT_OS_DARWIN) && defined(VBOX_WITH_NEW_USB_CODE_ON_DARWIN)) \
-  || defined(RT_OS_SOLARIS) || defined(RT_OS_WINDOWS) /* PORTME */
+# if defined(RT_OS_DARWIN) || defined(RT_OS_SOLARIS) || defined(RT_OS_WINDOWS) /* PORTME */
     (PFNRT)USBLibInit,
 # endif
 #endif /* VBOX_WITH_USB */

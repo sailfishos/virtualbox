@@ -1,10 +1,10 @@
 /* $Id: VBoxIChatTheaterWrapper.m $ */
 /** @file
- * Qt GUI - iChat Theater cocoa wrapper.
+ * VBox Qt GUI - iChat Theater cocoa wrapper.
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -139,7 +139,7 @@
         [avManager setVideoDataSource:self];
         /* Possible values: IMVideoOptimizationDefault, IMVideoOptimizationStills, IMVideoOptimizationReplacement */
         [avManager setVideoOptimizationOptions:IMVideoOptimizationDefault];
-        /* ToDo: Audio support */
+        /** @todo Audio support */
         [avManager setNumberOfAudioChannels:0];
         /* Start the streaming of the video */
         [avManager start];

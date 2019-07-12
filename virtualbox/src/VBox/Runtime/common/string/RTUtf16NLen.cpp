@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2014 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/string.h>
 #include "internal/iprt.h"
 
@@ -35,7 +35,7 @@
 RTDECL(size_t) RTUtf16NLen(PCRTUTF16 pwszString, size_t cwcMax)
 {
     PCRTUTF16 pwszStart = pwszString;
-    while (cwcMax-- > 0 && pwszString != '\0')
+    while (cwcMax-- > 0 && *pwszString != '\0')
         pwszString++;
     return pwszString - pwszStart;
 }

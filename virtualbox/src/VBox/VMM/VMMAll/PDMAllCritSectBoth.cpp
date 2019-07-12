@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM//_CRITSECT
 #include "PDMInternal.h"
 #include <VBox/vmm/pdmcritsect.h>
@@ -35,7 +35,7 @@
 /**
  * Process the critical sections (both types) queued for ring-3 'leave'.
  *
- * @param   pVCpu         Pointer to the VMCPU.
+ * @param   pVCpu         The cross context virtual CPU structure.
  */
 VMM_INT_DECL(void) PDMCritSectBothFF(PVMCPU pVCpu)
 {

@@ -8,7 +8,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,14 +31,12 @@
 #ifndef ___EFI_VBoxEFI_h
 #define ___EFI_VBoxEFI_h
 
-#include <iprt/assert.h>
-
 /** @defgroup grp_devefi    DevEFI <-> Firmware Interfaces
  * @{
  */
 
 /** The base of the I/O ports used for interaction between the EFI firmware and DevEFI. */
-#define EFI_PORT_BASE           0xEF10
+#define EFI_PORT_BASE           0xEF10  /**< @todo r=klaus stupid choice which causes trouble with PCI resource allocation in complex bridge setups, change to 0x0400 with appropriate saved state and reset handling */
 /** The number of ports. */
 #define EFI_PORT_COUNT          0x0008
 
@@ -65,9 +63,11 @@ typedef enum
     EFI_INFO_INDEX_FSB_FREQUENCY,
     EFI_INFO_INDEX_CPU_FREQUENCY,
     EFI_INFO_INDEX_TSC_FREQUENCY,
-    EFI_INFO_INDEX_GOP_MODE,
-    EFI_INFO_INDEX_UGA_HORISONTAL_RESOLUTION,
-    EFI_INFO_INDEX_UGA_VERTICAL_RESOLUTION,
+    EFI_INFO_INDEX_GRAPHICS_MODE,
+    EFI_INFO_INDEX_HORIZONTAL_RESOLUTION,
+    EFI_INFO_INDEX_VERTICAL_RESOLUTION,
+    EFI_INFO_INDEX_MCFG_BASE,
+    EFI_INFO_INDEX_MCFG_SIZE,
     EFI_INFO_INDEX_END
 } EfiInfoIndex;
 
@@ -127,7 +127,7 @@ typedef enum
 #define EFI_VARIABLE_OP_STATUS_OK         0xcafe0000
 #define EFI_VARIABLE_OP_STATUS_ERROR      0xcafe0001
 #define EFI_VARIABLE_OP_STATUS_NOT_FOUND  0xcafe0002
-#define EFI_VARIABLE_OP_STATUS_NOT_WP     0xcafe0003
+#define EFI_VARIABLE_OP_STATUS_WP         0xcafe0003
 #define EFI_VARIABLE_OP_STATUS_BSY        0xcafe0010
 
 /** The max number of variables allowed. */
@@ -140,7 +140,7 @@ typedef enum
 typedef enum
 {
     EFI_VM_VARIABLE_OP_START = 0,
-    EFI_VM_VARIABLE_OP_END, /**< @todo r=bird: What's the point of this one? */
+    EFI_VM_VARIABLE_OP_RESERVED_USED_TO_BE_END,
     EFI_VM_VARIABLE_OP_RESERVED_USED_TO_BE_INDEX,
     EFI_VM_VARIABLE_OP_GUID,
     EFI_VM_VARIABLE_OP_ATTRIBUTE,

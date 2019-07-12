@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,13 +16,13 @@
  */
 
 /*
- * Limitations: MAP_SHARED mmap does not notice changes made on the host.
+ * Limitations: only COW memory mapping is supported
  */
 
 #include "vfsmod.h"
 
-static void *
-alloc_bounce_buffer(size_t *tmp_sizep, size_t xfer_size, const char *caller)
+static void *alloc_bounce_buffer(size_t *tmp_sizep, PRTCCPHYS physp, size_t
+                                 xfer_size, const char *caller)
 {
     size_t tmp_size;
     void *tmp;
@@ -45,6 +45,7 @@ alloc_bounce_buffer(size_t *tmp_sizep, size_t xfer_size, const char *caller)
     }
 
     *tmp_sizep = tmp_size;
+    *physp = virt_to_phys(tmp);
     return tmp;
 }
 
@@ -55,61 +56,37 @@ static void free_bounce_buffer(void *tmp)
 
 
 /* fops */
-
-/* Input buf must be physically contiguous memory */
 static int sf_reg_read_aux(const char *caller, struct sf_glob_info *sf_g,
                            struct sf_reg_info *sf_r, void *buf,
                            uint32_t *nread, uint64_t pos)
 {
-    if (VbglR0CanUsePhysPageList())
+    /** @todo bird: yes, kmap() and kmalloc() input only. Since the buffer is
+     *        contiguous in physical memory (kmalloc or single page), we should
+     *        use a physical address here to speed things up. */
+    int rc = VbglR0SfRead(&client_handle, &sf_g->map, sf_r->handle,
+                          pos, nread, buf, false /* already locked? */);
+    if (RT_FAILURE(rc))
     {
-        int rc = VbglR0SfReadPhysCont(&client_handle, &sf_g->map, sf_r->handle,
-                                      pos, nread, virt_to_phys(buf));
-        if (RT_FAILURE(rc))
-        {
-            LogFunc(("VbglR0SfReadPhysCont failed. caller=%s, rc=%Rrc\n",
-                     caller, rc));
-            return -EPROTO;
-        }
-    }
-    else
-    {
-        int rc = vboxCallRead(&client_handle, &sf_g->map, sf_r->handle,
-                              pos, nread, buf, false /* already locked? */);
-        if (RT_FAILURE(rc))
-        {
-            LogFunc(("vboxCallRead failed. caller=%s, rc=%Rrc\n", caller, rc));
-            return -EPROTO;
-        }
+        LogFunc(("VbglR0SfRead failed. caller=%s, rc=%Rrc\n", caller, rc));
+        return -EPROTO;
     }
     return 0;
 }
 
-/* Input buf must be physically contiguous memory */
 static int sf_reg_write_aux(const char *caller, struct sf_glob_info *sf_g,
                             struct sf_reg_info *sf_r, void *buf,
                             uint32_t *nwritten, uint64_t pos)
 {
-    if (VbglR0CanUsePhysPageList())
-    {
-        int rc = VbglR0SfWritePhysCont(&client_handle, &sf_g->map, sf_r->handle,
-                                    pos, nwritten, virt_to_phys(buf));
-        if (RT_FAILURE(rc))
-        {
-            LogFunc(("VbglR0SfWritePhysCont failed. caller=%s, rc=%Rrc\n",
-                     caller, rc));
-            return -EPROTO;
-        }
-    }
-    else
-    {
-        int rc = vboxCallWrite(&client_handle, &sf_g->map, sf_r->handle,
+    /** @todo bird: yes, kmap() and kmalloc() input only. Since the buffer is
+     *        contiguous in physical memory (kmalloc or single page), we should
+     *        use a physical address here to speed things up. */
+    int rc = VbglR0SfWrite(&client_handle, &sf_g->map, sf_r->handle,
                            pos, nwritten, buf, false /* already locked? */);
-        if (RT_FAILURE(rc))
-        {
-            LogFunc(("vboxCallWrite failed. caller=%s, rc=%Rrc\n", caller, rc));
-            return -EPROTO;
-        }
+    if (RT_FAILURE(rc))
+    {
+        LogFunc(("VbglR0SfWrite failed. caller=%s, rc=%Rrc\n",
+                    caller, rc));
+        return -EPROTO;
     }
     return 0;
 }
@@ -127,6 +104,7 @@ static ssize_t sf_reg_read(struct file *file, char *buf, size_t size, loff_t *of
 {
     int err;
     void *tmp;
+    RTCCPHYS tmp_phys;
     size_t tmp_size;
     size_t left = size;
     ssize_t total_bytes_read = 0;
@@ -147,14 +125,7 @@ static ssize_t sf_reg_read(struct file *file, char *buf, size_t size, loff_t *of
     if (!size)
         return 0;
 
-    /* Try reading from the page cache */
-    if (sf_r->generation == inode->i_generation)
-        return do_sync_read(file, buf, size, off);
-    else
-        printk("vboxsf: doing direct read, generation %u != %u\n",
-               sf_r->generation, inode->i_generation);
-
-    tmp = alloc_bounce_buffer(&tmp_size, size, __PRETTY_FUNCTION__);
+    tmp = alloc_bounce_buffer(&tmp_size, &tmp_phys, size, __PRETTY_FUNCTION__);
     if (!tmp)
         return -ENOMEM;
 
@@ -208,6 +179,7 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
 {
     int err;
     void *tmp;
+    RTCCPHYS tmp_phys;
     size_t tmp_size;
     size_t left = size;
     ssize_t total_bytes_written = 0;
@@ -240,7 +212,7 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
     if (!size)
         return 0;
 
-    tmp = alloc_bounce_buffer(&tmp_size, size, __PRETTY_FUNCTION__);
+    tmp = alloc_bounce_buffer(&tmp_size, &tmp_phys, size, __PRETTY_FUNCTION__);
     if (!tmp)
         return -ENOMEM;
 
@@ -260,7 +232,9 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
             goto fail;
         }
 
-        err = sf_reg_write_aux(__func__, sf_g, sf_r, tmp, &nwritten, pos);
+        err = VbglR0SfWritePhysCont(&client_handle, &sf_g->map, sf_r->handle,
+                                    pos, &nwritten, tmp_phys);
+        err = RT_FAILURE(err) ? -EPROTO : 0;
         if (err)
             goto fail;
 
@@ -270,18 +244,6 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
         total_bytes_written += nwritten;
         if (nwritten != to_write)
             break;
-    }
-
-    /* force-invalidate the corresponding part of the page cache */
-    err = invalidate_inode_pages2_range(inode->i_mapping,
-                *off >> PAGE_CACHE_SHIFT,
-                (*off + total_bytes_written - 1) >> PAGE_CACHE_SHIFT);
-    if (err)
-    {
-        printk("vboxsf: could not invalidate inode page cache for %s\n",
-               sf_i->path->String.utf8);
-        /** @todo fall back on pagecache write here? */
-        inode->i_generation++; /* disable pagecache reads for current fds */
     }
 
     *off += total_bytes_written;
@@ -325,6 +287,22 @@ static int sf_reg_open(struct inode *inode, struct file *file)
         return -ENOMEM;
     }
 
+    /* Already open? */
+    if (sf_i->handle != SHFL_HANDLE_NIL)
+    {
+        /*
+         * This inode was created with sf_create_aux(). Check the CreateFlags:
+         * O_CREAT, O_TRUNC: inherent true (file was just created). Not sure
+         * about the access flags (SHFL_CF_ACCESS_*).
+         */
+        sf_i->force_restat = 1;
+        sf_r->handle = sf_i->handle;
+        sf_i->handle = SHFL_HANDLE_NIL;
+        sf_i->file = file;
+        file->private_data = sf_r;
+        return 0;
+    }
+
     RT_ZERO(params);
     params.Handle = SHFL_HANDLE_NIL;
     /* We check the value of params.Handle afterwards to find out if
@@ -343,8 +321,7 @@ static int sf_reg_open(struct inode *inode, struct file *file)
         if (file->f_flags & O_TRUNC)
         {
             LogFunc(("O_TRUNC set\n"));
-            params.CreateFlags |= (  SHFL_CF_ACT_OVERWRITE_IF_EXISTS
-                                   | SHFL_CF_ACCESS_WRITE);
+            params.CreateFlags |= SHFL_CF_ACT_OVERWRITE_IF_EXISTS;
         }
         else
             params.CreateFlags |= SHFL_CF_ACT_OPEN_IF_EXISTS;
@@ -355,8 +332,7 @@ static int sf_reg_open(struct inode *inode, struct file *file)
         if (file->f_flags & O_TRUNC)
         {
             LogFunc(("O_TRUNC set\n"));
-            params.CreateFlags |= (  SHFL_CF_ACT_OVERWRITE_IF_EXISTS
-                    | SHFL_CF_ACCESS_WRITE);
+            params.CreateFlags |= SHFL_CF_ACT_OVERWRITE_IF_EXISTS;
         }
     }
 
@@ -384,27 +360,13 @@ static int sf_reg_open(struct inode *inode, struct file *file)
         params.CreateFlags |= SHFL_CF_ACCESS_APPEND;
     }
 
-    /* Already open? */
-    if (sf_i->handle != SHFL_HANDLE_NIL)
-    {
-        /*
-         * This inode was created with sf_create_aux(). Check the CreateFlags:
-         * O_CREAT, O_TRUNC: inherent true (file was just created). Not sure
-         * about the access flags (SHFL_CF_ACCESS_*).
-         */
-        sf_r->handle = sf_i->handle;
-        sf_i->handle = SHFL_HANDLE_NIL;
-        goto out;
-    }
-
     params.Info.Attr.fMode = inode->i_mode;
-    LogFunc(("sf_reg_open: calling vboxCallCreate, file %s, flags=%#x, %#x\n",
+    LogFunc(("sf_reg_open: calling VbglR0SfCreate, file %s, flags=%#x, %#x\n",
               sf_i->path->String.utf8 , file->f_flags, params.CreateFlags));
-    rc = vboxCallCreate(&client_handle, &sf_g->map, sf_i->path, &params);
+    rc = VbglR0SfCreate(&client_handle, &sf_g->map, sf_i->path, &params);
     if (RT_FAILURE(rc))
     {
-        sf_i->force_restat = 1;
-        LogFunc(("vboxCallCreate failed flags=%d,%#x rc=%Rrc\n",
+        LogFunc(("VbglR0SfCreate failed flags=%d,%#x rc=%Rrc\n",
                   file->f_flags, params.CreateFlags, rc));
         kfree(sf_r);
         return -RTErrConvertToErrno(rc);
@@ -424,20 +386,11 @@ static int sf_reg_open(struct inode *inode, struct file *file)
             default:
                 break;
         }
-        sf_i->force_restat = 1;
-    }
-    else
-    {
-        sf_revalidate_mapping(inode, &params.Info);
-        sf_init_inode(sf_g, inode, &params.Info);
     }
 
+    sf_i->force_restat = 1;
     sf_r->handle = params.Handle;
-  out:
-    sf_r->createflags = params.CreateFlags;
-    sf_r->generation = inode->i_generation;
-    INIT_LIST_HEAD(&sf_r->head);
-    list_add(&sf_r->head, &sf_i->handles);
+    sf_i->file = file;
     file->private_data = sf_r;
     return rc_linux;
 }
@@ -473,20 +426,22 @@ static int sf_reg_release(struct inode *inode, struct file *file)
         && filemap_fdatawrite(inode->i_mapping) != -EIO)
         filemap_fdatawait(inode->i_mapping);
 #endif
-
-    list_del(&sf_r->head);
-
-    rc = vboxCallClose(&client_handle, &sf_g->map, sf_r->handle);
+    rc = VbglR0SfClose(&client_handle, &sf_g->map, sf_r->handle);
     if (RT_FAILURE(rc))
-        LogFunc(("vboxCallClose failed rc=%Rrc\n", rc));
+        LogFunc(("VbglR0SfClose failed rc=%Rrc\n", rc));
 
+    kfree(sf_r);
+    sf_i->file = NULL;
     sf_i->handle = SHFL_HANDLE_NIL;
     file->private_data = NULL;
-    kfree(sf_r);
     return 0;
 }
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0)
+static vm_fault_t sf_reg_fault(struct vm_fault *vmf)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+static int sf_reg_fault(struct vm_fault *vmf)
+#elif LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
 static int sf_reg_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
 static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vaddr, int *type)
@@ -501,6 +456,9 @@ static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vadd
     loff_t off;
     uint32_t nread = PAGE_SIZE;
     int err;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+    struct vm_area_struct *vma = vmf->vma;
+#endif
     struct file *file = vma->vm_file;
     struct inode *inode = GET_F_DENTRY(file)->d_inode;
     struct sf_glob_info *sf_g = GET_GLOB_INFO(inode->i_sb);
@@ -518,10 +476,10 @@ static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vadd
     }
 #endif
 
-    /* Don't use GFP_HIGHUSER as long as sf_reg_read_aux() calls vboxCallRead()
+    /* Don't use GFP_HIGHUSER as long as sf_reg_read_aux() calls VbglR0SfRead()
      * which works on virtual addresses. On Linux cannot reliably determine the
      * physical address for high memory, see rtR0MemObjNativeLockKernel(). */
-    page = find_or_create_page(inode->i_mapping, vmf->pgoff, GFP_USER);
+    page = alloc_page(GFP_USER);
     if (!page) {
         LogRelFunc(("failed to allocate page\n"));
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
@@ -542,8 +500,7 @@ static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vadd
     if (err)
     {
         kunmap(page);
-        unlock_page(page);
-        page_cache_release(page);
+        put_page(page);
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
         return VM_FAULT_SIGBUS;
 #else
@@ -567,9 +524,7 @@ static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vadd
         memset(buf + nread, 0, PAGE_SIZE - nread);
 
     flush_dcache_page(page);
-    SetPageUptodate(page);
     kunmap(page);
-    unlock_page(page);
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
     vmf->page = page;
     return 0;
@@ -579,51 +534,24 @@ static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vadd
 #endif
 }
 
-/**
- * Prepare for a mmap page to be made writable.
- * Check that the page is still there, and lock it if necessary to keep it there.
- * Part of MAP_SHARED support.
- *
- * @returns VM_FAULT_LOCKED if the page is ready, otherwise VM_FAULT_NOPAGE.
- */
-static int sf_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
-{
-    struct page *page = vmf->page;
-    struct inode *inode = vma->vm_file->f_path.dentry->d_inode;
-    loff_t size;
-
-    TRACE();
-
-    lock_page(page);
-    size = i_size_read(inode);
-    if (page->mapping != inode->i_mapping || page_offset(page) > size)
-    {
-        /* file was truncated */
-        unlock_page(page);
-        return VM_FAULT_NOPAGE;
-    }
-
-    wait_on_page_writeback(page);
-    return VM_FAULT_LOCKED;
-}
-
 static struct vm_operations_struct sf_vma_ops =
 {
 #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
-    .fault = sf_reg_fault,
+    .fault = sf_reg_fault
 #else
-     .nopage = sf_reg_nopage,
+    .nopage = sf_reg_nopage
 #endif
-    .page_mkwrite = sf_page_mkwrite
 };
 
 static int sf_reg_mmap(struct file *file, struct vm_area_struct *vma)
 {
-    struct sf_reg_info *sf_r = file->private_data;
-
     TRACE();
-    if (sf_r->createflags & SHFL_CF_ACCESS_APPEND)
-        return -EINVAL; /* can't simulate page operations */
+    if (vma->vm_flags & VM_SHARED)
+    {
+        LogFunc(("shared mmapping not available\n"));
+        return -EINVAL;
+    }
+
     vma->vm_ops = &sf_vma_ops;
     return 0;
 }
@@ -636,15 +564,14 @@ struct file_operations sf_reg_fops =
     .release     = sf_reg_release,
     .mmap        = sf_reg_mmap,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
-# if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
+# if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 31)
+/** @todo This code is known to cause caching of data which should not be
+ * cached.  Investigate. */
+#  if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 23)
     .splice_read = generic_file_splice_read,
-# else
+#  else
     .sendfile    = generic_file_sendfile,
-# endif
-# if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0)
-    .read_iter   = generic_file_read_iter,
-    .write_iter  = generic_file_write_iter,
-# else
+#  endif
     .aio_read    = generic_file_aio_read,
     .aio_write   = generic_file_aio_write,
 # endif
@@ -670,46 +597,17 @@ struct inode_operations sf_reg_iops =
 
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
-/* Helper function to pick a suitable handle for pagecache operations.
- * It picks the most recently opened handle for this inode that has the
- * requested flags (SHFL_CF_ACCESS_READ or SHFL_CF_ACCESS_WRITE).
- * Handles with SHFL_CF_ACCESS_APPEND are not suitable for paged use
- * so they are always skipped.
- */
-static struct sf_reg_info *sf_select_handle(struct inode *inode, u32 flags)
-{
-    struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
-    struct sf_reg_info *sf_r;
-
-    list_for_each_entry(sf_r, &sf_i->handles, head)
-    {
-        if (   sf_r->handle != SHFL_HANDLE_NIL
-            && (sf_r->createflags & (flags | SHFL_CF_ACCESS_APPEND)) == flags)
-            return sf_r;
-    }
-    return NULL;
-}
-
 static int sf_readpage(struct file *file, struct page *page)
 {
     struct inode *inode = GET_F_DENTRY(file)->d_inode;
     struct sf_glob_info *sf_g = GET_GLOB_INFO(inode->i_sb);
-    struct sf_reg_info *sf_r;
+    struct sf_reg_info *sf_r = file->private_data;
     uint32_t nread = PAGE_SIZE;
     char *buf;
     loff_t off = ((loff_t)page->index) << PAGE_SHIFT;
     int ret;
 
     TRACE();
-
-    sf_r = sf_select_handle(inode, SHFL_CF_ACCESS_READ);
-    if (unlikely(!sf_r))
-    {
-        struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
-        WARN(1, "vboxsf: could not find handle for readpage for %s",
-             sf_i->path->String.utf8);
-        sf_r = file->private_data;
-    }
 
     buf = kmap(page);
     ret = sf_reg_read_aux(__func__, sf_g, sf_r, buf, &nread, off);
@@ -735,7 +633,9 @@ sf_writepage(struct page *page, struct writeback_control *wbc)
     struct address_space *mapping = page->mapping;
     struct inode *inode = mapping->host;
     struct sf_glob_info *sf_g = GET_GLOB_INFO(inode->i_sb);
-    struct sf_reg_info *sf_r;
+    struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
+    struct file *file = sf_i->file;
+    struct sf_reg_info *sf_r = file->private_data;
     char *buf;
     uint32_t nwritten = PAGE_SIZE;
     int end_index = inode->i_size >> PAGE_SHIFT;
@@ -743,15 +643,6 @@ sf_writepage(struct page *page, struct writeback_control *wbc)
     int err;
 
     TRACE();
-
-    sf_r = sf_select_handle(inode, SHFL_CF_ACCESS_WRITE);
-    if (unlikely(!sf_r))
-    {
-        /* At least the handle of whoever wrote to the page should
-         * still be available; see the wait in sf_reg_release() */
-        WARN_ONCE(1, "vboxsf: could not find handle for writepage");
-        return -EBADF;
-    }
 
     if (page->index >= end_index)
         nwritten = inode->i_size & (PAGE_SIZE-1);
@@ -765,8 +656,8 @@ sf_writepage(struct page *page, struct writeback_control *wbc)
         goto out;
     }
 
-    if (off + nwritten > inode->i_size)
-        inode->i_size = off + nwritten;
+    if (off > inode->i_size)
+        inode->i_size = off;
 
     if (PageError(page))
         ClearPageError(page);
@@ -815,7 +706,11 @@ int sf_write_end(struct file *file, struct address_space *mapping, loff_t pos,
     }
 
     unlock_page(page);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
+    put_page(page);
+#else
     page_cache_release(page);
+#endif
 
     return nwritten;
 }

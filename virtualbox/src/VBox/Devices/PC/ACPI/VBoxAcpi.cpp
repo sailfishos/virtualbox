@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/cdefs.h>
 #if !defined(IN_RING3)
 # error Pure R3 code
@@ -42,8 +42,8 @@
 #else
 /* Statically compiled AML */
 # include <vboxaml.hex>
-# include <vboxssdt-standard.hex>
-# include <vboxssdt-cpuhotplug.hex>
+# include <vboxssdt_standard.hex>
+# include <vboxssdt_cpuhotplug.hex>
 #endif
 
 #include "VBoxDD.h"
@@ -228,18 +228,18 @@ static int patchAmlCpuHotPlug(PPDMDEVINS pDevIns, uint8_t *pabAml, size_t cbAml)
                     fCpuFound = true;
 
                     /* Processor ID */
-                    if (pabAmlCpu[idxAmlCpu+8] < cNumCpus)
+                    uint8_t const idAmlCpu = pabAmlCpu[idxAmlCpu + 8];
+                    if (idAmlCpu < cNumCpus)
                     {
-                        LogFlow(("CPU %d is configured\n", pabAmlCpu[idxAmlCpu+8]));
+                        LogFlow(("CPU %u is configured\n", idAmlCpu));
                         fCpuConfigured = true;
-                        break;
                     }
                     else
                     {
-                        LogFlow(("CPU %d is not configured\n", pabAmlCpu[idxAmlCpu+8]));
+                        LogFlow(("CPU %u is not configured\n", idAmlCpu));
                         fCpuConfigured = false;
-                        break;
                     }
+                    break;
                 }
             }
 
@@ -390,11 +390,12 @@ int acpiPrepareDsdt(PPDMDEVINS pDevIns,  void **ppvPtr, size_t *pcbDsdt)
 }
 
 /** No docs, lazy coder. */
-int acpiCleanupDsdt(PPDMDEVINS pDevIns,  void *pvPtr)
+int acpiCleanupDsdt(PPDMDEVINS pDevIns, void *pvPtr)
 {
 #ifdef VBOX_WITH_DYNAMIC_DSDT
     return cleanupDynamicDsdt(pDevIns, pvPtr);
 #else
+    RT_NOREF1(pDevIns);
     if (pvPtr)
         RTMemFree(pvPtr);
     return VINF_SUCCESS;
@@ -457,6 +458,7 @@ int acpiPrepareSsdt(PPDMDEVINS pDevIns, void **ppvPtr, size_t *pcbSsdt)
 /** No docs, lazy coder. */
 int acpiCleanupSsdt(PPDMDEVINS pDevIns, void *pvPtr)
 {
+    RT_NOREF1(pDevIns);
     if (pvPtr)
         RTMemFree(pvPtr);
     return VINF_SUCCESS;

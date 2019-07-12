@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -42,9 +42,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_PIC
 #include <VBox/vmm/pdmdev.h>
 #include <VBox/log.h>
@@ -54,9 +54,9 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @def PIC_LOCK
  * Acquires the PDM lock. This is a NOP if locking is disabled. */
 /** @def PIC_UNLOCK
@@ -242,6 +242,8 @@ static int pic_get_irq(PPICSTATE pPic)
        master, the IRQ coming from the slave is not taken into account
        for the priority computation. */
     mask = pPic->isr;
+    if (pPic->special_mask)
+        mask &= ~pPic->imr;
     if (pPic->special_fully_nested_mode && pPic->idxPic == 0)
         mask &= ~(1 << 2);
     cur_priority = get_priority(pPic, mask);
@@ -315,51 +317,6 @@ static int pic_update_irq(PDEVPIC pThis)
     }
     return VINF_SUCCESS;
 }
-
-/** @note if an interrupt line state changes from unmasked to masked, then it must be deactivated when currently pending! */
-static void pic_update_imr(PDEVPIC pThis, PPICSTATE pPic, uint8_t val)
-{
-    int       irq, intno;
-    PPICSTATE pActivePIC;
-
-    /* Query the current pending irq, if any. */
-    pActivePIC = &pThis->aPics[0];
-    intno = irq = pic_get_irq(pActivePIC);
-    if (irq == 2)
-    {
-        pActivePIC = &pThis->aPics[1];
-        irq = pic_get_irq(pActivePIC);
-        intno = irq + 8;
-    }
-
-    /* Update IMR */
-    Log(("pic_update_imr: pic%u %#x -> %#x\n", pPic->idxPic, pPic->imr, val));
-    pPic->imr = val;
-
-    /* If an interrupt is pending and now masked, then clear the FF flag. */
-    if (    irq >= 0
-        &&  ((1 << irq) & ~pActivePIC->imr) == 0)
-    {
-        Log(("pic_update_imr: pic0: elcr=%x last_irr=%x irr=%x imr=%x isr=%x irq_base=%x\n",
-            pThis->aPics[0].elcr, pThis->aPics[0].last_irr, pThis->aPics[0].irr, pThis->aPics[0].imr, pThis->aPics[0].isr, pThis->aPics[0].irq_base));
-        Log(("pic_update_imr: pic1: elcr=%x last_irr=%x irr=%x imr=%x isr=%x irq_base=%x\n",
-            pThis->aPics[1].elcr, pThis->aPics[1].last_irr, pThis->aPics[1].irr, pThis->aPics[1].imr, pThis->aPics[1].isr, pThis->aPics[1].irq_base));
-
-        /* Clear pending IRQ 2 on master controller in case of slave interrupt. */
-        /** @todo Is this correct? */
-        if (intno > 7)
-        {
-            pThis->aPics[0].irr &= ~(1 << 2);
-            STAM_COUNTER_INC(&pThis->StatClearedActiveSlaveIRQ);
-        }
-        else
-            STAM_COUNTER_INC(&pThis->StatClearedActiveMasterIRQ);
-
-        Log(("pic_update_imr: clear pending interrupt %d\n", intno));
-        pThis->CTX_SUFF(pPicHlp)->pfnClearInterruptFF(pThis->CTX_SUFF(pDevIns));
-    }
-}
-
 
 /**
  * Set the an IRQ.
@@ -594,8 +551,7 @@ static int pic_ioport_write(PDEVPIC pThis, PPICSTATE pPic, uint32_t addr, uint32
         {
             case 0:
                 /* normal mode */
-                pic_update_imr(pThis, pPic, val);
-
+                pPic->imr = val;
                 rc = pic_update_irq(pThis);
                 Assert(rc == VINF_SUCCESS);
                 break;
@@ -624,7 +580,7 @@ static int pic_ioport_write(PDEVPIC pThis, PPICSTATE pPic, uint32_t addr, uint32
 
 static uint32_t pic_poll_read(PPICSTATE pPic, uint32_t addr1)
 {
-    PDEVPIC pThis = RT_FROM_MEMBER(pPic, DEVPIC, aPics[pPic->idxPic]);
+    PDEVPIC pThis = RT_FROM_MEMBER_DYN(pPic, DEVPIC, aPics[pPic->idxPic]);
 
     int ret = pic_get_irq(pPic);
     if (ret >= 0)
@@ -688,7 +644,7 @@ static uint32_t pic_ioport_read(PPICSTATE pPic, uint32_t addr1, int *pRC)
 /**
  * @callback_method_impl{FNIOMIOPORTIN}
  */
-PDMBOTHCBDECL(int) picIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t *pu32, unsigned cb)
+PDMBOTHCBDECL(int) picIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t *pu32, unsigned cb)
 {
     PDEVPIC     pThis = PDMINS_2_DATA(pDevIns, PDEVPIC);
     uint32_t    iPic  = (uint32_t)(uintptr_t)pvUser;
@@ -698,7 +654,7 @@ PDMBOTHCBDECL(int) picIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port
     {
         int rc;
         PIC_LOCK(pThis, VINF_IOM_R3_IOPORT_READ);
-        *pu32 = pic_ioport_read(&pThis->aPics[iPic], Port, &rc);
+        *pu32 = pic_ioport_read(&pThis->aPics[iPic], uPort, &rc);
         PIC_UNLOCK(pThis);
         return rc;
     }
@@ -709,7 +665,7 @@ PDMBOTHCBDECL(int) picIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port
 /**
  * @callback_method_impl{FNIOMIOPORTOUT}
  */
-PDMBOTHCBDECL(int) picIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t u32, unsigned cb)
+PDMBOTHCBDECL(int) picIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t u32, unsigned cb)
 {
     PDEVPIC     pThis = PDMINS_2_DATA(pDevIns, PDEVPIC);
     uint32_t    iPic  = (uint32_t)(uintptr_t)pvUser;
@@ -720,7 +676,7 @@ PDMBOTHCBDECL(int) picIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Por
     {
         int rc;
         PIC_LOCK(pThis, VINF_IOM_R3_IOPORT_WRITE);
-        rc = pic_ioport_write(pThis, &pThis->aPics[iPic], Port, u32);
+        rc = pic_ioport_write(pThis, &pThis->aPics[iPic], uPort, u32);
         PIC_UNLOCK(pThis);
         return rc;
     }
@@ -766,7 +722,7 @@ PDMBOTHCBDECL(int) picIOPortElcrWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT
 #ifdef IN_RING3
 
 /**
- * @callback_method_impl{FNDBGFINFOHANDLERDEV}
+ * @callback_method_impl{FNDBGFHANDLERDEV}
  */
 static DECLCALLBACK(void) picInfo(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, const char *pszArgs)
 {
@@ -854,6 +810,8 @@ static DECLCALLBACK(int) picLoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32
         SSMR3GetU8(pSSM, &pThis->aPics[i].init4);
         SSMR3GetU8(pSSM, &pThis->aPics[i].elcr);
     }
+
+    /* Note! PDM will restore the VMCPU_FF_INTERRUPT_PIC state. */
     return VINF_SUCCESS;
 }
 
@@ -882,6 +840,7 @@ static DECLCALLBACK(void)  picReset(PPDMDEVINS pDevIns)
  */
 static DECLCALLBACK(void) picRelocate(PPDMDEVINS pDevIns, RTGCINTPTR offDelta)
 {
+    RT_NOREF1(offDelta);
     PDEVPIC         pThis = PDMINS_2_DATA(pDevIns, PDEVPIC);
     unsigned        i;
 
@@ -897,6 +856,8 @@ static DECLCALLBACK(void) picRelocate(PPDMDEVINS pDevIns, RTGCINTPTR offDelta)
  */
 static DECLCALLBACK(int)  picConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
+    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
+    RT_NOREF1(iInstance);
     PDEVPIC         pThis = PDMINS_2_DATA(pDevIns, PDEVPIC);
     int             rc;
     bool            fGCEnabled;
@@ -1086,7 +1047,7 @@ const PDMDEVREG g_DeviceI8259 =
     /* szName */
     "i8259",
     /* szRCMod */
-    "VBoxDDGC.gc",
+    "VBoxDDRC.rc",
     /* szR0Mod */
     "VBoxDDR0.r0",
     /* pszDescription */

@@ -1,10 +1,10 @@
+/* $Id: USBUninstall.cpp $ */
 /** @file
- *
- * VBox host drivers - USB drivers - Filter & driver uninstallation
- *
- * Installation code
- *
- * Copyright (C) 2006-2011 Oracle Corporation
+ * VBox host drivers - USB drivers - Filter & driver uninstallation.
+ */
+
+/*
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,14 +13,23 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <windows.h>
-#include <setupapi.h>
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
+#include <iprt/win/setupapi.h>
 #include <newdev.h>
 
 #include <iprt/assert.h>
@@ -36,23 +45,25 @@
 int usblibOsStopService(void);
 int usblibOsDeleteService(void);
 
-static DECLCALLBACK(void) vboxUsbLog(VBOXDRVCFG_LOG_SEVERITY enmSeverity, char * msg, void * pvContext)
+static DECLCALLBACK(void) vboxUsbLog(VBOXDRVCFG_LOG_SEVERITY enmSeverity, char *pszMsg, void *pvContext)
 {
+    RT_NOREF1(pvContext);
     switch (enmSeverity)
     {
         case VBOXDRVCFG_LOG_SEVERITY_FLOW:
         case VBOXDRVCFG_LOG_SEVERITY_REGULAR:
             break;
         case VBOXDRVCFG_LOG_SEVERITY_REL:
-            printf("%s", msg);
+            printf("%s", pszMsg);
             break;
         default:
             break;
     }
 }
 
-static DECLCALLBACK(void) vboxUsbPanic(void * pvPanic)
+static DECLCALLBACK(void) vboxUsbPanic(void *pvPanic)
 {
+    RT_NOREF1(pvPanic);
 #ifndef DEBUG_bird
     AssertFailed();
 #endif
@@ -61,6 +72,7 @@ static DECLCALLBACK(void) vboxUsbPanic(void * pvPanic)
 
 int __cdecl main(int argc, char **argv)
 {
+    RT_NOREF2(argc, argv);
     printf("USB uninstallation\n");
 
     VBoxDrvCfgLoggerSet(vboxUsbLog, NULL);
@@ -119,7 +131,11 @@ int usblibOsStopService(void)
                 rc = 0;
             else if (ControlService(hService, SERVICE_CONTROL_STOP, &Status))
             {
-                int iWait = 100;
+                /*
+                 * Wait for finish about 1 minute.
+                 * It should be enough for work with driver verifier
+                 */
+                int iWait = 600;
                 while (Status.dwCurrentState == SERVICE_STOP_PENDING && iWait-- > 0)
                 {
                     Sleep(100);

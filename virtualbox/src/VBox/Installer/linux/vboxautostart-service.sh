@@ -1,8 +1,11 @@
 #!/bin/sh
-#
+# $Id: vboxautostart-service.sh $
+## @file
 # VirtualBox autostart service init script.
 #
-# Copyright (C) 2012 Oracle Corporation
+
+#
+# Copyright (C) 2012-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -13,7 +16,7 @@
 # hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
 #
 
-# chkconfig: 35 35 65
+# chkconfig: 345 35 65
 # description: VirtualBox autostart service
 #
 ### BEGIN INIT INFO
@@ -26,6 +29,7 @@
 ### END INIT INFO
 
 PATH=$PATH:/bin:/sbin:/usr/sbin
+SCRIPTNAME=vboxautostart-service.sh
 
 [ -f /etc/debian_release -a -f /lib/lsb/init-functions ] || NOLSB=yes
 [ -f /etc/vbox/vbox.cfg ] && . /etc/vbox/vbox.cfg
@@ -42,223 +46,42 @@ fi
 
 [ -r /etc/default/virtualbox ] && . /etc/default/virtualbox
 
-system=unknown
-if [ -f /etc/redhat-release ]; then
-    system=redhat
-elif [ -f /etc/SuSE-release ]; then
-    system=suse
-elif [ -f /etc/debian_version ]; then
-    system=debian
-elif [ -f /etc/gentoo-release ]; then
-    system=gentoo
-elif [ -f /etc/arch-release ]; then
-     system=arch
-elif [ -f /etc/slackware-version ]; then
-    system=slackware
-elif [ -f /etc/lfs-release ]; then
-    system=lfs
-else
-    system=other
+# Preamble for Gentoo
+if [ "`which $0`" = "/sbin/rc" ]; then
+    shift
 fi
 
-if [ -z "$NOLSB" ]; then
-    . /lib/lsb/init-functions
-    fail_msg() {
-        echo ""
-        log_failure_msg "$1"
-    }
-    succ_msg() {
-        log_success_msg " done."
-    }
-    begin_msg() {
-        log_daemon_msg "$@"
-    }
-fi
+begin_msg()
+{
+    test -n "${2}" && echo "${SCRIPTNAME}: ${1}."
+    logger -t "${SCRIPTNAME}" "${1}."
+}
 
-if [ "$system" = "redhat" ]; then
-    . /etc/init.d/functions
-    if [ -n "$NOLSB" ]; then
-        start_daemon() {
-            usr="$1"
-            shift
-            daemon --user $usr $@
-        }
-        fail_msg() {
-            echo_failure
-            echo
-        }
-        succ_msg() {
-            echo_success
-            echo
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-    fi
-fi
+succ_msg()
+{
+    logger -t "${SCRIPTNAME}" "${1}."
+}
 
-if [ "$system" = "suse" ]; then
-    . /etc/rc.status
-    start_daemon() {
-        usr="$1"
-        shift
-        su - $usr -c "$*"
-    }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            rc_failed 1
-            rc_status -v
-        }
-        succ_msg() {
-            rc_reset
-            rc_status -v
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-    fi
-fi
+fail_msg()
+{
+    echo "${SCRIPTNAME}: failed: ${1}." >&2
+    logger -t "${SCRIPTNAME}" "failed: ${1}."
+}
 
-if [ "$system" = "debian" ]; then
+start_daemon() {
+    usr="$1"
+    shift
+    su - $usr -c "$*"
+}
+
+if which start-stop-daemon >/dev/null 2>&1; then
     start_daemon() {
         usr="$1"
         shift
         bin="$1"
         shift
-        start-stop-daemon --background --chuid $usr --start --exec $bin -- $@
+        start-stop-daemon --chuid $usr --start --exec $bin -- $@
     }
-    killproc() {
-        start-stop-daemon --stop --exec $@
-    }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo " ...fail!"
-        }
-        succ_msg() {
-            echo " ...done."
-        }
-        begin_msg() {
-            echo -n "$1"
-       }
-    fi
-fi
-
-if [ "$system" = "gentoo" ]; then
-    if [ -f /sbin/functions.sh ]; then
-        . /sbin/functions.sh
-    elif [ -f /etc/init.d/functions.sh ]; then
-        . /etc/init.d/functions.sh
-    fi
-    start_daemon() {
-        usr="$1"
-        shift
-        bin="$1"
-        shift
-        start-stop-daemon --background --chuid $usr --start --exec $bin -- $@
-    }
-    killproc() {
-        start-stop-daemon --stop --exec $@
-    }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo " ...fail!"
-        }
-        succ_msg() {
-            echo " ...done."
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-        if [ "`which $0`" = "/sbin/rc" ]; then
-            shift
-        fi
-    fi
-fi
-
-if [ "$system" = "arch" ]; then
-    USECOLOR=yes
-    . /etc/rc.d/functions
-    start_daemon() {
-        usr="$1"
-        shift
-        su - $usr -c "$*"
-        test $? -eq 0 && add_daemon rc.`basename $2`
-    }
-    killproc() {
-        killall $@
-        rm_daemon `basename $@`
-    }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            stat_fail
-        }
-        succ_msg() {
-            stat_done
-        }
-        begin_msg() {
-            stat_busy "$1"
-        }
-    fi
-fi
-
-if [ "$system" = "slackware" ]; then
-    killproc() {
-        killall $1
-        rm -f $PIDFILE
-    }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo " ...fail!"
-        }
-        succ_msg() {
-            echo " ...done."
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-    fi
-    start_daemon() {
-        usr="$1"
-        shift
-        su - $usr -c "$*"
-    }
-fi
-
-if [ "$system" = "lfs" ]; then
-    . /etc/rc.d/init.d/functions
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo_failure
-        }
-        succ_msg() {
-            echo_ok
-        }
-        begin_msg() {
-            echo $1
-        }
-    fi
-    start_daemon() {
-        usr="$1"
-        shift
-        su - $usr -c "$*"
-    }
-    status() {
-        statusproc $1
-    }
-fi
-
-if [ "$system" = "other" ]; then
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo " ...fail!"
-        }
-        succ_msg() {
-            echo " ...done."
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-    fi
 fi
 
 vboxdrvrunning() {
@@ -268,7 +91,7 @@ vboxdrvrunning() {
 start() {
     [ -z "$VBOXAUTOSTART_DB" ] && exit 0
     [ -z "$VBOXAUTOSTART_CONFIG" ] && exit 0
-    begin_msg "Starting VirtualBox VMs configured for autostart";
+    begin_msg "Starting VirtualBox VMs configured for autostart" console;
     vboxdrvrunning || {
         fail_msg "VirtualBox kernel module not loaded!"
         exit 0

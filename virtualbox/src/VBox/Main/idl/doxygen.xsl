@@ -5,7 +5,7 @@
  *  definition expressed in XML. The generated file is intended solely to
  *  generate the documentation using Doxygen.
 
-    Copyright (C) 2006-2012 Oracle Corporation
+    Copyright (C) 2006-2016 Oracle Corporation
 
     This file is part of VirtualBox Open Source Edition (OSE), as
     available from http://www.virtualbox.org. This file is free software;
@@ -21,42 +21,7 @@
 
 <xsl:strip-space elements="*"/>
 
-
-<!--
-//  helper definitions
-/////////////////////////////////////////////////////////////////////////////
--->
-
-<!--
- *  uncapitalizes the first letter only if the second one is not capital
- *  otherwise leaves the string unchanged
--->
-<xsl:template name="uncapitalize">
-  <xsl:param name="str" select="."/>
-  <xsl:choose>
-    <xsl:when test="not(contains('ABCDEFGHIJKLMNOPQRSTUVWXYZ', substring($str,2,1)))">
-      <xsl:value-of select="
-        concat(
-          translate(substring($str,1,1),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),
-          substring($str,2)
-        )
-      "/>
-    </xsl:when>
-    <xsl:otherwise>
-      <xsl:value-of select="string($str)"/>
-    </xsl:otherwise>
-  </xsl:choose>
-</xsl:template>
-
-<!--
- *  translates the string to uppercase
--->
-<xsl:template name="uppercase">
-  <xsl:param name="str" select="."/>
-  <xsl:value-of select="
-    translate($str,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-  "/>
-</xsl:template>
+<xsl:include href="typemap-shared.inc.xsl" />
 
 
 <!--
@@ -77,6 +42,39 @@
  *  and copied w/o modifications
 -->
 <xsl:template match="desc//*">
+  <xsl:copy>
+    <xsl:apply-templates/>
+  </xsl:copy>
+</xsl:template>
+
+<!--
+ * same like desc//* but place <ol> at start of line otherwise Doxygen will not
+ * find it
+-->
+<xsl:template match="desc//ol">
+  <xsl:text>&#x0A;</xsl:text>
+  <xsl:copy>
+    <xsl:apply-templates/>
+  </xsl:copy>
+</xsl:template>
+
+<!--
+ * same like desc//* but place <ul> at start of line otherwise Doxygen will not
+ * find it
+-->
+<xsl:template match="desc//ul">
+  <xsl:text>&#x0A;</xsl:text>
+  <xsl:copy>
+    <xsl:apply-templates/>
+  </xsl:copy>
+</xsl:template>
+
+<!--
+ * same like desc//* but place <pre> at start of line otherwise Doxygen will not
+ * find it
+-->
+<xsl:template match="desc//pre">
+  <xsl:text>&#x0A;</xsl:text>
   <xsl:copy>
     <xsl:apply-templates/>
   </xsl:copy>
@@ -204,7 +202,7 @@
 <xsl:template match="desc" mode="results">
   <xsl:if test="result">
     <xsl:text>
-      @par Expected result codes:
+@par Expected result codes:
     </xsl:text>
       <table>
     <xsl:for-each select="result">
@@ -236,7 +234,7 @@
   <xsl:apply-templates select="." mode="begin"/>
   <xsl:apply-templates select="." mode="middle"/>
 @par Interface ID:
-<tt>{<xsl:call-template name="uppercase">
+<tt>{<xsl:call-template name="string-to-upper">
     <xsl:with-param name="str" select="../@uuid"/>
   </xsl:call-template>}</tt>
   <xsl:text>&#x0A;*/&#x0A;</xsl:text>
@@ -304,7 +302,7 @@ owns the object will most likely fail or crash your application.
   <xsl:apply-templates select="." mode="begin"/>
   <xsl:apply-templates select="." mode="middle"/>
 @par Interface ID:
-<tt>{<xsl:call-template name="uppercase">
+<tt>{<xsl:call-template name="string-to-upper">
     <xsl:with-param name="str" select="../@uuid"/>
   </xsl:call-template>}</tt>
   <xsl:text>&#x0A;*/&#x0A;</xsl:text>
@@ -410,7 +408,7 @@ owns the object will most likely fail or crash your application.
 <!--
  *  libraries
 -->
-<xsl:template match="library">
+<xsl:template match="application">
   <!-- result codes -->
   <xsl:for-each select="result">
     <xsl:apply-templates select="."/>
@@ -426,7 +424,7 @@ owns the object will most likely fail or crash your application.
 <!--
  *  result codes
 -->
-<xsl:template match="result">
+<xsl:template match="application//result">
   <xsl:apply-templates select="@if" mode="begin"/>
   <xsl:apply-templates select="desc"/>
   <xsl:value-of select="concat('const HRESULT ',@name,' = ',@value,';')"/>
@@ -632,15 +630,15 @@ owns the object will most likely fail or crash your application.
           <xsl:choose>
             <!-- enum types -->
             <xsl:when test="
-              (ancestor::library/enum[@name=current()]) or
-              (ancestor::library/if[@target=$self_target]/enum[@name=current()])
+              (ancestor::library/application/enum[@name=current()]) or
+              (ancestor::library/application/if[@target=$self_target]/enum[@name=current()])
             ">
               <xsl:value-of select="."/>
             </xsl:when>
             <!-- custom interface types -->
             <xsl:when test="
-              ((ancestor::library/interface[@name=current()]) or
-               (ancestor::library/if[@target=$self_target]/interface[@name=current()])
+              ((ancestor::library/application/interface[@name=current()]) or
+               (ancestor::library/application/if[@target=$self_target]/interface[@name=current()])
               )
             ">
               <xsl:value-of select="."/>

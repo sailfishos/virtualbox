@@ -1,11 +1,10 @@
 /* $Id: VBoxUhgsmiBase.cpp $ */
-
 /** @file
  * VBoxVideo Display D3D User mode dll
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +16,13 @@
  */
 
 #include "VBoxDispD3DCmn.h"
+#include <VBox/VMMDevCoreTypes.h>
 
-DECLCALLBACK(int) vboxUhgsmiBaseEscBufferLock(PVBOXUHGSMI_BUFFER pBuf, uint32_t offLock, uint32_t cbLock, VBOXUHGSMI_BUFFER_LOCK_FLAGS fFlags, void**pvLock)
+
+DECLCALLBACK(int) vboxUhgsmiBaseEscBufferLock(PVBOXUHGSMI_BUFFER pBuf, uint32_t offLock, uint32_t cbLock,
+                                              VBOXUHGSMI_BUFFER_LOCK_FLAGS fFlags, void**pvLock)
 {
+    RT_NOREF(cbLock, fFlags);
     PVBOXUHGSMI_BUFFER_PRIVATE_ESC_BASE pBuffer = VBOXUHGSMIESCBASE_GET_BUFFER(pBuf);
     *pvLock = (void*)(pBuffer->Alloc.pvData + offLock);
     return VINF_SUCCESS;
@@ -27,6 +30,7 @@ DECLCALLBACK(int) vboxUhgsmiBaseEscBufferLock(PVBOXUHGSMI_BUFFER pBuf, uint32_t 
 
 DECLCALLBACK(int) vboxUhgsmiBaseEscBufferUnlock(PVBOXUHGSMI_BUFFER pBuf)
 {
+    RT_NOREF(pBuf);
     return VINF_SUCCESS;
 }
 
@@ -54,15 +58,16 @@ static int vboxUhgsmiBaseEventChkCreate(VBOXUHGSMI_BUFFER_TYPE_FLAGS fUhgsmiType
         Assert(*phSynch);
         if (!*phSynch)
         {
-            DWORD winEr = GetLastError();
-            /* todo: translate winer */
+            /*DWORD winEr = GetLastError(); - unused */
+            /** @todo translate winer */
             return VERR_GENERAL_FAILURE;
         }
     }
     return VINF_SUCCESS;
 }
 
-int vboxUhgsmiKmtEscBufferInit(PVBOXUHGSMI_PRIVATE_BASE pPrivate, PVBOXUHGSMI_BUFFER_PRIVATE_ESC_BASE pBuffer, uint32_t cbBuf, VBOXUHGSMI_BUFFER_TYPE_FLAGS fUhgsmiType, PFNVBOXUHGSMI_BUFFER_DESTROY pfnDestroy)
+int vboxUhgsmiKmtEscBufferInit(PVBOXUHGSMI_PRIVATE_BASE pPrivate, PVBOXUHGSMI_BUFFER_PRIVATE_ESC_BASE pBuffer, uint32_t cbBuf,
+                               VBOXUHGSMI_BUFFER_TYPE_FLAGS fUhgsmiType, PFNVBOXUHGSMI_BUFFER_DESTROY pfnDestroy)
 {
     HANDLE hSynch = NULL;
     if (!cbBuf)
@@ -77,13 +82,15 @@ int vboxUhgsmiKmtEscBufferInit(PVBOXUHGSMI_PRIVATE_BASE pPrivate, PVBOXUHGSMI_BU
 
     cbBuf = VBOXWDDM_ROUNDBOUND(cbBuf, 0x1000);
     Assert(cbBuf);
+#ifdef VBOX_STRICT
     uint32_t cPages = cbBuf >> 12;
     Assert(cPages);
+#endif
 
     VBOXDISPIFESCAPE_UHGSMI_ALLOCATE AllocInfo = {0};
     AllocInfo.EscapeHdr.escapeCode = VBOXESC_UHGSMI_ALLOCATE;
     AllocInfo.Alloc.cbData = cbBuf;
-    AllocInfo.Alloc.hSynch = (uint64_t)hSynch;
+    AllocInfo.Alloc.hSynch = (uintptr_t)hSynch;
     AllocInfo.Alloc.fUhgsmiType = fUhgsmiType;
 
     rc = vboxCrHgsmiPrivateEscape(pPrivate, &AllocInfo, sizeof (AllocInfo), FALSE);
@@ -121,7 +128,8 @@ DECLCALLBACK(int) vboxUhgsmiBaseEscBufferDestroy(PVBOXUHGSMI_BUFFER pBuf)
     return VINF_SUCCESS;
 }
 
-DECLCALLBACK(int) vboxUhgsmiBaseEscBufferCreate(PVBOXUHGSMI pHgsmi, uint32_t cbBuf, VBOXUHGSMI_BUFFER_TYPE_FLAGS fUhgsmiType, PVBOXUHGSMI_BUFFER* ppBuf)
+DECLCALLBACK(int) vboxUhgsmiBaseEscBufferCreate(PVBOXUHGSMI pHgsmi, uint32_t cbBuf, VBOXUHGSMI_BUFFER_TYPE_FLAGS fUhgsmiType,
+                                                PVBOXUHGSMI_BUFFER* ppBuf)
 {
     *ppBuf = NULL;
 
@@ -189,7 +197,8 @@ DECLCALLBACK(int) vboxUhgsmiBaseEscBufferSubmit(PVBOXUHGSMI pHgsmi, PVBOXUHGSMI_
         }
     }
 
-    int rc = vboxCrHgsmiPrivateEscape(pPrivate, &Buf.SubmitInfo, RT_OFFSETOF(VBOXDISPIFESCAPE_UHGSMI_SUBMIT, aBuffers[cBuffers]), FALSE);
+    int rc = vboxCrHgsmiPrivateEscape(pPrivate, &Buf.SubmitInfo,
+                                      RT_UOFFSETOF_DYN(VBOXDISPIFESCAPE_UHGSMI_SUBMIT, aBuffers[cBuffers]), FALSE);
     if (RT_SUCCESS(rc))
     {
         DWORD dwResult = WaitForSingleObject(hSynch, INFINITE);
@@ -213,7 +222,7 @@ typedef struct VBOXCRHGSMI_CALLDATA
     HGCMFunctionParameter aArgs[3];
 } VBOXCRHGSMI_CALLDATA, *PVBOXCRHGSMI_CALLDATA;
 
-int vboxCrHgsmiPrivateCtlConCall(struct VBOXUHGSMI_PRIVATE_BASE *pHgsmi, struct VBoxGuestHGCMCallInfo *pCallInfo, int cbCallInfo)
+int vboxCrHgsmiPrivateCtlConCall(struct VBOXUHGSMI_PRIVATE_BASE *pHgsmi, struct VBGLIOCHGCMCALL *pCallInfo, int cbCallInfo)
 {
     VBOXCRHGSMI_CALLDATA Buf;
     PVBOXCRHGSMI_CALLDATA pBuf;

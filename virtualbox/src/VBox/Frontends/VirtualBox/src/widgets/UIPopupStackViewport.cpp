@@ -1,12 +1,10 @@
 /* $Id: UIPopupStackViewport.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIPopupStackViewport class implementation
+ * VBox Qt GUI - UIPopupStackViewport class implementation.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,12 +15,18 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
 /* GUI includes: */
-#include "UIPopupStackViewport.h"
-#include "UIPopupPane.h"
+# include "UIPopupStackViewport.h"
+# include "UIPopupPane.h"
 
 /* Other VBox includes: */
-#include <VBox/sup.h>
+# include <VBox/sup.h>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIPopupStackViewport::UIPopupStackViewport()
     : m_iLayoutMargin(1)
@@ -53,7 +57,7 @@ void UIPopupStackViewport::createPopupPane(const QString &strPopupPaneID,
                                                                         buttonDescriptions);
 
     /* Attach popup-pane connection: */
-    connect(this, SIGNAL(sigProposePopupPaneWidth(int)), pPopupPane, SLOT(sltHandleProposalForWidth(int)));
+    connect(this, &UIPopupStackViewport::sigProposePopupPaneSize, pPopupPane, &UIPopupPane::sltHandleProposalForSize);
     connect(pPopupPane, SIGNAL(sigSizeHintChanged()), this, SLOT(sltAdjustGeometry()));
     connect(pPopupPane, SIGNAL(sigDone(int)), this, SLOT(sltPopupPaneDone(int)));
 
@@ -95,13 +99,14 @@ void UIPopupStackViewport::recallPopupPane(const QString &strPopupPaneID)
     pPopupPane->recall();
 }
 
-void UIPopupStackViewport::sltHandleProposalForWidth(int iWidth)
+void UIPopupStackViewport::sltHandleProposalForSize(QSize newSize)
 {
     /* Subtract layout margins: */
-    iWidth -= 2 * m_iLayoutMargin;
+    newSize.setWidth(newSize.width() - 2 * m_iLayoutMargin);
+    newSize.setHeight(newSize.height() - 2 * m_iLayoutMargin);
 
-    /* Propagate resulting width to popups: */
-    emit sigProposePopupPaneWidth(iWidth);
+    /* Propagate resulting size to popups: */
+    emit sigProposePopupPaneSize(newSize);
 }
 
 void UIPopupStackViewport::sltAdjustGeometry()

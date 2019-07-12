@@ -9,7 +9,7 @@
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,9 +20,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM_ASYNC_COMPLETION
 
 #include "VMInternal.h" /* UVM */
@@ -58,10 +59,10 @@ PPDMASYNCCOMPLETIONTASK g_AsyncCompletionTasks[NR_TASKS];
 volatile uint32_t       g_cTasksLeft;
 RTSEMEVENT              g_FinishedEventSem;
 
-void pfnAsyncTaskCompleted(PVM pVM, void *pvUser, void *pvUser2, int rc)
+static DECLCALLBACK(void) AsyncTaskCompleted(PVM pVM, void *pvUser, void *pvUser2, int rc)
 {
+    RT_NOREF4(pVM, pvUser, pvUser2, rc);
     LogFlow((TESTCASE ": %s: pVM=%p pvUser=%p pvUser2=%p\n", __FUNCTION__, pVM, pvUser, pvUser2));
-    NOREF(rc);
 
     uint32_t cTasksStillLeft = ASMAtomicDecU32(&g_cTasksLeft);
 
@@ -77,6 +78,7 @@ void pfnAsyncTaskCompleted(PVM pVM, void *pvUser, void *pvUser2, int rc)
  */
 extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
+    RT_NOREF1(envp);
     int rcRet = 0; /* error count */
     PPDMASYNCCOMPLETIONENDPOINT pEndpointSrc, pEndpointDst;
 
@@ -104,7 +106,7 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
          * Create the template.
          */
         PPDMASYNCCOMPLETIONTEMPLATE pTemplate;
-        rc = PDMR3AsyncCompletionTemplateCreateInternal(pVM, &pTemplate, pfnAsyncTaskCompleted, NULL, "Test");
+        rc = PDMR3AsyncCompletionTemplateCreateInternal(pVM, &pTemplate, AsyncTaskCompleted, NULL, "Test");
         if (RT_FAILURE(rc))
         {
             RTPrintf(TESTCASE ": Error while creating the template!! rc=%d\n", rc);

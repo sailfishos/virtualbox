@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,9 +26,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_LDR
 #include <iprt/ldr.h>
 #include "internal/iprt.h"
@@ -41,9 +41,9 @@
 #include "internal/ldr.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Memory reader (for debuggers) instance.
  */
@@ -71,21 +71,24 @@ typedef struct RTLDRRDRMEM
     /** The fake filename (variable size). */
     char                szName[1];
 } RTLDRRDRMEM;
-/** Memory based loader reader instance data.   */
+/** Memory based loader reader instance data. */
 typedef RTLDRRDRMEM *PRTLDRRDRMEM;
 
 
-/** @callback_method_impl{FNRTLDRRDRMEMDTOR,
- *  Default destructor - pvUser points to the image memory block.}
+/**
+ * @callback_method_impl{FNRTLDRRDRMEMDTOR,
+ *      Default destructor - pvUser points to the image memory block}
  */
-static DECLCALLBACK(void) rtldrRdrMemDefaultDtor(void *pvUser)
+static DECLCALLBACK(void) rtldrRdrMemDefaultDtor(void *pvUser, size_t cbImage)
 {
+    RT_NOREF(cbImage);
     RTMemFree(pvUser);
 }
 
 
-/** @callback_method_impl{FNRTLDRRDRMEMREAD,
- *  Default memory reader - pvUser points to the image memory block.}
+/**
+ * @callback_method_impl{FNRTLDRRDRMEMREAD,
+ *      Default memory reader - pvUser points to the image memory block}
  */
 static DECLCALLBACK(int) rtldrRdrMemDefaultReader(void *pvBuf, size_t cb, size_t off, void *pvUser)
 {
@@ -94,7 +97,7 @@ static DECLCALLBACK(int) rtldrRdrMemDefaultReader(void *pvBuf, size_t cb, size_t
 }
 
 
-/** @copydoc RTLDRREADER::pfnRead */
+/** @interface_method_impl{RTLDRREADER,pfnRead} */
 static DECLCALLBACK(int) rtldrRdrMem_Read(PRTLDRREADER pReader, void *pvBuf, size_t cb, RTFOFF off)
 {
     PRTLDRRDRMEM pThis = (PRTLDRRDRMEM)pReader;
@@ -117,7 +120,7 @@ static DECLCALLBACK(int) rtldrRdrMem_Read(PRTLDRREADER pReader, void *pvBuf, siz
 }
 
 
-/** @copydoc RTLDRREADER::pfnTell */
+/** @interface_method_impl{RTLDRREADER,pfnTell} */
 static DECLCALLBACK(RTFOFF) rtldrRdrMem_Tell(PRTLDRREADER pReader)
 {
     PRTLDRRDRMEM pThis = (PRTLDRRDRMEM)pReader;
@@ -125,15 +128,15 @@ static DECLCALLBACK(RTFOFF) rtldrRdrMem_Tell(PRTLDRREADER pReader)
 }
 
 
-/** @copydoc RTLDRREADER::pfnSize */
-static DECLCALLBACK(RTFOFF) rtldrRdrMem_Size(PRTLDRREADER pReader)
+/** @interface_method_impl{RTLDRREADER,pfnSize} */
+static DECLCALLBACK(uint64_t) rtldrRdrMem_Size(PRTLDRREADER pReader)
 {
     PRTLDRRDRMEM pThis = (PRTLDRRDRMEM)pReader;
     return pThis->cbImage;
 }
 
 
-/** @copydoc RTLDRREADER::pfnLogName */
+/** @interface_method_impl{RTLDRREADER,pfnLogName} */
 static DECLCALLBACK(const char *) rtldrRdrMem_LogName(PRTLDRREADER pReader)
 {
     PRTLDRRDRMEM pThis = (PRTLDRRDRMEM)pReader;
@@ -141,7 +144,7 @@ static DECLCALLBACK(const char *) rtldrRdrMem_LogName(PRTLDRREADER pReader)
 }
 
 
-/** @copydoc RTLDRREADER::pfnMap */
+/** @interface_method_impl{RTLDRREADER,pfnMap} */
 static DECLCALLBACK(int) rtldrRdrMem_Map(PRTLDRREADER pReader, const void **ppvBits)
 {
     PRTLDRRDRMEM pThis = (PRTLDRRDRMEM)pReader;
@@ -178,7 +181,7 @@ static DECLCALLBACK(int) rtldrRdrMem_Map(PRTLDRREADER pReader, const void **ppvB
 }
 
 
-/** @copydoc RTLDRREADER::pfnUnmap */
+/** @interface_method_impl{RTLDRREADER,pfnUnmap} */
 static DECLCALLBACK(int) rtldrRdrMem_Unmap(PRTLDRREADER pReader, const void *pvBits)
 {
     PRTLDRRDRMEM pThis = (PRTLDRRDRMEM)pReader;
@@ -195,11 +198,13 @@ static DECLCALLBACK(int) rtldrRdrMem_Unmap(PRTLDRREADER pReader, const void *pvB
 }
 
 
-/** @copydoc RTLDRREADER::pfnDestroy */
+/** @interface_method_impl{RTLDRREADER,pfnDestroy} */
 static DECLCALLBACK(int) rtldrRdrMem_Destroy(PRTLDRREADER pReader)
 {
     PRTLDRRDRMEM pThis = (PRTLDRRDRMEM)pReader;
-    pThis->pfnDtor(pThis->pvUser);
+    pThis->pfnDtor(pThis->pvUser, pThis->cbImage);
+    pThis->pfnDtor = NULL;
+    pThis->pvUser = NULL;
     RTMemFree(pThis);
     return VINF_SUCCESS;
 }
@@ -272,18 +277,18 @@ RTDECL(int) RTLdrOpenInMemory(const char *pszName, uint32_t fFlags, RTLDRARCH en
     if (!pfnDtor)
         pfnDtor = rtldrRdrMemDefaultDtor;
     else
-        AssertPtrReturn(pfnRead, VERR_INVALID_POINTER);
+        AssertPtrReturn(pfnDtor, VERR_INVALID_POINTER);
 
     /* The rest of the validations will call the destructor. */
     AssertMsgReturnStmt(!(fFlags & ~RTLDR_O_VALID_MASK), ("%#x\n", fFlags),
-                        pfnDtor(pvUser), VERR_INVALID_PARAMETER);
+                        pfnDtor(pvUser, cbImage), VERR_INVALID_PARAMETER);
     AssertMsgReturnStmt(enmArch > RTLDRARCH_INVALID && enmArch < RTLDRARCH_END, ("%d\n", enmArch),
-                        pfnDtor(pvUser), VERR_INVALID_PARAMETER);
+                        pfnDtor(pvUser, cbImage), VERR_INVALID_PARAMETER);
     if (!pfnRead)
         pfnRead = rtldrRdrMemDefaultReader;
     else
-        AssertReturnStmt(RT_VALID_PTR(pfnRead), pfnDtor(pvUser), VERR_INVALID_POINTER);
-    AssertReturnStmt(cbImage > 0, pfnDtor(pvUser), VERR_INVALID_PARAMETER);
+        AssertReturnStmt(RT_VALID_PTR(pfnRead), pfnDtor(pvUser, cbImage), VERR_INVALID_POINTER);
+    AssertReturnStmt(cbImage > 0, pfnDtor(pvUser, cbImage), VERR_INVALID_PARAMETER);
 
     /*
      * Resolve RTLDRARCH_HOST.
@@ -307,14 +312,14 @@ RTDECL(int) RTLdrOpenInMemory(const char *pszName, uint32_t fFlags, RTLDRARCH en
         rc = RTLdrOpenWithReader(pReader, fFlags, enmArch, phLdrMod, NULL);
         if (RT_SUCCESS(rc))
         {
-            LogFlow(("RTLdrOpen: return %Rrc *phLdrMod\n", rc, *phLdrMod));
+            LogFlow(("RTLdrOpen: return %Rrc *phLdrMod=%p\n", rc, *phLdrMod));
             return rc;
         }
 
         pReader->pfnDestroy(pReader);
     }
     else
-        pfnDtor(pvUser);
+        pfnDtor(pvUser, cbImage);
     *phLdrMod = NIL_RTLDRMOD;
 
     LogFlow(("RTLdrOpen: return %Rrc\n", rc));

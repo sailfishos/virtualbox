@@ -1,9 +1,11 @@
-/*
+/* $Id: webtest.cpp $ */
+/** @file
  * webtest.cpp:
  *      demo webservice client in C++. This mimics some of the
  *      functionality of VBoxManage for testing purposes.
- *
- * Copyright (C) 2006-2014 Oracle Corporation
+ */
+/*
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,6 +25,10 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+
+#include <iprt/initterm.h>
+#include <iprt/message.h>
+#include <iprt/err.h>
 
 
 static void usage(int exitcode)
@@ -75,6 +81,11 @@ int main(int argc, char* argv[])
 {
     bool fSSL = false;
     const char *pcszArgEndpoint = "http://localhost:18083/";
+
+    /* SSL callbacks drag in IPRT sem/thread use, so make sure it is ready. */
+    int rc = RTR3InitExe(argc, &argv, 0);
+    if (RT_FAILURE(rc))
+        return RTMsgInitFailure(rc);
 
     int ap;
     for (ap = 1; ap < argc; ap++)

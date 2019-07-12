@@ -1,15 +1,32 @@
 #!/usr/bin/python
-#
-# Copyright (C) 2012 Oracle Corporation
-#
-# This file is part of VirtualBox Open Source Edition (OSE), as
-# available from http://www.virtualbox.org. This file is free software;
-# you can redistribute it and/or modify it under the terms of the GNU
-# General Public License (GPL) as published by the Free Software
-# Foundation, in version 2 as it comes in the "COPYING" file of the
-# VirtualBox OSE distribution. VirtualBox OSE is distributed in the
-# hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
-#
+
+__copyright__ = \
+"""
+Copyright (C) 2012-2017 Oracle Corporation
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the "Software"), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+"""
+
+
 # Things needed to be set up before running this sample:
 # - Install Python and verify it works (2.7.2 will do, 3.x is untested yet)
 # - On Windows: Install the PyWin32 extensions for your Python version
@@ -17,7 +34,7 @@
 # - If not already done, set the environment variable "VBOX_INSTALL_PATH"
 #   to point to your VirtualBox installation directory (which in turn must have
 #   the "sdk" subfolder")
-# - Install the VirtualBox Python bindings by doing a 
+# - Install the VirtualBox Python bindings by doing a
 #   "[python] vboxapisetup.py install"
 # - Run this sample with "[python] clienttest.py"
 
@@ -38,20 +55,18 @@ def main(argv):
 
     from vboxapi import VirtualBoxManager
     # This is a VirtualBox COM/XPCOM API client, no data needed.
-    wrapper = VirtualBoxManager(None, None)
+    mgr = VirtualBoxManager(None, None)
 
-    # Get the VirtualBox manager
-    mgr  = wrapper.mgr
     # Get the global VirtualBox object
-    vbox = wrapper.vbox
+    vbox = mgr.getVirtualBox()
 
     print "Running VirtualBox version %s" %(vbox.version)
 
-    # Get all constants through the Python wrapper code
-    vboxConstants = wrapper.constants
+    # Get all constants through the Python manager code
+    vboxConstants = mgr.constants
 
     # Enumerate all defined machines
-    for mach in wrapper.getArray(vbox, 'machines'):
+    for mach in mgr.getArray(vbox, 'machines'):
 
         try:
             # Be prepared for failures - the VM can be inaccessible
@@ -79,7 +94,7 @@ def main(argv):
             if mach.state == vboxConstants.MachineState_Running:
 
                 # Get the session object
-                session = mgr.getSessionObject(vbox)
+                session = mgr.getSessionObject()
 
                  # Lock the current machine (shared mode, since we won't modify the machine)
                 mach.lockMachine(session, vboxConstants.LockType_Shared)
@@ -100,7 +115,7 @@ def main(argv):
 
                 # Get the VM's current display resolution + bit depth + position
                 screenNum = 0 # From first screen
-                (screenW, screenH, screenBPP, screenX, screenY) = display.getScreenResolution(screenNum)
+                (screenW, screenH, screenBPP, screenX, screenY, _) = display.getScreenResolution(screenNum)
                 print "    Display (%d):     %dx%d, %d BPP at %d,%d"  %(screenNum, screenW, screenH, screenBPP, screenX, screenY)
 
                 # We're done -- don't forget to unlock the machine!
@@ -110,8 +125,8 @@ def main(argv):
             print "Errror [%s]: %s" %(mach.name, str(e))
             traceback.print_exc()
 
-    # Call destructor and delete wrapper
-    del wrapper
+    # Call destructor and delete manager
+    del mgr
 
 if __name__ == '__main__':
     main(sys.argv)

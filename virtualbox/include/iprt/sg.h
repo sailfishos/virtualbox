@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -79,6 +79,10 @@ typedef PRTSGBUF *PPRTSGBUF;
  * @param   pSgBuf    Pointer to the S/G buffer to initialize.
  * @param   paSegs    Pointer to the start of the segment array.
  * @param   cSegs     Number of segments in the array.
+ *
+ * @note paSegs and cSegs can be NULL and 0 respectively to indicate
+ *       an empty S/G buffer. All operations on the S/G buffer will
+ *       not do anything in this case.
  */
 RTDECL(void) RTSgBufInit(PRTSGBUF pSgBuf, PCRTSGSEG paSegs, size_t cSegs);
 
@@ -148,14 +152,13 @@ RTDECL(int) RTSgBufCmp(PCRTSGBUF pSgBuf1, PCRTSGBUF pSgBuf2, size_t cbCmp);
  * @param   pSgBuf1      First S/G buffer.
  * @param   pSgBuf2      Second S/G buffer.
  * @param   cbCmp        How many bytes to compare.
- * @param   pcbOff       Where to store the offset of the first different byte
+ * @param   poffDiff     Where to store the offset of the first different byte
  *                       in the buffer starting from the position of the S/G
  *                       buffer before this call.
  * @param   fAdvance     Flag whether the internal buffer position should be advanced.
  *
  */
-RTDECL(int) RTSgBufCmpEx(PRTSGBUF pSgBuf1, PRTSGBUF pSgBuf2, size_t cbCmp,
-                         size_t *pcbOff, bool fAdvance);
+RTDECL(int) RTSgBufCmpEx(PRTSGBUF pSgBuf1, PRTSGBUF pSgBuf2, size_t cbCmp, size_t *poffDiff, bool fAdvance);
 
 /**
  * Fills an S/G buf with a constant byte.

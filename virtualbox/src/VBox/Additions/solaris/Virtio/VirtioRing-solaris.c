@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,12 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#ifdef DEBUG_ramshankar
-# define LOG_INSTANCE       RTLogRelDefaultInstance()
-#endif
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "Virtio-solaris.h"
 
 #include <iprt/asm.h>
@@ -79,7 +77,7 @@ void VirtioRingInit(PVIRTIOQUEUE pQueue, uint_t cDescs, caddr_t virtBuf, ulong_t
     pRing->cDesc          = cDescs;
     pRing->pRingDesc      = (void *)virtBuf;
     pRing->pRingAvail     = (PVIRTIORINGAVAIL)(virtBuf + (cDescs * sizeof(pRing->pRingDesc[0])));
-    pRing->pRingUsedElem  = RT_ALIGN_PT(pRing->pRingAvail + RT_OFFSETOF(VIRTIORINGAVAIL, aRings[pQueue->Ring.cDesc]), Align,
+    pRing->pRingUsedElem  = RT_ALIGN_PT(pRing->pRingAvail + RT_UOFFSETOF_DYN(VIRTIORINGAVAIL, aRings[pQueue->Ring.cDesc]), Align,
                                         PVIRTIORINGUSEDELEM);
 
     for (uint_t i = 0; i < pRing->cDesc - 1; i++)

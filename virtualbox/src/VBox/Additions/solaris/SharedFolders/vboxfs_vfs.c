@@ -1,9 +1,10 @@
+/* $Id: vboxfs_vfs.c $ */
 /** @file
  * VirtualBox File System for Solaris Guests, VFS implementation.
  */
 
 /*
- * Copyright (C) 2009-2014 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,18 +39,17 @@
 #include <sys/sunddi.h>
 #include <sys/vfs.h>
 #if !defined(VBOX_VFS_SOLARIS_10U6)
-#include <sys/vfs_opreg.h>
+# include <sys/vfs_opreg.h>
 #endif
 #include <sys/pathname.h>
 #include <sys/cmn_err.h>
+#undef u /* /usr/include/sys/user.h:249:1 is where this is defined to (curproc->p_user). very cool. */
+
 #include "vboxfs_prov.h"
 #include "vboxfs_vnode.h"
 #include "vboxfs_vfs.h"
 #include "vboxfs.h"
 
-#ifdef u
-#undef u
-#endif
 
 #define VBOXSOLQUOTE2(x)                #x
 #define VBOXSOLQUOTE(x)                 VBOXSOLQUOTE2(x)
@@ -239,7 +239,7 @@ sf_pn_get(char *rawpath, struct mounta *uap, char **outpath)
 	return (0);
 }
 
-static void 
+static void
 sffs_print(sffs_data_t *sffs)
 {
 	cmn_err(CE_NOTE, "sffs_data_t at 0x%p\n", sffs);

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -191,7 +191,13 @@ typedef struct VMINTUSERPERVM
     /** The reference count of the UVM handle. */
     volatile uint32_t               cUvmRefs;
 
+    /** Number of active EMTs. */
+    volatile uint32_t               cActiveEmts;
+
 # ifdef VBOX_WITH_STATISTICS
+#  if HC_ARCH_BITS == 32
+    uint32_t                        uPadding;
+#  endif
     /** Number of VMR3ReqAlloc returning a new packet. */
     STAMCOUNTER                     StatReqAllocNew;
     /** Number of VMR3ReqAlloc causing races. */
@@ -341,8 +347,11 @@ typedef struct VMINTUSERPERVMCPU
     RTSEMEVENT                      EventSemWait;
     /** Wait/Idle indicator. */
     bool volatile                   fWait;
+    /** Set if we've been thru vmR3Destroy and decremented the active EMT count
+     *  already. */
+    bool volatile                   fBeenThruVmDestroy;
     /** Align the next bit. */
-    bool                            afAlignment[HC_ARCH_BITS == 32 ? 3 : 7];
+    bool                            afAlignment[HC_ARCH_BITS == 32 ? 2 : 6];
 
     /** @name Generic Halt data
      * @{
@@ -456,7 +465,6 @@ void                vmSetErrorCopy(PVM pVM, int rc, RT_SRC_POS_DECL, const char 
 DECLCALLBACK(int)   vmR3SetRuntimeError(PVM pVM, uint32_t fFlags, const char *pszErrorId, char *pszMessage);
 DECLCALLBACK(int)   vmR3SetRuntimeErrorV(PVM pVM, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, va_list *pVa);
 void                vmSetRuntimeErrorCopy(PVM pVM, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, va_list va);
-void                vmR3SetGuruMeditation(PVM pVM);
 void                vmR3SetTerminated(PVM pVM);
 
 RT_C_DECLS_END

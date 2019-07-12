@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -116,6 +116,8 @@ RT_C_DECLS_BEGIN
 #define RTFS_TYPE_WHITEOUT          0160000U
 /** Type mask (S_IFMT). */
 #define RTFS_TYPE_MASK              0170000U
+/** The shift count to convert between RTFS_TYPE_MASK and DIRENTRYTYPE. */
+#define RTFS_TYPE_DIRENTRYTYPE_SHIFT    12
 
 /** Unix attribute mask. */
 #define RTFS_UNIX_MASK              0xffffU
@@ -231,6 +233,8 @@ typedef enum RTFSTYPE
      * limiting the file size (except, perhaps for the 64KB cluster case on
      * non-Windows hosts). */
     RTFSTYPE_FAT,
+    /** Extended File Allocation Table, main target are flash drives. */
+    RTFSTYPE_EXFAT,
 
     /* Solaris: */
     /** Zettabyte File System.  */
@@ -299,11 +303,11 @@ typedef enum RTFSOBJATTRADD
 typedef struct RTFSOBJATTRUNIX
 {
     /** The user owning the filesystem object (st_uid).
-     * This field is NIL_UID if not supported. */
+     * This field is NIL_RTUID if not supported. */
     RTUID           uid;
 
     /** The group the filesystem object is assigned (st_gid).
-     * This field is NIL_GID if not supported. */
+     * This field is NIL_RTGID if not supported. */
     RTGID           gid;
 
     /** Number of hard links to this filesystem object (st_nlink).
@@ -319,7 +323,9 @@ typedef struct RTFSOBJATTRUNIX
     /** The unique identifier (within the filesystem) of this filesystem object (st_ino).
      * Together with INodeIdDevice, this field can be used as a OS wide unique id
      * when both their values are not 0.
-     * This field is 0 if the information is not available. */
+     * This field is 0 if the information is not available.
+     *
+     * @remarks  The special '..' dir always shows up with 0 on NTFS/Windows. */
     RTINODE         INodeId;
 
     /** User flags (st_flags).
@@ -592,6 +598,17 @@ typedef RTFSPROPERTIES const *PCRTFSPROPERTIES;
  */
 RTR3DECL(int) RTFsQueryProperties(const char *pszFsPath, PRTFSPROPERTIES pProperties);
 
+/**
+ * Checks if the given volume is case sensitive or not.
+ *
+ * This may be misleading in some cases as we lack the necessary APIs to query
+ * the information on some system (or choose not to use them) and are instead
+ * returning the general position on case sensitive file name of the system.
+ *
+ * @returns @c true if case sensitive, @c false if not.
+ * @param   pszFsPath       Path within the mounted file system.
+ */
+RTR3DECL(bool) RTFsIsCaseSensitive(const char *pszFsPath);
 
 /**
  * Mountpoint enumerator callback.

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/sup.h>
 #include <VBox/param.h>
 #include <VBox/err.h>
@@ -60,7 +60,7 @@ int main(int argc, char **argv)
         RTPrintf("pv=%p\n", pv);
         SUPPAGE aPages[1];
         rc = supR3PageLock(pv, 1, &aPages[0]);
-        RTPrintf("rc=%d aPages[0]=%RHp\n", rc, pv, aPages[0]);
+        RTPrintf("rc=%d pv=%p aPages[0]=%RHp\n", rc, pv, aPages[0]);
         RTThreadSleep(1500);
 #if 0
         RTPrintf("Unlocking...\n");
@@ -136,14 +136,14 @@ int main(int argc, char **argv)
         /*
          * Allocate a bit of contiguous memory.
          */
-        pv = SUPR3ContAlloc(RT_ALIGN_Z(15003, PAGE_SIZE) >> PAGE_SHIFT, NIL_RTR0PTR, &HCPhys);
+        pv = SUPR3ContAlloc(RT_ALIGN_Z(15003, PAGE_SIZE) >> PAGE_SHIFT, NULL, &HCPhys);
         rcRet += pv == NULL || HCPhys == 0;
         if (pv && HCPhys)
         {
             RTPrintf("SUPR3ContAlloc(15003) -> HCPhys=%llx pv=%p\n", HCPhys, pv);
             void *pv0 = pv;
             memset(pv0, 0xaf, 15003);
-            pv = SUPR3ContAlloc(RT_ALIGN_Z(12999, PAGE_SIZE) >> PAGE_SHIFT, NIL_RTR0PTR, &HCPhys);
+            pv = SUPR3ContAlloc(RT_ALIGN_Z(12999, PAGE_SIZE) >> PAGE_SHIFT, NULL, &HCPhys);
             rcRet += pv == NULL || HCPhys == 0;
             if (pv && HCPhys)
             {

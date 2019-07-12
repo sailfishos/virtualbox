@@ -3,29 +3,30 @@
 #
 # See the file LICENSE.txt for information on redistributing this software.
 
+from __future__ import print_function
 import sys
 curver = sys.version_info[0] + sys.version_info[1]/10.0
 if curver < 2.2:
-	print >>sys.stderr, "Your python is version %g.  Chromium requires at least"%(curver)
-	print >>sys.stderr, "version 2.2.  Please upgrade your python installation."
+	print("Your python is version %g.  Chromium requires at least"%(curver), file=sys.stderr)
+	print("version 2.2.  Please upgrade your python installation.", file=sys.stderr)
 	sys.exit(1)
 
 import string;
 import re;
 
 def CopyrightC( ):
-	print """/* Copyright (c) 2001, Stanford University
+	print("""/* Copyright (c) 2001, Stanford University
 	All rights reserved.
 
 	See the file LICENSE.txt for information on redistributing this software. */
-	"""
+	""")
 
 def CopyrightDef( ):
-	print """; Copyright (c) 2001, Stanford University
+	print("""; Copyright (c) 2001, Stanford University
 	; All rights reserved.
 	;
 	; See the file LICENSE.txt for information on redistributing this software.
-	"""
+	""")
 
 def DecoderName( glName ):
 	return "crUnpack" + glName
@@ -74,7 +75,7 @@ def LoadAnnotations(filename):
 	except:
 		annotations[filename] = {}
 		return {}
-	
+
 	for line in f.readlines():
 		line = line.strip()
 		if line == "" or line[0] == '#':
@@ -94,15 +95,13 @@ def GetAnnotations( filename, key ):
 		table = annotations[filename]
 	except KeyError:
 		table = LoadAnnotations(filename)
-	
+
 	try:
 		subtable = table[key]
 	except KeyError:
 		return []
 
-	keys = subtable.keys()
-	keys.sort()
-	return keys
+	return sorted(subtable.keys())
 
 def FindAnnotation( filename, key, subkey ):
 	table = {}
@@ -110,7 +109,7 @@ def FindAnnotation( filename, key, subkey ):
 		table = annotations[filename]
 	except KeyError:
 		table = LoadAnnotations(filename)
-	
+
 	try:
 	    	subtable = table[key]
 	except KeyError:
@@ -120,7 +119,7 @@ def FindAnnotation( filename, key, subkey ):
 		return subtable[subkey]
 	except KeyError:
 		return 0
-		
+
 
 
 specials = {}
@@ -132,13 +131,13 @@ def LoadSpecials( filename ):
 	except:
 		specials[filename] = {}
 		return {}
-	
+
 	for line in f.readlines():
 		line = string.strip(line)
 		if line == "" or line[0] == '#':
 			continue
 		table[line] = 1
-	
+
 	specials[filename] = table
 	return table
 
@@ -149,7 +148,7 @@ def FindSpecial( table_file, glName ):
 		table = specials[filename]
 	except KeyError:
 		table = LoadSpecials( filename )
-	
+
 	try:
 		if (table[glName] == 1):
 			return 1
@@ -165,10 +164,8 @@ def AllSpecials( table_file ):
 		table = specials[filename]
 	except KeyError:
 		table = LoadSpecials( filename )
-	
-	keys = table.keys()
-	keys.sort()
-	return keys
+
+	return sorted(table.keys())
 
 def AllSpecials( table_file ):
 	filename = table_file + "_special"
@@ -178,11 +175,9 @@ def AllSpecials( table_file ):
 		table = specials[filename]
 	except KeyError:
 		table = LoadSpecials(filename)
-	
-	ret = table.keys()
-	ret.sort()
-	return ret
-	
+
+	return sorted(table.keys())
+
 def NumSpecials( table_file ):
 	filename = table_file + "_special"
 
@@ -261,7 +256,7 @@ def ArgumentString( arg_names, arg_types ):
 	"""Return InternalArgumentString inside parenthesis."""
 	output = '( ' + InternalArgumentString(arg_names, arg_types) + ' )'
 	return output
-	
+
 def InternalCallString( arg_names ):
 	output = ''
 	for index in range(0,len(arg_names)):

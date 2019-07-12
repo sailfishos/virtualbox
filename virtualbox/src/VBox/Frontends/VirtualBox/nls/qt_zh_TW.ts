@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE TS>
-<TS version="2.0" language="zh_TW">
+<TS version="2.1" language="zh_TW">
+<context>
+    <name>CloseButton</name>
+    <message>
+        <source>Close Tab</source>
+        <translation>關閉索引標籤</translation>
+    </message>
+</context>
 <context>
     <name>MAC_APPLICATION_MENU</name>
     <message>
@@ -33,636 +40,6 @@
     </message>
 </context>
 <context>
-    <name>AudioOutput</name>
-    <message>
-        <source>&lt;html&gt;The audio playback device &lt;b&gt;%1&lt;/b&gt; does not work.&lt;br/&gt;Falling back to &lt;b&gt;%2&lt;/b&gt;.&lt;/html&gt;</source>
-        <translation>&lt;html&gt;音效播放裝置 &lt;b&gt;%1&lt;/b&gt; 無法動作。&lt;br/&gt;返回 &lt;b&gt;%2&lt;/b&gt; 失敗。&lt;/html&gt;</translation>
-    </message>
-    <message>
-        <source>&lt;html&gt;Switching to the audio playback device &lt;b&gt;%1&lt;/b&gt;&lt;br/&gt;which just became available and has higher preference.&lt;/html&gt;</source>
-        <translation>&lt;html&gt;切換至音效播放裝置 &lt;b&gt;%1&lt;/b&gt;&lt;br/&gt;，其剛成為可用並具有較高的偏好。&lt;/html&gt;</translation>
-    </message>
-    <message>
-        <source>Revert back to device &apos;%1&apos;</source>
-        <translation>恢復為裝置「%1」</translation>
-    </message>
-</context>
-<context>
-    <name>Phonon::</name>
-    <message>
-        <source>Notifications</source>
-        <translation>通知</translation>
-    </message>
-    <message>
-        <source>Music</source>
-        <translation>音樂</translation>
-    </message>
-    <message>
-        <source>Video</source>
-        <translation>視訊</translation>
-    </message>
-    <message>
-        <source>Communication</source>
-        <translation>通訊</translation>
-    </message>
-    <message>
-        <source>Games</source>
-        <translation>遊戲</translation>
-    </message>
-    <message>
-        <source>Accessibility</source>
-        <translation>可存取性</translation>
-    </message>
-</context>
-<context>
-    <name>Phonon::Gstreamer::Backend</name>
-    <message>
-        <source>Warning: You do not seem to have the package gstreamer0.10-plugins-good installed.
-          Some video features have been disabled.</source>
-        <translation>警告: 您似乎沒有安裝 gstreamer0.10-plugins-good 套件。
-          某些視訊功能已停用。</translation>
-    </message>
-    <message>
-        <source>Warning: You do not seem to have the base GStreamer plugins installed.
-          All audio and video support has been disabled</source>
-        <translation>警告: 您似乎沒有安裝基礎 GStreamer 外掛。
-          所有音訊與視訊支援已停用</translation>
-    </message>
-</context>
-<context>
-    <name>Phonon::Gstreamer::MediaObject</name>
-    <message>
-        <source>Cannot start playback. 
-
-Check your Gstreamer installation and make sure you 
-have libgstreamer-plugins-base installed.</source>
-        <translation>無法開始播放。 
-
-檢查您的 Gstreamer 安裝並確認您 
-有安裝 libgstreamer-plugins-base 。</translation>
-    </message>
-    <message numerus="yes">
-        <source>A required codec is missing. You need to install the following codec(s) to play this content: %0</source>
-        <translation>
-            <numerusform>遺失所需的轉碼器。 您需要安裝以下轉碼器以播放這個內容: %0</numerusform>
-        </translation>
-    </message>
-    <message>
-        <source>Could not open media source.</source>
-        <translation>無法開啟媒體來源。</translation>
-    </message>
-    <message>
-        <source>Invalid source type.</source>
-        <translation>無效的來源類型。</translation>
-    </message>
-    <message>
-        <source>Could not locate media source.</source>
-        <translation>找不到媒體來源。</translation>
-    </message>
-    <message>
-        <source>Could not open audio device. The device is already in use.</source>
-        <translation>無法開啟音訊裝置。 裝置已經使用中。</translation>
-    </message>
-    <message>
-        <source>Could not decode media source.</source>
-        <translation>無法解碼媒體來源。</translation>
-    </message>
-</context>
-<context>
-    <name>Phonon::VolumeSlider</name>
-    <message>
-        <source>Volume: %1%</source>
-        <translation>音量: %1%</translation>
-    </message>
-    <message>
-        <source>Use this slider to adjust the volume. The leftmost position is 0%, the rightmost is %1%</source>
-        <translation>使用這個滑桿調整音量。 最左邊位置為 0% ，最右邊為 %1%</translation>
-    </message>
-</context>
-<context>
-    <name>Q3Accel</name>
-    <message>
-        <source>%1, %2 not defined</source>
-        <translation>%1, %2 未定義</translation>
-    </message>
-    <message>
-        <source>Ambiguous %1 not handled</source>
-        <translation>不明確的 %1 不處理</translation>
-    </message>
-</context>
-<context>
-    <name>Q3DataTable</name>
-    <message>
-        <source>True</source>
-        <translation>True</translation>
-    </message>
-    <message>
-        <source>False</source>
-        <translation>False</translation>
-    </message>
-    <message>
-        <source>Insert</source>
-        <translation>插入</translation>
-    </message>
-    <message>
-        <source>Update</source>
-        <translation>更新</translation>
-    </message>
-    <message>
-        <source>Delete</source>
-        <translation>刪除</translation>
-    </message>
-</context>
-<context>
-    <name>Q3FileDialog</name>
-    <message>
-        <source>Copy or Move a File</source>
-        <translation>複製或移動檔案</translation>
-    </message>
-    <message>
-        <source>Read: %1</source>
-        <translation>讀取: %1</translation>
-    </message>
-    <message>
-        <source>Write: %1</source>
-        <translation>寫入: %1</translation>
-    </message>
-    <message>
-        <source>Cancel</source>
-        <translation>取消</translation>
-    </message>
-    <message>
-        <source>All Files (*)</source>
-        <translation>所有檔案 (*)</translation>
-    </message>
-    <message>
-        <source>Name</source>
-        <translation>名稱</translation>
-    </message>
-    <message>
-        <source>Size</source>
-        <translation>大小</translation>
-    </message>
-    <message>
-        <source>Type</source>
-        <translation>類型</translation>
-    </message>
-    <message>
-        <source>Date</source>
-        <translation>日期</translation>
-    </message>
-    <message>
-        <source>Attributes</source>
-        <translation>屬性</translation>
-    </message>
-    <message>
-        <source>&amp;OK</source>
-        <translation>確定(&amp;O)</translation>
-    </message>
-    <message>
-        <source>Look &amp;in:</source>
-        <translation>尋找(&amp;I):</translation>
-    </message>
-    <message>
-        <source>File &amp;name:</source>
-        <translation>檔案名稱(&amp;N):</translation>
-    </message>
-    <message>
-        <source>File &amp;type:</source>
-        <translation>檔案類型(&amp;T):</translation>
-    </message>
-    <message>
-        <source>Back</source>
-        <translation>上一步</translation>
-    </message>
-    <message>
-        <source>One directory up</source>
-        <translation>上一層目錄</translation>
-    </message>
-    <message>
-        <source>Create New Folder</source>
-        <translation>建立新資料夾</translation>
-    </message>
-    <message>
-        <source>List View</source>
-        <translation>清單檢視</translation>
-    </message>
-    <message>
-        <source>Detail View</source>
-        <translation>詳細檢視</translation>
-    </message>
-    <message>
-        <source>Preview File Info</source>
-        <translation>預覽檔案資訊</translation>
-    </message>
-    <message>
-        <source>Preview File Contents</source>
-        <translation>預覽檔案內容</translation>
-    </message>
-    <message>
-        <source>Read-write</source>
-        <translation>唯寫</translation>
-    </message>
-    <message>
-        <source>Read-only</source>
-        <translation>唯讀</translation>
-    </message>
-    <message>
-        <source>Write-only</source>
-        <translation>唯寫</translation>
-    </message>
-    <message>
-        <source>Inaccessible</source>
-        <translation>不可存取</translation>
-    </message>
-    <message>
-        <source>Symlink to File</source>
-        <translation>符號連結至檔案</translation>
-    </message>
-    <message>
-        <source>Symlink to Directory</source>
-        <translation>符號連結至目錄</translation>
-    </message>
-    <message>
-        <source>Symlink to Special</source>
-        <translation>符號連結至特殊</translation>
-    </message>
-    <message>
-        <source>File</source>
-        <translation>檔案</translation>
-    </message>
-    <message>
-        <source>Dir</source>
-        <translation>Dir</translation>
-    </message>
-    <message>
-        <source>Special</source>
-        <translation>特殊</translation>
-    </message>
-    <message>
-        <source>Open</source>
-        <translation>開啟</translation>
-    </message>
-    <message>
-        <source>Save As</source>
-        <translation>另存新檔</translation>
-    </message>
-    <message>
-        <source>&amp;Open</source>
-        <translation>開啟(&amp;O)</translation>
-    </message>
-    <message>
-        <source>&amp;Save</source>
-        <translation>儲存(&amp;S)</translation>
-    </message>
-    <message>
-        <source>&amp;Rename</source>
-        <translation>重新命名(&amp;R)</translation>
-    </message>
-    <message>
-        <source>&amp;Delete</source>
-        <translation>刪除(&amp;D)</translation>
-    </message>
-    <message>
-        <source>R&amp;eload</source>
-        <translation>重新載入(&amp;E)</translation>
-    </message>
-    <message>
-        <source>Sort by &amp;Name</source>
-        <translation>依名稱排序(&amp;N)</translation>
-    </message>
-    <message>
-        <source>Sort by &amp;Size</source>
-        <translation>依大小排序(&amp;S)</translation>
-    </message>
-    <message>
-        <source>Sort by &amp;Date</source>
-        <translation>依日期排序(&amp;D)</translation>
-    </message>
-    <message>
-        <source>&amp;Unsorted</source>
-        <translation>未排序(&amp;U)</translation>
-    </message>
-    <message>
-        <source>Sort</source>
-        <translation>排序</translation>
-    </message>
-    <message>
-        <source>Show &amp;hidden files</source>
-        <translation>顯示隱藏檔(&amp;H)</translation>
-    </message>
-    <message>
-        <source>the file</source>
-        <translation>檔案</translation>
-    </message>
-    <message>
-        <source>the directory</source>
-        <translation>目錄</translation>
-    </message>
-    <message>
-        <source>the symlink</source>
-        <translation>符號連結</translation>
-    </message>
-    <message>
-        <source>Delete %1</source>
-        <translation>刪除 %1</translation>
-    </message>
-    <message>
-        <source>&lt;qt&gt;Are you sure you wish to delete %1 &quot;%2&quot;?&lt;/qt&gt;</source>
-        <translation>&lt;qt&gt;您確定要刪除 %1 「%2」嗎?&lt;/qt&gt;</translation>
-    </message>
-    <message>
-        <source>&amp;Yes</source>
-        <translation>是(&amp;Y)</translation>
-    </message>
-    <message>
-        <source>&amp;No</source>
-        <translation>否(&amp;N)</translation>
-    </message>
-    <message>
-        <source>New Folder 1</source>
-        <translation>新資料夾 1</translation>
-    </message>
-    <message>
-        <source>New Folder</source>
-        <translation>新資料夾</translation>
-    </message>
-    <message>
-        <source>New Folder %1</source>
-        <translation>新資料夾 %1</translation>
-    </message>
-    <message>
-        <source>Find Directory</source>
-        <translation>尋找目錄</translation>
-    </message>
-    <message>
-        <source>Directories</source>
-        <translation>目錄</translation>
-    </message>
-    <message>
-        <source>Directory:</source>
-        <translation>目錄:</translation>
-    </message>
-    <message>
-        <source>Error</source>
-        <translation>錯誤</translation>
-    </message>
-    <message>
-        <source>%1
-File not found.
-Check path and filename.</source>
-        <translation>%1
-檔案找不到。
-請檢查路徑和檔案名稱。</translation>
-    </message>
-</context>
-<context>
-    <name>Q3LocalFs</name>
-    <message>
-        <source>Could not read directory
-%1</source>
-        <translation>無法讀取目錄
-%1</translation>
-    </message>
-    <message>
-        <source>Could not create directory
-%1</source>
-        <translation>無法建立目錄
-%1</translation>
-    </message>
-    <message>
-        <source>Could not remove file or directory
-%1</source>
-        <translation>無法移除檔案或目錄
-%1</translation>
-    </message>
-    <message>
-        <source>Could not rename
-%1
-to
-%2</source>
-        <translation>無法重新命名
-%1
-為
-%2</translation>
-    </message>
-    <message>
-        <source>Could not open
-%1</source>
-        <translation>無法開啟
-%1</translation>
-    </message>
-    <message>
-        <source>Could not write
-%1</source>
-        <translation>無法寫入
-%1</translation>
-    </message>
-</context>
-<context>
-    <name>Q3MainWindow</name>
-    <message>
-        <source>Line up</source>
-        <translation>上移一行</translation>
-    </message>
-    <message>
-        <source>Customize...</source>
-        <translation>自訂化...</translation>
-    </message>
-</context>
-<context>
-    <name>Q3NetworkProtocol</name>
-    <message>
-        <source>Operation stopped by the user</source>
-        <translation>使用者停止操作</translation>
-    </message>
-</context>
-<context>
-    <name>Q3ProgressDialog</name>
-    <message>
-        <source>Cancel</source>
-        <translation>取消</translation>
-    </message>
-</context>
-<context>
-    <name>Q3TabDialog</name>
-    <message>
-        <source>OK</source>
-        <translation>確定</translation>
-    </message>
-    <message>
-        <source>Apply</source>
-        <translation>套用</translation>
-    </message>
-    <message>
-        <source>Help</source>
-        <translation>說明</translation>
-    </message>
-    <message>
-        <source>Defaults</source>
-        <translation>預設值</translation>
-    </message>
-    <message>
-        <source>Cancel</source>
-        <translation>取消</translation>
-    </message>
-</context>
-<context>
-    <name>Q3TextEdit</name>
-    <message>
-        <source>&amp;Undo</source>
-        <translation>復原(&amp;U)</translation>
-    </message>
-    <message>
-        <source>&amp;Redo</source>
-        <translation>重作(&amp;R)</translation>
-    </message>
-    <message>
-        <source>Cu&amp;t</source>
-        <translation>剪下(&amp;T)</translation>
-    </message>
-    <message>
-        <source>&amp;Copy</source>
-        <translation>複製(&amp;C)</translation>
-    </message>
-    <message>
-        <source>&amp;Paste</source>
-        <translation>貼上(&amp;P)</translation>
-    </message>
-    <message>
-        <source>Clear</source>
-        <translation>清除</translation>
-    </message>
-    <message>
-        <source>Select All</source>
-        <translation>全選</translation>
-    </message>
-</context>
-<context>
-    <name>Q3TitleBar</name>
-    <message>
-        <source>System</source>
-        <translation>系統</translation>
-    </message>
-    <message>
-        <source>Restore up</source>
-        <translation>向上還原</translation>
-    </message>
-    <message>
-        <source>Minimize</source>
-        <translation>最小化</translation>
-    </message>
-    <message>
-        <source>Restore down</source>
-        <translation>向下還原</translation>
-    </message>
-    <message>
-        <source>Maximize</source>
-        <translation>最大化</translation>
-    </message>
-    <message>
-        <source>Close</source>
-        <translation>關閉</translation>
-    </message>
-    <message>
-        <source>Contains commands to manipulate the window</source>
-        <translation>包含操縱視窗的命令</translation>
-    </message>
-    <message>
-        <source>Puts a minimized back to normal</source>
-        <translation>將最小化恢復成標準</translation>
-    </message>
-    <message>
-        <source>Moves the window out of the way</source>
-        <translation>移動視窗超出方式</translation>
-    </message>
-    <message>
-        <source>Puts a maximized window back to normal</source>
-        <translation>將最大化的視窗恢復成標準</translation>
-    </message>
-    <message>
-        <source>Makes the window full screen</source>
-        <translation>使視窗全螢幕</translation>
-    </message>
-    <message>
-        <source>Closes the window</source>
-        <translation>關閉視窗</translation>
-    </message>
-    <message>
-        <source>Holds the name of the window and contains controls to manipulate it</source>
-        <translation>視窗所使用的名稱並包含對其進行操作的控制項</translation>
-    </message>
-</context>
-<context>
-    <name>Q3ToolBar</name>
-    <message>
-        <source>More...</source>
-        <translation>更多...</translation>
-    </message>
-</context>
-<context>
-    <name>Q3UrlOperator</name>
-    <message>
-        <source>The protocol `%1&apos; is not supported</source>
-        <translation>不支援協定「%1」</translation>
-    </message>
-    <message>
-        <source>The protocol `%1&apos; does not support listing directories</source>
-        <translation>協定「%1」不支援列出目錄</translation>
-    </message>
-    <message>
-        <source>The protocol `%1&apos; does not support creating new directories</source>
-        <translation>協定「%1」不支援建立新目錄</translation>
-    </message>
-    <message>
-        <source>The protocol `%1&apos; does not support removing files or directories</source>
-        <translation>協定「%1」不支援移除檔案或目錄</translation>
-    </message>
-    <message>
-        <source>The protocol `%1&apos; does not support renaming files or directories</source>
-        <translation>協定「%1」不支援重新命名檔案或目錄</translation>
-    </message>
-    <message>
-        <source>The protocol `%1&apos; does not support getting files</source>
-        <translation>協定「%1」不支援取得檔案</translation>
-    </message>
-    <message>
-        <source>The protocol `%1&apos; does not support putting files</source>
-        <translation>協定「%1」不支援放置檔案</translation>
-    </message>
-    <message>
-        <source>The protocol `%1&apos; does not support copying or moving files or directories</source>
-        <translation>協定「%1」不支援複製或移動檔案或目錄</translation>
-    </message>
-    <message>
-        <source>(unknown)</source>
-        <translation>(未知)</translation>
-    </message>
-</context>
-<context>
-    <name>Q3Wizard</name>
-    <message>
-        <source>&amp;Cancel</source>
-        <translation>取消(&amp;C)</translation>
-    </message>
-    <message>
-        <source>&lt; &amp;Back</source>
-        <translation>&lt; 上一步(&amp;B)</translation>
-    </message>
-    <message>
-        <source>&amp;Next &gt;</source>
-        <translation>下一步(&amp;N) &gt;</translation>
-    </message>
-    <message>
-        <source>&amp;Finish</source>
-        <translation>完成(&amp;F)</translation>
-    </message>
-    <message>
-        <source>&amp;Help</source>
-        <translation>說明(&amp;H)</translation>
-    </message>
-</context>
-<context>
     <name>QAbstractSocket</name>
     <message>
         <source>Host not found</source>
@@ -674,11 +51,27 @@ to
     </message>
     <message>
         <source>Socket operation timed out</source>
-        <translation>通訊端操作未逾時</translation>
+        <translation>通訊端操作逾時</translation>
     </message>
     <message>
         <source>Socket is not connected</source>
         <translation>通訊端未連接</translation>
+    </message>
+    <message>
+        <source>Operation on socket is not supported</source>
+        <translation>通訊端操作不支援</translation>
+    </message>
+    <message>
+        <source>Connection timed out</source>
+        <translation>連線逾時</translation>
+    </message>
+    <message>
+        <source>Trying to connect while connection is in progress</source>
+        <translation>連線進行中時嘗試連線</translation>
+    </message>
+    <message>
+        <source>Network unreachable</source>
+        <translation>網路不可連接</translation>
     </message>
 </context>
 <context>
@@ -697,11 +90,125 @@ to
     </message>
 </context>
 <context>
-    <name>QApplication</name>
+    <name>QAccessibleActionInterface</name>
     <message>
-        <source>Activate</source>
-        <translation>啟動</translation>
+        <source>Press</source>
+        <translation>按下</translation>
     </message>
+    <message>
+        <source>Increase</source>
+        <translation>增加</translation>
+    </message>
+    <message>
+        <source>Decrease</source>
+        <translation>減少</translation>
+    </message>
+    <message>
+        <source>ShowMenu</source>
+        <translation>ShowMenu</translation>
+    </message>
+    <message>
+        <source>SetFocus</source>
+        <translation>SetFocus</translation>
+    </message>
+    <message>
+        <source>Toggle</source>
+        <translation>切換</translation>
+    </message>
+    <message>
+        <source>Scroll Left</source>
+        <translation>向左捲動</translation>
+    </message>
+    <message>
+        <source>Scroll Right</source>
+        <translation>向右捲動</translation>
+    </message>
+    <message>
+        <source>Scroll Up</source>
+        <translation>向上捲動</translation>
+    </message>
+    <message>
+        <source>Scroll Down</source>
+        <translation>向下捲動</translation>
+    </message>
+    <message>
+        <source>Previous Page</source>
+        <translation>上一頁</translation>
+    </message>
+    <message>
+        <source>Next Page</source>
+        <translation>下一頁</translation>
+    </message>
+    <message>
+        <source>Triggers the action</source>
+        <translation>觸發器動作</translation>
+    </message>
+    <message>
+        <source>Increase the value</source>
+        <translation>增加值</translation>
+    </message>
+    <message>
+        <source>Decrease the value</source>
+        <translation>減少值</translation>
+    </message>
+    <message>
+        <source>Shows the menu</source>
+        <translation>顯示功能表</translation>
+    </message>
+    <message>
+        <source>Sets the focus</source>
+        <translation>設定焦點</translation>
+    </message>
+    <message>
+        <source>Toggles the state</source>
+        <translation>切換狀態</translation>
+    </message>
+    <message>
+        <source>Scrolls to the left</source>
+        <translation>向左捲動</translation>
+    </message>
+    <message>
+        <source>Scrolls to the right</source>
+        <translation>向右捲動</translation>
+    </message>
+    <message>
+        <source>Scrolls up</source>
+        <translation>向上捲動</translation>
+    </message>
+    <message>
+        <source>Scrolls down</source>
+        <translation>向下捲動</translation>
+    </message>
+    <message>
+        <source>Goes back a page</source>
+        <translation>返回上頁</translation>
+    </message>
+    <message>
+        <source>Goes to the next page</source>
+        <translation>移至下頁</translation>
+    </message>
+</context>
+<context>
+    <name>QAndroidPlatformTheme</name>
+    <message>
+        <source>Yes</source>
+        <translation>是</translation>
+    </message>
+    <message>
+        <source>Yes to All</source>
+        <translation>全部皆是</translation>
+    </message>
+    <message>
+        <source>No</source>
+        <translation>否</translation>
+    </message>
+    <message>
+        <source>No to All</source>
+        <translation>全部皆否</translation>
+    </message>
+</context>
+<context>
+    <name>QApplication</name>
     <message>
         <source>Executable &apos;%1&apos; requires Qt %2, found Qt %3.</source>
         <translation>執行檔「%1」需要 Qt %2, 但找到 Qt %3。</translation>
@@ -710,29 +217,67 @@ to
         <source>Incompatible Qt Library Error</source>
         <translation>不相容的 Qt 程式庫錯誤</translation>
     </message>
+</context>
+<context>
+    <name>QCocoaMenuItem</name>
     <message>
-        <source>QT_LAYOUT_DIRECTION</source>
-        <comment>Translate this string to the string &apos;LTR&apos; in left-to-right languages or to &apos;RTL&apos; in right-to-left languages (such as Hebrew and Arabic) to get proper widget layout.</comment>
-        <translation>QT_LAYOUT_DIRECTION</translation>
+        <source>About Qt</source>
+        <translation>關於 Qt</translation>
     </message>
     <message>
-        <source>Activates the program&apos;s main window</source>
-        <translation>啟動程式的主視窗</translation>
+        <source>About</source>
+        <translation>關於</translation>
+    </message>
+    <message>
+        <source>Config</source>
+        <translation>組態</translation>
+    </message>
+    <message>
+        <source>Preference</source>
+        <translation>喜好設定</translation>
+    </message>
+    <message>
+        <source>Options</source>
+        <translation>選項</translation>
+    </message>
+    <message>
+        <source>Setting</source>
+        <translation>設定</translation>
+    </message>
+    <message>
+        <source>Setup</source>
+        <translation>設定</translation>
+    </message>
+    <message>
+        <source>Quit</source>
+        <translation>離開</translation>
+    </message>
+    <message>
+        <source>Exit</source>
+        <translation>結束</translation>
+    </message>
+    <message>
+        <source>Cut</source>
+        <translation>剪下</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>複製</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>貼上</translation>
+    </message>
+    <message>
+        <source>Select All</source>
+        <translation>全選</translation>
     </message>
 </context>
 <context>
-    <name>QCheckBox</name>
+    <name>QCocoaTheme</name>
     <message>
-        <source>Uncheck</source>
-        <translation>不勾選</translation>
-    </message>
-    <message>
-        <source>Check</source>
-        <translation>勾選</translation>
-    </message>
-    <message>
-        <source>Toggle</source>
-        <translation>切換</translation>
+        <source>Don&apos;t Save</source>
+        <translation>不儲存</translation>
     </message>
 </context>
 <context>
@@ -763,7 +308,7 @@ to
     </message>
     <message>
         <source>A&amp;lpha channel:</source>
-        <translation>Alpha 通道(&amp;L):</translation>
+        <translation>Alpha 色板(&amp;L):</translation>
     </message>
     <message>
         <source>&amp;Basic colors</source>
@@ -778,56 +323,84 @@ to
         <translation>加入到自訂色彩(&amp;A)</translation>
     </message>
     <message>
-        <source>Select color</source>
+        <source>&amp;HTML:</source>
+        <translation>&amp;HTML:</translation>
+    </message>
+    <message>
+        <source>Cursor at %1, %2
+Press ESC to cancel</source>
+        <translation>游標在 %1, %2
+按下 ESC 來取消</translation>
+    </message>
+    <message>
+        <source>Select Color</source>
         <translation>選取色彩</translation>
+    </message>
+    <message>
+        <source>&amp;Pick Screen Color</source>
+        <translation>選擇螢幕色彩(&amp;P)</translation>
     </message>
 </context>
 <context>
     <name>QComboBox</name>
     <message>
-        <source>Open</source>
-        <translation>開啟</translation>
-    </message>
-    <message>
         <source>False</source>
-        <translation>False</translation>
+        <translation>否</translation>
     </message>
     <message>
         <source>True</source>
-        <translation>True</translation>
+        <translation>是</translation>
     </message>
     <message>
-        <source>Close</source>
-        <translation>關閉</translation>
+        <source>Open the combo box selection popup</source>
+        <translation>開啟組合方塊選取快顯</translation>
+    </message>
+</context>
+<context>
+    <name>QCommandLineParser</name>
+    <message>
+        <source>Displays version information.</source>
+        <translation>顯示版本資訊。</translation>
+    </message>
+    <message>
+        <source>Displays this help.</source>
+        <translation>顯示這個說明。</translation>
+    </message>
+    <message>
+        <source>Unknown option &apos;%1&apos;.</source>
+        <translation>未知選項「%1」。</translation>
+    </message>
+    <message>
+        <source>Unknown options: %1.</source>
+        <translation>未知選項: %1。</translation>
+    </message>
+    <message>
+        <source>Missing value after &apos;%1&apos;.</source>
+        <translation>「%1」之後缺少值。</translation>
+    </message>
+    <message>
+        <source>Unexpected value after &apos;%1&apos;.</source>
+        <translation>「%1」之後未預期的值。</translation>
+    </message>
+    <message>
+        <source>[options]</source>
+        <translation>[選項]</translation>
+    </message>
+    <message>
+        <source>Usage: %1</source>
+        <translation>用法: %1</translation>
+    </message>
+    <message>
+        <source>Options:</source>
+        <translation>選項:</translation>
+    </message>
+    <message>
+        <source>Arguments:</source>
+        <translation>參數:</translation>
     </message>
 </context>
 <context>
     <name>QCoreApplication</name>
-    <message>
-        <source>%1: permission denied</source>
-        <comment>QSystemSemaphore</comment>
-        <translation>%1: 權限拒絕</translation>
-    </message>
-    <message>
-        <source>%1: already exists</source>
-        <comment>QSystemSemaphore</comment>
-        <translation>%1: 已經存在</translation>
-    </message>
-    <message>
-        <source>%1: doesn&apos;t exists</source>
-        <comment>QSystemSemaphore</comment>
-        <translation>%1: 不存在</translation>
-    </message>
-    <message>
-        <source>%1: out of resources</source>
-        <comment>QSystemSemaphore</comment>
-        <translation>%1: 資源不足</translation>
-    </message>
-    <message>
-        <source>%1: unknown error %2</source>
-        <comment>QSystemSemaphore</comment>
-        <translation>%1: 未知錯誤 %2</translation>
-    </message>
     <message>
         <source>%1: key is empty</source>
         <comment>QSystemSemaphore</comment>
@@ -842,6 +415,110 @@ to
         <source>%1: ftok failed</source>
         <comment>QSystemSemaphore</comment>
         <translation>%1: ftok 失敗</translation>
+    </message>
+</context>
+<context>
+    <name>QCupsJobWidget</name>
+    <message>
+        <source>Job</source>
+        <translation>工作</translation>
+    </message>
+    <message>
+        <source>Job Control</source>
+        <translation>工作控制</translation>
+    </message>
+    <message>
+        <source>Scheduled printing:</source>
+        <translation>排程列印:</translation>
+    </message>
+    <message>
+        <source>Billing information:</source>
+        <translation>帳單資訊:</translation>
+    </message>
+    <message>
+        <source>Job priority:</source>
+        <translation>工作優先順序:</translation>
+    </message>
+    <message>
+        <source>Banner Pages</source>
+        <translation>橫幅頁</translation>
+    </message>
+    <message>
+        <source>End:</source>
+        <comment>Banner page at end</comment>
+        <translation>結束:</translation>
+    </message>
+    <message>
+        <source>Start:</source>
+        <comment>Banner page at start</comment>
+        <translation>啟動:</translation>
+    </message>
+    <message>
+        <source>Print Immediately</source>
+        <translation>立即列印</translation>
+    </message>
+    <message>
+        <source>Hold Indefinitely</source>
+        <translation>無限期保持</translation>
+    </message>
+    <message>
+        <source>Day (06:00 to 17:59)</source>
+        <translation>白天 (06:00 到 17:59)</translation>
+    </message>
+    <message>
+        <source>Night (18:00 to 05:59)</source>
+        <translation>晚上 (18:00 到 05:59)</translation>
+    </message>
+    <message>
+        <source>Second Shift (16:00 to 23:59)</source>
+        <translation>第二班 (16:00 到 23:59)</translation>
+    </message>
+    <message>
+        <source>Third Shift (00:00 to 07:59)</source>
+        <translation>第三班 (00:00 到 07:59)</translation>
+    </message>
+    <message>
+        <source>Weekend (Saturday to Sunday)</source>
+        <translation>週末 (週六到週日)</translation>
+    </message>
+    <message>
+        <source>Specific Time</source>
+        <translation>特定時間</translation>
+    </message>
+    <message>
+        <source>None</source>
+        <comment>CUPS Banner page</comment>
+        <translation>無</translation>
+    </message>
+    <message>
+        <source>Standard</source>
+        <comment>CUPS Banner page</comment>
+        <translation>標準</translation>
+    </message>
+    <message>
+        <source>Unclassified</source>
+        <comment>CUPS Banner page</comment>
+        <translation>未分類</translation>
+    </message>
+    <message>
+        <source>Confidential</source>
+        <comment>CUPS Banner page</comment>
+        <translation>機密</translation>
+    </message>
+    <message>
+        <source>Classified</source>
+        <comment>CUPS Banner page</comment>
+        <translation>分類</translation>
+    </message>
+    <message>
+        <source>Secret</source>
+        <comment>CUPS Banner page</comment>
+        <translation>秘密</translation>
+    </message>
+    <message>
+        <source>Top Secret</source>
+        <comment>CUPS Banner page</comment>
+        <translation>最高秘密</translation>
     </message>
 </context>
 <context>
@@ -891,7 +568,14 @@ to
     </message>
 </context>
 <context>
-    <name>QDateTimeEdit</name>
+    <name>QDBusTrayIcon</name>
+    <message>
+        <source>OK</source>
+        <translation>確定</translation>
+    </message>
+</context>
+<context>
+    <name>QDateTimeParser</name>
     <message>
         <source>AM</source>
         <translation>AM</translation>
@@ -910,29 +594,10 @@ to
     </message>
 </context>
 <context>
-    <name>QDial</name>
-    <message>
-        <source>QDial</source>
-        <translation>QDial</translation>
-    </message>
-    <message>
-        <source>SpeedoMeter</source>
-        <translation>SpeedoMeter</translation>
-    </message>
-    <message>
-        <source>SliderHandle</source>
-        <translation>SliderHandle</translation>
-    </message>
-</context>
-<context>
     <name>QDialog</name>
     <message>
         <source>What&apos;s This?</source>
-        <translation>這是? </translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <translation>完成</translation>
+        <translation>這是?</translation>
     </message>
 </context>
 <context>
@@ -940,86 +605,6 @@ to
     <message>
         <source>OK</source>
         <translation>確定</translation>
-    </message>
-    <message>
-        <source>Save</source>
-        <translation>儲存</translation>
-    </message>
-    <message>
-        <source>Open</source>
-        <translation>開啟</translation>
-    </message>
-    <message>
-        <source>Cancel</source>
-        <translation>取消</translation>
-    </message>
-    <message>
-        <source>Close</source>
-        <translation>關閉</translation>
-    </message>
-    <message>
-        <source>Apply</source>
-        <translation>套用</translation>
-    </message>
-    <message>
-        <source>Reset</source>
-        <translation>重設</translation>
-    </message>
-    <message>
-        <source>Help</source>
-        <translation>說明</translation>
-    </message>
-    <message>
-        <source>Don&apos;t Save</source>
-        <translation>不儲存</translation>
-    </message>
-    <message>
-        <source>Discard</source>
-        <translation>捨棄</translation>
-    </message>
-    <message>
-        <source>&amp;Yes</source>
-        <translation>是(&amp;Y)</translation>
-    </message>
-    <message>
-        <source>Yes to &amp;All</source>
-        <translation>全部皆是(&amp;A)</translation>
-    </message>
-    <message>
-        <source>&amp;No</source>
-        <translation>否(&amp;N)</translation>
-    </message>
-    <message>
-        <source>N&amp;o to All</source>
-        <translation>全部皆否(&amp;O)</translation>
-    </message>
-    <message>
-        <source>Save All</source>
-        <translation>全部儲存</translation>
-    </message>
-    <message>
-        <source>Abort</source>
-        <translation>中止</translation>
-    </message>
-    <message>
-        <source>Retry</source>
-        <translation>重試</translation>
-    </message>
-    <message>
-        <source>Ignore</source>
-        <translation>忽略</translation>
-    </message>
-    <message>
-        <source>Restore Defaults</source>
-        <translation>還原預設值</translation>
-    </message>
-    <message>
-        <source>Close without Saving</source>
-        <translation>關閉不儲存</translation>
-    </message>
-    <message>
-        <source>&amp;OK</source>
-        <translation>確定(&amp;O)</translation>
     </message>
 </context>
 <context>
@@ -1048,29 +633,130 @@ to
     </message>
 </context>
 <context>
-    <name>QDockWidget</name>
+    <name>QDnsLookup</name>
     <message>
-        <source>Close</source>
-        <translation>關閉</translation>
-    </message>
-    <message>
-        <source>Dock</source>
-        <translation>停駐</translation>
-    </message>
-    <message>
-        <source>Float</source>
-        <translation>浮動</translation>
+        <source>Operation cancelled</source>
+        <translation>操作取消</translation>
     </message>
 </context>
 <context>
-    <name>QDoubleSpinBox</name>
+    <name>QDnsLookupRunnable</name>
     <message>
-        <source>More</source>
-        <translation>更多</translation>
+        <source>IPv6 addresses for nameservers are currently not supported</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Less</source>
-        <translation>較少</translation>
+        <source>Invalid domain name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Not yet supported on Android</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Resolver functions not found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Resolver initialization failed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Server could not process query</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Server failure</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Non existent domain</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Server refused to answer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid reply received</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not expand domain name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid IPv4 address record</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid IPv6 address record</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid canonical name record</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid name server record</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid pointer record</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid mail exchange record</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid service record</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid text record</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Resolver library can&apos;t be loaded: No runtime library loading support</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No hostname given</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Invalid hostname</source>
+        <translation>主機名稱無效</translation>
+    </message>
+    <message>
+        <source>Host %1 could not be found.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unknown error</source>
+        <translation>未知錯誤</translation>
+    </message>
+</context>
+<context>
+    <name>QDockWidget</name>
+    <message>
+        <source>Close</source>
+        <extracomment>Accessible name for button closing a dock widget</extracomment>
+        <translation>關閉</translation>
+    </message>
+    <message>
+        <source>Float</source>
+        <extracomment>Accessible name for button undocking a dock widget (floating state)</extracomment>
+        <translation>浮動</translation>
+    </message>
+    <message>
+        <source>Undocks and re-attaches the dock widget</source>
+        <translation>取消停駐並重新附加停駐小工具</translation>
+    </message>
+    <message>
+        <source>Closes the dock widget</source>
+        <translation>關閉停駐小工具</translation>
     </message>
 </context>
 <context>
@@ -1094,6 +780,60 @@ to
     <message>
         <source>&amp;OK</source>
         <translation>確定(&amp;O)</translation>
+    </message>
+</context>
+<context>
+    <name>QFile</name>
+    <message>
+        <source>Destination file is the same file.</source>
+        <translation>目的地檔案是相同檔案。</translation>
+    </message>
+    <message>
+        <source>Source file does not exist.</source>
+        <translation>來源檔案不存在。</translation>
+    </message>
+    <message>
+        <source>Destination file exists</source>
+        <translation>目的地檔案存在</translation>
+    </message>
+    <message>
+        <source>Error while renaming.</source>
+        <translation>重新命名時錯誤。</translation>
+    </message>
+    <message>
+        <source>Unable to restore from %1: %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Will not rename sequential file using block copy</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cannot remove source file</source>
+        <translation>無法移除來源檔案</translation>
+    </message>
+    <message>
+        <source>Cannot open %1 for input</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cannot open for output</source>
+        <translation>無法開啟輸出</translation>
+    </message>
+    <message>
+        <source>Failure to write block</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cannot create %1 for output</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QFileDevice</name>
+    <message>
+        <source>No file engine available or engine does not support UnMapExtension</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -1122,7 +862,7 @@ to
         <source>%1 already exists.
 Do you want to replace it?</source>
         <translation>%1 已經存在。
-您要取代它嗎? </translation>
+您要取代它嗎?</translation>
     </message>
     <message>
         <source>%1
@@ -1184,11 +924,7 @@ Please verify the correct directory name was given.</source>
         <source>&apos;%1&apos; is write protected.
 Do you want to delete it anyway?</source>
         <translation>「%1」有寫入保護。
-您仍然要刪除嗎? </translation>
-    </message>
-    <message>
-        <source>Are sure you want to delete &apos;%1&apos;?</source>
-        <translation>您確定要刪除「%1」嗎? </translation>
+您仍然要刪除嗎?</translation>
     </message>
     <message>
         <source>Could not delete directory.</source>
@@ -1249,6 +985,95 @@ Do you want to delete it anyway?</source>
     <message>
         <source>Create New Folder</source>
         <translation>建立新資料夾</translation>
+    </message>
+    <message>
+        <source>Go back</source>
+        <translation>上一步</translation>
+    </message>
+    <message>
+        <source>Alt+Left</source>
+        <translation>Alt+Left</translation>
+    </message>
+    <message>
+        <source>Go forward</source>
+        <translation>下一頁</translation>
+    </message>
+    <message>
+        <source>Alt+Right</source>
+        <translation>Alt+Right</translation>
+    </message>
+    <message>
+        <source>Go to the parent directory</source>
+        <translation>移至上層目錄</translation>
+    </message>
+    <message>
+        <source>Alt+Up</source>
+        <translation>Alt+Up</translation>
+    </message>
+    <message>
+        <source>Create a New Folder</source>
+        <translation>建立新資料夾</translation>
+    </message>
+    <message>
+        <source>Change to list view mode</source>
+        <translation>變更清單檢視模式</translation>
+    </message>
+    <message>
+        <source>Change to detail view mode</source>
+        <translation>變更詳細資料檢視模式</translation>
+    </message>
+    <message>
+        <source>Sidebar</source>
+        <translation>側邊列</translation>
+    </message>
+    <message>
+        <source>List of places and bookmarks</source>
+        <translation>位置和書籤清單</translation>
+    </message>
+    <message>
+        <source>Files</source>
+        <translation>檔案</translation>
+    </message>
+    <message>
+        <source>All files (*)</source>
+        <translation>所有檔案 (*)</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>刪除</translation>
+    </message>
+    <message>
+        <source>Are you sure you want to delete &apos;%1&apos;?</source>
+        <translation>您確定要刪除「%1」嗎?</translation>
+    </message>
+    <message>
+        <source>Recent Places</source>
+        <translation>最近位置</translation>
+    </message>
+    <message>
+        <source>%1 File</source>
+        <extracomment>%1 is a file name suffix, for example txt</extracomment>
+        <translation>%1 檔案</translation>
+    </message>
+    <message>
+        <source>File Folder</source>
+        <comment>Match Windows Explorer</comment>
+        <translation>檔案資料夾</translation>
+    </message>
+    <message>
+        <source>Folder</source>
+        <comment>All other platforms</comment>
+        <translation>資料夾</translation>
+    </message>
+    <message>
+        <source>Alias</source>
+        <comment>OS X Finder</comment>
+        <translation>別名</translation>
+    </message>
+    <message>
+        <source>Shortcut</source>
+        <comment>All other platforms</comment>
+        <translation>快速鍵</translation>
     </message>
 </context>
 <context>
@@ -1311,13 +1136,13 @@ Do you want to delete it anyway?</source>
         <source>%1 bytes</source>
         <translation>%1 bytes</translation>
     </message>
+    <message>
+        <source>%1 byte(s)</source>
+        <translation>%1 byte(s)</translation>
+    </message>
 </context>
 <context>
     <name>QFontDatabase</name>
-    <message>
-        <source>Normal</source>
-        <translation>標準</translation>
-    </message>
     <message>
         <source>Bold</source>
         <translation>粗體</translation>
@@ -1332,11 +1157,12 @@ Do you want to delete it anyway?</source>
     </message>
     <message>
         <source>Demi</source>
+        <extracomment>The word for &quot;Demi&quot; as in &quot;Demi Bold&quot; used as a pattern for string searches</extracomment>
         <translation>Demi</translation>
     </message>
     <message>
         <source>Light</source>
-        <translation>Light</translation>
+        <translation>亮</translation>
     </message>
     <message>
         <source>Italic</source>
@@ -1478,6 +1304,37 @@ Do you want to delete it anyway?</source>
         <source>Runic</source>
         <translation>古代北歐文</translation>
     </message>
+    <message>
+        <source>Normal</source>
+        <comment>The Normal or Regular font weight</comment>
+        <translation>標準</translation>
+    </message>
+    <message>
+        <source>Medium</source>
+        <comment>The Medium font weight</comment>
+        <translation>中</translation>
+    </message>
+    <message>
+        <source>Thin</source>
+        <translation>Thin</translation>
+    </message>
+    <message>
+        <source>Extra Light</source>
+        <translation>特細</translation>
+    </message>
+    <message>
+        <source>Extra Bold</source>
+        <translation>特粗</translation>
+    </message>
+    <message>
+        <source>Extra</source>
+        <extracomment>The word for &quot;Extra&quot; as in &quot;Extra Bold, Extra Thin&quot; used as a pattern for string searches</extracomment>
+        <translation>額外</translation>
+    </message>
+    <message>
+        <source>N&apos;Ko</source>
+        <translation>N&apos;Ko</translation>
+    </message>
 </context>
 <context>
     <name>QFontDialog</name>
@@ -1535,10 +1392,6 @@ Do you want to delete it anyway?</source>
     <message>
         <source>Connected to host %1</source>
         <translation>已連接到主機 %1</translation>
-    </message>
-    <message>
-        <source>Connection refused for data connection</source>
-        <translation>拒絕資料連線的連線</translation>
     </message>
     <message>
         <source>Unknown error</source>
@@ -1603,20 +1456,43 @@ Do you want to delete it anyway?</source>
         <translation>已關閉連線</translation>
     </message>
     <message>
-        <source>Host %1 found</source>
-        <translation>找到主機 %1</translation>
+        <source>Connection timed out to host %1</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Connection to %1 closed</source>
-        <translation>已關閉連線到 %1</translation>
+        <source>Data Connection refused</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QGnomeTheme</name>
+    <message>
+        <source>&amp;OK</source>
+        <translation>確定(&amp;O)</translation>
     </message>
     <message>
-        <source>Host found</source>
-        <translation>找到主機</translation>
+        <source>&amp;Save</source>
+        <translation>儲存(&amp;S)</translation>
     </message>
     <message>
-        <source>Connected to host</source>
-        <translation>已連接到主機</translation>
+        <source>&amp;Cancel</source>
+        <translation>取消(&amp;C)</translation>
+    </message>
+    <message>
+        <source>&amp;Close</source>
+        <translation>關閉(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Close without Saving</source>
+        <translation>關閉不儲存</translation>
+    </message>
+</context>
+<context>
+    <name>QGuiApplication</name>
+    <message>
+        <source>QT_LAYOUT_DIRECTION</source>
+        <comment>Translate this string to the string &apos;LTR&apos; in left-to-right languages or to &apos;RTL&apos; in right-to-left languages (such as Hebrew and Arabic) to get proper widget layout.</comment>
+        <translation>QT_LAYOUT_DIRECTION</translation>
     </message>
 </context>
 <context>
@@ -1624,6 +1500,10 @@ Do you want to delete it anyway?</source>
     <message>
         <source>Unknown error</source>
         <translation>未知錯誤</translation>
+    </message>
+    <message>
+        <source>No host name given</source>
+        <translation>未給予主機名稱</translation>
     </message>
 </context>
 <context>
@@ -1640,29 +1520,21 @@ Do you want to delete it anyway?</source>
         <source>Unknown error</source>
         <translation>未知錯誤</translation>
     </message>
+    <message>
+        <source>No host name given</source>
+        <translation>未給予主機名稱</translation>
+    </message>
+    <message>
+        <source>Invalid hostname</source>
+        <translation>主機名稱無效</translation>
+    </message>
+    <message>
+        <source>Unknown error (%1)</source>
+        <translation>未知錯誤 (%1)</translation>
+    </message>
 </context>
 <context>
     <name>QHttp</name>
-    <message>
-        <source>Unknown error</source>
-        <translation>未知錯誤</translation>
-    </message>
-    <message>
-        <source>Request aborted</source>
-        <translation>請求已中止</translation>
-    </message>
-    <message>
-        <source>No server set to connect to</source>
-        <translation>沒有設定要連接的伺服器</translation>
-    </message>
-    <message>
-        <source>Wrong content length</source>
-        <translation>內容長度錯誤</translation>
-    </message>
-    <message>
-        <source>Server closed connection unexpectedly</source>
-        <translation>伺服器未預期關閉連線</translation>
-    </message>
     <message>
         <source>Connection refused</source>
         <translation>拒絕連線</translation>
@@ -1672,52 +1544,8 @@ Do you want to delete it anyway?</source>
         <translation>找不到主機 %1</translation>
     </message>
     <message>
-        <source>HTTP request failed</source>
-        <translation>HTTP 請求失敗</translation>
-    </message>
-    <message>
-        <source>Invalid HTTP response header</source>
-        <translation>無效的 HTTP 回應標頭</translation>
-    </message>
-    <message>
-        <source>Invalid HTTP chunked body</source>
-        <translation>無效的 HTTP 分塊主體</translation>
-    </message>
-    <message>
-        <source>Host %1 found</source>
-        <translation>找到主機 %1</translation>
-    </message>
-    <message>
-        <source>Connected to host %1</source>
-        <translation>已連接到主機 %1</translation>
-    </message>
-    <message>
-        <source>Connection to %1 closed</source>
-        <translation>已關閉連線到 %1</translation>
-    </message>
-    <message>
-        <source>Host found</source>
-        <translation>找到主機</translation>
-    </message>
-    <message>
-        <source>Connected to host</source>
-        <translation>已連接到主機</translation>
-    </message>
-    <message>
         <source>Connection closed</source>
         <translation>已關閉連線</translation>
-    </message>
-    <message>
-        <source>Proxy authentication required</source>
-        <translation>Proxy 驗證要求</translation>
-    </message>
-    <message>
-        <source>Authentication required</source>
-        <translation>需要驗證</translation>
-    </message>
-    <message>
-        <source>Connection refused (or timed out)</source>
-        <translation>拒絕連線 (或逾時)</translation>
     </message>
     <message>
         <source>Proxy requires authentication</source>
@@ -1740,8 +1568,12 @@ Do you want to delete it anyway?</source>
         <translation>SSL 交握失敗</translation>
     </message>
     <message>
-        <source>HTTPS connection requested but SSL support not compiled in</source>
-        <translation>需要 HTTPS 連線，但 SSL 支援未編譯於</translation>
+        <source>Too many redirects</source>
+        <translation>太多重新導向</translation>
+    </message>
+    <message>
+        <source>Insecure redirect</source>
+        <translation>不安全重新導向</translation>
     </message>
 </context>
 <context>
@@ -1749,6 +1581,38 @@ Do you want to delete it anyway?</source>
     <message>
         <source>Authentication required</source>
         <translation>需要驗證</translation>
+    </message>
+    <message>
+        <source>Did not receive HTTP response from proxy</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Error parsing authentication request from proxy</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy denied connection</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Error communicating with HTTP proxy</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy server not found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy connection refused</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy server connection timed out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy connection closed prematurely</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -1863,59 +1727,140 @@ Do you want to delete it anyway?</source>
         <source>Unknown error</source>
         <translation>未知錯誤</translation>
     </message>
+    <message>
+        <source>file to open is a directory</source>
+        <translation>開啟的檔案為目錄</translation>
+    </message>
 </context>
 <context>
-    <name>QInputContext</name>
+    <name>QImageReader</name>
     <message>
-        <source>XIM</source>
-        <translation>XIM</translation>
+        <source>Invalid device</source>
+        <translation>裝置無效</translation>
     </message>
     <message>
-        <source>XIM input method</source>
-        <translation>XIM 輸入法</translation>
+        <source>File not found</source>
+        <translation>找不到檔案</translation>
     </message>
     <message>
-        <source>Windows input method</source>
-        <translation>Windows 輸入法</translation>
+        <source>Unsupported image format</source>
+        <translation>不支援的映像格式</translation>
     </message>
     <message>
-        <source>Mac OS X input method</source>
-        <translation>Mac OS X 輸入法</translation>
+        <source>Unable to read image data</source>
+        <translation>無法讀取映像資料</translation>
+    </message>
+    <message>
+        <source>Unknown error</source>
+        <translation>未知錯誤</translation>
+    </message>
+</context>
+<context>
+    <name>QImageWriter</name>
+    <message>
+        <source>Unknown error</source>
+        <translation>未知錯誤</translation>
+    </message>
+    <message>
+        <source>Device is not set</source>
+        <translation>裝置未設定</translation>
+    </message>
+    <message>
+        <source>Device not writable</source>
+        <translation>裝置不可寫</translation>
+    </message>
+    <message>
+        <source>Unsupported image format</source>
+        <translation>不支援的映像格式</translation>
+    </message>
+</context>
+<context>
+    <name>QInputDialog</name>
+    <message>
+        <source>Enter a value:</source>
+        <translation>輸入值:</translation>
+    </message>
+</context>
+<context>
+    <name>QJsonParseError</name>
+    <message>
+        <source>no error occurred</source>
+        <translation>未發生錯誤</translation>
+    </message>
+    <message>
+        <source>unterminated object</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing name separator</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unterminated array</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing value separator</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>illegal value</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid termination by number</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>illegal number</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid escape sequence</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid UTF8 string</source>
+        <translation>無效的 UTF8 字串</translation>
+    </message>
+    <message>
+        <source>unterminated string</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>object is missing after a comma</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>too deeply nested document</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>too large document</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>garbage at the end of the document</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QKeySequenceEdit</name>
+    <message>
+        <source>Press shortcut</source>
+        <translation>按下快速鍵</translation>
+    </message>
+    <message>
+        <source>%1, ...</source>
+        <extracomment>This text is an &quot;unfinished&quot; shortcut, expands like &quot;Ctrl+A, ...&quot;</extracomment>
+        <translation>%1, ...</translation>
     </message>
 </context>
 <context>
     <name>QLibrary</name>
     <message>
-        <source>QLibrary::load_sys: Cannot load %1 (%2)</source>
-        <translation>QLibrary::load_sys: 無法載入 %1 (%2)</translation>
-    </message>
-    <message>
-        <source>QLibrary::unload_sys: Cannot unload %1 (%2)</source>
-        <translation>QLibrary::unload_sys: 無法卸載 %1 (%2)</translation>
-    </message>
-    <message>
-        <source>QLibrary::resolve_sys: Symbol &quot;%1&quot; undefined in %2 (%3)</source>
-        <translation>QLibrary::resolve_sys: 符號「%1」於 %2 (%3) 未定義</translation>
-    </message>
-    <message>
-        <source>Could not mmap &apos;%1&apos;: %2</source>
-        <translation>無法對應「%1」: %2</translation>
-    </message>
-    <message>
-        <source>Plugin verification data mismatch in &apos;%1&apos;</source>
-        <translation>在 「%1」中的外掛程式驗證資料不相符</translation>
-    </message>
-    <message>
-        <source>Could not unmap &apos;%1&apos;: %2</source>
-        <translation>無法取消對應「%1」: %2</translation>
-    </message>
-    <message>
         <source>The plugin &apos;%1&apos; uses incompatible Qt library. (%2.%3.%4) [%5]</source>
         <translation>外掛「%1」使用不相容的 Qt 程式庫。 (%2.%3.%4) [%5]</translation>
-    </message>
-    <message>
-        <source>The plugin &apos;%1&apos; uses incompatible Qt library. Expected build key &quot;%2&quot;, got &quot;%3&quot;</source>
-        <translation>外掛「%1」使用不相容的 Qt 程式庫。 預期組建碼 &quot;%2&quot;， 取得 &quot;%3&quot;</translation>
     </message>
     <message>
         <source>Unknown error</source>
@@ -1932,6 +1877,66 @@ Do you want to delete it anyway?</source>
     <message>
         <source>The plugin &apos;%1&apos; uses incompatible Qt library. (Cannot mix debug and release libraries.)</source>
         <translation>外掛「%1」使用不相容的 Qt 程式庫。 (無法混合 debug 與 release 程式庫。)</translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is not an ELF object (%2)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is not an ELF object</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is an invalid ELF object (%2)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Failed to extract plugin meta data from &apos;%1&apos;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cannot load library %1: %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cannot unload library %1: %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cannot resolve symbol &quot;%1&quot; in %2: %3</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is not a valid Mach-O binary (%2)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>file is corrupt</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>file too small</source>
+        <translation>檔案太小</translation>
+    </message>
+    <message>
+        <source>no suitable architecture in fat binary</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid magic %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>wrong architecture</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>not a dynamic library</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>&apos;%1&apos; is not a Qt plugin</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2026,13 +2031,25 @@ Do you want to delete it anyway?</source>
         <source>%1: Unknown error %2</source>
         <translation>%1: 未知錯誤 %2</translation>
     </message>
+    <message>
+        <source>%1: Operation not permitted when socket is in this state</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1: Unknown error</source>
+        <translation>%1: 未知錯誤</translation>
+    </message>
+    <message>
+        <source>Trying to connect while connection is in progress</source>
+        <translation>連線進行中時嘗試連線</translation>
+    </message>
+    <message>
+        <source>%1: Access denied</source>
+        <translation>%1: 拒絕存取</translation>
+    </message>
 </context>
 <context>
     <name>QMYSQLDriver</name>
-    <message>
-        <source>Unable to open database &apos;</source>
-        <translation>無法開啟資料庫 &apos;</translation>
-    </message>
     <message>
         <source>Unable to connect</source>
         <translation>無法連接</translation>
@@ -2048,6 +2065,14 @@ Do you want to delete it anyway?</source>
     <message>
         <source>Unable to rollback transaction</source>
         <translation>無法回復異動</translation>
+    </message>
+    <message>
+        <source>Unable to allocate a MYSQL object</source>
+        <translation>無法配置 MYSQL 物件</translation>
+    </message>
+    <message>
+        <source>Unable to open database &apos;%1&apos;</source>
+        <translation>無法開啟資料庫「%1」</translation>
     </message>
 </context>
 <context>
@@ -2101,7 +2126,7 @@ Do you want to delete it anyway?</source>
     <name>QMdiArea</name>
     <message>
         <source>(Untitled)</source>
-        <translation> (未命名) </translation>
+        <translation>(未命名)</translation>
     </message>
 </context>
 <context>
@@ -2180,21 +2205,6 @@ Do you want to delete it anyway?</source>
     </message>
 </context>
 <context>
-    <name>QMenu</name>
-    <message>
-        <source>Close</source>
-        <translation>關閉</translation>
-    </message>
-    <message>
-        <source>Open</source>
-        <translation>開啟</translation>
-    </message>
-    <message>
-        <source>Execute</source>
-        <translation>執行</translation>
-    </message>
-</context>
-<context>
     <name>QMessageBox</name>
     <message>
         <source>Help</source>
@@ -2209,10 +2219,6 @@ Do you want to delete it anyway?</source>
         <translation>關於 Qt</translation>
     </message>
     <message>
-        <source>&lt;p&gt;This program uses Qt version %1.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;這個程式使用 Qt %1 版。&lt;/p&gt;</translation>
-    </message>
-    <message>
         <source>Show Details...</source>
         <translation>顯示詳細資料...</translation>
     </message>
@@ -2221,30 +2227,12 @@ Do you want to delete it anyway?</source>
         <translation>隱藏詳細資料...</translation>
     </message>
     <message>
-        <source>&lt;p&gt;This program uses Qt Open Source Edition version %1.&lt;/p&gt;&lt;p&gt;Qt Open Source Edition is intended for the development of Open Source applications. You need a commercial Qt license for development of proprietary (closed source) applications.&lt;/p&gt;&lt;p&gt;Please see &lt;a href=&quot;http://www.trolltech.com/company/model/&quot;&gt;www.trolltech.com/company/model/&lt;/a&gt; for an overview of Qt licensing.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;這個程式使用 Qt Open Source Edition 版本 %1 。&lt;/p&gt;&lt;p&gt;Qt Open Source Edition 是供開發的開放原始程式碼應用程式。 開發專有的 (封閉原始碼) 應用程式您需要商業 Qt 授權。&lt;/p&gt;&lt;p&gt;有關 Qt 授權的概述請參閱 &lt;a href=&quot;http://www.trolltech.com/company/model/&quot;&gt;www.trolltech.com/company/model/&lt;/a&gt; 。&lt;/p&gt;</translation>
+        <source>&lt;h3&gt;About Qt&lt;/h3&gt;&lt;p&gt;This program uses Qt version %1.&lt;/p&gt;</source>
+        <translation>&lt;h3&gt;關於 Qt&lt;/h3&gt;&lt;p&gt;這個程式使用 Qt 版本 %1。&lt;/p&gt;</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;About Qt&lt;/h3&gt;%1&lt;p&gt;Qt is a C++ toolkit for cross-platform application development.&lt;/p&gt;&lt;p&gt;Qt provides single-source portability across MS&amp;nbsp;Windows, Mac&amp;nbsp;OS&amp;nbsp;X, Linux, and all major commercial Unix variants. Qt is also available for embedded devices as Qt for Embedded Linux and Qt for Windows CE.&lt;/p&gt;&lt;p&gt;Qt is a Nokia product. See &lt;a href=&quot;http://www.trolltech.com/qt/&quot;&gt;www.trolltech.com/qt/&lt;/a&gt; for more information.&lt;/p&gt;</source>
-        <translation>&lt;h3&gt;關於 Qt&lt;/h3&gt;%1&lt;p&gt;Qt 是 C++ 工具集作為跨平台的應用程式開發。&lt;/p&gt;&lt;p&gt;Qt 提供單一來源可攜性，橫跨 MS&amp;nbsp;Windows, Mac&amp;nbsp;OS&amp;nbsp;X, Linux, 和所有各種商業 Unix 變種。 以嵌入式 Linux 的 Qt 與 Windows CE 的 Qt ， Qt 也可用於可攜式裝置。&lt;/p&gt;&lt;p&gt;Qt 是 Nokia 的產品。 更多資訊請參閱 &lt;a href=&quot;http://www.trolltech.com/qt/&quot;&gt;www.trolltech.com/qt/&lt;/a&gt; 。&lt;/p&gt;</translation>
-    </message>
-</context>
-<context>
-    <name>QMultiInputContext</name>
-    <message>
-        <source>Select IM</source>
-        <translation>選取 IM</translation>
-    </message>
-</context>
-<context>
-    <name>QMultiInputContextPlugin</name>
-    <message>
-        <source>Multiple input method switcher</source>
-        <translation>多重輸入法切換器</translation>
-    </message>
-    <message>
-        <source>Multiple input method switcher that uses the context menu of the text widgets</source>
-        <translation>使用文字 Widget 內容功能表的多重輸入法切換器</translation>
+        <source>&lt;p&gt;Qt is a C++ toolkit for cross-platform application development.&lt;/p&gt;&lt;p&gt;Qt provides single-source portability across all major desktop operating systems. It is also available for embedded Linux and other embedded and mobile operating systems.&lt;/p&gt;&lt;p&gt;Qt is available under three different licensing options designed to accommodate the needs of our various users.&lt;/p&gt;&lt;p&gt;Qt licensed under our commercial license agreement is appropriate for development of proprietary/commercial software where you do not want to share any source code with third parties or otherwise cannot comply with the terms of the GNU LGPL version 3 or GNU LGPL version 2.1.&lt;/p&gt;&lt;p&gt;Qt licensed under the GNU LGPL version 3 is appropriate for the development of Qt&amp;nbsp;applications provided you can comply with the terms and conditions of the GNU LGPL version 3.&lt;/p&gt;&lt;p&gt;Qt licensed under the GNU LGPL version 2.1 is appropriate for the development of Qt&amp;nbsp;applications provided you can comply with the terms and conditions of the GNU LGPL version 2.1.&lt;/p&gt;&lt;p&gt;Please see &lt;a href=&quot;http://%2/&quot;&gt;%2&lt;/a&gt; for an overview of Qt licensing.&lt;/p&gt;&lt;p&gt;Copyright (C) %1 The Qt Company Ltd and other contributors.&lt;/p&gt;&lt;p&gt;Qt and the Qt logo are trademarks of The Qt Company Ltd.&lt;/p&gt;&lt;p&gt;Qt is The Qt Company Ltd product developed as an open source project. See &lt;a href=&quot;http://%3/&quot;&gt;%3&lt;/a&gt; for more information.&lt;/p&gt;</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2263,7 +2251,7 @@ Do you want to delete it anyway?</source>
     </message>
     <message>
         <source>Unsupported socket operation</source>
-        <translation>未支援的通訊端操作</translation>
+        <translation>不支援的通訊端操作</translation>
     </message>
     <message>
         <source>Protocol type not supported</source>
@@ -2299,7 +2287,7 @@ Do you want to delete it anyway?</source>
     </message>
     <message>
         <source>The address is protected</source>
-        <translation>位址不受保護</translation>
+        <translation>位址受到保護</translation>
     </message>
     <message>
         <source>Unable to send a message</source>
@@ -2353,6 +2341,47 @@ Do you want to delete it anyway?</source>
         <source>The proxy type is invalid for this operation</source>
         <translation>這個操作的 Proxy 類型無效</translation>
     </message>
+    <message>
+        <source>Temporary error</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Network dropped connection on reset</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connection reset by peer</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkAccessCacheBackend</name>
+    <message>
+        <source>Error opening %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkAccessDataBackend</name>
+    <message>
+        <source>Invalid URI: %1</source>
+        <translation>無效的 URI: %1</translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkAccessDebugPipeBackend</name>
+    <message>
+        <source>Write error writing to %1: %2</source>
+        <translation>寫入 %1 錯誤: %2</translation>
+    </message>
+    <message>
+        <source>Socket error on %1: %2</source>
+        <translation>%1 通訊端錯誤: %2</translation>
+    </message>
+    <message>
+        <source>Remote host closed the connection prematurely on %1</source>
+        <translation>遠端主機已永久關閉連線於 %1</translation>
+    </message>
 </context>
 <context>
     <name>QNetworkAccessFileBackend</name>
@@ -2395,16 +2424,54 @@ Do you want to delete it anyway?</source>
         <source>Error while uploading %1: %2</source>
         <translation>上傳 %1 時錯誤: %2</translation>
     </message>
+    <message>
+        <source>No suitable proxy found</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkAccessManager</name>
+    <message>
+        <source>Network access is disabled.</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>QNetworkReply</name>
     <message>
-        <source>Error downloading %1 - server replied: %2</source>
-        <translation>下載 %1 錯誤 - 伺服器回應: %2</translation>
-    </message>
-    <message>
         <source>Protocol &quot;%1&quot; is unknown</source>
         <translation>協定 &quot;%1&quot; 未知</translation>
+    </message>
+    <message>
+        <source>Error transferring %1 - server replied: %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Background request not allowed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Network session error.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>backend start error.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Temporary network failure.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkReplyHttpImpl</name>
+    <message>
+        <source>Operation canceled</source>
+        <translation>取消操作</translation>
+    </message>
+    <message>
+        <source>No suitable proxy found</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2412,6 +2479,36 @@ Do you want to delete it anyway?</source>
     <message>
         <source>Operation canceled</source>
         <translation>取消操作</translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkSession</name>
+    <message>
+        <source>Invalid configuration.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QNetworkSessionPrivateImpl</name>
+    <message>
+        <source>Unknown session error.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The session was aborted by the user or system.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The requested operation is not supported by the system.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The specified configuration cannot be used.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Roaming was aborted or is not possible.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2465,12 +2562,12 @@ Do you want to delete it anyway?</source>
         <translation>無法繫結值</translation>
     </message>
     <message>
-        <source>Unable to execute select statement</source>
-        <translation>無法執行選取陳述式</translation>
-    </message>
-    <message>
         <source>Unable to execute statement</source>
         <translation>無法執行陳述式</translation>
+    </message>
+    <message>
+        <source>Unable to get statement type</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2478,10 +2575,6 @@ Do you want to delete it anyway?</source>
     <message>
         <source>Unable to connect</source>
         <translation>無法連接</translation>
-    </message>
-    <message>
-        <source>Unable to connect - Driver doesn&apos;t support all needed functionality</source>
-        <translation>無法連接 - 驅動程式不支援所有所需的功能</translation>
     </message>
     <message>
         <source>Unable to disable autocommit</source>
@@ -2498,6 +2591,10 @@ Do you want to delete it anyway?</source>
     <message>
         <source>Unable to enable autocommit</source>
         <translation>無法啟用自動認可</translation>
+    </message>
+    <message>
+        <source>Unable to connect - Driver doesn&apos;t support all functionality required</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -2540,48 +2637,6 @@ Do you want to delete it anyway?</source>
     </message>
 </context>
 <context>
-    <name>QObject</name>
-    <message>
-        <source>Operation not supported on %1</source>
-        <translation>%1 不支援操作</translation>
-    </message>
-    <message>
-        <source>Invalid URI: %1</source>
-        <translation>無效的 URI: %1</translation>
-    </message>
-    <message>
-        <source>Write error writing to %1: %2</source>
-        <translation>寫入 %1 錯誤: %2</translation>
-    </message>
-    <message>
-        <source>Read error reading from %1: %2</source>
-        <translation>讀取 %1 錯誤: %2</translation>
-    </message>
-    <message>
-        <source>Socket error on %1: %2</source>
-        <translation>%1 通訊端錯誤: %2</translation>
-    </message>
-    <message>
-        <source>Remote host closed the connection prematurely on %1</source>
-        <translation>遠端主機已永久關閉連線於 %1</translation>
-    </message>
-    <message>
-        <source>Protocol error: packet of size 0 received</source>
-        <translation>協定錯誤: 收到大小 0 的封包</translation>
-    </message>
-</context>
-<context>
-    <name>QPPDOptionsModel</name>
-    <message>
-        <source>Name</source>
-        <translation>名稱</translation>
-    </message>
-    <message>
-        <source>Value</source>
-        <translation>值</translation>
-    </message>
-</context>
-<context>
     <name>QPSQLDriver</name>
     <message>
         <source>Unable to connect</source>
@@ -2621,10 +2676,6 @@ Do you want to delete it anyway?</source>
 </context>
 <context>
     <name>QPageSetupWidget</name>
-    <message>
-        <source>Centimeters (cm)</source>
-        <translation>公分 (cm)</translation>
-    </message>
     <message>
         <source>Millimeters (mm)</source>
         <translation>公釐 (mm)</translation>
@@ -2701,53 +2752,101 @@ Do you want to delete it anyway?</source>
         <source>bottom margin</source>
         <translation>按鈕邊界</translation>
     </message>
+    <message>
+        <source>Page Layout</source>
+        <translation>頁面配置</translation>
+    </message>
+    <message>
+        <source>Page order:</source>
+        <translation>頁面順序:</translation>
+    </message>
+    <message>
+        <source>Pages per sheet:</source>
+        <translation>每張頁數:</translation>
+    </message>
+    <message>
+        <source>Pica (P̸)</source>
+        <translation>Pica (P̸)</translation>
+    </message>
+    <message>
+        <source>Didot (DD)</source>
+        <translation>Didot (DD)</translation>
+    </message>
+    <message>
+        <source>Cicero (CC)</source>
+        <translation>Cicero (CC)</translation>
+    </message>
+    <message>
+        <source>Custom</source>
+        <translation>自訂</translation>
+    </message>
+    <message>
+        <source>mm</source>
+        <extracomment>Unit &apos;Millimeter&apos;</extracomment>
+        <translation>mm</translation>
+    </message>
+    <message>
+        <source>pt</source>
+        <extracomment>Unit &apos;Points&apos;</extracomment>
+        <translation>pt</translation>
+    </message>
+    <message>
+        <source>in</source>
+        <extracomment>Unit &apos;Inch&apos;</extracomment>
+        <translation>in</translation>
+    </message>
+    <message>
+        <source>P̸</source>
+        <extracomment>Unit &apos;Pica&apos;</extracomment>
+        <translation>P̸</translation>
+    </message>
+    <message>
+        <source>DD</source>
+        <extracomment>Unit &apos;Didot&apos;</extracomment>
+        <translation>DD</translation>
+    </message>
+    <message>
+        <source>CC</source>
+        <extracomment>Unit &apos;Cicero&apos;</extracomment>
+        <translation>CC</translation>
+    </message>
 </context>
 <context>
-    <name>QPluginLoader</name>
+    <name>QPageSize</name>
     <message>
-        <source>Unknown error</source>
-        <translation>未知錯誤</translation>
+        <source>Custom (%1mm x %2mm)</source>
+        <extracomment>Custom size name in millimeters</extracomment>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>The plugin was not loaded.</source>
-        <translation>外掛未載入。</translation>
-    </message>
-</context>
-<context>
-    <name>QPrintDialog</name>
-    <message>
-        <source>locally connected</source>
-        <translation>本機連接</translation>
+        <source>Custom (%1pt x %2pt)</source>
+        <extracomment>Custom size name in points</extracomment>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Aliases: %1</source>
-        <translation>別名: %1</translation>
+        <source>Custom (%1in x %2in)</source>
+        <extracomment>Custom size name in inches</extracomment>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>unknown</source>
-        <translation>未知</translation>
+        <source>Custom (%1pc x %2pc)</source>
+        <extracomment>Custom size name in picas</extracomment>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Print To File ...</source>
-        <translation>列印到檔案 ...</translation>
+        <source>Custom (%1DD x %2DD)</source>
+        <extracomment>Custom size name in didots</extracomment>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>File %1 is not writable.
-Please choose a different file name.</source>
-        <translation>不可寫入檔案 %1 。
-請選擇不同的檔案名稱。</translation>
+        <source>Custom (%1CC x %2CC)</source>
+        <extracomment>Custom size name in ciceros</extracomment>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>%1 already exists.
-Do you want to overwrite it?</source>
-        <translation>%1 已經存在。
-您要覆寫它嗎? </translation>
-    </message>
-    <message>
-        <source>%1 is a directory.
-Please choose a different file name.</source>
-        <translation>%1 是一個目錄。
-請選擇不同的檔案名稱。</translation>
+        <source>%1 x %2 in</source>
+        <extracomment>Page size in &apos;Inch&apos;.</extracomment>
+        <translation>%1 x %2 in</translation>
     </message>
     <message>
         <source>A0</source>
@@ -2788,6 +2887,10 @@ Please choose a different file name.</source>
     <message>
         <source>A9</source>
         <translation>A9</translation>
+    </message>
+    <message>
+        <source>A10</source>
+        <translation>A10</translation>
     </message>
     <message>
         <source>B0</source>
@@ -2834,44 +2937,467 @@ Please choose a different file name.</source>
         <translation>B10</translation>
     </message>
     <message>
-        <source>C5E</source>
-        <translation>C5E</translation>
+        <source>Executive (7.5 x 10 in)</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>DLE</source>
-        <translation>DLE</translation>
+        <source>Executive (7.25 x 10.5 in)</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Executive</source>
-        <translation>Executive</translation>
-    </message>
-    <message>
-        <source>Folio</source>
-        <translation>Folio</translation>
-    </message>
-    <message>
-        <source>Ledger</source>
-        <translation>Ledger</translation>
+        <source>Folio (8.27 x 13 in)</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Legal</source>
         <translation>Legal</translation>
     </message>
     <message>
-        <source>Letter</source>
-        <translation>Letter</translation>
+        <source>Letter / ANSI A</source>
+        <translation>Letter / ANSI A</translation>
     </message>
     <message>
-        <source>Tabloid</source>
-        <translation>Tabloid</translation>
+        <source>Tabloid / ANSI B</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>US Common #10 Envelope</source>
-        <translation>US Common #10 信封</translation>
+        <source>Ledger / ANSI B</source>
+        <translation>Ledger / ANSI B</translation>
     </message>
     <message>
         <source>Custom</source>
         <translation>自訂</translation>
+    </message>
+    <message>
+        <source>A3 Extra</source>
+        <translation>A3 Extra</translation>
+    </message>
+    <message>
+        <source>A4 Extra</source>
+        <translation>A4 Extra</translation>
+    </message>
+    <message>
+        <source>A4 Plus</source>
+        <translation>A4 Plus</translation>
+    </message>
+    <message>
+        <source>A4 Small</source>
+        <translation>A4 Small</translation>
+    </message>
+    <message>
+        <source>A5 Extra</source>
+        <translation>A5 Extra</translation>
+    </message>
+    <message>
+        <source>B5 Extra</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>JIS B0</source>
+        <translation>JIS B0</translation>
+    </message>
+    <message>
+        <source>JIS B1</source>
+        <translation>JIS B1</translation>
+    </message>
+    <message>
+        <source>JIS B2</source>
+        <translation>JIS B2</translation>
+    </message>
+    <message>
+        <source>JIS B3</source>
+        <translation>JIS B3</translation>
+    </message>
+    <message>
+        <source>JIS B4</source>
+        <translation>JIS B4</translation>
+    </message>
+    <message>
+        <source>JIS B5</source>
+        <translation>JIS B5</translation>
+    </message>
+    <message>
+        <source>JIS B6</source>
+        <translation>JIS B6</translation>
+    </message>
+    <message>
+        <source>JIS B7</source>
+        <translation>JIS B7</translation>
+    </message>
+    <message>
+        <source>JIS B8</source>
+        <translation>JIS B8</translation>
+    </message>
+    <message>
+        <source>JIS B9</source>
+        <translation>JIS B9</translation>
+    </message>
+    <message>
+        <source>JIS B10</source>
+        <translation>JIS B10</translation>
+    </message>
+    <message>
+        <source>ANSI C</source>
+        <translation>ANSI C</translation>
+    </message>
+    <message>
+        <source>ANSI D</source>
+        <translation>ANSI D</translation>
+    </message>
+    <message>
+        <source>ANSI E</source>
+        <translation>ANSI E</translation>
+    </message>
+    <message>
+        <source>Legal Extra</source>
+        <translation>Legal Extra</translation>
+    </message>
+    <message>
+        <source>Letter Extra</source>
+        <translation>Letter Extra</translation>
+    </message>
+    <message>
+        <source>Letter Plus</source>
+        <translation>Letter Plus</translation>
+    </message>
+    <message>
+        <source>Letter Small</source>
+        <translation>Letter Small</translation>
+    </message>
+    <message>
+        <source>Tabloid Extra</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Architect A</source>
+        <translation>Architect A</translation>
+    </message>
+    <message>
+        <source>Architect B</source>
+        <translation>Architect B</translation>
+    </message>
+    <message>
+        <source>Architect C</source>
+        <translation>Architect C</translation>
+    </message>
+    <message>
+        <source>Architect D</source>
+        <translation>Architect D</translation>
+    </message>
+    <message>
+        <source>Architect E</source>
+        <translation>Architect E</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Quarto</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Statement</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Super A</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Super B</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Postcard</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Double Postcard</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>PRC 16K</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>PRC 32K</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>PRC 32K Big</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fan-fold US (14.875 x 11 in)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fan-fold German (8.5 x 12 in)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fan-fold German Legal (8.5 x 13 in)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope B4</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope B5</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope B6</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope C0</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope C1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope C2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope C3</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope C4</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope C5</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope C6</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope C65</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope C7</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope DL</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope US 9</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope US 10</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope US 11</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope US 12</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope US 14</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope Monarch</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope Personal</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope Chou 3</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope Chou 4</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope Invite</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope Italian</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope Kaku 2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope Kaku 3</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 3</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 4</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 5</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 6</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 7</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 8</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 9</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope PRC 10</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Envelope You 4</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QPlatformTheme</name>
+    <message>
+        <source>OK</source>
+        <translation>確定</translation>
+    </message>
+    <message>
+        <source>Save</source>
+        <translation>儲存</translation>
+    </message>
+    <message>
+        <source>Save All</source>
+        <translation>全部儲存</translation>
+    </message>
+    <message>
+        <source>Open</source>
+        <translation>開啟</translation>
+    </message>
+    <message>
+        <source>&amp;Yes</source>
+        <translation>是(&amp;Y)</translation>
+    </message>
+    <message>
+        <source>Yes to &amp;All</source>
+        <translation>全部皆是(&amp;A)</translation>
+    </message>
+    <message>
+        <source>&amp;No</source>
+        <translation>否(&amp;N)</translation>
+    </message>
+    <message>
+        <source>N&amp;o to All</source>
+        <translation>全部皆否(&amp;O)</translation>
+    </message>
+    <message>
+        <source>Abort</source>
+        <translation>中止</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>重試</translation>
+    </message>
+    <message>
+        <source>Ignore</source>
+        <translation>忽略</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>關閉</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>取消</translation>
+    </message>
+    <message>
+        <source>Discard</source>
+        <translation>捨棄</translation>
+    </message>
+    <message>
+        <source>Help</source>
+        <translation>說明</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>套用</translation>
+    </message>
+    <message>
+        <source>Reset</source>
+        <translation>重設</translation>
+    </message>
+    <message>
+        <source>Restore Defaults</source>
+        <translation>還原預設值</translation>
+    </message>
+</context>
+<context>
+    <name>QPluginLoader</name>
+    <message>
+        <source>Unknown error</source>
+        <translation>未知錯誤</translation>
+    </message>
+    <message>
+        <source>The plugin was not loaded.</source>
+        <translation>外掛未載入。</translation>
+    </message>
+</context>
+<context>
+    <name>QPrintDialog</name>
+    <message>
+        <source>Print To File ...</source>
+        <translation>列印到檔案 ...</translation>
+    </message>
+    <message>
+        <source>File %1 is not writable.
+Please choose a different file name.</source>
+        <translation>不可寫入檔案 %1 。
+請選擇不同的檔案名稱。</translation>
+    </message>
+    <message>
+        <source>%1 already exists.
+Do you want to overwrite it?</source>
+        <translation>%1 已經存在。
+您要覆寫它嗎?</translation>
+    </message>
+    <message>
+        <source>%1 is a directory.
+Please choose a different file name.</source>
+        <translation>%1 是一個目錄。
+請選擇不同的檔案名稱。</translation>
     </message>
     <message>
         <source>&amp;Options &gt;&gt;</source>
@@ -2890,16 +3416,101 @@ Please choose a different file name.</source>
         <translation>列印到檔案 (PDF)</translation>
     </message>
     <message>
-        <source>Print to File (Postscript)</source>
-        <translation>列印到檔案 (Postscript)</translation>
-    </message>
-    <message>
         <source>Local file</source>
         <translation>本機檔案</translation>
     </message>
     <message>
-        <source>Write %1 file</source>
-        <translation>寫入 %1 檔案</translation>
+        <source>Print</source>
+        <translation>列印</translation>
+    </message>
+    <message>
+        <source>Left to Right, Top to Bottom</source>
+        <translation>由左到右，由上到下</translation>
+    </message>
+    <message>
+        <source>Left to Right, Bottom to Top</source>
+        <translation>由左到右，由下到上</translation>
+    </message>
+    <message>
+        <source>Right to Left, Bottom to Top</source>
+        <translation>由右到左，由下到上</translation>
+    </message>
+    <message>
+        <source>Right to Left, Top to Bottom</source>
+        <translation>由右到左，由上到下</translation>
+    </message>
+    <message>
+        <source>Bottom to Top, Left to Right</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bottom to Top, Right to Left</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Top to Bottom, Left to Right</source>
+        <translation>由上到下，由左到右</translation>
+    </message>
+    <message>
+        <source>Top to Bottom, Right to Left</source>
+        <translation>由上到下，由右到左</translation>
+    </message>
+    <message>
+        <source>1 (1x1)</source>
+        <translation>1 (1x1)</translation>
+    </message>
+    <message>
+        <source>2 (2x1)</source>
+        <translation>2 (2x1)</translation>
+    </message>
+    <message>
+        <source>4 (2x2)</source>
+        <translation>4 (2x2)</translation>
+    </message>
+    <message>
+        <source>6 (2x3)</source>
+        <translation>6 (2x3)</translation>
+    </message>
+    <message>
+        <source>9 (3x3)</source>
+        <translation>9 (3x3)</translation>
+    </message>
+    <message>
+        <source>16 (4x4)</source>
+        <translation>16 (4x4)</translation>
+    </message>
+    <message>
+        <source>All Pages</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Odd Pages</source>
+        <translation>奇數頁</translation>
+    </message>
+    <message>
+        <source>Even Pages</source>
+        <translation>偶數頁</translation>
+    </message>
+    <message>
+        <source>Write PDF file</source>
+        <translation>寫入 PDF 檔案</translation>
+    </message>
+    <message>
+        <source>Options &apos;Pages Per Sheet&apos; and &apos;Page Set&apos; cannot be used together.
+Please turn one of those options off.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The &apos;From&apos; value cannot be greater than the &apos;To&apos; value.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>OK</source>
+        <translation>確定</translation>
+    </message>
+    <message>
+        <source>Automatic</source>
+        <translation>自動</translation>
     </message>
 </context>
 <context>
@@ -2973,8 +3584,23 @@ Please choose a different file name.</source>
         <translation>頁面設定</translation>
     </message>
     <message>
-        <source>Close</source>
-        <translation>關閉</translation>
+        <source>%1%</source>
+        <translation>%1%</translation>
+    </message>
+    <message>
+        <source>Export to PDF</source>
+        <translation>匯出到 PDF</translation>
+    </message>
+</context>
+<context>
+    <name>QPrintPropertiesDialog</name>
+    <message>
+        <source>Printer Properties</source>
+        <translation>印表機內容</translation>
+    </message>
+    <message>
+        <source>Job Options</source>
+        <translation>工作選項</translation>
     </message>
 </context>
 <context>
@@ -2986,10 +3612,6 @@ Please choose a different file name.</source>
     <message>
         <source>Page</source>
         <translation>頁面</translation>
-    </message>
-    <message>
-        <source>Advanced</source>
-        <translation>進階</translation>
     </message>
 </context>
 <context>
@@ -3070,6 +3692,14 @@ Please choose a different file name.</source>
         <source>Short side</source>
         <translation>短邊</translation>
     </message>
+    <message>
+        <source>Current Page</source>
+        <translation>目前頁面</translation>
+    </message>
+    <message>
+        <source>Page Set:</source>
+        <translation>頁面設定:</translation>
+    </message>
 </context>
 <context>
     <name>QPrintWidget</name>
@@ -3111,6 +3741,49 @@ Please choose a different file name.</source>
     </message>
 </context>
 <context>
+    <name>QProcess</name>
+    <message>
+        <source>Process failed to start</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Process crashed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Process operation timed out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Error reading from process</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Error writing to process</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No program defined</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not open input redirection for reading</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Resource error (fork failure): %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Could not open output redirection for writing</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Process failed to start: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>QProgressDialog</name>
     <message>
         <source>Cancel</source>
@@ -3118,17 +3791,17 @@ Please choose a different file name.</source>
     </message>
 </context>
 <context>
-    <name>QPushButton</name>
+    <name>QQnxFileDialogHelper</name>
     <message>
-        <source>Open</source>
-        <translation>開啟</translation>
+        <source>All files (*.*)</source>
+        <translation>所有檔案 (*.*)</translation>
     </message>
 </context>
 <context>
-    <name>QRadioButton</name>
+    <name>QQnxFilePicker</name>
     <message>
-        <source>Check</source>
-        <translation>檢查</translation>
+        <source>Pick a file</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -3169,13 +3842,356 @@ Please choose a different file name.</source>
         <source>met internal limit</source>
         <translation>達到內部限制</translation>
     </message>
+    <message>
+        <source>lookbehinds not supported, see QTBUG-2371</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid interval</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid category</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QRegularExpression</name>
+    <message>
+        <source>no error</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\ at end of pattern</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\c at end of pattern</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unrecognized character follows \</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>numbers out of order in {} quantifier</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>number too big in {} quantifier</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing terminating ] for character class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid escape sequence in character class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>range out of order in character class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>nothing to repeat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: unexpected repeat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unrecognized character after (? or (?-</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>POSIX named classes are supported only within a class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing )</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>reference to non-existent subpattern</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>erroffset passed as NULL</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unknown option bit(s) set</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing ) after comment</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>regular expression is too large</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>failed to get memory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unmatched parentheses</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: code overflow</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unrecognized character after (?&lt;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>lookbehind assertion is not fixed length</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>malformed number or name after (?(</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>conditional group contains more than two branches</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>assertion expected after (?(</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>(?R or (?[+-]digits must be followed by )</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unknown POSIX class name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>POSIX collating elements are not supported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>this version of PCRE is not compiled with PCRE_UTF8 support</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>character value in \x{...} sequence is too large</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid condition (?(0)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\C not allowed in lookbehind assertion</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>PCRE does not support \L, \l, \N{name}, \U, or \u</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>number after (?C is &gt; 255</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>closing ) for (?C expected</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>recursive call could loop indefinitely</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unrecognized character after (?P</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>syntax error in subpattern name (missing terminator)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>two named subpatterns have the same name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid UTF-8 string</source>
+        <translation>無效的 UTF-8 字串</translation>
+    </message>
+    <message>
+        <source>support for \P, \p, and \X has not been compiled</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>malformed \P or \p sequence</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unknown property name after \P or \p</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>subpattern name is too long (maximum 32 characters)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>too many named subpatterns (maximum 10000)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>octal value is greater than \377 (not in UTF-8 mode)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: overran compiling workspace</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: previously-checked referenced subpattern not found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>DEFINE group contains more than one branch</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>repeating a DEFINE group is not allowed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>inconsistent NEWLINE options</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\g is not followed by a braced, angle-bracketed, or quoted name/number or by a plain number</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>a numbered reference must not be zero</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>an argument is not allowed for (*ACCEPT), (*FAIL), or (*COMMIT)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>(*VERB) not recognized</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>number is too big</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>subpattern name expected</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>digit expected after (?+</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>] is an invalid data character in JavaScript compatibility mode</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>different names for subpatterns of the same number are not allowed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>(*MARK) must have an argument</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>this version of PCRE is not compiled with PCRE_UCP support</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\c must be followed by an ASCII character</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\k is not followed by a braced, angle-bracketed, or quoted name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>internal error: unknown opcode in find_fixedlength()</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>\N is not supported in a class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>too many forward references</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>disallowed Unicode code point (&gt;= 0xd800 &amp;&amp; &lt;= 0xdfff)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid UTF-16 string</source>
+        <translation>無效的 UTF-16 字串</translation>
+    </message>
+    <message>
+        <source>name is too long in (*MARK), (*PRUNE), (*SKIP), or (*THEN)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>character value in \u.... sequence is too large</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid UTF-32 string</source>
+        <translation>無效的 UTF-32 字串</translation>
+    </message>
+    <message>
+        <source>setting UTF is disabled by the application</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>non-hex character in \x{} (closing brace missing?)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>non-octal character in \o{} (closing brace missing?)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>missing opening brace after \o</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>parentheses are too deeply nested</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>invalid range in character class</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>group name must start with a non-digit</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>parentheses are too deeply nested (stack check)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>digits missing in \x{} or \o{}</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>QSQLite2Driver</name>
-    <message>
-        <source>Error to open database</source>
-        <translation>開啟資料庫錯誤</translation>
-    </message>
     <message>
         <source>Unable to begin transaction</source>
         <translation>無法開始異動</translation>
@@ -3185,7 +4201,11 @@ Please choose a different file name.</source>
         <translation>無法提交異動</translation>
     </message>
     <message>
-        <source>Unable to rollback Transaction</source>
+        <source>Error opening database</source>
+        <translation>開啟資料庫錯誤</translation>
+    </message>
+    <message>
+        <source>Unable to rollback transaction</source>
         <translation>無法回復異動</translation>
     </message>
 </context>
@@ -3249,6 +4269,25 @@ Please choose a different file name.</source>
         <source>No query</source>
         <translation>沒有查詢</translation>
     </message>
+    <message>
+        <source>Unable to execute multiple statements at a time</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QSaveFile</name>
+    <message>
+        <source>Existing file %1 is not writable</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Filename refers to a directory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Writing canceled by application</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>QScrollBar</name>
@@ -3304,18 +4343,6 @@ Please choose a different file name.</source>
         <source>Scroll down</source>
         <translation>向下捲動</translation>
     </message>
-    <message>
-        <source>Line up</source>
-        <translation>上移一行</translation>
-    </message>
-    <message>
-        <source>Position</source>
-        <translation>位置</translation>
-    </message>
-    <message>
-        <source>Line down</source>
-        <translation>下移一行</translation>
-    </message>
 </context>
 <context>
     <name>QSharedMemory</name>
@@ -3344,10 +4371,6 @@ Please choose a different file name.</source>
         <translation>%1: 已經存在</translation>
     </message>
     <message>
-        <source>%1: doesn&apos;t exists</source>
-        <translation>%1: 不存在</translation>
-    </message>
-    <message>
         <source>%1: out of resources</source>
         <translation>%1: 資源不足</translation>
     </message>
@@ -3358,10 +4381,6 @@ Please choose a different file name.</source>
     <message>
         <source>%1: key is empty</source>
         <translation>%1: 空的金鑰</translation>
-    </message>
-    <message>
-        <source>%1: unix key file doesn&apos;t exists</source>
-        <translation>%1: unix 金鑰檔案不存在</translation>
     </message>
     <message>
         <source>%1: ftok failed</source>
@@ -3379,11 +4398,36 @@ Please choose a different file name.</source>
         <source>%1: not attached</source>
         <translation>%1: 未附加</translation>
     </message>
+    <message>
+        <source>%1: bad name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1: UNIX key file doesn&apos;t exist</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1: doesn&apos;t exist</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1: invalid size</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1: key error</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1: size query failed</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>QShortcut</name>
     <message>
         <source>Space</source>
+        <extracomment>This and all following &quot;incomprehensible&quot; strings in QShortcut context are key names. Please use the localized names appearing on actual keyboards or whatever is commonly used.</extracomment>
         <translation>空格</translation>
     </message>
     <message>
@@ -3404,7 +4448,7 @@ Please choose a different file name.</source>
     </message>
     <message>
         <source>Return</source>
-        <translation>返回</translation>
+        <translation>Enter</translation>
     </message>
     <message>
         <source>Enter</source>
@@ -3464,11 +4508,11 @@ Please choose a different file name.</source>
     </message>
     <message>
         <source>CapsLock</source>
-        <translation>CapsLock</translation>
+        <translation>大寫鎖定</translation>
     </message>
     <message>
         <source>NumLock</source>
-        <translation>NumLock</translation>
+        <translation>數字鎖</translation>
     </message>
     <message>
         <source>ScrollLock</source>
@@ -3656,7 +4700,7 @@ Please choose a different file name.</source>
     </message>
     <message>
         <source>Num Lock</source>
-        <translation>Num Lock</translation>
+        <translation>數字鎖</translation>
     </message>
     <message>
         <source>Number Lock</source>
@@ -3712,10 +4756,12 @@ Please choose a different file name.</source>
     </message>
     <message>
         <source>Call</source>
+        <extracomment>Button to start a call (note: a separate button is used to end the call)</extracomment>
         <translation>呼叫</translation>
     </message>
     <message>
         <source>Hangup</source>
+        <extracomment>Button to end a call (note: a separate button is used to start the call)</extracomment>
         <translation>掛斷</translation>
     </message>
     <message>
@@ -3750,93 +4796,1047 @@ Please choose a different file name.</source>
         <source>Home Page</source>
         <translation>首頁</translation>
     </message>
-</context>
-<context>
-    <name>QSlider</name>
     <message>
-        <source>Page left</source>
-        <translation>左頁</translation>
+        <source>Media Pause</source>
+        <extracomment>Media player pause button</extracomment>
+        <translation>媒體暫停</translation>
     </message>
     <message>
-        <source>Page up</source>
-        <translation>上一頁</translation>
+        <source>Toggle Media Play/Pause</source>
+        <extracomment>Media player button to toggle between playing and paused</extracomment>
+        <translation>切換媒體播放/暫停</translation>
     </message>
     <message>
-        <source>Position</source>
-        <translation>位置</translation>
+        <source>Monitor Brightness Up</source>
+        <translation>螢幕亮度增加</translation>
     </message>
     <message>
-        <source>Page right</source>
-        <translation>右頁</translation>
+        <source>Monitor Brightness Down</source>
+        <translation>螢幕亮度降低</translation>
     </message>
     <message>
-        <source>Page down</source>
-        <translation>下一頁</translation>
-    </message>
-</context>
-<context>
-    <name>QSocks5SocketEngine</name>
-    <message>
-        <source>Socks5 timeout error connecting to socks server</source>
-        <translation>連線到通訊端伺服器 Socks5 逾時錯誤</translation>
+        <source>Keyboard Light On/Off</source>
+        <translation>鍵盤燈開啟/關閉</translation>
     </message>
     <message>
-        <source>Network operation timed out</source>
-        <translation>網路操作逾時</translation>
-    </message>
-</context>
-<context>
-    <name>QSpinBox</name>
-    <message>
-        <source>More</source>
-        <translation>更多</translation>
+        <source>Keyboard Brightness Up</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Less</source>
-        <translation>較少</translation>
-    </message>
-</context>
-<context>
-    <name>QSql</name>
-    <message>
-        <source>Delete</source>
-        <translation>刪除</translation>
+        <source>Keyboard Brightness Down</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Delete this record?</source>
-        <translation>刪除這個紀錄嗎? </translation>
+        <source>Power Off</source>
+        <translation>關機</translation>
     </message>
     <message>
-        <source>Yes</source>
-        <translation>是</translation>
+        <source>Wake Up</source>
+        <translation>喚醒</translation>
     </message>
     <message>
-        <source>No</source>
-        <translation>否</translation>
+        <source>Eject</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Insert</source>
-        <translation>插入</translation>
+        <source>Screensaver</source>
+        <translation>螢幕保護程式</translation>
     </message>
     <message>
-        <source>Update</source>
-        <translation>更新</translation>
+        <source>WWW</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Save edits?</source>
-        <translation>儲存編輯嗎? </translation>
+        <source>Sleep</source>
+        <translation>睡眠</translation>
+    </message>
+    <message>
+        <source>LightBulb</source>
+        <translation>LightBulb</translation>
+    </message>
+    <message>
+        <source>Shop</source>
+        <translation>商店</translation>
+    </message>
+    <message>
+        <source>History</source>
+        <translation>歷程記錄</translation>
+    </message>
+    <message>
+        <source>Add Favorite</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hot Links</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Adjust Brightness</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Finance</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Community</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Media Rewind</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Back Forward</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Application Left</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Application Right</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Book</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>CD</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Calculator</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation>清除</translation>
+    </message>
+    <message>
+        <source>Clear Grab</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>關閉</translation>
+    </message>
+    <message>
+        <source>Copy</source>
+        <translation>複製</translation>
+    </message>
+    <message>
+        <source>Cut</source>
+        <translation>剪下</translation>
+    </message>
+    <message>
+        <source>Display</source>
+        <translation>顯示</translation>
+    </message>
+    <message>
+        <source>DOS</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Documents</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Spreadsheet</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Browser</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Game</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Go</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>iTouch</source>
+        <translation>iTouch</translation>
+    </message>
+    <message>
+        <source>Logoff</source>
+        <translation>登出</translation>
+    </message>
+    <message>
+        <source>Market</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Meeting</source>
+        <translation>會議</translation>
+    </message>
+    <message>
+        <source>Keyboard Menu</source>
+        <translation>鍵盤功能表</translation>
+    </message>
+    <message>
+        <source>Menu PB</source>
+        <translation>功能表 PB</translation>
+    </message>
+    <message>
+        <source>My Sites</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>News</source>
+        <translation>新增</translation>
+    </message>
+    <message>
+        <source>Home Office</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Option</source>
+        <translation>選項</translation>
+    </message>
+    <message>
+        <source>Paste</source>
+        <translation>貼上</translation>
+    </message>
+    <message>
+        <source>Phone</source>
+        <translation>電話</translation>
+    </message>
+    <message>
+        <source>Reply</source>
+        <translation>回覆</translation>
+    </message>
+    <message>
+        <source>Reload</source>
+        <translation>重新載入</translation>
+    </message>
+    <message>
+        <source>Rotate Windows</source>
+        <translation>旋轉視窗</translation>
+    </message>
+    <message>
+        <source>Rotation PB</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Rotation KB</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Save</source>
+        <translation>儲存</translation>
+    </message>
+    <message>
+        <source>Send</source>
+        <translation>傳送</translation>
+    </message>
+    <message>
+        <source>Spellchecker</source>
+        <translation>拼字檢查</translation>
+    </message>
+    <message>
+        <source>Split Screen</source>
+        <translation>分割畫面</translation>
+    </message>
+    <message>
+        <source>Support</source>
+        <translation>技術支援</translation>
+    </message>
+    <message>
+        <source>Task Panel</source>
+        <translation>工作面板</translation>
+    </message>
+    <message>
+        <source>Terminal</source>
+        <translation>終端</translation>
+    </message>
+    <message>
+        <source>Tools</source>
+        <translation>工具</translation>
+    </message>
+    <message>
+        <source>Travel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Video</source>
+        <translation>視訊</translation>
+    </message>
+    <message>
+        <source>Word Processor</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>XFer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zoom In</source>
+        <translation>放大</translation>
+    </message>
+    <message>
+        <source>Zoom Out</source>
+        <translation>縮小</translation>
+    </message>
+    <message>
+        <source>Away</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Messenger</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>WebCam</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Mail Forward</source>
+        <translation>郵件轉寄</translation>
+    </message>
+    <message>
+        <source>Pictures</source>
+        <translation>照片</translation>
+    </message>
+    <message>
+        <source>Music</source>
+        <translation>音樂</translation>
+    </message>
+    <message>
+        <source>Battery</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Wireless</source>
+        <translation>無線</translation>
+    </message>
+    <message>
+        <source>Ultra Wide Band</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Media Fast Forward</source>
+        <translation>媒體快轉</translation>
+    </message>
+    <message>
+        <source>Audio Repeat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio Random Play</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Subtitle</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Audio Cycle Track</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hibernate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>View</source>
+        <translation>檢視</translation>
+    </message>
+    <message>
+        <source>Top Menu</source>
+        <translation>上功能表</translation>
+    </message>
+    <message>
+        <source>Power Down</source>
+        <translation>電源關閉</translation>
+    </message>
+    <message>
+        <source>Suspend</source>
+        <translation>暫停</translation>
+    </message>
+    <message>
+        <source>Microphone Mute</source>
+        <translation>麥克風靜音</translation>
+    </message>
+    <message>
+        <source>Red</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Green</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Yellow</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Blue</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Channel Up</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Channel Down</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Guide</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Info</source>
+        <translation>資訊</translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation>設定</translation>
+    </message>
+    <message>
+        <source>Microphone Volume Up</source>
+        <translation>麥克風提高音量</translation>
+    </message>
+    <message>
+        <source>Microphone Volume Down</source>
+        <translation>麥克風降低音量</translation>
+    </message>
+    <message>
+        <source>New</source>
+        <translation>新增</translation>
+    </message>
+    <message>
+        <source>Open</source>
+        <translation>開啟</translation>
+    </message>
+    <message>
+        <source>Find</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Undo</source>
+        <translation>復原</translation>
+    </message>
+    <message>
+        <source>Redo</source>
+        <translation>重作</translation>
+    </message>
+    <message>
+        <source>Toggle Call/Hangup</source>
+        <extracomment>Button that will hang up if we&apos;re in call, or make a call if we&apos;re not.</extracomment>
+        <translation>切換撥號/掛斷</translation>
+    </message>
+    <message>
+        <source>Voice Dial</source>
+        <extracomment>Button to trigger voice dialing</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Last Number Redial</source>
+        <extracomment>Button to redial the last number called</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Camera Shutter</source>
+        <extracomment>Button to trigger the camera shutter (take a picture)</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Camera Focus</source>
+        <extracomment>Button to focus the camera</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Kanji</source>
+        <translation>Kanji</translation>
+    </message>
+    <message>
+        <source>Muhenkan</source>
+        <translation>Muhenkan</translation>
+    </message>
+    <message>
+        <source>Henkan</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Romaji</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hiragana</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Katakana</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hiragana Katakana</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zenkaku</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hankaku</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Zenkaku Hankaku</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Touroku</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Massyo</source>
+        <translation>Massyo</translation>
+    </message>
+    <message>
+        <source>Kana Lock</source>
+        <translation>Kana Lock</translation>
+    </message>
+    <message>
+        <source>Kana Shift</source>
+        <translation>Kana Shift</translation>
+    </message>
+    <message>
+        <source>Eisu Shift</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Eisu toggle</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Code input</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Multiple Candidate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Previous Candidate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul Start</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul End</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul Hanja</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul Jamo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul Romaja</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul Jeonja</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul Banja</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul PreHanja</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul PostHanja</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Hangul Special</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Cancel</source>
         <translation>取消</translation>
     </message>
     <message>
-        <source>Confirm</source>
-        <translation>確認</translation>
+        <source>Printer</source>
+        <translation>印表機</translation>
     </message>
     <message>
-        <source>Cancel your edits?</source>
-        <translation>取消您的編輯嗎? </translation>
+        <source>Execute</source>
+        <translation>執行</translation>
+    </message>
+    <message>
+        <source>Play</source>
+        <translation>播放</translation>
+    </message>
+    <message>
+        <source>Zoom</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exit</source>
+        <translation>結束</translation>
+    </message>
+    <message>
+        <source>Touchpad Toggle</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Touchpad On</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Touchpad Off</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Num</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QSocks5SocketEngine</name>
+    <message>
+        <source>Network operation timed out</source>
+        <translation>網路操作逾時</translation>
+    </message>
+    <message>
+        <source>Connection to proxy refused</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connection to proxy closed prematurely</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy host not found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connection to proxy timed out</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy authentication failed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Proxy authentication failed: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>SOCKS version 5 protocol error</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>General SOCKSv5 server failure</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connection not allowed by SOCKSv5 server</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>TTL expired</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>SOCKSv5 command not supported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Address type not supported</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unknown SOCKSv5 proxy error code 0x%1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QSpiAccessibleBridge</name>
+    <message>
+        <source>invalid role</source>
+        <extracomment>Role of an accessible object - the object is in an invalid state or could not be constructed</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>title bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>標題列</translation>
+    </message>
+    <message>
+        <source>menu bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>scroll bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>捲軸</translation>
+    </message>
+    <message>
+        <source>grip</source>
+        <extracomment>Role of an accessible object - the grip is usually used for resizing another object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>sound</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>聲音</translation>
+    </message>
+    <message>
+        <source>cursor</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>text caret</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>alert message</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>frame</source>
+        <extracomment>Role of an accessible object: a window with frame and title
+----------
+Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>filler</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>popup menu</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>快顯功能表</translation>
+    </message>
+    <message>
+        <source>menu item</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>tool tip</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>application</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>document</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>panel</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>面板</translation>
+    </message>
+    <message>
+        <source>chart</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>dialog</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>separator</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>tool bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>status bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>狀態列</translation>
+    </message>
+    <message>
+        <source>table</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>表格</translation>
+    </message>
+    <message>
+        <source>column header</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>row header</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>column</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>row</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>cell</source>
+        <extracomment>Role of an accessible object - part of a table</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>link</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>help balloon</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>assistant</source>
+        <extracomment>Role of an accessible object - a helper dialog</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>list</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>清單</translation>
+    </message>
+    <message>
+        <source>list item</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>tree</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>tree item</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>page tab</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>property page</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>內容頁</translation>
+    </message>
+    <message>
+        <source>indicator</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>graphic</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>label</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>標籤</translation>
+    </message>
+    <message>
+        <source>text</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>文字</translation>
+    </message>
+    <message>
+        <source>push button</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>check box</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>radio button</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>combo box</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>progress bar</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>進度列</translation>
+    </message>
+    <message>
+        <source>dial</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>hotkey field</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>slider</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>spin box</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>canvas</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>animation</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>equation</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>button with drop down</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>button menu</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>button with drop down grid</source>
+        <extracomment>Role of an accessible object - a button that expands a grid.</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>space</source>
+        <extracomment>Role of an accessible object - blank space between other objects.</extracomment>
+        <translation>空格</translation>
+    </message>
+    <message>
+        <source>page tab list</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>clock</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>splitter</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>layered pane</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>web document</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>web 文件</translation>
+    </message>
+    <message>
+        <source>paragraph</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>段落</translation>
+    </message>
+    <message>
+        <source>section</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>color chooser</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>footer</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>form</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>表單</translation>
+    </message>
+    <message>
+        <source>heading</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>note</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>complementary content</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unknown</source>
+        <extracomment>Role of an accessible object</extracomment>
+        <translation>未知</translation>
     </message>
 </context>
 <context>
@@ -3882,8 +5882,245 @@ Please choose a different file name.</source>
         <translation>載入私人金鑰錯誤, %1</translation>
     </message>
     <message>
-        <source>Private key does not certificate public key, %1</source>
-        <translation>私鑰無法憑證公鑰， %1</translation>
+        <source>Error when setting the elliptic curves (%1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>unsupported protocol</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Private key does not certify public key, %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>OpenSSL version too old, need at least v1.0.2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No error</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The issuer certificate could not be found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate signature could not be decrypted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The public key in the certificate could not be read</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The signature of the certificate is invalid</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate is not yet valid</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate has expired</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate&apos;s notBefore field contains an invalid time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate&apos;s notAfter field contains an invalid time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The certificate is self-signed, and untrusted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The root certificate of the certificate chain is self-signed, and untrusted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The issuer certificate of a locally looked up certificate could not be found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No certificates could be verified</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>One of the CA certificates is invalid</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The basicConstraints path length parameter has been exceeded</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The supplied certificate is unsuitable for this purpose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The root CA certificate is not trusted for this purpose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The root CA certificate is marked to reject the specified purpose</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The current candidate issuer certificate was rejected because its subject name did not match the issuer name of the current certificate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The current candidate issuer certificate was rejected because its issuer name and serial number was present and did not match the authority key identifier of the current certificate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The peer did not present any certificate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The host name did not match any of the valid hosts for this certificate</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The peer certificate is blacklisted</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unknown error</source>
+        <translation>未知錯誤</translation>
+    </message>
+    <message>
+        <source>The TLS/SSL connection has been closed</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unable to init SSL Context: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unable to decrypt data: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QStandardPaths</name>
+    <message>
+        <source>Desktop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Documents</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Fonts</source>
+        <translation>字型</translation>
+    </message>
+    <message>
+        <source>Applications</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Music</source>
+        <translation>音樂</translation>
+    </message>
+    <message>
+        <source>Movies</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pictures</source>
+        <translation>照片</translation>
+    </message>
+    <message>
+        <source>Temporary Directory</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Home</source>
+        <translation>首頁</translation>
+    </message>
+    <message>
+        <source>Cache</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shared Data</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Runtime</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Configuration</source>
+        <translation>組態</translation>
+    </message>
+    <message>
+        <source>Shared Configuration</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shared Cache</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Download</source>
+        <translation>下載</translation>
+    </message>
+    <message>
+        <source>Application Data</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Application Configuration</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>QStateMachine</name>
+    <message>
+        <source>Missing initial state in compound state &apos;%1&apos;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Missing default state in history state &apos;%1&apos;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No common ancestor for targets and source of transition from state &apos;%1&apos;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unknown error</source>
+        <translation>未知錯誤</translation>
+    </message>
+</context>
+<context>
+    <name>QSystemSemaphore</name>
+    <message>
+        <source>%1: permission denied</source>
+        <translation>%1: 權限拒絕</translation>
+    </message>
+    <message>
+        <source>%1: already exists</source>
+        <translation>%1: 已經存在</translation>
+    </message>
+    <message>
+        <source>%1: does not exist</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1: out of resources</source>
+        <translation>%1: 資源不足</translation>
+    </message>
+    <message>
+        <source>%1: unknown error %2</source>
+        <translation>%1: 未知錯誤 %2</translation>
     </message>
 </context>
 <context>
@@ -3909,66 +6146,30 @@ Please choose a different file name.</source>
     </message>
 </context>
 <context>
-    <name>QTextControl</name>
+    <name>QTcpServer</name>
     <message>
-        <source>&amp;Undo</source>
-        <translation>復原(&amp;U)</translation>
-    </message>
-    <message>
-        <source>&amp;Redo</source>
-        <translation>重作(&amp;R)</translation>
-    </message>
-    <message>
-        <source>Cu&amp;t</source>
-        <translation>剪下(&amp;T)</translation>
-    </message>
-    <message>
-        <source>&amp;Copy</source>
-        <translation>複製(&amp;C)</translation>
-    </message>
-    <message>
-        <source>Copy &amp;Link Location</source>
-        <translation>複製連結位置(&amp;L)</translation>
-    </message>
-    <message>
-        <source>&amp;Paste</source>
-        <translation>貼上(&amp;P)</translation>
-    </message>
-    <message>
-        <source>Delete</source>
-        <translation>刪除</translation>
-    </message>
-    <message>
-        <source>Select All</source>
-        <translation>全選</translation>
-    </message>
-</context>
-<context>
-    <name>QToolButton</name>
-    <message>
-        <source>Press</source>
-        <translation>按下</translation>
-    </message>
-    <message>
-        <source>Open</source>
-        <translation>開啟</translation>
-    </message>
-</context>
-<context>
-    <name>QUdpSocket</name>
-    <message>
-        <source>This platform does not support IPv6</source>
-        <translation>這個平台不支援 IPv6</translation>
+        <source>Operation on socket is not supported</source>
+        <translation>通訊端操作不支援</translation>
     </message>
 </context>
 <context>
     <name>QUndoGroup</name>
     <message>
+        <source>Undo %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Undo</source>
+        <comment>Default text for undo action</comment>
         <translation>復原</translation>
     </message>
     <message>
+        <source>Redo %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Redo</source>
+        <comment>Default text for redo action</comment>
         <translation>重作</translation>
     </message>
 </context>
@@ -3982,11 +6183,21 @@ Please choose a different file name.</source>
 <context>
     <name>QUndoStack</name>
     <message>
+        <source>Undo %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Undo</source>
+        <comment>Default text for undo action</comment>
         <translation>復原</translation>
     </message>
     <message>
+        <source>Redo %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Redo</source>
+        <comment>Default text for redo action</comment>
         <translation>重作</translation>
     </message>
 </context>
@@ -4036,290 +6247,28 @@ Please choose a different file name.</source>
         <source>Insert Unicode control character</source>
         <translation>插入 Unicode 控制字元</translation>
     </message>
-</context>
-<context>
-    <name>QWebFrame</name>
     <message>
-        <source>Request cancelled</source>
-        <translation>請求已取消</translation>
+        <source>LRI Left-to-right isolate</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Request blocked</source>
-        <translation>請求已封鎖</translation>
+        <source>RLI Right-to-left isolate</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Cannot show URL</source>
-        <translation>無法顯示 URL</translation>
+        <source>FSI First strong isolate</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Frame load interruped by policy change</source>
-        <translation>原則變更中斷框架載入</translation>
-    </message>
-    <message>
-        <source>Cannot show mimetype</source>
-        <translation>無法顯示 Mime 類型</translation>
-    </message>
-    <message>
-        <source>File does not exist</source>
-        <translation>檔案不存在</translation>
-    </message>
-</context>
-<context>
-    <name>QWebPage</name>
-    <message>
-        <source>Bad HTTP request</source>
-        <translation>不良的 HTTP 要求</translation>
-    </message>
-    <message>
-        <source>Submit</source>
-        <comment>default label for Submit buttons in forms on web pages</comment>
-        <translation>提交</translation>
-    </message>
-    <message>
-        <source>Submit</source>
-        <comment>Submit (input element) alt text for &lt;input&gt; elements with no alt, title, or value</comment>
-        <translation>提交</translation>
-    </message>
-    <message>
-        <source>Reset</source>
-        <comment>default label for Reset buttons in forms on web pages</comment>
-        <translation>重設</translation>
-    </message>
-    <message>
-        <source>This is a searchable index. Enter search keywords: </source>
-        <comment>text that appears at the start of nearly-obsolete web pages in the form of a &apos;searchable index&apos;</comment>
-        <translation>這是可搜尋的索引。 輸入搜尋關鍵字: </translation>
-    </message>
-    <message>
-        <source>Choose File</source>
-        <comment>title for file button used in HTML forms</comment>
-        <translation>選擇檔案</translation>
-    </message>
-    <message>
-        <source>No file selected</source>
-        <comment>text to display in file button used in HTML forms when no file is selected</comment>
-        <translation>未選取檔案</translation>
-    </message>
-    <message>
-        <source>Open in New Window</source>
-        <comment>Open in New Window context menu item</comment>
-        <translation>在新視窗開啟</translation>
-    </message>
-    <message>
-        <source>Save Link...</source>
-        <comment>Download Linked File context menu item</comment>
-        <translation>儲存連結...</translation>
-    </message>
-    <message>
-        <source>Copy Link</source>
-        <comment>Copy Link context menu item</comment>
-        <translation>複製連結</translation>
-    </message>
-    <message>
-        <source>Open Image</source>
-        <comment>Open Image in New Window context menu item</comment>
-        <translation>開啟映像</translation>
-    </message>
-    <message>
-        <source>Save Image</source>
-        <comment>Download Image context menu item</comment>
-        <translation>儲存映像</translation>
-    </message>
-    <message>
-        <source>Copy Image</source>
-        <comment>Copy Link context menu item</comment>
-        <translation>複製映像</translation>
-    </message>
-    <message>
-        <source>Open Frame</source>
-        <comment>Open Frame in New Window context menu item</comment>
-        <translation>開啟框架</translation>
-    </message>
-    <message>
-        <source>Copy</source>
-        <comment>Copy context menu item</comment>
-        <translation>複製</translation>
-    </message>
-    <message>
-        <source>Go Back</source>
-        <comment>Back context menu item</comment>
-        <translation>上一頁</translation>
-    </message>
-    <message>
-        <source>Go Forward</source>
-        <comment>Forward context menu item</comment>
-        <translation>下一頁</translation>
-    </message>
-    <message>
-        <source>Stop</source>
-        <comment>Stop context menu item</comment>
-        <translation>停止</translation>
-    </message>
-    <message>
-        <source>Reload</source>
-        <comment>Reload context menu item</comment>
-        <translation>重新載入</translation>
-    </message>
-    <message>
-        <source>Cut</source>
-        <comment>Cut context menu item</comment>
-        <translation>剪下</translation>
-    </message>
-    <message>
-        <source>Paste</source>
-        <comment>Paste context menu item</comment>
-        <translation>貼上</translation>
-    </message>
-    <message>
-        <source>No Guesses Found</source>
-        <comment>No Guesses Found context menu item</comment>
-        <translation>找不到 Guesses</translation>
-    </message>
-    <message>
-        <source>Ignore</source>
-        <comment>Ignore Spelling context menu item</comment>
-        <translation>忽略</translation>
-    </message>
-    <message>
-        <source>Add To Dictionary</source>
-        <comment>Learn Spelling context menu item</comment>
-        <translation>加入到字典</translation>
-    </message>
-    <message>
-        <source>Search The Web</source>
-        <comment>Search The Web context menu item</comment>
-        <translation>搜尋網站</translation>
-    </message>
-    <message>
-        <source>Look Up In Dictionary</source>
-        <comment>Look Up in Dictionary context menu item</comment>
-        <translation>查詢字典</translation>
-    </message>
-    <message>
-        <source>Open Link</source>
-        <comment>Open Link context menu item</comment>
-        <translation>開啟連結</translation>
-    </message>
-    <message>
-        <source>Ignore</source>
-        <comment>Ignore Grammar context menu item</comment>
-        <translation>忽略</translation>
-    </message>
-    <message>
-        <source>Spelling</source>
-        <comment>Spelling and Grammar context sub-menu item</comment>
-        <translation>拼字</translation>
-    </message>
-    <message>
-        <source>Show Spelling and Grammar</source>
-        <comment>menu item title</comment>
-        <translation>顯示拼字與文法</translation>
-    </message>
-    <message>
-        <source>Hide Spelling and Grammar</source>
-        <comment>menu item title</comment>
-        <translation>隱藏拼字和文法</translation>
-    </message>
-    <message>
-        <source>Check Spelling</source>
-        <comment>Check spelling context menu item</comment>
-        <translation>拼字檢查</translation>
-    </message>
-    <message>
-        <source>Check Spelling While Typing</source>
-        <comment>Check spelling while typing context menu item</comment>
-        <translation>輸入時拼字檢查</translation>
-    </message>
-    <message>
-        <source>Check Grammar With Spelling</source>
-        <comment>Check grammar with spelling context menu item</comment>
-        <translation>檢查拼字與文法</translation>
-    </message>
-    <message>
-        <source>Fonts</source>
-        <comment>Font context sub-menu item</comment>
-        <translation>字型</translation>
-    </message>
-    <message>
-        <source>Bold</source>
-        <comment>Bold context menu item</comment>
-        <translation>粗體</translation>
-    </message>
-    <message>
-        <source>Italic</source>
-        <comment>Italic context menu item</comment>
-        <translation>斜體</translation>
-    </message>
-    <message>
-        <source>Underline</source>
-        <comment>Underline context menu item</comment>
-        <translation>底線</translation>
-    </message>
-    <message>
-        <source>Outline</source>
-        <comment>Outline context menu item</comment>
-        <translation>大綱</translation>
-    </message>
-    <message>
-        <source>Direction</source>
-        <comment>Writing direction context sub-menu item</comment>
-        <translation>方向</translation>
-    </message>
-    <message>
-        <source>Default</source>
-        <comment>Default writing direction context menu item</comment>
-        <translation>預設值</translation>
-    </message>
-    <message>
-        <source>LTR</source>
-        <comment>Left to Right context menu item</comment>
-        <translation>LTR</translation>
-    </message>
-    <message>
-        <source>RTL</source>
-        <comment>Right to Left context menu item</comment>
-        <translation>RTL</translation>
-    </message>
-    <message>
-        <source>Inspect</source>
-        <comment>Inspect Element context menu item</comment>
-        <translation>檢閱</translation>
-    </message>
-    <message>
-        <source>No recent searches</source>
-        <comment>Label for only item in menu that appears when clicking on the search field image, when no searches have been performed</comment>
-        <translation>沒有最近的搜尋</translation>
-    </message>
-    <message>
-        <source>Recent searches</source>
-        <comment>label for first item in the menu that appears when clicking on the search field image, used as embedded menu title</comment>
-        <translation>最近的搜尋</translation>
-    </message>
-    <message>
-        <source>Clear recent searches</source>
-        <comment>menu item in Recent Searches menu that empties menu&apos;s contents</comment>
-        <translation>清除最近的搜尋</translation>
-    </message>
-    <message>
-        <source>Unknown</source>
-        <comment>Unknown filesize FTP directory listing item</comment>
-        <translation>未知</translation>
-    </message>
-    <message>
-        <source>%1 (%2x%3 pixels)</source>
-        <comment>Title string for images</comment>
-        <translation>%1 (%2x%3 像素)</translation>
-    </message>
-    <message>
-        <source>Web Inspector - %2</source>
-        <translation>Web 偵測器 - %2</translation>
+        <source>PDI Pop directional isolate</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
     <name>QWhatsThisAction</name>
     <message>
         <source>What&apos;s This?</source>
-        <translation>這是? </translation>
+        <translation>這是?</translation>
     </message>
 </context>
 <context>
@@ -4327,6 +6276,54 @@ Please choose a different file name.</source>
     <message>
         <source>*</source>
         <translation>*</translation>
+    </message>
+</context>
+<context>
+    <name>QWidgetTextControl</name>
+    <message>
+        <source>&amp;Undo</source>
+        <translation>復原(&amp;U)</translation>
+    </message>
+    <message>
+        <source>&amp;Redo</source>
+        <translation>重作(&amp;R)</translation>
+    </message>
+    <message>
+        <source>Cu&amp;t</source>
+        <translation>剪下(&amp;T)</translation>
+    </message>
+    <message>
+        <source>&amp;Copy</source>
+        <translation>複製(&amp;C)</translation>
+    </message>
+    <message>
+        <source>Copy &amp;Link Location</source>
+        <translation>複製連結位置(&amp;L)</translation>
+    </message>
+    <message>
+        <source>&amp;Paste</source>
+        <translation>貼上(&amp;P)</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation>刪除</translation>
+    </message>
+    <message>
+        <source>Select All</source>
+        <translation>全選</translation>
+    </message>
+</context>
+<context>
+    <name>QWindowsDirect2DIntegration</name>
+    <message>
+        <source>Qt cannot load the direct2d platform plugin because the Direct2D version on this system is too old. The minimum system requirement for this platform plugin is Windows 7 SP1 with Platform Update.
+
+The minimum Direct2D version required is %1.%2.%3.%4. The Direct2D version on this system is %5.%6.%7.%8.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cannot load direct2d platform plugin</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -4346,10 +6343,6 @@ Please choose a different file name.</source>
     <message>
         <source>Done</source>
         <translation>完成</translation>
-    </message>
-    <message>
-        <source>Quit</source>
-        <translation>離開</translation>
     </message>
     <message>
         <source>Help</source>
@@ -4378,61 +6371,6 @@ Please choose a different file name.</source>
     <message>
         <source>&amp;Next &gt;</source>
         <translation>下一步(&amp;N) &gt;</translation>
-    </message>
-</context>
-<context>
-    <name>QWorkspace</name>
-    <message>
-        <source>&amp;Restore</source>
-        <translation>還原(&amp;R)</translation>
-    </message>
-    <message>
-        <source>&amp;Move</source>
-        <translation>移動(&amp;M)</translation>
-    </message>
-    <message>
-        <source>&amp;Size</source>
-        <translation>大小(&amp;S)</translation>
-    </message>
-    <message>
-        <source>Mi&amp;nimize</source>
-        <translation>最小化(&amp;N)</translation>
-    </message>
-    <message>
-        <source>Ma&amp;ximize</source>
-        <translation>最大化(&amp;X)</translation>
-    </message>
-    <message>
-        <source>&amp;Close</source>
-        <translation>關閉(&amp;C)</translation>
-    </message>
-    <message>
-        <source>Stay on &amp;Top</source>
-        <translation>最上層顯示(&amp;T)</translation>
-    </message>
-    <message>
-        <source>Sh&amp;ade</source>
-        <translation>陰影(&amp;A)</translation>
-    </message>
-    <message>
-        <source>%1 - [%2]</source>
-        <translation>%1 - [%2]</translation>
-    </message>
-    <message>
-        <source>Minimize</source>
-        <translation>最小化</translation>
-    </message>
-    <message>
-        <source>Restore Down</source>
-        <translation>向下還原</translation>
-    </message>
-    <message>
-        <source>Close</source>
-        <translation>關閉</translation>
-    </message>
-    <message>
-        <source>&amp;Unshade</source>
-        <translation>取消陰影(&amp;U)</translation>
     </message>
 </context>
 <context>
@@ -4553,10 +6491,6 @@ Please choose a different file name.</source>
         <translation>命名空間字首「%1」未宣告</translation>
     </message>
     <message>
-        <source>Attribute redefined.</source>
-        <translation>已重新定義屬性。</translation>
-    </message>
-    <message>
         <source>Unexpected character &apos;%1&apos; in public id literal.</source>
         <translation>未預期的字元 「%1」於公共 ID 常值。</translation>
     </message>
@@ -4672,654 +6606,9 @@ Please choose a different file name.</source>
         <source>%1 is an invalid PUBLIC identifier.</source>
         <translation>%1 是無效的公共識別字。</translation>
     </message>
-</context>
-<context>
-    <name>QtXmlPatterns</name>
     <message>
-        <source>An %1-attribute with value %2 has already been declared.</source>
-        <translation>值 %2 的 %1-屬性已宣告。</translation>
-    </message>
-    <message>
-        <source>An %1-attribute must have a valid %2 as value, which %3 isn&apos;t.</source>
-        <translation>%1-屬性必須有一個有效的 %2 值，其 %3 沒有。</translation>
-    </message>
-    <message>
-        <source>Network timeout.</source>
-        <translation>網路逾時。</translation>
-    </message>
-    <message>
-        <source>Element %1 can&apos;t be serialized because it appears outside the document element.</source>
-        <translation>因為元素似乎在文件元素之外，無法序列化元素 %1 。</translation>
-    </message>
-    <message>
-        <source>Year %1 is invalid because it begins with %2.</source>
-        <translation>年 %1 無效因為以 %2 開始。</translation>
-    </message>
-    <message>
-        <source>Day %1 is outside the range %2..%3.</source>
-        <translation>天 %1 超出 %2..%3 範圍。</translation>
-    </message>
-    <message>
-        <source>Month %1 is outside the range %2..%3.</source>
-        <translation>月 %1 超出 %2..%3 範圍。</translation>
-    </message>
-    <message>
-        <source>Overflow: Can&apos;t represent date %1.</source>
-        <translation>溢位: 不能表示日期 %1。</translation>
-    </message>
-    <message>
-        <source>Day %1 is invalid for month %2.</source>
-        <translation>%2 月的 %1 天無效。</translation>
-    </message>
-    <message>
-        <source>Time 24:%1:%2.%3 is invalid. Hour is 24, but minutes, seconds, and milliseconds are not all 0; </source>
-        <translation>時間 24:%1:%2。 %3 無效。 小時是 24，但分鐘、 秒和毫秒非全為 0; </translation>
-    </message>
-    <message>
-        <source>Time %1:%2:%3.%4 is invalid.</source>
-        <translation>時間 %1:%2:%3。 %4 無效。</translation>
-    </message>
-    <message>
-        <source>Overflow: Date can&apos;t be represented.</source>
-        <translation>溢位: 日期不能表示。</translation>
-    </message>
-    <message>
-        <source>At least one component must be present.</source>
-        <translation>必須至少存在一個元件。</translation>
-    </message>
-    <message>
-        <source>At least one time component must appear after the %1-delimiter.</source>
-        <translation>至少一個時間元件必須出現在 %1-分隔符號之後。</translation>
-    </message>
-    <message>
-        <source>No operand in an integer division, %1, can be %2.</source>
-        <translation>沒有運算元在整數除法, %1，可以是 %2。</translation>
-    </message>
-    <message>
-        <source>The first operand in an integer division, %1, cannot be infinity (%2).</source>
-        <translation>在整數除法的第一個運算元 %1，不能無窮大 (%2)。</translation>
-    </message>
-    <message>
-        <source>The second operand in a division, %1, cannot be zero (%2).</source>
-        <translation>在除法的第二個運算元 %1，不能為零 (%2)。</translation>
-    </message>
-    <message>
-        <source>%1 is not a valid value of type %2.</source>
-        <translation>%1 不是類型 %2 的有效值。</translation>
-    </message>
-    <message>
-        <source>When casting to %1 from %2, the source value cannot be %3.</source>
-        <translation>從 %2 轉換到 %1 時，來源值不能為 %3。</translation>
-    </message>
-    <message>
-        <source>Integer division (%1) by zero (%2) is undefined.</source>
-        <translation>未定義的整數 (%1) 除數零 (%2)。</translation>
-    </message>
-    <message>
-        <source>Division (%1) by zero (%2) is undefined.</source>
-        <translation>未定義的 (%1) 除以零 (%2) 。</translation>
-    </message>
-    <message>
-        <source>Modulus division (%1) by zero (%2) is undefined.</source>
-        <translation>模組零 (%2) 除以 (%1) 未定義。</translation>
-    </message>
-    <message>
-        <source>Dividing a value of type %1 by %2 (not-a-number) is not allowed.</source>
-        <translation>不允許類型 %1 的值除以 %2 (不是數字)。</translation>
-    </message>
-    <message>
-        <source>Dividing a value of type %1 by %2 or %3 (plus or minus zero) is not allowed.</source>
-        <translation>不允許類型 %1 的值除以 %2 或 %3 (加上或減去零)。</translation>
-    </message>
-    <message>
-        <source>Multiplication of a value of type %1 by %2 or %3 (plus or minus infinity) is not allowed.</source>
-        <translation>不允許使用相乘的類型 %1 %2 或 %3 (加上或減去無限) 的值。</translation>
-    </message>
-    <message>
-        <source>A value of type %1 cannot have an Effective Boolean Value.</source>
-        <translation>類型 %1 的值不能有 Effective Boolean 值。</translation>
-    </message>
-    <message>
-        <source>Effective Boolean Value cannot be calculated for a sequence containing two or more atomic values.</source>
-        <translation>有效的布林值不能計算包含序列兩個或多個原子值。</translation>
-    </message>
-    <message>
-        <source>Value %1 of type %2 exceeds maximum (%3).</source>
-        <translation>類型 %2 的值 %1 超過最大 (%3)。</translation>
-    </message>
-    <message>
-        <source>Value %1 of type %2 is below minimum (%3).</source>
-        <translation>類型 %2 的值 %1 低於最小 (%3)。</translation>
-    </message>
-    <message>
-        <source>A value of type %1 must contain an even number of digits. The value %2 does not.</source>
-        <translation>類型 %1 的值必須包含偶位數字。 值 %2 不是。</translation>
-    </message>
-    <message>
-        <source>%1 is not valid as a value of type %2.</source>
-        <translation>%1 無效作為類型 %2 的值。</translation>
-    </message>
-    <message>
-        <source>Operator %1 cannot be used on type %2.</source>
-        <translation>%1 運算子不能用在類型 %2。</translation>
-    </message>
-    <message>
-        <source>Operator %1 cannot be used on atomic values of type %2 and %3.</source>
-        <translation>%1 運算子不能用在類型 %2 和 %3 的自動值。</translation>
-    </message>
-    <message>
-        <source>The namespace URI in the name for a computed attribute cannot be %1.</source>
-        <translation>在計算的屬性的名稱命名空間 URI 不能為 %1。</translation>
-    </message>
-    <message>
-        <source>The name for a computed attribute cannot have the namespace URI %1 with the local name %2.</source>
-        <translation>計算屬性的名稱不能有命名空間 URI %1 使用 %2 的本機名稱。</translation>
-    </message>
-    <message>
-        <source>Type error in cast, expected %1, received %2.</source>
-        <translation>轉換中錯誤的類型，預期 %1 ，收到 %2。</translation>
-    </message>
-    <message>
-        <source>When casting to %1 or types derived from it, the source value must be of the same type, or it must be a string literal. Type %2 is not allowed.</source>
-        <translation>轉換為 %1 或從它衍生的類型時，來源值必須是相同類型，或必須是字串常值，類型 %2 不允許。</translation>
-    </message>
-    <message>
-        <source>No casting is possible with %1 as the target type.</source>
-        <translation>%1 不能轉換為目標類型。</translation>
-    </message>
-    <message>
-        <source>It is not possible to cast from %1 to %2.</source>
-        <translation>無法轉換 %1 到 %2。</translation>
-    </message>
-    <message>
-        <source>Casting to %1 is not possible because it is an abstract type, and can therefore never be instantiated.</source>
-        <translation>轉換為 %1 不可能，因為它是一個抽象的類型，因此永遠不能是實體。</translation>
-    </message>
-    <message>
-        <source>It&apos;s not possible to cast the value %1 of type %2 to %3</source>
-        <translation>無法轉換類型 %2 的值 %1 到 %3</translation>
-    </message>
-    <message>
-        <source>Failure when casting from %1 to %2: %3</source>
-        <translation>轉換 %1 到 %2 失敗: %3</translation>
-    </message>
-    <message>
-        <source>A comment cannot contain %1</source>
-        <translation>註解不能包含 %1</translation>
-    </message>
-    <message>
-        <source>A comment cannot end with a %1.</source>
-        <translation>註解不能以 %1 結束。</translation>
-    </message>
-    <message>
-        <source>No comparisons can be done involving the type %1.</source>
-        <translation>涉及類型 %1 沒有比較可以完成。</translation>
-    </message>
-    <message>
-        <source>Operator %1 is not available between atomic values of type %2 and %3.</source>
-        <translation>%1 運算子不可用在類型 %2 和 %3 的自動值之間。</translation>
-    </message>
-    <message>
-        <source>An attribute node cannot be a child of a document node. Therefore, the attribute %1 is out of place.</source>
-        <translation>一個屬性節點不能是文件節點的子級。 因此，%1 屬性超出位置。</translation>
-    </message>
-    <message>
-        <source>A library module cannot be evaluated directly. It must be imported from a main module.</source>
-        <translation>程式庫模組不能直接計算。 它必須從主模組匯入。</translation>
-    </message>
-    <message>
-        <source>A value of type %1 cannot be a predicate. A predicate must have either a numeric type or an Effective Boolean Value type.</source>
-        <translation>類型 %1 的值不能為述詞。 述詞必須有數字類型或 Effective Boolean 數值類型。</translation>
-    </message>
-    <message>
-        <source>A positional predicate must evaluate to a single numeric value.</source>
-        <translation>一個位置述詞必須計算為單一數字。</translation>
-    </message>
-    <message>
-        <source>The target name in a processing instruction cannot be %1 in any combination of upper and lower case. Therefore, is %2 invalid.</source>
-        <translation>在大寫和小寫的任何組合中，處理指示的目標名稱不能為 %1。 因此 %2 無效。</translation>
-    </message>
-    <message>
-        <source>%1 is not a valid target name in a processing instruction. It must be a %2 value, e.g. %3.</source>
-        <translation>%1 不是有效的處理指示名稱。 它必須是%2 值，例如 %3。</translation>
-    </message>
-    <message>
-        <source>The last step in a path must contain either nodes or atomic values. It cannot be a mixture between the two.</source>
-        <translation>路徑中的上次步驟必須包含節點或者原子值。 不能是兩者的混合。</translation>
-    </message>
-    <message>
-        <source>The data of a processing instruction cannot contain the string %1</source>
-        <translation>處理指示的資料不能包含字串 %1</translation>
-    </message>
-    <message>
-        <source>No namespace binding exists for the prefix %1</source>
-        <translation>沒有命名空間繫結現有的字首 %1</translation>
-    </message>
-    <message>
-        <source>No namespace binding exists for the prefix %1 in %2</source>
-        <translation>沒有命名空間繫結現有 %2 中字首 %1</translation>
-    </message>
-    <message>
-        <source>%1 is an invalid %2</source>
-        <translation>%1 是無效的 %2</translation>
-    </message>
-    <message numerus="yes">
-        <source>%1 takes at most %n argument(s). %2 is therefore invalid.</source>
-        <translation>
-            <numerusform>%1 取得最多 %n 個引數。 因此 %2 無效。</numerusform>
-        </translation>
-    </message>
-    <message numerus="yes">
-        <source>%1 requires at least %n argument(s). %2 is therefore invalid.</source>
-        <translation>
-            <numerusform>%1 需要至少 %n 個引數。 因此 %2 無效。</numerusform>
-        </translation>
-    </message>
-    <message>
-        <source>The first argument to %1 cannot be of type %2. It must be a numeric type, xs:yearMonthDuration or xs:dayTimeDuration.</source>
-        <translation>%1 的第一個參數不能是類型 %2。 它必須為數值類型、 xs:yearMonthDuration 或 xs:dayTimeDuration。</translation>
-    </message>
-    <message>
-        <source>The first argument to %1 cannot be of type %2. It must be of type %3, %4, or %5.</source>
-        <translation>%1 的第一個參數不能是類型 %2。 它的類型必須是 %3、%4 或 %5。</translation>
-    </message>
-    <message>
-        <source>The second argument to %1 cannot be of type %2. It must be of type %3, %4, or %5.</source>
-        <translation>%1 的第二個引數不能是類型 %2。 必須是 %3, %4, 或 %5。</translation>
-    </message>
-    <message>
-        <source>%1 is not a valid XML 1.0 character.</source>
-        <translation>%1 不是有效的 XML 1.0 字元。</translation>
-    </message>
-    <message>
-        <source>The first argument to %1 cannot be of type %2.</source>
-        <translation>%1 的第一個參數不能是類型 %2。</translation>
-    </message>
-    <message>
-        <source>If both values have zone offsets, they must have the same zone offset. %1 and %2 are not the same.</source>
-        <translation>如果兩個值都有時區偏移，必須有相同的時區偏移。 %1 和 %2 不一樣。</translation>
-    </message>
-    <message>
-        <source>%1 was called.</source>
-        <translation>呼叫 %1。</translation>
-    </message>
-    <message>
-        <source>%1 must be followed by %2 or %3, not at the end of the replacement string.</source>
-        <translation>%1 的後面必須跟 %2 或 %3，不是在替換字串的末尾。</translation>
-    </message>
-    <message>
-        <source>In the replacement string, %1 must be followed by at least one digit when not escaped.</source>
-        <translation>在置換字串中，在不脫離 %1 後面必須至少有一個位數。</translation>
-    </message>
-    <message>
-        <source>In the replacement string, %1 can only be used to escape itself or %2, not %3</source>
-        <translation>在置換字串中，%1 只能用來脫離本身或 %2，不是 %3</translation>
-    </message>
-    <message>
-        <source>%1 matches newline characters</source>
-        <translation>%1 符合分行符號</translation>
-    </message>
-    <message>
-        <source>%1 and %2 match the start and end of a line.</source>
-        <translation>%1 和 %2 符合行的開始與結束。</translation>
-    </message>
-    <message>
-        <source>Matches are case insensitive</source>
-        <translation>符合區分大小寫</translation>
-    </message>
-    <message>
-        <source>Whitespace characters are removed, except when they appear in character classes</source>
-        <translation>空白字元已移除，除非出現在字元類別</translation>
-    </message>
-    <message>
-        <source>%1 is an invalid regular expression pattern: %2</source>
-        <translation>%1 是無效的規則運算式樣式: %2</translation>
-    </message>
-    <message>
-        <source>%1 is an invalid flag for regular expressions. Valid flags are:</source>
-        <translation>對於規則運算式 %1 是無效的旗標。 有效的旗標是:</translation>
-    </message>
-    <message>
-        <source>If the first argument is the empty sequence or a zero-length string (no namespace), a prefix cannot be specified. Prefix %1 was specified.</source>
-        <translation>如果第一個參數為空序列或零長度字串 (沒有命名空間)，不能指定首碼。 已指定首碼 %1。</translation>
-    </message>
-    <message>
-        <source>It will not be possible to retrieve %1.</source>
-        <translation>無法檢索 %1。</translation>
-    </message>
-    <message>
-        <source>The root node of the second argument to function %1 must be a document node. %2 is not a document node.</source>
-        <translation>函數 %1 的第二個引數之根節點必須是文件節點。 %2 不是文件節點。</translation>
-    </message>
-    <message>
-        <source>The default collection is undefined</source>
-        <translation>是未定義的預設集合</translation>
-    </message>
-    <message>
-        <source>%1 cannot be retrieved</source>
-        <translation>無法擷取 %1</translation>
-    </message>
-    <message>
-        <source>The normalization form %1 is unsupported. The supported forms are %2, %3, %4, and %5, and none, i.e. the empty string (no normalization).</source>
-        <translation>不支援正規化表單 %1 。 支援的表單是 %2, %3, %4, 和 %5 和無，即空字串 (未正規化)。</translation>
-    </message>
-    <message>
-        <source>A zone offset must be in the range %1..%2 inclusive. %3 is out of range.</source>
-        <translation>區域的偏移量必須在範圍 %1..%2 包容。 %3 超出範圍。</translation>
-    </message>
-    <message>
-        <source>%1 is not a whole number of minutes.</source>
-        <translation>%1 不是分鐘的整數。</translation>
-    </message>
-    <message>
-        <source>Required cardinality is %1; got cardinality %2.</source>
-        <translation>所需的基數為 %1，基數 %2。</translation>
-    </message>
-    <message>
-        <source>The item %1 did not match the required type %2.</source>
-        <translation>項目 %1 不符合所需的類型 %2。</translation>
-    </message>
-    <message>
-        <source>%1 is an unknown schema type.</source>
-        <translation>%1 是無效的架構類型。</translation>
-    </message>
-    <message>
-        <source>Only one %1 declaration can occur in the query prolog.</source>
-        <translation>%1 宣告僅可以出現在查詢 prolog 中。</translation>
-    </message>
-    <message>
-        <source>The initialization of variable %1 depends on itself</source>
-        <translation>變數 %1 的初始化取決於本身</translation>
-    </message>
-    <message>
-        <source>No variable by name %1 exists</source>
-        <translation>不存在名稱為 %1 的變數</translation>
-    </message>
-    <message>
-        <source>The variable %1 is unused</source>
-        <translation>變數 %1 未使用</translation>
-    </message>
-    <message>
-        <source>Version %1 is not supported. The supported XQuery version is 1.0.</source>
-        <translation>不支援版本 %1 。支援的 XQuery 版本為 1.0。</translation>
-    </message>
-    <message>
-        <source>The encoding %1 is invalid. It must contain Latin characters only, must not contain whitespace, and must match the regular expression %2.</source>
-        <translation>編碼 %1 是無效的。 它必須包含僅拉丁字元，不能包含空格，並且必須與 %2 的規則運算式相匹配。</translation>
-    </message>
-    <message>
-        <source>No function with signature %1 is available</source>
-        <translation>沒有 %1 簽署的函數可用</translation>
-    </message>
-    <message>
-        <source>A default namespace declaration must occur before function, variable, and option declarations.</source>
-        <translation>預設命名空間宣告必須在函數、變數和選用宣告前發生。</translation>
-    </message>
-    <message>
-        <source>Namespace declarations must occur before function, variable, and option declarations.</source>
-        <translation>命名空間宣告必須在函數、變數和選用宣告前發生。</translation>
-    </message>
-    <message>
-        <source>Module imports must occur before function, variable, and option declarations.</source>
-        <translation>模組匯入必須出現在函數、 變數和選項聲明之前。</translation>
-    </message>
-    <message>
-        <source>It is not possible to redeclare prefix %1.</source>
-        <translation>無法重新宣告字首 %1。</translation>
-    </message>
-    <message>
-        <source>Only the prefix %1 can be declared to bind the namespace %2. By default, it is already bound to the prefix %1.</source>
-        <translation>只有字首 %1 可以宣告繫結命名空間 %2。 預設，已經繫結到字首 %1。</translation>
-    </message>
-    <message>
-        <source>Prefix %1 is already declared in the prolog.</source>
-        <translation>字首 %1 已經在 prolog 中宣告。</translation>
-    </message>
-    <message>
-        <source>The name of an option must have a prefix. There is no default namespace for options.</source>
-        <translation>一個選項的名稱必須有字首。 選項沒有預設的命名空間。</translation>
-    </message>
-    <message>
-        <source>The Schema Import feature is not supported, and therefore %1 declarations cannot occur.</source>
-        <translation>架構匯入功能不支援，因此 %1 的宣告不能發生。</translation>
-    </message>
-    <message>
-        <source>The target namespace of a %1 cannot be empty.</source>
-        <translation>%1 的目標命名空間不能為空。</translation>
-    </message>
-    <message>
-        <source>The module import feature is not supported</source>
-        <translation>不支援模組匯入功能</translation>
-    </message>
-    <message>
-        <source>A variable by name %1 has already been declared in the prolog.</source>
-        <translation>已在序言中宣告一個名稱 %1 的變數。</translation>
-    </message>
-    <message>
-        <source>No value is available for the external variable by name %1.</source>
-        <translation>名稱 %1 的外部變數沒有可用的值。</translation>
-    </message>
-    <message>
-        <source>The namespace %1 is reserved; therefore user defined functions may not use it. Try the predefined prefix %2, which exists for these cases.</source>
-        <translation>命名空間 %1 已保留，因此使用者定義的函數可能不使用。 請在這些情形下，嘗試預先設定字首 %2。</translation>
-    </message>
-    <message>
-        <source>The namespace of a user defined function in a library module must be equivalent to the module namespace. In other words, it should be %1 instead of %2</source>
-        <translation>在程式庫模組中使用者定義函數的命名空間必須等於模組命名空間。 換句話說，應該是 %1 而不是 %2</translation>
-    </message>
-    <message>
-        <source>A function already exists with the signature %1.</source>
-        <translation>以 %1 簽署的功能已經存在。</translation>
-    </message>
-    <message>
-        <source>No external functions are supported. All supported functions can be used directly, without first declaring them as external</source>
-        <translation>支援無外部函數。 所有支援的函數可直接使用，不用先宣告它們為外部</translation>
-    </message>
-    <message>
-        <source>An argument by name %1 has already been declared. Every argument name must be unique.</source>
-        <translation>名稱 %1 的參數已宣告。 每個參數的名稱必須是唯一。</translation>
-    </message>
-    <message>
-        <source>The name of a variable bound in a for-expression must be different from the positional variable. Hence, the two variables named %1 collide.</source>
-        <translation>在運算式中繫結的變數名稱必須與位置變數不同。 因此，名為 %1 的兩個變數相抵觸。</translation>
-    </message>
-    <message>
-        <source>The Schema Validation Feature is not supported. Hence, %1-expressions may not be used.</source>
-        <translation>架構驗證功能不支援，因此%1 運算式不能使用。</translation>
-    </message>
-    <message>
-        <source>None of the pragma expressions are supported. Therefore, a fallback expression must be present</source>
-        <translation>所有 pragma 運算式都不支援。 因此，回復運算式必須存在</translation>
-    </message>
-    <message>
-        <source>The %1-axis is unsupported in XQuery</source>
-        <translation>XQuery 中不支援 %1-axis</translation>
-    </message>
-    <message>
-        <source>%1 is not a valid numeric literal.</source>
-        <translation>%1 不是有效的數值文字。</translation>
-    </message>
-    <message>
-        <source>No function by name %1 is available.</source>
-        <translation>沒有名稱 %1 的函數可用。</translation>
-    </message>
-    <message>
-        <source>The namespace URI cannot be the empty string when binding to a prefix, %1.</source>
-        <translation>在繫結字首 %1 時命名空間 URI 不能是空字串。</translation>
-    </message>
-    <message>
-        <source>%1 is an invalid namespace URI.</source>
-        <translation>%1 是無效的命名空間 URI。</translation>
-    </message>
-    <message>
-        <source>It is not possible to bind to the prefix %1</source>
-        <translation>無法繫結字首 %1</translation>
-    </message>
-    <message>
-        <source>Namespace %1 can only be bound to %2 (and it is, in either case, pre-declared).</source>
-        <translation>命名空間 %1 只能繫結到 %2 (並且，在這兩種情形下，預先宣告)。</translation>
-    </message>
-    <message>
-        <source>Prefix %1 can only be bound to %2 (and it is, in either case, pre-declared).</source>
-        <translation>字首 %1 只能繫結到 %2 (或者是預先宣告的情形下)。</translation>
-    </message>
-    <message>
-        <source>Two namespace declaration attributes have the same name: %1.</source>
-        <translation>兩個命名空間宣告屬性有相同的名稱: %1。</translation>
-    </message>
-    <message>
-        <source>The namespace URI must be a constant and cannot use enclosed expressions.</source>
-        <translation>命名空間 URI 必須是常數且不能使用封閉的運算式。</translation>
-    </message>
-    <message>
-        <source>An attribute by name %1 has already appeared on this element.</source>
-        <translation>名稱 %1 的屬性已經出現在這個元素。</translation>
-    </message>
-    <message>
-        <source>A direct element constructor is not well-formed. %1 is ended with %2.</source>
-        <translation>直接元素結構不是標準格式。 %1 以 %2 結束。</translation>
-    </message>
-    <message>
-        <source>The name %1 does not refer to any schema type.</source>
-        <translation>名稱 %1 未參照任何架構類型。</translation>
-    </message>
-    <message>
-        <source>%1 is an complex type. Casting to complex types is not possible. However, casting to atomic types such as %2 works.</source>
-        <translation>%1 是一個複雜類型。 轉換為複雜類型是不可能的。 然而，能轉換為原子類型如 %2。</translation>
-    </message>
-    <message>
-        <source>%1 is not an atomic type. Casting is only possible to atomic types.</source>
-        <translation>%1 不是原子類型。 只能轉換原子類型。</translation>
-    </message>
-    <message>
-        <source>%1 is not a valid name for a processing-instruction. Therefore this name test will never match.</source>
-        <translation>%1 不是有效的處理指示名稱。 因此這個名稱測試永遠不會符合。</translation>
-    </message>
-    <message>
-        <source>%1 is not in the in-scope attribute declarations. Note that the schema import feature is not supported.</source>
-        <translation>%1 在作用域的屬性聲明中不存在。 請注意不支援架構導入功能。</translation>
-    </message>
-    <message>
-        <source>The name of an extension expression must be in a namespace.</source>
-        <translation>擴展運算式的名稱必須在命名空間。</translation>
-    </message>
-    <message>
-        <source>empty</source>
-        <translation>空的</translation>
-    </message>
-    <message>
-        <source>zero or one</source>
-        <translation>零或一個</translation>
-    </message>
-    <message>
-        <source>exactly one</source>
-        <translation>只有一個</translation>
-    </message>
-    <message>
-        <source>one or more</source>
-        <translation>一或更多</translation>
-    </message>
-    <message>
-        <source>zero or more</source>
-        <translation>零或更多</translation>
-    </message>
-    <message>
-        <source>Required type is %1, but %2 was found.</source>
-        <translation>所需的類型是 %1，但未找到 %2。</translation>
-    </message>
-    <message>
-        <source>Promoting %1 to %2 may cause loss of precision.</source>
-        <translation>提昇 %1 為 %2 可能造成精確度遺失。</translation>
-    </message>
-    <message>
-        <source>The focus is undefined.</source>
-        <translation>焦點未定義。</translation>
-    </message>
-    <message>
-        <source>It&apos;s not possible to add attributes after any other kind of node.</source>
-        <translation>不可能在任何其他節點的類型後加入屬性。</translation>
-    </message>
-    <message>
-        <source>An attribute by name %1 has already been created.</source>
-        <translation>名稱 %1 的屬性已建立。</translation>
-    </message>
-    <message>
-        <source>Only the Unicode Codepoint Collation is supported(%1). %2 is unsupported.</source>
-        <translation>Unicode Codepoint Collation 只支援 (%1)。 不支援 %2。</translation>
-    </message>
-    <message>
-        <source>Attribute %1 can&apos;t be serialized because it appears at the top level.</source>
-        <translation>屬性 %1 無法序列化因為出現在最上層。</translation>
-    </message>
-    <message>
-        <source>The namespace for a user defined function cannot be empty (try the predefined prefix %1 which exists for cases like this)</source>
-        <translation>使用者定義函數的命名空間不能為空 (請在這種情形下，嘗試預先設定字首 %1)</translation>
-    </message>
-</context>
-<context>
-    <name>VolumeSlider</name>
-    <message>
-        <source>Muted</source>
-        <translation>靜音</translation>
-    </message>
-    <message>
-        <source>Volume: %1%</source>
-        <translation>音量: %1%</translation>
-    </message>
-</context>
-<context>
-    <name>WebCore::PlatformScrollbar</name>
-    <message>
-        <source>Scroll here</source>
-        <translation>在此捲動</translation>
-    </message>
-    <message>
-        <source>Left edge</source>
-        <translation>左邊緣</translation>
-    </message>
-    <message>
-        <source>Top</source>
-        <translation>上方</translation>
-    </message>
-    <message>
-        <source>Right edge</source>
-        <translation>右邊緣</translation>
-    </message>
-    <message>
-        <source>Bottom</source>
-        <translation>下方</translation>
-    </message>
-    <message>
-        <source>Page left</source>
-        <translation>左頁</translation>
-    </message>
-    <message>
-        <source>Page up</source>
-        <translation>上一頁</translation>
-    </message>
-    <message>
-        <source>Page right</source>
-        <translation>右頁</translation>
-    </message>
-    <message>
-        <source>Page down</source>
-        <translation>下一頁</translation>
-    </message>
-    <message>
-        <source>Scroll left</source>
-        <translation>向左捲動</translation>
-    </message>
-    <message>
-        <source>Scroll up</source>
-        <translation>向上捲動</translation>
-    </message>
-    <message>
-        <source>Scroll right</source>
-        <translation>向右捲動</translation>
-    </message>
-    <message>
-        <source>Scroll down</source>
-        <translation>向下捲動</translation>
+        <source>Attribute &apos;%1&apos; redefined.</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 </TS>

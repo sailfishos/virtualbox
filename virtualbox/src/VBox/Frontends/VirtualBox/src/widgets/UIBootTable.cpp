@@ -1,12 +1,10 @@
 /* $Id: UIBootTable.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIBootTable class implementation
+ * VBox Qt GUI - UIBootTable class implementation.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,12 +15,20 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global include */
-#include <QScrollBar>
+# include <QScrollBar>
 
 /* Local includes */
-#include "UIBootTable.h"
-#include "UIConverter.h"
+# include "UIBootTable.h"
+# include "UIConverter.h"
+# include "UIIconPool.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIBootTableItem::UIBootTableItem(KDeviceType type)
   : m_type(type)
@@ -30,26 +36,11 @@ UIBootTableItem::UIBootTableItem(KDeviceType type)
     setCheckState(Qt::Unchecked);
     switch(type)
     {
-        case KDeviceType_Floppy:
-        {
-            setIcon(QIcon(":fd_16px.png"));
-            break;
-        }
-        case KDeviceType_DVD:
-        {
-            setIcon(QIcon(":cd_16px.png"));
-            break;
-        }
-        case KDeviceType_HardDisk:
-        {
-            setIcon(QIcon(":hd_16px.png"));
-            break;
-        }
-        case KDeviceType_Network:
-        {
-            setIcon(QIcon(":nw_16px.png"));
-            break;
-        }
+        case KDeviceType_Floppy:   setIcon(UIIconPool::iconSet(":/fd_16px.png")); break;
+        case KDeviceType_DVD:      setIcon(UIIconPool::iconSet(":/cd_16px.png")); break;
+        case KDeviceType_HardDisk: setIcon(UIIconPool::iconSet(":/hd_16px.png")); break;
+        case KDeviceType_Network:  setIcon(UIIconPool::iconSet(":/nw_16px.png")); break;
+        default: break; /* Shut up, MSC! */
     }
     retranslateUi();
 }
@@ -79,9 +70,6 @@ void UIBootTable::adjustSizeToFitContent()
 {
     int h = 2 * frameWidth();
     int w = h;
-#if QT_VERSION < 0x040700
-    w += 4; // WTF?
-#endif /* QT_VERSION < 0x040700 */
     setFixedSize(sizeHintForColumn(0) + w,
                  sizeHintForRow(0) * count() + h);
 }

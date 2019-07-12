@@ -3,7 +3,7 @@
 # libraries VBox OSE depends on.
 
 #
-# Copyright (C) 2006-2013 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -19,8 +19,8 @@ export LC_ALL
 
 # append some extra paths
 PATH="$PATH:/opt/gnome/bin"
-# Solaris (order of paths important for tr, echo, grep, sed to work)
-PATH="/usr/xpg4/bin:/usr/ucb:$PATH:/usr/local/bin:/usr/sfw/bin:/usr/ccs/bin"
+# Solaris (order of paths important for tr, grep, sed to work)
+PATH="/usr/xpg4/bin:$PATH:/usr/local/bin:/usr/sfw/bin:/usr/ccs/bin"
 ORGPATH=$PATH
 
 # Wrapper for ancient /usr/bin/which on darwin that always returns 0
@@ -51,6 +51,8 @@ case "$OS" in
     ;;
   freebsd)
     ;;
+  netbsd)
+    ;;
   sunos)
     OS='solaris'
     ;;
@@ -71,6 +73,7 @@ ODIR_OVERRIDE=0
 OUT_PATH=""
 OUT_PATH_OVERRIDE=0
 SETUP_WINE=
+ONLY_ADDITIONS=0
 TARGET_MACHINE=""
 TARGET_CPU=""
 WITH_XPCOM=1
@@ -79,7 +82,7 @@ WITH_JAVA=1
 WITH_VMMRAW=1
 WITH_LIBIDL=1
 WITH_GSOAP=0
-WITH_QT4=1
+WITH_QT5=1
 WITH_SDL=1
 WITH_SDL_TTF=1
 WITH_X11=1
@@ -111,7 +114,6 @@ YASM="yasm"
 IASL="iasl"
 XSLTPROC="xsltproc"
 GENISOIMAGE="genisoimage"
-MKISOFS="mkisofs"
 INCCRYPTO=""
 LIBCRYPTO="-lssl -lcrypto"
 LIBPTHREAD="-lpthread"
@@ -150,14 +152,23 @@ INCVPX=""
 LIBVPX="-lvpx"
 PKGCONFIG="`which_wrapper pkg-config`"
 PYTHONDIR="/usr /usr/local"
-QT4DIR="/usr/lib/qt4 /usr/share/qt4 /usr/lib64/qt4 /usr /usr/local"
-QT4DIR_PKGCONFIG=1
-QT4UIC3DIR="/usr/bin"
+QT5DIR="/usr/lib/qt5 /usr/share/qt5 /usr/lib64/qt5 /usr /usr/local"
+QT5DIR_PKGCONFIG=1
+QT5MAJ=5
+QT5MIN=6
 KBUILDDIR="`cd \`dirname $0\`; pwd`/kBuild"
 DEVDIR="`cd \`dirname $0\`; pwd`/tools"
 if [ -d "/lib/modules/`uname -r`/build" ]; then
- LINUX="/lib/modules/`uname -r`/build"
-else
+  LINUX="/lib/modules/`uname -r`/build"
+elif [ "`echo /lib/modules/*`" != "/lib/modules/*" ]; then
+  # Get the most recent kernel headers if none match the current kernel.
+  for i in /lib/modules/*; do
+    if [ -r "$i/build" ]; then
+      LINUX="$i/build"
+    fi
+  done
+fi
+if [ -z "$LINUX" ]; then
  LINUX="/usr/src/linux"
 fi
 KCHMVIEWER="kchmviewer"
@@ -173,12 +184,8 @@ if (cd `dirname $0`; pwd)|grep -q "$INVALID_CHARS"; then
   exit 1
 fi
 
-# darwin /bin/sh has a builtin echo that doesn't grok -n. gotta love it.
-if [ "$OS" = "darwin" ]; then
-  ECHO_N="/bin/echo -n"
-else
-  ECHO_N="echo -n"
-fi
+# Posix /bin/sh isn't supporting echo -n. Use printf instead.
+ECHO_N="printf"
 
 
 cleanup()
@@ -278,8 +285,8 @@ test_compile()
   echo "compiling the following source file:" >> $LOG
   cat $ODIR.tmp_src.cc >> $LOG
   echo "using the following command line:" >> $LOG
-  echo "$CXX $CXX_FLAGS -g -O -Wall -o $ODIR.tmp_out $ODIR.tmp_src.cc \"$1\"" >> $LOG
-  $CXX $CXX_FLAGS -g -O -Wall -o $ODIR.tmp_out $ODIR.tmp_src.cc $1 >> $LOG 2>&1
+  echo "$CXX $CXX_FLAGS -fPIC -g -O -Wall -o $ODIR.tmp_out $ODIR.tmp_src.cc \"$1\"" >> $LOG
+  $CXX $CXX_FLAGS -fPIC -g -O -Wall -o $ODIR.tmp_out $ODIR.tmp_src.cc $1 >> $LOG 2>&1
   if [ $? -ne 0 ]; then
     if [ -z "$4" ]; then
       echo
@@ -316,12 +323,18 @@ test_execute()
 # Execute a compiled test binary
 test_execute_path()
 {
+  ## LD_LIBRARY_PATH to set.
+  local_path="${1}"
+  ## Set this to non-empty to make this test non-fatal.
+  local_nofail="${2}"
   echo "executing the binary (LD_LIBRARY_PATH=$1)" >> $LOG
-  LD_LIBRARY_PATH=$1 $ODIR.tmp_out > $ODIR.test_execute.log
+  LD_LIBRARY_PATH="${local_path}" $ODIR.tmp_out > $ODIR.test_execute.log
   rc=$?
   cat $ODIR.test_execute.log | tee -a $LOG
   if [ $rc -ne 0 ]; then
-    fail
+    test -z "${local_nofail}" && fail
+    echo >> $LOG
+    echo >> $LOG
     return 1
   fi
   echo >> $LOG
@@ -398,13 +411,19 @@ check_gcc()
 {
   test_header gcc
   if check_avail "$CC" CC really; then
-    cc_ver=`$CC -dumpversion` 2>/dev/null
+    cc_ver=`$CC -dumpfullversion 2>/dev/null`
+    if [ $? -ne 0 ]; then
+      cc_ver=`$CC -dumpversion 2>/dev/null`
+    fi
     if [ $? -ne 0 ]; then
       log_failure "cannot execute '$CC -dumpversion'"
       fail really
     fi
     if check_avail "$CXX" CXX really; then
-      cxx_ver=`$CXX -dumpversion` 2>/dev/null
+      cxx_ver=`$CXX -dumpfullversion 2>/dev/null`
+      if [ $? -ne 0 ]; then
+        cxx_ver=`$CXX -dumpversion 2>/dev/null`
+      fi
       if [ $? -ne 0 ]; then
         log_failure "cannot execute '$CXX -dumpversion'"
         fail really
@@ -417,12 +436,10 @@ check_gcc()
       elif [ $cc_maj -eq 4 -a $cc_min -eq 0 -a "$OS" = "darwin" ]; then
         log_success "found version $cc_ver"
       # gcc-4.0 is allowed for Darwin only
-      elif [ $cc_maj -lt 3 \
-             -o \( $cc_maj -eq 3 -a $cc_min -lt 2 \) \
-             -o \( $cc_maj -eq 4 -a $cc_min -lt 1 -a "$OS" != "darwin" \) \
-             -o \( $cc_maj -eq 4 -a $cc_min -gt 9 \) \
-             -o $cc_maj -gt 4 ]; then
-        log_failure "gcc version $cc_ver found, expected gcc 3.x with x>1 or gcc 4.x with 0<x<10"
+      elif [ $cc_maj -lt 4 \
+             -o \( $cc_maj -eq 4 -a $cc_min -lt 4 -a "$OS" != "darwin" \) \
+             -o \( $cc_maj -eq 4 -a $cc_min -lt 2 -a "$OS"  = "darwin" \) ]; then
+        log_failure "gcc version $cc_maj.$cc_min found, expected gcc 4.x or later"
         fail really
       else
         log_success "found version $cc_ver"
@@ -479,6 +496,18 @@ check_gcc()
         cnf_append "TOOL_GXX64_CXX" "$CXX64"
         cnf_append "TOOL_GXX64_LD"  "$CXX64"
       fi
+      if [ "$CC" != "gcc" ]; then
+        if [ -n "$CC64" ]; then
+          cnf_append "TOOL_Bs3Gcc64Elf64_CC"  "$CC64"
+        else
+          cnf_append "TOOL_Bs3Gcc64Elf64_CC"  "$CC"
+        fi
+        if [ -n "$CXX64" ]; then
+          cnf_append "TOOL_Bs3Gcc64Elf64_CXX" "$CXX64"
+        else
+          cnf_append "TOOL_Bs3Gcc64Elf64_CXX" "$CXX"
+        fi
+      fi
       # Solaris sports a 32-bit gcc/g++.
       if [ "$OS" = "solaris" -a "$BUILD_MACHINE" = "amd64" ]; then
         [ "$CC" = "gcc" ] && CC="gcc -m64"
@@ -504,7 +533,11 @@ check_open_watcom()
   if [ -z "$WATCOM" ]; then
     WATCOM=`/bin/ls -rd1 $PWD/tools/common/openwatcom/* 2> /dev/null | head -1`
     if [ -z "$WATCOM" ]; then
-      log_failure "Open Watcom was not found"
+      if [ $OSE -eq 0 -a $OS = "linux" ]; then
+        log_failure "Open Watcom was not found"
+        exit 1
+      fi
+      log_failure "Open Watcom was not found, using alternative BIOS sources"
       cnf_append "VBOX_WITH_OPEN_WATCOM" ""
       return 0;
     fi
@@ -515,6 +548,7 @@ check_open_watcom()
     "dos")      wc_bin="binw";;
     "freebsd")  wc_bin="binfbsd";; # ??
     "linux")    wc_bin="binl";;
+    "netbsd")   wc_bin="binnbsd";; # ??
     "solaris")  wc_bin="binsol";;  # ??
     "os2")      wc_bin="binp";;
     "win")      wc_bin="binnt";;
@@ -609,34 +643,6 @@ check_xsltproc()
     else
       log_success "found"
       cnf_append "VBOX_XSLTPROC" "`which_wrapper $XSLTPROC`"
-    fi
-  fi
-}
-
-
-#
-# Check for mkisofs, needed to build the CDROM image containing the additions
-#
-check_mkisofs()
-{
-  test_header mkisofs
-  if which_wrapper $GENISOIMAGE > /dev/null; then
-    mkisofs_ver=`$GENISOIMAGE --version`
-    if [ $? -ne 0 ]; then
-      log_failure "mkisofs not found"
-      fail
-    else
-      log_success "found $mkisofs_ver"
-      cnf_append "VBOX_MKISOFS" "`which_wrapper $GENISOIMAGE`"
-    fi
-  elif check_avail "$MKISOFS" MKISOFS; then
-    mkisofs_ver=`$MKISOFS --version`
-    if [ $? -ne 0 ]; then
-      log_failure "mkisofs not working"
-      fail
-    else
-      log_success "found $mkisofs_ver"
-      cnf_append "VBOX_MKISOFS" "`which_wrapper $MKISOFS`"
     fi
   fi
 }
@@ -1132,7 +1138,7 @@ EOF
       fi
     fi
   else
-    log_failure "SDL not found"
+    log_failure "SDL not found (can be disabled using --disable-sdl)"
     fail
   fi
 }
@@ -1166,9 +1172,8 @@ extern "C" int main(void)
 }
 EOF
   if test_compile "-lSDL_ttf $I_INCSDL" SDL_ttf SDL_ttf nofatal; then
-    if ! test_execute nofatal; then
+    test_execute nofatal || \
       cnf_append "VBOX_WITH_SECURELABEL" ""
-    fi
   else
     echo "not found -- disabling VBoxSDL secure label."
     cnf_append "VBOX_WITH_SECURELABEL" ""
@@ -1189,11 +1194,11 @@ extern "C" int main(void)
 {
   printf("found version %d.%d.%d",
          SND_LIB_MAJOR, SND_LIB_MINOR, SND_LIB_SUBMINOR);
-#if 10000*SND_LIB_MAJOR + 100*SND_LIB_MINOR + SND_LIB_SUBMINOR >= 10006
+#if 10000*SND_LIB_MAJOR + 100*SND_LIB_MINOR + SND_LIB_SUBMINOR >= 10014
   printf(", OK.\n");
   return 0;
 #else
-  printf(", expected version 1.0.6 or higher\n");
+  printf(", expected version 1.0.14 or higher\n");
   return 1;
 #endif
 }
@@ -1440,193 +1445,222 @@ EOF
 
 
 #
-# Check for the Qt4 library, needed by the VirtualBox frontend
+# Check for the Qt5 library, needed by the VirtualBox frontend
 #
 # Currently not fatal.
 #
-check_qt4()
+check_qt5()
 {
-  foundqt4=
-  test_header Qt4
+  foundqt5=
+  test_header Qt5
+  cat > $ODIR.tmp_src.cc << EOF
+#include <QtGlobal>
+extern "C" int main(void)
+{
+EOF
+  echo "#if QT_VERSION >= $(($QT5MAJ*65536+$QT5MIN*256))" >> $ODIR.tmp_src.cc
+  cat >> $ODIR.tmp_src.cc << EOF
+  return 0;
+#else
+  return 1;
+#endif
+}
+EOF
   if [ "$OS" = "darwin" ]; then
     # First check if there is the internal version of Qt. If yes nothing else
     # has to be done.
     QT_INTERNAL=`/bin/ls -rd1 $PWD/tools/$BUILD_TARGET.$BUILD_PLATFORM_ARCH/qt/* 2> /dev/null`
     for t in $QT_INTERNAL; do
-        if [ -f "$t/Frameworks/QtCoreVBox.framework/QtCoreVBox" ]; then
-          cnf_append "VBOX_WITH_QT4_SUN" "1"
-          log_success "use internal version"
-          return
-        fi
+      if [ -f "$t/Frameworks/QtCoreVBox.framework/QtCoreVBox" ]; then
+        cnf_append "VBOX_WITH_ORACLE_QT" "1"
+        log_success "use internal version"
+        return
+      fi
     done
     # Now try the user provided directory and some of the standard directories.
-    QT_TRIES="$QT4DIR /System/Library /Library"
+    QT_TRIES="$QT5DIR /System/Library /Library"
     for t in $QT_TRIES; do
-        if [ -f "$t/Frameworks/QtCore.framework/QtCore" ]; then
-          PATH_SDK_QT4="$t"
-          break
-        fi
+      if [ -f "$t/Frameworks/QtCore.framework/QtCore" ]; then
+        PATH_SDK_QT5="$t"
+        break
+      fi
     done
     # Add the necessary params for building the test application
-    if [ -n "$PATH_SDK_QT4" ]; then
-      foundqt4=1
-      INCQT4=-I$PATH_SDK_QT4/Frameworks/QtCore.framework/Headers
-      LIBQT4=-F$PATH_SDK_QT4/Frameworks
-      FLGQT4="-framework QtCore"
+    if [ -n "$PATH_SDK_QT5" ]; then
+      foundqt5=1
+      INCQT5=-I$PATH_SDK_QT5/Frameworks/QtCore.framework/Headers
+      LIBQT5=-F$PATH_SDK_QT5/Frameworks
+      FLGQT5="-framework QtCore"
     else
-      log_failure "Qt4 framework not found (can be disabled using --disable-qt4)"
+      log_failure "Qt5 framework not found (can be disabled using --disable-qt)"
       fail
     fi
-  else
-    if [ $QT4DIR_PKGCONFIG -eq 1 ]; then
-      # default is to use pkg-config
+  else # !darwin
+    if [ $QT5DIR_PKGCONFIG -eq 1 ]; then
+      # Default is to use pkg-config:
       if which_wrapper pkg-config > /dev/null; then
-        # this braindead path is necessary for mdv2008.1
-        qt4_ver=`\
-            PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/lib/qt4/lib/pkgconfig \
-            pkg-config QtCore --modversion 2>> $LOG`
-        if [ $? -ne 0 ]; then
-          log_failure "QtCore not found"
-          fail
-        else
-          FLGQT4=`\
-              PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/lib/qt4/lib/pkgconfig \
-              pkg-config QtCore --cflags`
-          INCQT4=`strip_I "$FLGQT4"`
-          LIBQT4=`\
-              PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/lib/qt4/lib/pkgconfig \
-              PKG_CONFIG_ALLOW_SYSTEM_LIBS=1 \
-              pkg-config QtCore --libs`
-          foundqt4=1
+        qt5_ver=`pkg-config Qt5Core --modversion 2>> $LOG`
+        if [ $? -eq 0 ]; then
+          echo "(Qt5 from pkg-config)" >> $LOG
+          FLGQT5=`pkg-config Qt5Core --cflags`
+          # gcc 4.8 is able to compile with C++11 (see also VBOX_GCC_std in Config.kmk)
+          [ $cc_maj -eq 4 -a $cc_min -eq 8 ] && FLGQT5="$FLGQT5 -std=c++11"
+          INCQT5=`strip_I "$FLGQT5"`
+          LIBDIR5=`pkg-config Qt5Core --variable=libdir`
+          LIBQT5=`pkg-config Qt5Core --libs`
+          LIBQT5="-L$LIBDIR5 $LIBQT5"
+          TOOLQT5=`pkg-config Qt5Core --variable=prefix`
+          TOOLQT5BIN=`pkg-config Qt5Core --variable=host_bins`
+          if test_compile "$LIBQT5 $LIBPTHREAD $FLGQT5" qt5 qt5 nofatal; then
+            test_execute_path "`strip_L "$LIBQT5"`" nofatal && foundqt5=3 # pkg-config
+          fi
         fi
       else
         log_failure "pkg-config not found"
         fail
       fi
-    else
-      # do it the old way (e.g. user has specified QT4DIR)
-      cat > $ODIR.tmp_src.cc << EOF
-#include <cstdio>
-#include <QtGlobal>
-extern "C" int main(void)
-{
-  printf("found version %s", QT_VERSION_STR);
-#if QT_VERSION >= 0x040602
-  printf(", OK.\n");
-  return 0;
-#else
-  printf(", expected version 4.6.2 or higher\n");
-  return 1;
-#endif
-}
-EOF
-      for q in $QT4DIR; do
-        INCQT4="$q/include $q/include/QtCore"
-        FLGQT4="-DQT_SHARED"
-        I_INCQT4=`prefix_I "$INCQT4"`
-        LIBQT4="-L$q/lib -lQtCoreVBox"
-        if test_compile "$LIBQT4 $LIBPTHREAD $I_INCQT4 $FLGQT4" qt4 qt4 nofatal; then
-          foundqt4=2
+    fi
+    if [ -z "$foundqt5" ]; then
+      # Do it the old way (e.g. user has specified QT5DIR):
+      for q in $QT5DIR "$PWD/tools/linux.$TARGET_MACHINE"/qt/v5.*; do
+        echo "(Qt5 from '$q')" >> $LOG
+        INCQT5="$q/include $q/include/QtCore"
+        FLGQT5="-DQT_SHARED"
+        I_INCQT5=`prefix_I "$INCQT5"`
+        LIBQT5="-L$q/lib -lQt5CoreVBox"
+        TOOLQT5="$q"
+        if test_compile "$LIBQT5 $LIBPTHREAD $I_INCQT5 $FLGQT5" qt5 qt5 nofatal &&
+            test_execute_path "`strip_L "$LIBQT5"`" nofatal; then
+          foundqt5=2 # internal
           break;
         fi
-        LIBQT4="-L$q/lib -lQtCore"
-        if test_compile "$LIBQT4 $LIBPTHREAD $I_INCQT4 $FLGQT4" qt4 qt4 nofatal; then
-          foundqt4=1
+        LIBQT5="-L$q/lib -lQt5Core"
+        if test_compile "$LIBQT5 $LIBPTHREAD $I_INCQT5 $FLGQT5" qt5 qt5 nofatal &&
+            test_execute_path "`strip_L "$LIBQT5"`" nofatal; then
+          foundqt5=1 # no pkg-config, Qt directory
           break;
         fi
       done
     fi
   fi
-  if [ -n "$foundqt4" ]; then
+  if [ -n "$foundqt5" ]; then
+    # We decided which version of Qt to use, now enforce the version requirement:
     cat > $ODIR.tmp_src.cc << EOF
 #include <cstdio>
 #include <QtGlobal>
 extern "C" int main(void)
 {
   printf("found version %s", QT_VERSION_STR);
-#if QT_VERSION >= 0x040602
+EOF
+  echo "#if QT_VERSION >= $(($QT5MAJ*65536+$QT5MIN*256))" >> $ODIR.tmp_src.cc
+    cat >> $ODIR.tmp_src.cc << EOF
   printf(", OK.\n");
   return 0;
 #else
-  printf(", expected version 4.6.2 or higher\n");
+EOF
+echo "  printf(\", expected version $QT5MAJ.$QT5MIN or higher\\\\n\");" >> $ODIR.tmp_src.cc
+    cat >> $ODIR.tmp_src.cc << EOF
   return 1;
 #endif
 }
 EOF
-    [ -n "$INCQT4" ] && I_INCQT4=`prefix_I "$INCQT4"`
-    if test_compile "$LIBQT4 $LIBPTHREAD $I_INCQT4 $FLGQT4" qt4 qt4 nofatal; then
-      if test_execute_path "`strip_L "$LIBQT4"`"; then
+    [ -n "$INCQT5" ] && I_INCQT5=`prefix_I "$INCQT5"`
+    if test_compile "$LIBQT5 $LIBPTHREAD $I_INCQT5 $FLGQT5" qt5 qt5 nofatal; then
+      if test_execute_path "`strip_L "$LIBQT5"`"; then
         if [ "$OS" = "darwin" ]; then
           # Successful build & run the test application so add the necessary
-          # params to AutoConfig.kmk
-          cnf_append "PATH_SDK_QT4_INC" "$PATH_SDK_QT4/Frameworks"
-          cnf_append "PATH_SDK_QT4_LIB" "$PATH_SDK_QT4/Frameworks"
-          cnf_append "PATH_SDK_QT4" "$PATH_SDK_QT4/Frameworks"
+          # params to AutoConfig.kmk:
+          cnf_append "PATH_SDK_QT5_INC" "$PATH_SDK_QT5/Frameworks"
+          cnf_append "PATH_SDK_QT5_LIB" "$PATH_SDK_QT5/Frameworks"
+          cnf_append "PATH_SDK_QT5" "$PATH_SDK_QT5/Frameworks"
           # Check for the moc tool in the Qt directory found & some standard
           # directories.
-          for q in $PATH_SDK_QT4 /usr /Developer/Tools/Qt; do
+          for q in $PATH_SDK_QT5 /usr /Developer/Tools/Qt; do
             if which_wrapper "$q/bin/moc" > /dev/null; then
-              cnf_append "PATH_TOOL_QT4" "$q"
-              cnf_append "PATH_TOOL_QT4_BIN" "$q/bin"
+              cnf_append "PATH_TOOL_QT5_BIN" "$q/bin"
             fi
           done
         else
-          # strip .../QtCore as we add components ourself
-          INCQT4=`echo "$INCQT4"|$KBUILD_SED 's|\([^ ]*\)/QtCore|\1|g; s| $||g'`
-          # store only the first path, remove all other pathes
-          # most likely pkg-config gave us -I/usr/include/qt4 -I/usr/include/qt4/QtCore
-          INCQT4=`echo "$INCQT4"|$KBUILD_SED 's|\([^ ]*\) .*|\1|'`
-          cnf_append "VBOX_PATH_QT4_LIB" "`strip_L "$LIBQT4"`"
-          cnf_append "SDK_QT4_LIBPATH" "`strip_L "$LIBQT4"`"
-          cnf_append "PATH_SDK_QT4_INC" "$INCQT4"
-          # this is not quite right since the qt libpath does not have to be first...
-          cnf_append "PATH_SDK_QT4_LIB" '$'"(firstword `strip_L "$LIBQT4"`)"
-          if [ "$foundqt4" = "2" ]; then
-            cnf_append "VBOX_WITH_QT4_SUN" "1"
+          # Strip .../QtCore as we add components ourself:
+          INCQT5=`echo "$INCQT5"|$KBUILD_SED 's|\([^ ]*\)/QtCore|\1|g; s| $||g'`
+          # store only the first path, remove all other paths
+          # most likely pkg-config gave us -I/usr/include/qt5 -I/usr/include/qt5/QtCore
+          INCQT5=`echo "$INCQT5"|$KBUILD_SED 's|\([^ ]*\) .*|\1|'`
+          cnf_append "VBOX_PATH_QT_LIB" "`strip_L "$LIBQT5"`"
+          cnf_append "PATH_SDK_QT5_INC" "$INCQT5"
+          # This is not quite right since the qt libpath does not have to be first...
+          cnf_append "PATH_SDK_QT5_LIB" '$'"(firstword `strip_L "$LIBQT5"`)"
+          if [ "$foundqt5" = "2" ]; then
+            cnf_append "VBOX_WITH_ORACLE_QT" "1"
           fi
-          test_header "Qt4 devtools"
-          for q in $QT4DIR; do
-            # first try it with a suffix, some platforms use that
-            if which_wrapper "$q/bin/moc-qt4" > /dev/null; then
-              moc_ver=`$q/bin/moc-qt4 -v 2>&1|sed 's+^.*(Qt \(.*\))+\1+'`
-              if [ $? -ne 0 ]; then
-                log_failure "moc-qt4 not working"
-                fail
-              else
-                log_success "found version $moc_ver"
-                cnf_append "VBOX_PATH_QT4" "$q"
-                cnf_append "PATH_SDK_QT4" "$q"
-                cnf_append "PATH_TOOL_QT4" "$q"
-                cnf_append "PATH_TOOL_QT4_BIN" "$q/bin"
-                cnf_append "TOOL_QT4_BIN_SUFF" "-qt4"
-                return
-              fi
-            elif which_wrapper "$q/bin/moc" > /dev/null; then
-              moc_ver=`$q/bin/moc -v 2>&1|sed 's+^.*(Qt \(.*\))+\1+'`
-              if [ $? -ne 0 ]; then
-                log_failure "moc not working"
-                fail
-              else
-                log_success "found version $moc_ver"
-                cnf_append "VBOX_PATH_QT4" "$q"
-                cnf_append "PATH_SDK_QT4" "$q"
-                cnf_append "PATH_TOOL_QT4" "$q"
-                cnf_append "PATH_TOOL_QT4_BIN" "$q/bin"
-                return
-              fi
-            fi
-          done
+          if [ "$foundqt5" != "3" ]; then
+            TOOLQT5BIN="$TOOLQT5/bin"
+          fi
+          test_header "Qt5 devtools"
+          # Try it with a suffix, some platforms use that
+          if which_wrapper "$TOOLQT5BIN/moc-qt5" > /dev/null; then
+            QT5BINSUFF="-qt5"
+          else
+            QT5BINSUFF=""
+          fi
+          moc_ver=`$TOOLQT5BIN/moc$QT5BINSUFF -v 2>&1|sed 's+^.*(Qt \(.*\))+\1+'`
+          if [ $? -ne 0 ]; then
+            log_failure "moc$QT5BINSUFF not working"
+            fail
+          else
+            log_success "found version $moc_ver"
+            cnf_append "VBOX_PATH_QT" "$TOOLQT5"
+            cnf_append "PATH_SDK_QT5" "$TOOLQT5"
+            cnf_append "PATH_TOOL_QT5_BIN" "$TOOLQT5BIN"
+            [ -n "$QT5BINSUFF" ] && cnf_append "TOOL_QT5_BIN_SUFF" "$QT5BINSUFF"
+          fi
         fi
       fi
     else
-      log_failure "qt4 not working"
+      log_failure "qt5 not working"
       fail
     fi
   else
-    log_failure "qt4 not found"
+    log_failure "qt5 not found"
     fail
   fi
 }
+
+
+#
+# Check for libopus
+#
+check_libopus()
+{
+  if [ -z "$BUILD_LIBOPUS" ]; then
+    test_header libopus
+    if which_wrapper pkg-config > /dev/null; then
+      libopus_ver=`pkg-config opus --modversion 2>> $LOG`
+      if [ $? -eq 0 ]; then
+        FLGOPUS=`pkg-config opus --cflags`
+        INCOPUS=`strip_I "$FLGOPUS"`
+        LIBOPUS=`pkg-config opus --libs`
+      fi
+      cat > $ODIR.tmp_src.cc << EOF
+#include <cstdio>
+#include <opus/opus.h>
+extern "C" int main(void)
+{
+  OpusEncoder *test;
+  printf("found, OK.\n");
+}
+EOF
+      [ -n "$INCOPUS" ] && I_INCOPUS=`prefix_I "$INCOPUS"`
+      if test_compile "$LIBOPUS $I_INCOPUS" opus opus; then
+        if test_execute; then
+          cnf_append "SDK_VBOX_OPUS_INCS" "$INCOPUS"
+          cnf_append "SDK_VBOX_OPUS_LIBS" "`strip_l "$LIBOPUS"`"
+          fi
+      fi
+    fi
+  fi
+}
+
 
 #
 # Check for libvpx
@@ -1742,7 +1776,6 @@ EOF
   fi
 }
 
-
 #
 # Check for kchmviewer, needed to display the online help
 # (unused as we ship kchmviewer)
@@ -1827,7 +1860,7 @@ check_kbuild()
 check_compiler_h()
 {
   test_header compiler.h
-  if ! test -f "/usr/include/linux/compiler.h"; then
+  if test ! -f "/usr/include/linux/compiler.h"; then
     log_success "compiler.h not found"
   else
     cnf_append "VBOX_WITH_LINUX_COMPILER_H" "1"
@@ -1925,22 +1958,17 @@ extern "C" int main(void)
 {
   Py_Initialize();
   printf("found version %s", PY_VERSION);
-#if PY_VERSION_HEX >= 0x02030000
+#if PY_VERSION_HEX >= 0x02060000
   printf(", OK.\n");
   return 0;
 #else
-  printf(", expected version 2.3 or higher\n");
+  printf(", expected version 2.6 or higher\n");
   return 1;
 #endif
 }
 EOF
   found=
-# For Solaris we use libpython2.4 for compatibility with Solaris 10 and passing IPS pkg audit
-  if [ "$OS" != "solaris" ]; then
-    SUPPYTHONLIBS="python2.7 python2.6 python2.5 python2.4 python2.3"
-  else
-    SUPPYTHONLIBS="python2.4"
-  fi
+  SUPPYTHONLIBS="python2.7 python2.6 python3.1 python3.2 python3.3 python3.4 python3.4m python3.5 python3.5m python3.6 python3.6m"
   for p in $PYTHONDIR; do
     for d in $SUPPYTHONLIBS; do
       for b in lib/x86_64-linux-gnu lib/i386-linux-gnu lib64 lib/64 lib; do
@@ -2116,6 +2144,26 @@ check_gsoap()
 
 
 #
+# Check Xcode path
+#
+check_xcode_sdk_path()
+{
+    # Check if WITH_XCODE_DIR is set.
+    if [ -z "$WITH_XCODE_DIR" ]; then
+        echo "Please specify --with-xcode-dir option."
+        return 0
+    fi
+
+    # Check if specified path exists and is a directory.
+    if [ -d "$1" ]; then
+        return 1
+    else
+        echo "Xcode path [$1] not found."
+        return 0
+    fi
+}
+
+#
 # Determines the Darwin version.
 # @todo This should really check the Xcode/SDK version.
 #
@@ -2124,6 +2172,57 @@ check_darwinversion()
   test_header "Darwin version"
   darwin_ver=`uname -r`
   case "$darwin_ver" in
+    17\.*)
+      check_xcode_sdk_path "$WITH_XCODE_DIR"
+      [ $? -eq 1 ] || fail
+      darwin_ver="10.13" # High Sierra
+      sdk=$WITH_XCODE_DIR/Developer/SDKs/MacOSX10.6.sdk
+      cnf_append "VBOX_WITH_MACOSX_COMPILERS_FROM_DEVEL" "1"
+      cnf_append "VBOX_PATH_MACOSX_DEVEL_ROOT" "$WITH_XCODE_DIR/Developer"
+      ;;
+    16\.*)
+      check_xcode_sdk_path "$WITH_XCODE_DIR"
+      [ $? -eq 1 ] || fail
+      darwin_ver="10.12" # Sierra
+      sdk=$WITH_XCODE_DIR/Developer/SDKs/MacOSX10.6.sdk
+      cnf_append "VBOX_WITH_MACOSX_COMPILERS_FROM_DEVEL" "1"
+      cnf_append "VBOX_PATH_MACOSX_DEVEL_ROOT" "$WITH_XCODE_DIR/Developer"
+      ;;
+    15\.*)
+      check_xcode_sdk_path "$WITH_XCODE_DIR"
+      [ $? -eq 1 ] || fail
+      darwin_ver="10.11" # El Capitan
+      sdk=$WITH_XCODE_DIR/Developer/SDKs/MacOSX10.6.sdk
+      cnf_append "VBOX_WITH_MACOSX_COMPILERS_FROM_DEVEL" "1"
+      cnf_append "VBOX_PATH_MACOSX_DEVEL_ROOT" "$WITH_XCODE_DIR/Developer"
+      ;;
+    14\.*)
+      check_xcode_sdk_path "$WITH_XCODE_DIR"
+      [ $? -eq 1 ] || fail
+      darwin_ver="10.10" # Yosemite
+      sdk=$WITH_XCODE_DIR/Developer/SDKs/MacOSX10.6.sdk
+      cnf_append "VBOX_WITH_MACOSX_COMPILERS_FROM_DEVEL" "1"
+      cnf_append "VBOX_PATH_MACOSX_DEVEL_ROOT" "$WITH_XCODE_DIR/Developer"
+      ;;
+    13\.*)
+      check_xcode_sdk_path "$WITH_XCODE_DIR"
+      [ $? -eq 1 ] || fail
+      darwin_ver="10.9" # Mavericks
+      sdk=$WITH_XCODE_DIR/Developer/SDKs/MacOSX10.6.sdk
+      cnf_append "VBOX_WITH_MACOSX_COMPILERS_FROM_DEVEL" "1"
+      cnf_append "VBOX_PATH_MACOSX_DEVEL_ROOT" "$WITH_XCODE_DIR/Developer"
+      ;;
+    12\.*)
+      darwin_ver="10.8" # Mountain Lion
+      if [ ! -z "$WITH_XCODE_DIR" ]; then
+        sdk=$WITH_XCODE_DIR/Developer/SDKs/MacOSX10.6.sdk
+        cnf_append "VBOX_WITH_MACOSX_COMPILERS_FROM_DEVEL" "1"
+        cnf_append "VBOX_PATH_MACOSX_DEVEL_ROOT" "$WITH_XCODE_DIR/Developer"
+      else
+        sdk=/Developer/SDKs/MacOSX10.6.sdk
+      fi
+      CXX_FLAGS="-mmacosx-version-min=10.6 -isysroot $sdk -Wl,-syslibroot,$sdk"
+      ;;
     11\.*)
       darwin_ver="10.7" # Lion
       sdk=/Developer/SDKs/MacOSX10.6.sdk
@@ -2189,26 +2288,6 @@ check_makeself()
 
 
 #
-# Checks that i386-elf-gcc-3.4.6, i386-elf-gcc-3.4.3, i386-elf-gcc-3.4 or i386-elf-gcc
-# is around to prevent confusion when the build fails in src/recompiler.
-# Note. Keep the which order in sync with the $(which ) in src/recompiler/Makefile.kmk.
-#
-check_i386elfgcc()
-{
-  test_header "i386-elf-gcc"
-  i386_elf_gcc=`which_wrapper i386-elf-gcc-3.4.6`
-  test -z "$i386_elf_gcc" && i386_elf_gcc=`which_wrapper i386-elf-gcc-3.4.3`
-  test -z "$i386_elf_gcc" && i386_elf_gcc=`which_wrapper i386-elf-gcc-3.4`
-  test -z "$i386_elf_gcc" && i386_elf_gcc=`which_wrapper i386-elf-gcc`
-  if test -z "$i386_elf_gcc"; then
-    echo "  failed to find i386-elf-gcc"
-    fail
-  fi
-  log_success "found $i386_elf_gcc"
-}
-
-
-#
 # Show help
 #
 show_help()
@@ -2225,11 +2304,13 @@ EOF
 [ $WITH_JAVA    -eq 1 ] && echo "  --disable-java           disable java bindings"
 [ $WITH_VMMRAW  -eq 1 ] && echo "  --disable-vmmraw         disable VMM raw mode (VT-x/AMD-V mandatory!)"
 [ $WITH_SDL_TTF -eq 1 ] && echo "  --disable-sdl-ttf        disable SDL_ttf detection"
+[ $WITH_QT5     -eq 1 ] && echo "  --disable-qt             disable Qt detection"
 [ $WITH_ALSA    -eq 1 ] && echo "  --disable-alsa           disable the ALSA sound backend"
 [ $WITH_PULSE   -eq 1 ] && echo "  --disable-pulse          disable the PulseAudio backend"
 [ $WITH_DBUS    -eq 1 ] && echo "  --disable-dbus           don't use DBus and hal for hardware detection"
 [ $WITH_KMODS   -eq 1 ] && echo "  --disable-kmods          don't build Linux kernel modules (host and guest)"
 [ $WITH_OPENGL  -eq 1 ] && echo "  --disable-opengl         disable OpenGL support (2D & 3D)"
+[ $WITH_QT5     -eq 0 ] && echo "  --enable-qt5             enable Qt5 detection"
 [ $WITH_GSOAP   -eq 0 ] && echo "  --enable-webservice      enable the webservice stuff"
 [ $OSE          -eq 1 ] && echo "  --enable-vnc             enable the VNC server"
 [ $OSE          -eq 0 ] && echo "  --disable-extpack        don't build the extpack"
@@ -2249,17 +2330,20 @@ EOF
 EOF
 [ "$OS"   != "darwin" ] && echo "  --setup-wine             setup a Wine directory and register the hhc hack"
 cat << EOF
+  --only-additions         only build the Guest Additions
 
 Paths:
   --with-gcc=PATH          location of the gcc compiler [$CC]
   --with-g++=PATH          location of the g++ compiler [$CXX]
   --with-kbuild=DIR        kbuild directory [$KBUILDDIR]
   --with-iasl=PATH         location of the iasl compiler [$IASL]
-  --with-mkisofs=PATH      location of mkisofs [$MKISOFS]
   --with-makeself=PATH     location of makeself [$MAKESELF]
 EOF
+[ "$OS"   = "darwin" ] && echo "  --with-xcode-dir=DIR     custom path to Xcode root directory; it is assumed that Xcode"
+[ "$OS"   = "darwin" ] && echo "                           contains OS X 10.6 SDK (required for Mountain Lion and newer hosts"
+[ "$OS"   = "darwin" ] && echo "                           only, ignored for the rest)"
 [ "$OS"    = "linux" ] && echo "  --with-linux=DIR         Linux kernel source directory [$LINUX]"
-[ $WITH_QT4    -eq 1 ] && echo "  --with-qt-dir=DIR        directory for Qt4 headers/libraries [pkgconfig]"
+[ $WITH_QT5    -eq 1 ] && echo "  --with-qt-dir=DIR        directory for Qt headers/libraries [pkgconfig]"
 [ $WITH_GSOAP  -eq 1 ] && echo "  --with-gsoap-dir=PATH    directory for gSOAP compiler/headers/libraries"
 [ $WITH_GSOAP  -eq 1 ] && echo "                           (soapcpp2 and wsdl2h, soapstd2.h, libgsoap++.a/so)"
 [ $WITH_GSOAP  -eq 1 ] && echo "  --with-gsoap-import=PATH directory for gSOAP import files (stlvector.h)"
@@ -2303,6 +2387,7 @@ if [ "$OS" = "darwin" ]; then
   BUILD_LIBVPX=1
   [ $OSE -eq 1 ] || BUILD_LIBCURL=1
   [ $OSE -eq 1 ] && WITH_LIBVPX=0
+  WITH_XCODE_DIR=""
 elif [ "$OS" = "haiku" ]; then
   #WITH_SDL=0
   WITH_SDL_TTF=0
@@ -2326,7 +2411,7 @@ elif [ "$OS" = "solaris" ]; then
 fi
 
 # scan command line options
-for option in $*; do
+for option in "$@"; do
   case "$option" in
     --help|-help|-h)
       show_help
@@ -2350,9 +2435,15 @@ for option in $*; do
         exit 1
       fi
       ;;
-    --with-qt-dir=*|--with-qt4-dir=*)
-      QT4DIR=`echo $option | cut -d'=' -f2`
-      QT4DIR_PKGCONFIG=0
+    --with-qt-dir=*)
+      [ $WITH_QT5 -eq 1 ] && QT5DIR=`echo $option | cut -d'=' -f2`
+      [ $WITH_QT5 -eq 1 ] && QT5DIR_PKGCONFIG=0
+      ;;
+    --with-qt5-minor=*)
+      QT5MIN=`echo $option | cut -d'=' -f2`
+      ;;
+    --with-qt5-major=*)
+      QT5MAJ=`echo $option | cut -d'=' -f2`
       ;;
     --with-openssl-dir=*)
       OPENSSLDIR=`echo $option | cut -d'=' -f2`
@@ -2371,11 +2462,12 @@ for option in $*; do
     --with-iasl=*)
       IASL=`echo $option | cut -d'=' -f2`
       ;;
+    --with-xcode-dir=*)
+      WITH_XCODE_DIR=`echo $option | cut -d'=' -f2`
+      echo $option
+      ;;
     --with-linux=*)
       LINUX=`echo $option | cut -d'=' -f2`
-      ;;
-    --with-mkisofs=*)
-      MKISOFS=`echo $option | cut -d'=' -f2`
       ;;
     --with-makeself=*)
       MAKESELF=`echo $option | cut -d'=' -f2`
@@ -2399,10 +2491,10 @@ for option in $*; do
       [ $WITH_SDL_TTF -eq 1 ] && WITH_SDL_TTF=0
       ;;
     --disable-qt)
-      [ $WITH_QT4 -eq 1 ] && WITH_QT4=0
+      [ $WITH_QT5 -eq 1 ] && WITH_QT5=0
       ;;
-    --disable-qt4)
-      [ $WITH_QT4 -eq 1 ] && WITH_QT4=0
+    --enable-qt5)
+      [ $WITH_QT5 -eq 0 ] && WITH_QT5=1
       ;;
     --passive-mesa)
       PASSIVE_MESA=1
@@ -2443,6 +2535,9 @@ for option in $*; do
     --enable-hardening)
       WITH_HARDENING=2
       ;;
+    --build-libopus)
+      BUILD_LIBOPUS=1
+      ;;
     --disable-udptunnel)
       WITH_UDPTUNNEL=0
       ;;
@@ -2454,6 +2549,9 @@ for option in $*; do
       ;;
     --disable-libvpx)
       WITH_LIBVPX=0
+      ;;
+    --disable-sdl)
+      WITH_SDL=0
       ;;
     --build-debug|-d)
       BUILD_TYPE=debug
@@ -2479,7 +2577,7 @@ for option in $*; do
       WITH_SDL_TTF=0
       WITH_X11=0
       WITH_OPENGL=0
-      WITH_QT4=0
+      WITH_QT5=0
       ;;
     --ose)
       OSE=2
@@ -2507,6 +2605,9 @@ for option in $*; do
       ;;
     --setup-wine)
       [ "$OS" != "darwin" ] && SETUP_WINE=1
+      ;;
+    --only-additions)
+      ONLY_ADDITIONS=1
       ;;
     *)
       echo
@@ -2586,10 +2687,13 @@ if [ $OUT_PATH_OVERRIDE -eq 1 ]; then
   echo "export PATH_OUT_BASE" >> $ENV
 fi
 
+# don't bother people with -Werror
+cnf_append "VBOX_GCC_WERR" "\$(NO_SUCH_VARIABLE)"
+
 # some things are not available in for OSE
 if [ $OSE -ge 1 ]; then
   cnf_append "VBOX_OSE" "1"
-  cnf_append "VBOX_WITH_TESTSUITE" ""
+  cnf_append "VBOX_WITH_VALIDATIONKIT" ""
   cnf_append "VBOX_WITH_WIN32_ADDITIONS" ""
 
   if [ "$OS" = "linux" ]; then
@@ -2601,7 +2705,9 @@ if [ $OSE -ge 1 ]; then
 fi
 
 # extpack
-if [ $OSE -eq 0 ]; then
+if [ $ONLY_ADDITIONS -eq 1 ]; then
+  cnf_append "VBOX_WITH_EXTPACK_PUEL_BUILD" ""
+elif [ $OSE -eq 0 ]; then
   if [ $WITH_EXTPACK -eq 1 ]; then
     BUILD_LIBSSL=1
   else
@@ -2621,7 +2727,7 @@ if [ $WITH_OPENGL -eq 0 ]; then
   cnf_append "VBOX_GUI_USE_QGL" ""
 fi
 [ $WITH_XPCOM     -eq 0 ] && cnf_append "VBOX_WITH_MAIN" ""
-[ $WITH_QT4       -eq 0 ] && cnf_append "VBOX_WITH_QTGUI" ""
+[ $WITH_QT5       -eq 0 ] && cnf_append "VBOX_WITH_QTGUI" ""
 [ $WITH_SDL_TTF   -eq 0 ] && cnf_append "VBOX_WITH_SECURELABEL" ""
 [ $WITH_PYTHON    -eq 0 ] && cnf_append "VBOX_WITH_PYTHON" ""
 [ $WITH_JAVA      -eq 0 ] && cnf_append "VBOX_WITH_JXPCOM" ""
@@ -2629,7 +2735,10 @@ fi
 [ $WITH_HARDENING -eq 0 ] && cnf_append "VBOX_WITHOUT_HARDENING" "1"
 [ $WITH_HARDENING -eq 2 ] && cnf_append "VBOX_WITH_HARDENING" "2"
 [ $WITH_VMMRAW    -eq 0 ] && cnf_append "VBOX_WITH_RAW_MODE" ""
-[ $WITH_LIBVPX    -eq 0 ] && cnf_append "VBOX_WITH_VPX" ""
+if [ $WITH_LIBVPX -eq 0 ]; then
+  cnf_append "VBOX_WITH_LIBVPX" ""
+  cnf_append "VBOX_WITH_VIDEOREC" ""
+fi
 
 # Darwin-specific
 if [ "$OS" = "darwin" ]; then
@@ -2637,43 +2746,51 @@ if [ "$OS" = "darwin" ]; then
 fi
 # the tools
 check_gcc
-check_open_watcom
-[ "$OS" != "darwin"  ] && check_iasl
-# don't check for yasm for the time beeing as 0.40 and 0.50 both have known bugs
-# [ "$OS" != "darwin" ] && check_yasm
-[ "$OS" != "darwin"  ] && check_xsltproc
-[ "$OS" != "darwin"  ] && check_mkisofs
+if [ $ONLY_ADDITIONS -eq 0 ]; then
+  check_open_watcom
+  [ "$OS" != "darwin"  ] && check_iasl
+  # don't check for yasm for the time beeing as 0.40 and 0.50 both have known bugs
+  # [ "$OS" != "darwin" ] && check_yasm
+  [ "$OS" != "darwin"  ] && check_xsltproc
+fi
 
 # the libraries
-[ "$OS" != "darwin"  ] && check_pthread
-check_libxml2
-[ $WITH_LIBIDL -eq 1 ] && check_libidl
-check_ssl
-check_curl
-[ $WITH_LIBVPX -eq 1 ] && check_vpx
-[ "$OS" != "darwin"  ] && check_z
-[ "$OS" != "darwin"  ] && check_png
-[ $OSE -eq 0 -a "$OS" = "linux" ] && check_pam
-[ $WITH_SDL -eq 1 ]    && check_sdl
-[ $WITH_SDL_TTF -eq 1 -a $OSE -eq 0 ] && check_sdl_ttf
-[ $WITH_X11    -eq 1 ] && check_x
-# TODO check for xcomposite-dev (X11/extensions/Xcomposite.h, additions only)
-# TODO check for libxdamange-dev (X11/extensions/Xdamage.h, additions only)
-[ $WITH_X11    -eq 1 ] && check_xcursor
-[ $WITH_X11    -eq 1 ] && check_xinerama
-[ $WITH_X11    -eq 1 ] && check_xrandr
-[ $WITH_OPENGL -eq 1 ] && check_opengl
-[ $WITH_QT4    -eq 1 ] && check_qt4
-[ $WITH_PYTHON -eq 1 ] && check_python
-[ $WITH_JAVA   -eq 1 ] && check_java
-
-# PulseAudio
-if [ "$OS" = "linux" -o "$OS" = "freebsd" ]; then
-  if [ $WITH_PULSE -eq 1 ]; then
-    check_pulse
-  elif [ $WITH_PULSE -eq 0 ]; then
-    cnf_append "VBOX_WITH_PULSE" ""
+if [ $ONLY_ADDITIONS -eq 0 ]; then
+  [ "$OS" != "darwin"  ] && check_pthread
+  check_libxml2
+  [ $WITH_LIBIDL -eq 1 ] && check_libidl
+  check_ssl
+  check_curl
+  [ $WITH_LIBVPX -eq 1 ] && check_vpx
+  check_libopus
+ [ "$OS" != "darwin"  ] && check_z
+  [ "$OS" != "darwin"  ] && check_png
+  [ $OSE -eq 0 -a "$OS" = "linux" ] && check_pam
+  if [ $WITH_SDL -eq 1 ]; then
+    check_sdl
+  else
+    cnf_append "VBOX_WITH_VBOXSDL" ""
   fi
+  [ $WITH_SDL_TTF -eq 1 -a $OSE -eq 0 ] && check_sdl_ttf
+  [ $WITH_X11    -eq 1 ] && check_x
+  # TODO check for xcomposite-dev (X11/extensions/Xcomposite.h, additions only)
+  # TODO check for libxdamange-dev (X11/extensions/Xdamage.h, additions only)
+  [ $WITH_X11    -eq 1 ] && check_xcursor
+  [ $WITH_X11    -eq 1 ] && check_xinerama
+  [ $WITH_X11    -eq 1 ] && check_xrandr
+  [ $WITH_OPENGL -eq 1 ] && check_opengl
+  [ $WITH_QT5    -eq 1 ] && check_qt5
+  [ $WITH_PYTHON -eq 1 ] && check_python
+  [ $WITH_JAVA   -eq 1 ] && check_java
+
+  # PulseAudio
+  if [ "$OS" = "linux" -o "$OS" = "freebsd" -o "$OS" = "netbsd" ]; then
+    if [ $WITH_PULSE -eq 1 ]; then
+      check_pulse
+    elif [ $WITH_PULSE -eq 0 ]; then
+      cnf_append "VBOX_WITH_AUDIO_PULSE" ""
+    fi
+ fi
 fi
 
 # Linux-specific
@@ -2685,32 +2802,33 @@ if [ "$OS" = "linux" ]; then
     check_linux
   else
     cnf_append "VBOX_LINUX_SRC" ""
-    cnf_append "VBOX_WITH_VBOXDRV" ""
-    cnf_append "VBOX_WITH_ADDITION_DRIVERS" ""
+    cnf_append "VBOX_WITHOUT_LINUX_TEST_BUILDS" "1"
   fi
-  if [ $WITH_ALSA -eq 1 ]; then
-    check_alsa
-  else
-    cnf_append "VBOX_WITH_ALSA" ""
+  if [ $ONLY_ADDITIONS -eq 0 ]; then
+    if [ $WITH_ALSA -eq 1 ]; then
+      check_alsa
+    else
+      cnf_append "VBOX_WITH_AUDIO_ALSA" ""
+    fi
+    if [ $WITH_DBUS -eq 0 ]; then
+      cnf_append "VBOX_WITH_DBUS" ""
+    fi
+    if [ $WITH_DEVMAPPER -eq 1 ]; then
+      check_libdevmapper
+    else
+      cnf_append "VBOX_WITH_DEVMAPPER" ""
+    fi
+    check_libcap
   fi
-  if [ $WITH_DBUS -eq 0 ]; then
-    cnf_append "VBOX_WITH_DBUS" ""
-  fi
-  if [ $WITH_DEVMAPPER -eq 1 ]; then
-    check_libdevmapper
-  else
-    cnf_append "VBOX_WITH_DEVMAPPER" ""
-  fi
-  check_libcap
   check_compiler_h
-  [ "$BUILD_MACHINE" = "amd64" -a $WITH_VMMRAW -eq 1 ] && check_32bit
+  [ $ONLY_ADDITIONS -eq 0 -a "$BUILD_MACHINE" = "amd64" -a $WITH_VMMRAW -eq 1 ] && check_32bit
   # tools/common/makeself*
   [ $OSE -ge 1 ] && check_makeself
 fi
 
 [ -n "$SETUP_WINE" ] && setup_wine
 
-if [ $WITH_GSOAP -eq 1 ]; then
+if [ $ONLY_ADDITIONS -eq 0 -a $WITH_GSOAP -eq 1 ]; then
   check_gsoap
 else
   if [ $OSE -ge 1 ]; then
@@ -2719,30 +2837,34 @@ else
 fi
 
 # UDPTUNNEL
-if [ $WITH_UDPTUNNEL -eq 0 ]; then
+if [ $ONLY_ADDITIONS -eq 0 -a $WITH_UDPTUNNEL -eq 0 ]; then
   cnf_append "VBOX_WITH_UDPTUNNEL" ""
 fi
 
 # VDE
-if [ "$OS" = "linux" -o "$OS" = "freebsd" ]; then
+if [ $ONLY_ADDITIONS -eq 0 -a "$OS" = "linux" -o "$OS" = "freebsd" ]; then
   if [ $WITH_VDE -eq 1 ]; then
     cnf_append "VBOX_WITH_VDE" "1"
   fi
 fi
 
 # DOCS
-if [ $WITH_DOCS -eq 0 ]; then
+if [ $ONLY_ADDITIONS -eq 1 -o $WITH_DOCS -eq 0 ]; then
   cnf_append "VBOX_WITH_DOCS" ""
   cnf_append "VBOX_WITH_DOCS_PACKING" ""
 fi
 
 # VNC server support
-if [ $OSE -ge 1 ]; then
+if [ $ONLY_ADDITIONS -eq 0 -a $OSE -ge 1 ]; then
   if [ $WITH_VNC = 1 ]; then
     check_vncserver
   else
     cnf_append "VBOX_WITH_EXTPACK_VNC" ""
   fi
+fi
+
+if [ $ONLY_ADDITIONS -eq 1 ]; then
+  cnf_append "VBOX_ONLY_ADDITIONS" "1"
 fi
 
 # success!
@@ -2765,7 +2887,11 @@ if [ "$OS" = "linux" ]; then
     echo "  make"
     echo ""
 fi
-if [ $WITH_HARDENING -gt 0 ]; then
+if [ $ONLY_ADDITIONS -eq 1 ]; then
+    echo ""
+    echo "  Tree configured to build only the Guest Additions"
+    echo ""
+elif [ $WITH_HARDENING -gt 0 ]; then
     echo ""
     echo "  +++ WARNING +++ WARNING +++ WARNING +++ WARNING +++ WARNING +++ WARNING +++"
     echo "  Hardening is enabled which means that the VBox binaries will not run from"

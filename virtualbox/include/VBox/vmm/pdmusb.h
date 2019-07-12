@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,6 +30,7 @@
 #include <VBox/vmm/pdmcritsect.h>
 #include <VBox/vmm/pdmthread.h>
 #include <VBox/vmm/pdmifs.h>
+#include <VBox/vmm/pdmins.h>
 #include <VBox/vmm/pdmcommon.h>
 #include <VBox/vmm/tm.h>
 #include <VBox/vmm/ssm.h>
@@ -117,6 +118,10 @@ typedef const PDMUSBDESCCACHE *PCPDMUSBDESCCACHE;
  * @{ */
 /** A high-speed capable USB 2.0 device (also required to support full-speed). */
 #define PDM_USBREG_HIGHSPEED_CAPABLE        RT_BIT(0)
+/** Indicates that the device implements the saved state handlers. */
+#define PDM_USBREG_SAVED_STATE_SUPPORTED    RT_BIT(1)
+/** A SuperSpeed USB 3.0 device. */
+#define PDM_USBREG_SUPERSPEED_CAPABLE       RT_BIT(2)
 /** @} */
 
 /** PDM USB Device Registration Structure,
@@ -269,9 +274,10 @@ typedef struct PDMUSBREG
      * @returns VBox status code.
      * @param   pUsbIns     The USB device instance data.
      * @param   iLUN        The logical unit which is being detached.
+     * @param   fFlags      Flags, combination of the PDM_TACH_FLAGS_* \#defines.
      * @remarks Optional.
      */
-    DECLR3CALLBACKMEMBER(int, pfnDriverAttach,(PPDMUSBINS pUsbIns, unsigned iLUN));
+    DECLR3CALLBACKMEMBER(int, pfnDriverAttach,(PPDMUSBINS pUsbIns, unsigned iLUN, uint32_t fFlags));
 
     /**
      * Driver Detach notification.
@@ -281,9 +287,10 @@ typedef struct PDMUSBREG
      *
      * @param   pUsbIns     The USB device instance data.
      * @param   iLUN        The logical unit which is being detached.
+     * @param   fFlags      Flags, combination of the PDM_TACH_FLAGS_* \#defines.
      * @remarks Optional.
      */
-    DECLR3CALLBACKMEMBER(void, pfnDriverDetach,(PPDMUSBINS pUsbIns, unsigned iLUN));
+    DECLR3CALLBACKMEMBER(void, pfnDriverDetach,(PPDMUSBINS pUsbIns, unsigned iLUN, uint32_t fFlags));
 
     /**
      * Query the base interface of a logical unit.
@@ -445,7 +452,7 @@ typedef struct PDMUSBHLP
     /**
      * Attaches a driver (chain) to the USB device.
      *
-     * The first call for a LUN this will serve as a registartion of the LUN. The pBaseInterface and
+     * The first call for a LUN this will serve as a registration of the LUN. The pBaseInterface and
      * the pszDesc string will be registered with that LUN and kept around for PDMR3QueryUSBDeviceLun().
      *
      * @returns VBox status code.
@@ -496,7 +503,8 @@ typedef struct PDMUSBHLP
      * @param   pszFormat           Message. (optional)
      * @param   va                  Message parameters.
      */
-    DECLR3CALLBACKMEMBER(int, pfnDBGFStopV,(PPDMUSBINS pUsbIns, const char *pszFile, unsigned iLine, const char *pszFunction, const char *pszFormat, va_list va));
+    DECLR3CALLBACKMEMBER(int, pfnDBGFStopV,(PPDMUSBINS pUsbIns, const char *pszFile, unsigned iLine, const char *pszFunction,
+                                            const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(5, 0));
 
     /**
      * Register a info handler with DBGF,
@@ -588,8 +596,9 @@ typedef struct PDMUSBHLP
      * @param   pszName             The sample name format string.
      * @param   va                  Arguments to the format string.
      */
-    DECLR3CALLBACKMEMBER(void, pfnSTAMRegisterV,(PPDMUSBINS pUsbIns, void *pvSample, STAMTYPE enmType, STAMVISIBILITY enmVisibility,
-                                                 STAMUNIT enmUnit, const char *pszDesc, const char *pszName, va_list va));
+    DECLR3CALLBACKMEMBER(void, pfnSTAMRegisterV,(PPDMUSBINS pUsbIns, void *pvSample, STAMTYPE enmType,
+                                                 STAMVISIBILITY enmVisibility, STAMUNIT enmUnit, const char *pszDesc,
+                                                 const char *pszName, va_list va)  RT_IPRT_FORMAT_ATTR(7, 0));
 
     /**
      * Creates a timer.
@@ -613,11 +622,12 @@ typedef struct PDMUSBHLP
      * @returns rc.
      * @param   pUsbIns             The USB device instance.
      * @param   rc                  VBox status code.
-     * @param   RT_SRC_POS_DECL     Use RT_SRC_POS.
+     * @param   SRC_POS             Use RT_SRC_POS.
      * @param   pszFormat           Error message format string.
      * @param   va                  Error message arguments.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVMSetErrorV,(PPDMUSBINS pUsbIns, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va));
+    DECLR3CALLBACKMEMBER(int, pfnVMSetErrorV,(PPDMUSBINS pUsbIns, int rc, RT_SRC_POS_DECL,
+                                              const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(6, 0));
 
     /**
      * Set the VM runtime error message
@@ -629,7 +639,8 @@ typedef struct PDMUSBHLP
      * @param   pszFormat           Error message format string.
      * @param   va                  Error message arguments.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVMSetRuntimeErrorV,(PPDMUSBINS pUsbIns, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, va_list va));
+    DECLR3CALLBACKMEMBER(int, pfnVMSetRuntimeErrorV,(PPDMUSBINS pUsbIns, uint32_t fFlags, const char *pszErrorId,
+                                                     const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(4, 0));
 
     /**
      * Gets the VM state.
@@ -647,7 +658,7 @@ typedef struct PDMUSBHLP
      * resuming, and destroying the thread as the VM state changes.
      *
      * @returns VBox status code.
-     * @param   pDevIns             The device instance.
+     * @param   pUsbIns             The USB device instance.
      * @param   ppThread            Where to store the thread 'handle'.
      * @param   pvUser              The user argument to the thread function.
      * @param   pfnThread           The thread function.
@@ -667,7 +678,7 @@ typedef struct PDMUSBHLP
      * for each one.
      *
      * @returns VBox status code.
-     * @param   pUSBIns             The USB device instance.
+     * @param   pUsbIns             The USB device instance.
      * @param   pfnAsyncNotify      The callback.
      * @thread  EMT(0)
      */
@@ -679,7 +690,7 @@ typedef struct PDMUSBHLP
      *
      * This can be called at any time, spurious calls will simply be ignored.
      *
-     * @param   pUSBIns             The USB device instance.
+     * @param   pUsbIns             The USB device instance.
      * @thread  Any
      */
     DECLR3CALLBACKMEMBER(void, pfnAsyncNotificationCompleted, (PPDMUSBINS pUsbIns));
@@ -776,9 +787,8 @@ typedef struct PDMUSBINS
     uint32_t                    fTracing;
     /** The tracing ID of this device.  */
     uint32_t                    idTracing;
-    /** The USB version of the hub this device is attached to. Used to
-     * determine whether the device communicates at high-speed or full-/low-speed. */
-    uint32_t                    iUsbHubVersion;
+    /** The port/device speed. HCs and emulated devices need to know. */
+    VUSBSPEED                   enmSpeed;
 
     /** Padding to make achInstanceData aligned at 32 byte boundary. */
     uint32_t                    au32Padding[HC_ARCH_BITS == 32 ? 2 : 3];
@@ -789,13 +799,13 @@ typedef struct PDMUSBINS
 } PDMUSBINS;
 
 /** Current USBINS version number. */
-#define PDM_USBINS_VERSION                      PDM_VERSION_MAKE(0xeefd, 2, 0)
+#define PDM_USBINS_VERSION                      PDM_VERSION_MAKE(0xeefd, 3, 0)
 
 /**
  * Checks the structure versions of the USB device instance and USB device
  * helpers, returning if they are incompatible.
  *
- * This is for use in the constructor.
+ * This shall be the first statement of the constructor!
  *
  * @param   pUsbIns     The USB device instance pointer.
  */
@@ -815,23 +825,23 @@ typedef struct PDMUSBINS
  * Quietly checks the structure versions of the USB device instance and
  * USB device helpers, returning if they are incompatible.
  *
- * This is for use in the destructor.
+ * This shall be invoked as the first statement in the destructor!
  *
  * @param   pUsbIns     The USB device instance pointer.
  */
-#define PDMUSB_CHECK_VERSIONS_RETURN_QUIET(pUsbIns) \
+#define PDMUSB_CHECK_VERSIONS_RETURN_VOID(pUsbIns) \
     do \
     { \
         PPDMUSBINS pUsbInsTypeCheck = (pUsbIns); NOREF(pUsbInsTypeCheck); \
-        if (RT_UNLIKELY(!PDM_VERSION_ARE_COMPATIBLE((pUsbIns)->u32Version, PDM_USBINS_VERSION) )) \
-            return VERR_PDM_USBINS_VERSION_MISMATCH; \
-        if (RT_UNLIKELY(!PDM_VERSION_ARE_COMPATIBLE((pUsbIns)->pHlpR3->u32Version, PDM_USBHLPR3_VERSION) )) \
-            return VERR_PDM_USBHLPR3_VERSION_MISMATCH; \
+        if (RT_LIKELY(PDM_VERSION_ARE_COMPATIBLE((pUsbIns)->u32Version, PDM_USBINS_VERSION) )) \
+        { /* likely */ } else return; \
+        if (RT_LIKELY(PDM_VERSION_ARE_COMPATIBLE((pUsbIns)->pHlpR3->u32Version, PDM_USBHLP_VERSION) )) \
+        { /* likely */ } else return; \
     } while (0)
 
 
 /** Converts a pointer to the PDMUSBINS::IBase to a pointer to PDMUSBINS. */
-#define PDMIBASE_2_PDMUSB(pInterface) ( (PPDMUSBINS)((char *)(pInterface) - RT_OFFSETOF(PDMUSBINS, IBase)) )
+#define PDMIBASE_2_PDMUSB(pInterface) ( (PPDMUSBINS)((char *)(pInterface) - RT_UOFFSETOF(PDMUSBINS, IBase)) )
 
 
 /** @def PDMUSB_ASSERT_EMT
@@ -882,11 +892,11 @@ DECLINLINE(int) PDMUsbHlpDriverAttach(PPDMUSBINS pUsbIns, RTUINT iLun, PPDMIBASE
  *
  * @returns VBox status code which must be passed up to the VMM.
  * @param   pUsbIns             Device instance.
- * @param   RT_SRC_POS_DECL     Use RT_SRC_POS.
+ * @param   SRC_POS             Use RT_SRC_POS.
  * @param   pszFormat           Message. (optional)
  * @param   ...                 Message parameters.
  */
-DECLINLINE(int) PDMUsbDBGFStop(PPDMUSBINS pUsbIns, RT_SRC_POS_DECL, const char *pszFormat, ...)
+DECLINLINE(int) RT_IPRT_FORMAT_ATTR(5, 6) PDMUsbDBGFStop(PPDMUSBINS pUsbIns, RT_SRC_POS_DECL, const char *pszFormat, ...)
 {
 #ifdef VBOX_STRICT
     int rc;
@@ -917,7 +927,7 @@ DECLINLINE(VMSTATE) PDMUsbHlpVMState(PPDMUSBINS pUsbIns)
  * @copydoc PDMUSBHLP::pfnThreadCreate
  */
 DECLINLINE(int) PDMUsbHlpThreadCreate(PPDMUSBINS pUsbIns, PPPDMTHREAD ppThread, void *pvUser, PFNPDMTHREADUSB pfnThread,
-                                         PFNPDMTHREADWAKEUPUSB pfnWakeup, size_t cbStack, RTTHREADTYPE enmType, const char *pszName)
+                                      PFNPDMTHREADWAKEUPUSB pfnWakeup, size_t cbStack, RTTHREADTYPE enmType, const char *pszName)
 {
     return pUsbIns->pHlpR3->pfnThreadCreate(pUsbIns, ppThread, pvUser, pfnThread, pfnWakeup, cbStack, enmType, pszName);
 }
@@ -945,11 +955,12 @@ DECLINLINE(void) PDMUsbHlpAsyncNotificationCompleted(PPDMUSBINS pUsbIns)
  * @returns rc.
  * @param   pUsbIns             The USB device instance.
  * @param   rc                  VBox status code.
- * @param   RT_SRC_POS_DECL     Use RT_SRC_POS.
+ * @param   SRC_POS             Use RT_SRC_POS.
  * @param   pszFormat           Error message format string.
  * @param   ...                 Error message arguments.
  */
-DECLINLINE(int) PDMUsbHlpVMSetError(PPDMUSBINS pUsbIns, int rc, RT_SRC_POS_DECL, const char *pszFormat, ...)
+DECLINLINE(int) RT_IPRT_FORMAT_ATTR(6, 7) PDMUsbHlpVMSetError(PPDMUSBINS pUsbIns, int rc, RT_SRC_POS_DECL,
+                                                              const char *pszFormat, ...)
 {
     va_list     va;
     va_start(va, pszFormat);
@@ -995,6 +1006,20 @@ DECLINLINE(int) PDMUsbHlpTMTimerCreate(PPDMUSBINS pUsbIns, TMCLOCK enmClock, PFN
     return pUsbIns->pHlpR3->pfnTMTimerCreate(pUsbIns, enmClock, pfnCallback, pvUser, fFlags, pszDesc, ppTimer);
 }
 
+/**
+ * @copydoc PDMUSBHLP::pfnSSMRegister
+ */
+DECLINLINE(int) PDMUsbHlpSSMRegister(PPDMUSBINS pUsbIns, uint32_t uVersion, size_t cbGuess,
+                                     PFNSSMUSBLIVEPREP pfnLivePrep, PFNSSMUSBLIVEEXEC pfnLiveExec, PFNSSMUSBLIVEVOTE pfnLiveVote,
+                                     PFNSSMUSBSAVEPREP pfnSavePrep, PFNSSMUSBSAVEEXEC pfnSaveExec, PFNSSMUSBSAVEDONE pfnSaveDone,
+                                     PFNSSMUSBLOADPREP pfnLoadPrep, PFNSSMUSBLOADEXEC pfnLoadExec, PFNSSMUSBLOADDONE pfnLoadDone)
+{
+    return pUsbIns->pHlpR3->pfnSSMRegister(pUsbIns, uVersion, cbGuess,
+                                           pfnLivePrep, pfnLiveExec, pfnLiveVote,
+                                           pfnSavePrep, pfnSaveExec, pfnSaveDone,
+                                           pfnLoadPrep, pfnLoadExec, pfnLoadDone);
+}
+
 #endif /* IN_RING3 */
 
 
@@ -1038,12 +1063,19 @@ typedef struct PDMUSBREGCB
  */
 typedef DECLCALLBACK(int) FNPDMVBOXUSBREGISTER(PCPDMUSBREGCB pCallbacks, uint32_t u32Version);
 
-VMMR3DECL(int)  PDMR3UsbCreateEmulatedDevice(PUVM pUVM, const char *pszDeviceName, PCFGMNODE pDeviceNode, PCRTUUID pUuid);
-VMMR3DECL(int)  PDMR3UsbCreateProxyDevice(PUVM pUVM, PCRTUUID pUuid, bool fRemote, const char *pszAddress, void *pvBackend,
-                                          uint32_t iUsbVersion, uint32_t fMaskedIfs);
+VMMR3DECL(int)  PDMR3UsbCreateEmulatedDevice(PUVM pUVM, const char *pszDeviceName, PCFGMNODE pDeviceNode, PCRTUUID pUuid,
+                                             const char *pszCaptureFilename);
+VMMR3DECL(int)  PDMR3UsbCreateProxyDevice(PUVM pUVM, PCRTUUID pUuid, const char *pszBackend, const char *pszAddress, void *pvBackend,
+                                          uint32_t iUsbVersion, uint32_t fMaskedIfs, const char *pszCaptureFilename);
 VMMR3DECL(int)  PDMR3UsbDetachDevice(PUVM pUVM, PCRTUUID pUuid);
 VMMR3DECL(bool) PDMR3UsbHasHub(PUVM pUVM);
-
+VMMR3DECL(int)  PDMR3UsbDriverAttach(PUVM pUVM, const char *pszDevice, unsigned iDevIns, unsigned iLun, uint32_t fFlags,
+                                     PPPDMIBASE ppBase);
+VMMR3DECL(int)  PDMR3UsbDriverDetach(PUVM pUVM, const char *pszDevice, unsigned iDevIns, unsigned iLun,
+                                     const char *pszDriver, unsigned iOccurance, uint32_t fFlags);
+VMMR3DECL(int)  PDMR3UsbQueryLun(PUVM pUVM, const char *pszDevice, unsigned iInstance, unsigned iLun, PPDMIBASE *ppBase);
+VMMR3DECL(int)  PDMR3UsbQueryDriverOnLun(PUVM pUVM, const char *pszDevice, unsigned iInstance, unsigned iLun,
+                                         const char *pszDriver, PPPDMIBASE ppBase);
 
 /** @} */
 

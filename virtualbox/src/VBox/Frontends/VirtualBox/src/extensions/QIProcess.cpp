@@ -1,12 +1,10 @@
 /* $Id: QIProcess.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * QIProcess class implementation
+ * VBox Qt GUI - QIProcess class implementation.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,13 +15,18 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
 /* GUI includes: */
-#include "QIProcess.h"
+# include "QIProcess.h"
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
 /* External includes: */
-#ifdef Q_WS_X11
+#ifdef VBOX_WS_X11
 # include <sys/wait.h>
-#endif /* Q_WS_X11 */
+#endif /* VBOX_WS_X11 */
+
 
 /* static */
 QByteArray QIProcess::singleShot(const QString &strProcessName, int iTimeout)
@@ -45,11 +48,11 @@ QByteArray QIProcess::singleShot(const QString &strProcessName, int iTimeout)
     if (firstShotReady)
         result = process.readAllStandardOutput();
     process.setProcessState(QProcess::NotRunning);
-#ifdef Q_WS_X11
+#ifdef VBOX_WS_X11
     int iStatus;
     if (process.pid() > 0)
         waitpid(process.pid(), &iStatus, 0);
-#endif /* Q_WS_X11 */
+#endif /* VBOX_WS_X11 */
     return result;
 }
 

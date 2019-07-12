@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP   LOG_GROUP_SUP
 #include <VBox/log.h>
 #include <iprt/string.h>
@@ -37,9 +38,9 @@
 #include "SUPSvcInternal.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Service state.
  */
@@ -107,9 +108,9 @@ typedef SUPSVCSERVICE const *PCSUPSVCSERVICE;
 
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static SUPSVCSERVICE g_aServices[] =
 {
     {
@@ -303,7 +304,7 @@ void supSvcLogErrorStr(const char *pszMsg)
  * In debug builds this will also put it in the debug log.
  *
  * @param   pszFormat   The log string. No trailing newline.
- * @param   ...         Format arguments.
+ * @param   va          Format arguments.
  *
  * @todo    This should later be replaced by the release logger and callback destination(s).
  */

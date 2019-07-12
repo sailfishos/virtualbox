@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-nt-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/thread.h>
@@ -75,12 +76,6 @@ RTDECL(int)   RTThreadSleep(RTMSINTERVAL cMillies)
 }
 
 
-RTDECL(int)   RTThreadSleepCommon(RTMSINTERVAL cMillies)
-{
-    return rtR0ThreadNtSleepCommon(cMillies);
-}
-
-
 RTDECL(bool) RTThreadYield(void)
 {
     return ZwYieldExecution() != STATUS_NO_YIELD_PERFORMED;
@@ -89,7 +84,7 @@ RTDECL(bool) RTThreadYield(void)
 
 RTDECL(bool) RTThreadPreemptIsEnabled(RTTHREAD hThread)
 {
-    Assert(hThread == NIL_RTTHREAD);
+    Assert(hThread == NIL_RTTHREAD); RT_NOREF1(hThread);
     KIRQL Irql = KeGetCurrentIrql();
     if (Irql > APC_LEVEL)
         return false;
@@ -101,7 +96,7 @@ RTDECL(bool) RTThreadPreemptIsEnabled(RTTHREAD hThread)
 
 RTDECL(bool) RTThreadPreemptIsPending(RTTHREAD hThread)
 {
-    Assert(hThread == NIL_RTTHREAD);
+    Assert(hThread == NIL_RTTHREAD); RT_NOREF1(hThread);
 
     /*
      * Read the globals and check if they are useful.
@@ -121,12 +116,12 @@ RTDECL(bool) RTThreadPreemptIsPending(RTTHREAD hThread)
     RTCCUINTREG     fSavedFlags  = ASMIntDisableFlags();
 
 #ifdef RT_ARCH_X86
-    PKPCR       pPcr   = (PKPCR)__readfsdword(RT_OFFSETOF(KPCR,SelfPcr));
+    PKPCR       pPcr   = (PKPCR)__readfsdword(RT_UOFFSETOF(KPCR,SelfPcr));
     uint8_t    *pbPrcb = (uint8_t *)pPcr->Prcb;
 
 #elif defined(RT_ARCH_AMD64)
     /* HACK ALERT! The offset is from windbg/vista64. */
-    PKPCR       pPcr   = (PKPCR)__readgsqword(RT_OFFSETOF(KPCR,Self));
+    PKPCR       pPcr   = (PKPCR)__readgsqword(RT_UOFFSETOF(KPCR,Self));
     uint8_t    *pbPrcb = (uint8_t *)pPcr->CurrentPrcb;
 
 #else
@@ -144,6 +139,8 @@ RTDECL(bool) RTThreadPreemptIsPending(RTTHREAD hThread)
         uint32_t volatile *pu32QuantumEnd = (uint32_t volatile *)(pbPrcb + offQuantumEnd);
         fPending = *pu32QuantumEnd != 0;
     }
+    else
+        fPending = false;
 
     /* Check DpcQueueDepth. */
     if (    !fPending

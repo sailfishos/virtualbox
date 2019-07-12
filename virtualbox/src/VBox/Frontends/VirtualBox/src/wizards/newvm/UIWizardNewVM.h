@@ -1,11 +1,10 @@
+/* $Id: UIWizardNewVM.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardNewVM class declaration
+ * VBox Qt GUI - UIWizardNewVM class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -50,6 +49,12 @@ public:
     /* Constructor: */
     UIWizardNewVM(QWidget *pParent, const QString &strGroup = QString());
 
+    /** Prepare routine. */
+    void prepare();
+
+    /** Returns the Id of newly created VM. */
+    QString createdMachineId() const { return m_machine.GetId(); }
+
 protected:
 
     /* Create VM stuff: */
@@ -64,9 +69,6 @@ private:
     /* Translation stuff: */
     void retranslateUi();
 
-    /* Pages related stuff: */
-    void prepare();
-
     /* Helping stuff: */
     QString getNextControllerName(KStorageBus type);
 
@@ -78,7 +80,10 @@ private:
     int m_iSCSICount;
     int m_iFloppyCount;
     int m_iSASCount;
+    int m_iUSBCount;
 };
+
+typedef QPointer<UIWizardNewVM> UISafePointerWizardNewVM;
 
 #endif // __UIWizardNewVM_h__
 

@@ -1,9 +1,10 @@
 /* $Id: vboxext.c $ */
 /** @file
- *
  * VBox extension to Wine D3D
- *
- * Copyright (C) 2011 Oracle Corporation
+ */
+
+/*
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,12 +14,13 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
+
 #include "config.h"
 #include "wine/port.h"
 #include "wined3d_private.h"
 #include "vboxext.h"
 #ifdef VBOX_WITH_WDDM
-#include <VBox/VBoxCrHgsmi.h>
+#include <VBoxCrHgsmi.h>
 #include <iprt/err.h>
 #endif
 
@@ -282,7 +284,7 @@ HRESULT VBoxExtWorkerSubmitProcAsync(PVBOXEXT_WORKER pWorker, PFNVBOXEXTWORKERCB
 }
 
 
-static HRESULT vboxExtInit()
+static HRESULT vboxExtInit(void)
 {
     HRESULT hr = S_OK;
 #ifdef VBOX_WITH_WDDM
@@ -306,9 +308,9 @@ static HRESULT vboxExtInit()
 }
 
 
-static HRESULT vboxExtWndCleanup();
+static HRESULT vboxExtWndCleanup(void);
 
-static HRESULT vboxExtTerm()
+static HRESULT vboxExtTerm(void)
 {
     HRESULT hr = vboxExtWndCleanup();
     if (!SUCCEEDED(hr))
@@ -334,24 +336,24 @@ static HRESULT vboxExtTerm()
 /* wine serializes all calls to us, so no need for any synchronization here */
 static DWORD g_cVBoxExtInits = 0;
 
-static DWORD vboxExtAddRef()
+static DWORD vboxExtAddRef(void)
 {
     return ++g_cVBoxExtInits;
 }
 
-static DWORD vboxExtRelease()
+static DWORD vboxExtRelease(void)
 {
     DWORD cVBoxExtInits = --g_cVBoxExtInits;
     Assert(cVBoxExtInits < UINT32_MAX/2);
     return cVBoxExtInits;
 }
 
-static DWORD vboxExtGetRef()
+static DWORD vboxExtGetRef(void)
 {
     return g_cVBoxExtInits;
 }
 
-HRESULT VBoxExtCheckInit()
+HRESULT VBoxExtCheckInit(void)
 {
     HRESULT hr = S_OK;
     if (!vboxExtGetRef())
@@ -367,7 +369,7 @@ HRESULT VBoxExtCheckInit()
     return S_OK;
 }
 
-HRESULT VBoxExtCheckTerm()
+HRESULT VBoxExtCheckTerm(void)
 {
     HRESULT hr = S_OK;
     if (vboxExtGetRef() == 1)
@@ -501,7 +503,7 @@ static LRESULT CALLBACK vboxExtWndProc(HWND hwnd,
 
 #define VBOXEXTWND_NAME "VboxDispD3DWineWnd"
 
-static HRESULT vboxExtWndDoCleanup()
+static HRESULT vboxExtWndDoCleanup(void)
 {
     HRESULT hr = S_OK;
     HINSTANCE hInstance = (HINSTANCE)GetModuleHandle(NULL);
@@ -684,7 +686,7 @@ HRESULT VBoxExtWndCreate(DWORD width, DWORD height, HWND *phWnd, HDC *phDC)
     return S_OK;
 }
 
-static HRESULT vboxExtWndCleanup()
+static HRESULT vboxExtWndCleanup(void)
 {
     HRESULT hr;
     VBOXEXTWND_CLEANUP_INFO Info;
@@ -724,7 +726,7 @@ void VBoxExtHashInit(PVBOXEXT_HASHMAP pMap, PFNVBOXEXT_HASHMAP_HASH pfnHash, PFN
     vboxExtHashInitEntries(pMap);
 }
 
-static DECLINLINE(uint32_t) vboxExtHashIdx(uint32_t u32Hash)
+DECLINLINE(uint32_t) vboxExtHashIdx(uint32_t u32Hash)
 {
     return u32Hash % VBOXEXT_HASHMAP_NUM_BUCKETS;
 }

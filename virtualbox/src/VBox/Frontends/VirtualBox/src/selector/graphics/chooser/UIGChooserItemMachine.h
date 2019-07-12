@@ -1,11 +1,10 @@
+/* $Id: UIGChooserItemMachine.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGChooserItemMachine class declaration
+ * VBox Qt GUI - UIGChooserItemMachine class declaration.
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -59,6 +58,7 @@ public:
 
     /* API: Basic stuff: */
     QString name() const;
+    QString description() const;
     QString fullName() const;
     QString definition() const;
     bool isLockedMachine() const;
@@ -174,6 +174,7 @@ private:
     QPixmap m_pixmap;
     QPixmap m_statePixmap;
     QString m_strName;
+    QString m_strDescription;
     QString m_strVisibleName;
     QString m_strSnapshotName;
     QString m_strVisibleSnapshotName;

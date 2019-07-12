@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <sys/conf.h>
 #include <sys/modctl.h>
 #include <sys/mutex.h>
@@ -52,54 +52,57 @@
 #include <iprt/asm.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The module name. */
 #define DEVICE_NAME              "vboxguest"
 /** The module description as seen in 'modinfo'. */
 #define DEVICE_DESC              "VirtualBox GstDrv"
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-static int VBoxGuestSolarisOpen(dev_t *pDev, int fFlag, int fType, cred_t *pCred);
-static int VBoxGuestSolarisClose(dev_t Dev, int fFlag, int fType, cred_t *pCred);
-static int VBoxGuestSolarisRead(dev_t Dev, struct uio *pUio, cred_t *pCred);
-static int VBoxGuestSolarisWrite(dev_t Dev, struct uio *pUio, cred_t *pCred);
-static int VBoxGuestSolarisIOCtl(dev_t Dev, int Cmd, intptr_t pArg, int Mode, cred_t *pCred, int *pVal);
-static int VBoxGuestSolarisPoll(dev_t Dev, short fEvents, int fAnyYet, short *pReqEvents, struct pollhead **ppPollHead);
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
+static int vgdrvSolarisOpen(dev_t *pDev, int fFlag, int fType, cred_t *pCred);
+static int vgdrvSolarisClose(dev_t Dev, int fFlag, int fType, cred_t *pCred);
+static int vgdrvSolarisRead(dev_t Dev, struct uio *pUio, cred_t *pCred);
+static int vgdrvSolarisWrite(dev_t Dev, struct uio *pUio, cred_t *pCred);
+static int vgdrvSolarisIOCtl(dev_t Dev, int iCmd, intptr_t pArg, int Mode, cred_t *pCred, int *pVal);
+static int vgdrvSolarisIOCtlSlow(PVBOXGUESTSESSION pSession, int iCmd, int Mode, intptr_t iArgs);
+static int vgdrvSolarisPoll(dev_t Dev, short fEvents, int fAnyYet, short *pReqEvents, struct pollhead **ppPollHead);
 
-static int VBoxGuestSolarisGetInfo(dev_info_t *pDip, ddi_info_cmd_t enmCmd, void *pArg, void **ppResult);
-static int VBoxGuestSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd);
-static int VBoxGuestSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd);
+static int vgdrvSolarisGetInfo(dev_info_t *pDip, ddi_info_cmd_t enmCmd, void *pArg, void **ppResult);
+static int vgdrvSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd);
+static int vgdrvSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd);
+static int vgdrvSolarisQuiesce(dev_info_t *pDip);
 
-static int VBoxGuestSolarisAddIRQ(dev_info_t *pDip);
-static void VBoxGuestSolarisRemoveIRQ(dev_info_t *pDip);
-static uint_t VBoxGuestSolarisISR(caddr_t Arg);
+static int vgdrvSolarisAddIRQ(dev_info_t *pDip);
+static void vgdrvSolarisRemoveIRQ(dev_info_t *pDip);
+static uint_t vgdrvSolarisHighLevelISR(caddr_t Arg);
+static uint_t vgdrvSolarisISR(caddr_t Arg);
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * cb_ops: for drivers that support char/block entry points
  */
-static struct cb_ops g_VBoxGuestSolarisCbOps =
+static struct cb_ops g_vgdrvSolarisCbOps =
 {
-    VBoxGuestSolarisOpen,
-    VBoxGuestSolarisClose,
+    vgdrvSolarisOpen,
+    vgdrvSolarisClose,
     nodev,                  /* b strategy */
     nodev,                  /* b dump */
     nodev,                  /* b print */
-    VBoxGuestSolarisRead,
-    VBoxGuestSolarisWrite,
-    VBoxGuestSolarisIOCtl,
+    vgdrvSolarisRead,
+    vgdrvSolarisWrite,
+    vgdrvSolarisIOCtl,
     nodev,                  /* c devmap */
     nodev,                  /* c mmap */
     nodev,                  /* c segmap */
-    VBoxGuestSolarisPoll,
+    vgdrvSolarisPoll,
     ddi_prop_op,            /* property ops */
     NULL,                   /* streamtab  */
     D_NEW | D_MP,           /* compat. flag */
@@ -109,38 +112,39 @@ static struct cb_ops g_VBoxGuestSolarisCbOps =
 /**
  * dev_ops: for driver device operations
  */
-static struct dev_ops g_VBoxGuestSolarisDevOps =
+static struct dev_ops g_vgdrvSolarisDevOps =
 {
     DEVO_REV,               /* driver build revision */
     0,                      /* ref count */
-    VBoxGuestSolarisGetInfo,
+    vgdrvSolarisGetInfo,
     nulldev,                /* identify */
     nulldev,                /* probe */
-    VBoxGuestSolarisAttach,
-    VBoxGuestSolarisDetach,
+    vgdrvSolarisAttach,
+    vgdrvSolarisDetach,
     nodev,                  /* reset */
-    &g_VBoxGuestSolarisCbOps,
+    &g_vgdrvSolarisCbOps,
     (struct bus_ops *)0,
-    nodev                   /* power */
+    nodev,                  /* power */
+    vgdrvSolarisQuiesce
 };
 
 /**
  * modldrv: export driver specifics to the kernel
  */
-static struct modldrv g_VBoxGuestSolarisModule =
+static struct modldrv g_vgdrvSolarisModule =
 {
     &mod_driverops,         /* extern from kernel */
     DEVICE_DESC " " VBOX_VERSION_STRING "r" RT_XSTR(VBOX_SVN_REV),
-    &g_VBoxGuestSolarisDevOps
+    &g_vgdrvSolarisDevOps
 };
 
 /**
  * modlinkage: export install/remove/info to the kernel
  */
-static struct modlinkage g_VBoxGuestSolarisModLinkage =
+static struct modlinkage g_vgdrvSolarisModLinkage =
 {
     MODREV_1,               /* loadable module system revision */
-    &g_VBoxGuestSolarisModule,
+    &g_vgdrvSolarisModule,
     NULL                    /* terminate array of linkage structures */
 };
 
@@ -156,13 +160,13 @@ typedef struct
 } vboxguest_state_t;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Device handle (we support only one instance). */
 static dev_info_t          *g_pDip = NULL;
 /** Opaque pointer to file-descriptor states */
-static void                *g_pVBoxGuestSolarisState = NULL;
+static void                *g_pvgdrvSolarisState = NULL;
 /** Device extention & session data association structure. */
 static VBOXGUESTDEVEXT      g_DevExt;
 /** IO port handle. */
@@ -175,20 +179,25 @@ static uint16_t             g_uIOPortBase;
 static caddr_t              g_pMMIOBase;
 /** Size of the MMIO region. */
 static off_t                g_cbMMIO;
-/** Pointer to the interrupt handle vector */
-static ddi_intr_handle_t   *g_pIntr;
-/** Number of actually allocated interrupt handles */
-static size_t               g_cIntrAllocated;
+/** Pointer to an array of interrupt handles. */
+static ddi_intr_handle_t   *g_pahIntrs;
+/** Handle to the soft interrupt. */
+static ddi_softint_handle_t g_hSoftIntr;
 /** The pollhead structure */
 static pollhead_t           g_PollHead;
 /** The IRQ Mutex */
 static kmutex_t             g_IrqMtx;
-/** Layered device handle for kernel keep-attached opens */
-static ldi_handle_t         g_LdiHandle = NULL;
-/** Ref counting for IDCOpen calls */
-static uint64_t             g_cLdiOpens = 0;
-/** The Mutex protecting the LDI handle in IDC opens */
-static kmutex_t             g_LdiMtx;
+/** The IRQ high-level Mutex. */
+static kmutex_t             g_HighLevelIrqMtx;
+/** Whether soft-ints are setup. */
+static bool                 g_fSoftIntRegistered = false;
+
+/** Additional IPRT function we need to drag in for vboxfs. */
+PFNRT g_Deps[] =
+{
+    (PFNRT)RTErrConvertToErrno,
+};
+
 
 /**
  * Kernel entry points
@@ -211,23 +220,21 @@ int _init(void)
         else
             cmn_err(CE_NOTE, "failed to initialize driver logging rc=%d!\n", rc);
 
-        mutex_init(&g_LdiMtx, NULL, MUTEX_DRIVER, NULL);
-
         /*
          * Prevent module autounloading.
          */
-        modctl_t *pModCtl = mod_getctl(&g_VBoxGuestSolarisModLinkage);
+        modctl_t *pModCtl = mod_getctl(&g_vgdrvSolarisModLinkage);
         if (pModCtl)
             pModCtl->mod_loadflags |= MOD_NOAUTOUNLOAD;
         else
-            LogRel((DEVICE_NAME ":failed to disable autounloading!\n"));
+            LogRel((DEVICE_NAME ": failed to disable autounloading!\n"));
 
-        rc = ddi_soft_state_init(&g_pVBoxGuestSolarisState, sizeof(vboxguest_state_t), 1);
+        rc = ddi_soft_state_init(&g_pvgdrvSolarisState, sizeof(vboxguest_state_t), 1);
         if (!rc)
         {
-            rc = mod_install(&g_VBoxGuestSolarisModLinkage);
+            rc = mod_install(&g_vgdrvSolarisModLinkage);
             if (rc)
-                ddi_soft_state_fini(&g_pVBoxGuestSolarisState);
+                ddi_soft_state_fini(&g_pvgdrvSolarisState);
         }
     }
     else
@@ -243,24 +250,23 @@ int _init(void)
 int _fini(void)
 {
     LogFlow((DEVICE_NAME ":_fini\n"));
-    int rc = mod_remove(&g_VBoxGuestSolarisModLinkage);
+    int rc = mod_remove(&g_vgdrvSolarisModLinkage);
     if (!rc)
-        ddi_soft_state_fini(&g_pVBoxGuestSolarisState);
+        ddi_soft_state_fini(&g_pvgdrvSolarisState);
 
     RTLogDestroy(RTLogRelSetDefaultInstance(NULL));
     RTLogDestroy(RTLogSetDefaultInstance(NULL));
 
-    mutex_destroy(&g_LdiMtx);
-
-    RTR0Term();
+    if (!rc)
+        RTR0Term();
     return rc;
 }
 
 
 int _info(struct modinfo *pModInfo)
 {
-    LogFlow((DEVICE_NAME ":_info\n"));
-    return mod_info(&g_VBoxGuestSolarisModLinkage, pModInfo);
+    /* LogFlow((DEVICE_NAME ":_info\n")); - Called too early, causing RTThreadPreemtIsEnabled warning. */
+    return mod_info(&g_vgdrvSolarisModLinkage, pModInfo);
 }
 
 
@@ -272,16 +278,16 @@ int _info(struct modinfo *pModInfo)
  *
  * @return  corresponding solaris error code.
  */
-static int VBoxGuestSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd)
+static int vgdrvSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd)
 {
-    LogFlow((DEVICE_NAME "::Attach\n"));
+    LogFlow(("vgdrvSolarisAttach:\n"));
     switch (enmCmd)
     {
         case DDI_ATTACH:
         {
             if (g_pDip)
             {
-                LogRel((DEVICE_NAME "::Attach: Only one instance supported.\n"));
+                LogRel(("vgdrvSolarisAttach: Only one instance supported.\n"));
                 return DDI_FAILURE;
             }
 
@@ -320,19 +326,19 @@ static int VBoxGuestSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd)
                             /*
                              * Add IRQ of VMMDev.
                              */
-                            rc = VBoxGuestSolarisAddIRQ(pDip);
+                            rc = vgdrvSolarisAddIRQ(pDip);
                             if (rc == DDI_SUCCESS)
                             {
                                 /*
                                  * Call the common device extension initializer.
                                  */
-                                rc = VBoxGuestInitDevExt(&g_DevExt, g_uIOPortBase, g_pMMIOBase, g_cbMMIO,
+                                rc = VGDrvCommonInitDevExt(&g_DevExt, g_uIOPortBase, g_pMMIOBase, g_cbMMIO,
 #if ARCH_BITS == 64
-                                                         VBOXOSTYPE_Solaris_x64,
+                                                           VBOXOSTYPE_Solaris_x64,
 #else
-                                                         VBOXOSTYPE_Solaris,
+                                                           VBOXOSTYPE_Solaris,
 #endif
-                                                         VMMDEV_EVENT_MOUSE_POSITION_CHANGED);
+                                                           VMMDEV_EVENT_MOUSE_POSITION_CHANGED);
                                 if (RT_SUCCESS(rc))
                                 {
                                     rc = ddi_create_minor_node(pDip, DEVICE_NAME, S_IFCHR, instance, DDI_PSEUDO, 0 /* fFlags */);
@@ -344,14 +350,15 @@ static int VBoxGuestSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd)
                                     }
 
                                     LogRel((DEVICE_NAME "::Attach: ddi_create_minor_node failed.\n"));
-                                    VBoxGuestDeleteDevExt(&g_DevExt);
+                                    VGDrvCommonDeleteDevExt(&g_DevExt);
                                 }
                                 else
-                                    LogRel((DEVICE_NAME "::Attach: VBoxGuestInitDevExt failed.\n"));
-                                VBoxGuestSolarisRemoveIRQ(pDip);
+                                    LogRel((DEVICE_NAME "::Attach: VGDrvCommonInitDevExt failed.\n"));
+
+                                vgdrvSolarisRemoveIRQ(pDip);
                             }
                             else
-                                LogRel((DEVICE_NAME "::Attach: VBoxGuestSolarisAddIRQ failed.\n"));
+                                LogRel((DEVICE_NAME "::Attach: vgdrvSolarisAddIRQ failed.\n"));
                             ddi_regs_map_free(&g_PciMMIOHandle);
                         }
                         else
@@ -390,18 +397,18 @@ static int VBoxGuestSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd)
  *
  * @return  corresponding solaris error code.
  */
-static int VBoxGuestSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd)
+static int vgdrvSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd)
 {
-    LogFlow((DEVICE_NAME "::Detach\n"));
+    LogFlow(("vgdrvSolarisDetach:\n"));
     switch (enmCmd)
     {
         case DDI_DETACH:
         {
-            VBoxGuestSolarisRemoveIRQ(pDip);
+            vgdrvSolarisRemoveIRQ(pDip);
             ddi_regs_map_free(&g_PciIOHandle);
             ddi_regs_map_free(&g_PciMMIOHandle);
             ddi_remove_minor_node(pDip, NULL);
-            VBoxGuestDeleteDevExt(&g_DevExt);
+            VGDrvCommonDeleteDevExt(&g_DevExt);
             g_pDip = NULL;
             return DDI_SUCCESS;
         }
@@ -419,6 +426,26 @@ static int VBoxGuestSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd)
 
 
 /**
+ * Quiesce entry point, called by solaris kernel for disabling the device from
+ * generating any interrupts or doing in-bound DMA.
+ *
+ * @param   pDip            The module structure instance.
+ *
+ * @return  corresponding solaris error code.
+ */
+static int vgdrvSolarisQuiesce(dev_info_t *pDip)
+{
+    int rc = ddi_intr_disable(g_pahIntrs[0]);
+    if (rc != DDI_SUCCESS)
+        return DDI_FAILURE;
+
+    /** @todo What about HGCM/HGSMI touching guest-memory? */
+
+    return DDI_SUCCESS;
+}
+
+
+/**
  * Info entry point, called by solaris kernel for obtaining driver info.
  *
  * @param   pDip            The module structure instance (do not use).
@@ -428,9 +455,9 @@ static int VBoxGuestSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd)
  *
  * @return  corresponding solaris error code.
  */
-static int VBoxGuestSolarisGetInfo(dev_info_t *pDip, ddi_info_cmd_t enmCmd, void *pvArg, void **ppvResult)
+static int vgdrvSolarisGetInfo(dev_info_t *pDip, ddi_info_cmd_t enmCmd, void *pvArg, void **ppvResult)
 {
-    LogFlow((DEVICE_NAME "::GetInfo\n"));
+    LogFlow(("vgdrvSolarisGetInfo:\n"));
 
     int rc = DDI_SUCCESS;
     switch (enmCmd)
@@ -455,13 +482,17 @@ static int VBoxGuestSolarisGetInfo(dev_info_t *pDip, ddi_info_cmd_t enmCmd, void
 
 /**
  * User context entry points
+ *
+ * @remarks fFlags are the flags passed to open() or to ldi_open_by_name.  In
+ *          the latter case the FKLYR flag is added to indicate that the caller
+ *          is a kernel component rather than user land.
  */
-static int VBoxGuestSolarisOpen(dev_t *pDev, int fFlag, int fType, cred_t *pCred)
+static int vgdrvSolarisOpen(dev_t *pDev, int fFlags, int fType, cred_t *pCred)
 {
     int                 rc;
     PVBOXGUESTSESSION   pSession = NULL;
 
-    LogFlow((DEVICE_NAME "::Open\n"));
+    LogFlow(("vgdrvSolarisOpen:\n"));
 
     /*
      * Verify we are being opened as a character device.
@@ -473,76 +504,87 @@ static int VBoxGuestSolarisOpen(dev_t *pDev, int fFlag, int fType, cred_t *pCred
     unsigned iOpenInstance;
     for (iOpenInstance = 0; iOpenInstance < 4096; iOpenInstance++)
     {
-        if (    !ddi_get_soft_state(g_pVBoxGuestSolarisState, iOpenInstance) /* faster */
-            &&  ddi_soft_state_zalloc(g_pVBoxGuestSolarisState, iOpenInstance) == DDI_SUCCESS)
+        if (    !ddi_get_soft_state(g_pvgdrvSolarisState, iOpenInstance) /* faster */
+            &&  ddi_soft_state_zalloc(g_pvgdrvSolarisState, iOpenInstance) == DDI_SUCCESS)
         {
-            pState = ddi_get_soft_state(g_pVBoxGuestSolarisState, iOpenInstance);
+            pState = ddi_get_soft_state(g_pvgdrvSolarisState, iOpenInstance);
             break;
         }
     }
     if (!pState)
     {
-        Log((DEVICE_NAME "::Open: too many open instances."));
+        Log(("vgdrvSolarisOpen: too many open instances."));
         return ENXIO;
     }
 
     /*
      * Create a new session.
      */
-    rc = VBoxGuestCreateUserSession(&g_DevExt, &pSession);
+    if (!(fFlags & FKLYR))
+        rc = VGDrvCommonCreateUserSession(&g_DevExt, &pSession);
+    else
+        rc = VGDrvCommonCreateKernelSession(&g_DevExt, &pSession);
     if (RT_SUCCESS(rc))
     {
-        pState->pvProcRef = proc_ref();
+        if (!(fFlags & FKLYR))
+            pState->pvProcRef = proc_ref();
+        else
+            pState->pvProcRef = NULL;
         pState->pSession = pSession;
         *pDev = makedevice(getmajor(*pDev), iOpenInstance);
-        Log((DEVICE_NAME "::Open: pSession=%p pState=%p pid=%d\n", pSession, pState, (int)RTProcSelf()));
+        Log(("vgdrvSolarisOpen: pSession=%p pState=%p pid=%d\n", pSession, pState, (int)RTProcSelf()));
         return 0;
     }
 
     /* Failed, clean up. */
-    ddi_soft_state_free(g_pVBoxGuestSolarisState, iOpenInstance);
+    ddi_soft_state_free(g_pvgdrvSolarisState, iOpenInstance);
 
-    LogRel((DEVICE_NAME "::Open: VBoxGuestCreateUserSession failed. rc=%d\n", rc));
+    LogRel((DEVICE_NAME "::Open: VGDrvCommonCreateUserSession failed. rc=%d\n", rc));
     return EFAULT;
 }
 
 
-static int VBoxGuestSolarisClose(dev_t Dev, int flag, int fType, cred_t *pCred)
+static int vgdrvSolarisClose(dev_t Dev, int flag, int fType, cred_t *pCred)
 {
-    LogFlow((DEVICE_NAME "::Close pid=%d\n", (int)RTProcSelf()));
+    LogFlow(("vgdrvSolarisClose: pid=%d\n", (int)RTProcSelf()));
 
     PVBOXGUESTSESSION pSession = NULL;
-    vboxguest_state_t *pState = ddi_get_soft_state(g_pVBoxGuestSolarisState, getminor(Dev));
+    vboxguest_state_t *pState = ddi_get_soft_state(g_pvgdrvSolarisState, getminor(Dev));
     if (!pState)
     {
-        Log((DEVICE_NAME "::Close: failed to get pState.\n"));
+        Log(("vgdrvSolarisClose: failed to get pState.\n"));
         return EFAULT;
     }
 
-    proc_unref(pState->pvProcRef);
+    if (pState->pvProcRef != NULL)
+    {
+        proc_unref(pState->pvProcRef);
+        pState->pvProcRef = NULL;
+    }
     pSession = pState->pSession;
     pState->pSession = NULL;
-    Log((DEVICE_NAME "::Close: pSession=%p pState=%p\n", pSession, pState));
-    ddi_soft_state_free(g_pVBoxGuestSolarisState, getminor(Dev));
+    Log(("vgdrvSolarisClose: pSession=%p pState=%p\n", pSession, pState));
+    ddi_soft_state_free(g_pvgdrvSolarisState, getminor(Dev));
     if (!pSession)
     {
-        Log((DEVICE_NAME "::Close: failed to get pSession.\n"));
+        Log(("vgdrvSolarisClose: failed to get pSession.\n"));
         return EFAULT;
     }
 
     /*
      * Close the session.
      */
-    VBoxGuestCloseSession(&g_DevExt, pSession);
+    if (pSession)
+        VGDrvCommonCloseSession(&g_DevExt, pSession);
     return 0;
 }
 
 
-static int VBoxGuestSolarisRead(dev_t Dev, struct uio *pUio, cred_t *pCred)
+static int vgdrvSolarisRead(dev_t Dev, struct uio *pUio, cred_t *pCred)
 {
     LogFlow((DEVICE_NAME "::Read\n"));
 
-    vboxguest_state_t *pState = ddi_get_soft_state(g_pVBoxGuestSolarisState, getminor(Dev));
+    vboxguest_state_t *pState = ddi_get_soft_state(g_pvgdrvSolarisState, getminor(Dev));
     if (!pState)
     {
         Log((DEVICE_NAME "::Close: failed to get pState.\n"));
@@ -558,9 +600,9 @@ static int VBoxGuestSolarisRead(dev_t Dev, struct uio *pUio, cred_t *pCred)
 }
 
 
-static int VBoxGuestSolarisWrite(dev_t Dev, struct uio *pUio, cred_t *pCred)
+static int vgdrvSolarisWrite(dev_t Dev, struct uio *pUio, cred_t *pCred)
 {
-    LogFlow((DEVICE_NAME "::Write\n"));
+    LogFlow(("vgdrvSolarisWrite:\n"));
     return 0;
 }
 
@@ -570,7 +612,7 @@ static int VBoxGuestSolarisWrite(dev_t Dev, struct uio *pUio, cred_t *pCred)
  * This is normally defined by sys/ioccom.h on BSD systems...
  */
 #ifndef IOCPARM_LEN
-# define IOCPARM_LEN(Code)                      (((Code) >> 16) & IOCPARM_MASK)
+# define IOCPARM_LEN(x)     ( ((x) >> 16) & IOCPARM_MASK )
 #endif
 
 
@@ -578,140 +620,228 @@ static int VBoxGuestSolarisWrite(dev_t Dev, struct uio *pUio, cred_t *pCred)
  * Driver ioctl, an alternate entry point for this character driver.
  *
  * @param   Dev             Device number
- * @param   Cmd             Operation identifier
- * @param   pArg            Arguments from user to driver
+ * @param   iCmd            Operation identifier
+ * @param   iArgs           Arguments from user to driver
  * @param   Mode            Information bitfield (read/write, address space etc.)
  * @param   pCred           User credentials
  * @param   pVal            Return value for calling process.
  *
  * @return  corresponding solaris error code.
  */
-static int VBoxGuestSolarisIOCtl(dev_t Dev, int Cmd, intptr_t pArg, int Mode, cred_t *pCred, int *pVal)
+static int vgdrvSolarisIOCtl(dev_t Dev, int iCmd, intptr_t iArgs, int Mode, cred_t *pCred, int *pVal)
 {
-    LogFlow((DEVICE_NAME ":VBoxGuestSolarisIOCtl\n"));
-
     /*
      * Get the session from the soft state item.
      */
-    vboxguest_state_t *pState = ddi_get_soft_state(g_pVBoxGuestSolarisState, getminor(Dev));
+    vboxguest_state_t *pState = ddi_get_soft_state(g_pvgdrvSolarisState, getminor(Dev));
     if (!pState)
     {
-        LogRel((DEVICE_NAME "::IOCtl: no state data for %d\n", getminor(Dev)));
+        LogRel(("vgdrvSolarisIOCtl: no state data for %#x (%d)\n", Dev, getminor(Dev)));
         return EINVAL;
     }
 
     PVBOXGUESTSESSION pSession = pState->pSession;
     if (!pSession)
     {
-        LogRel((DEVICE_NAME "::IOCtl: no session data for %d\n", getminor(Dev)));
-        return EINVAL;
+        LogRel(("vgdrvSolarisIOCtl: no session in state data for %#x (%d)\n", Dev, getminor(Dev)));
+        return DDI_SUCCESS;
     }
 
     /*
-     * Read and validate the request wrapper.
+     * Deal with fast requests.
      */
-    VBGLBIGREQ ReqWrap;
-    if (IOCPARM_LEN(Cmd) != sizeof(ReqWrap))
+    if (VBGL_IOCTL_IS_FAST(iCmd))
     {
-        LogRel((DEVICE_NAME "::IOCtl: bad request %#x size=%d expected=%d\n", Cmd, IOCPARM_LEN(Cmd), sizeof(ReqWrap)));
-        return ENOTTY;
+        *pVal = VGDrvCommonIoCtlFast(iCmd, &g_DevExt, pSession);
+        return 0;
     }
 
-    int rc = ddi_copyin((void *)pArg, &ReqWrap, sizeof(ReqWrap), Mode);
+    /*
+     * It's kind of simple if this is a kernel session, take slow path if user land.
+     */
+    if (pSession->R0Process == NIL_RTR0PROCESS)
+    {
+        if (IOCPARM_LEN(iCmd) == sizeof(VBGLREQHDR))
+        {
+            PVBGLREQHDR pHdr = (PVBGLREQHDR)iArgs;
+            int rc;
+            if (iCmd != VBGL_IOCTL_IDC_DISCONNECT)
+                rc =VGDrvCommonIoCtl(iCmd, &g_DevExt, pSession, pHdr, RT_MAX(pHdr->cbIn, pHdr->cbOut));
+            else
+            {
+                pState->pSession = NULL;
+                rc = VGDrvCommonIoCtl(iCmd, &g_DevExt, pSession, pHdr, RT_MAX(pHdr->cbIn, pHdr->cbOut));
+                if (RT_FAILURE(rc))
+                    pState->pSession = pSession;
+            }
+            return rc;
+        }
+    }
+
+    return vgdrvSolarisIOCtlSlow(pSession, iCmd, Mode, iArgs);
+}
+
+
+/**
+ * Worker for VBoxSupDrvIOCtl that takes the slow IOCtl functions.
+ *
+ * @returns Solaris errno.
+ *
+ * @param   pSession    The session.
+ * @param   iCmd        The IOCtl command.
+ * @param   Mode        Information bitfield (for specifying ownership of data)
+ * @param   iArg        User space address of the request buffer.
+ */
+static int vgdrvSolarisIOCtlSlow(PVBOXGUESTSESSION pSession, int iCmd, int Mode, intptr_t iArg)
+{
+    int         rc;
+    uint32_t    cbBuf = 0;
+    union
+    {
+        VBGLREQHDR  Hdr;
+        uint8_t     abBuf[64];
+    }           StackBuf;
+    PVBGLREQHDR  pHdr;
+
+
+    /*
+     * Read the header.
+     */
+    if (RT_UNLIKELY(IOCPARM_LEN(iCmd) != sizeof(StackBuf.Hdr)))
+    {
+        LogRel(("vgdrvSolarisIOCtlSlow: iCmd=%#x len %d expected %d\n", iCmd, IOCPARM_LEN(iCmd), sizeof(StackBuf.Hdr)));
+        return EINVAL;
+    }
+    rc = ddi_copyin((void *)iArg, &StackBuf.Hdr, sizeof(StackBuf.Hdr), Mode);
     if (RT_UNLIKELY(rc))
     {
-        LogRel((DEVICE_NAME "::IOCtl: ddi_copyin failed to read header pArg=%p Cmd=%d. rc=%#x.\n", pArg, Cmd, rc));
+        LogRel(("vgdrvSolarisIOCtlSlow: ddi_copyin(,%#lx,) failed; iCmd=%#x. rc=%d\n", iArg, iCmd, rc));
+        return EFAULT;
+    }
+    if (RT_UNLIKELY(StackBuf.Hdr.uVersion != VBGLREQHDR_VERSION))
+    {
+        LogRel(("vgdrvSolarisIOCtlSlow: bad header version %#x; iCmd=%#x\n", StackBuf.Hdr.uVersion, iCmd));
         return EINVAL;
     }
-
-    if (ReqWrap.u32Magic != VBGLBIGREQ_MAGIC)
+    cbBuf = RT_MAX(StackBuf.Hdr.cbIn, StackBuf.Hdr.cbOut);
+    if (RT_UNLIKELY(   StackBuf.Hdr.cbIn < sizeof(StackBuf.Hdr)
+                    || (StackBuf.Hdr.cbOut < sizeof(StackBuf.Hdr) && StackBuf.Hdr.cbOut != 0)
+                    || cbBuf > _1M*16))
     {
-        LogRel((DEVICE_NAME "::IOCtl: bad magic %#x; pArg=%p Cmd=%#x.\n", ReqWrap.u32Magic, pArg, Cmd));
-        return EINVAL;
-    }
-    if (RT_UNLIKELY(ReqWrap.cbData > _1M*16))
-    {
-        LogRel((DEVICE_NAME "::IOCtl: bad size %#x; pArg=%p Cmd=%#x.\n", ReqWrap.cbData, pArg, Cmd));
+        LogRel(("vgdrvSolarisIOCtlSlow: max(%#x,%#x); iCmd=%#x\n", StackBuf.Hdr.cbIn, StackBuf.Hdr.cbOut, iCmd));
         return EINVAL;
     }
 
     /*
-     * Read the request payload if any; requests like VBOXGUEST_IOCTL_CANCEL_ALL_WAITEVENTS have no data payload.
+     * Buffer the request.
+     *
+     * Note! Common code revalidates the header sizes and version. So it's
+     *       fine to read it once more.
      */
-    void *pvBuf = NULL;
-    if (RT_LIKELY(ReqWrap.cbData > 0))
+    if (cbBuf <= sizeof(StackBuf))
+        pHdr = &StackBuf.Hdr;
+    else
     {
-        pvBuf = RTMemTmpAlloc(ReqWrap.cbData);
-        if (RT_UNLIKELY(!pvBuf))
+        pHdr = RTMemTmpAlloc(cbBuf);
+        if (RT_UNLIKELY(!pHdr))
         {
-            LogRel((DEVICE_NAME "::IOCtl: RTMemTmpAlloc failed to alloc %d bytes.\n", ReqWrap.cbData));
+            LogRel(("vgdrvSolarisIOCtlSlow: failed to allocate buffer of %d bytes for iCmd=%#x.\n", cbBuf, iCmd));
             return ENOMEM;
         }
-
-        rc = ddi_copyin((void *)(uintptr_t)ReqWrap.pvDataR3, pvBuf, ReqWrap.cbData, Mode);
-        if (RT_UNLIKELY(rc))
-        {
-            RTMemTmpFree(pvBuf);
-            LogRel((DEVICE_NAME "::IOCtl: ddi_copyin failed; pvBuf=%p pArg=%p Cmd=%d. rc=%d\n", pvBuf, pArg, Cmd, rc));
-            return EFAULT;
-        }
-        if (RT_UNLIKELY(!VALID_PTR(pvBuf)))
-        {
-            RTMemTmpFree(pvBuf);
-            LogRel((DEVICE_NAME "::IOCtl: pvBuf invalid pointer %p\n", pvBuf));
-            return EINVAL;
-        }
     }
-    Log((DEVICE_NAME "::IOCtl: pSession=%p pid=%d.\n", pSession, (int)RTProcSelf()));
+    rc = ddi_copyin((void *)iArg, pHdr, cbBuf, Mode);
+    if (RT_UNLIKELY(rc))
+    {
+        LogRel(("vgdrvSolarisIOCtlSlow: copy_from_user(,%#lx, %#x) failed; iCmd=%#x. rc=%d\n", iArg, cbBuf, iCmd, rc));
+        if (pHdr != &StackBuf.Hdr)
+            RTMemFree(pHdr);
+        return EFAULT;
+    }
 
     /*
      * Process the IOCtl.
      */
-    size_t cbDataReturned = 0;
-    rc = VBoxGuestCommonIOCtl(Cmd, &g_DevExt, pSession, pvBuf, ReqWrap.cbData, &cbDataReturned);
+    rc = VGDrvCommonIoCtl(iCmd, &g_DevExt, pSession, pHdr, cbBuf);
+
+    /*
+     * Copy ioctl data and output buffer back to user space.
+     */
     if (RT_SUCCESS(rc))
     {
-        rc = 0;
-        if (RT_UNLIKELY(cbDataReturned > ReqWrap.cbData))
+        uint32_t cbOut = pHdr->cbOut;
+        if (RT_UNLIKELY(cbOut > cbBuf))
         {
-            LogRel((DEVICE_NAME "::IOCtl: too much output data %d expected %d\n", cbDataReturned, ReqWrap.cbData));
-            cbDataReturned = ReqWrap.cbData;
+            LogRel(("vgdrvSolarisIOCtlSlow: too much output! %#x > %#x; iCmd=%#x!\n", cbOut, cbBuf, iCmd));
+            cbOut = cbBuf;
         }
-        if (cbDataReturned > 0)
+        rc = ddi_copyout(pHdr, (void *)iArg, cbOut, Mode);
+        if (RT_UNLIKELY(rc != 0))
         {
-            rc = ddi_copyout(pvBuf, (void *)(uintptr_t)ReqWrap.pvDataR3, cbDataReturned, Mode);
-            if (RT_UNLIKELY(rc))
-            {
-                LogRel((DEVICE_NAME "::IOCtl: ddi_copyout failed; pvBuf=%p pArg=%p cbDataReturned=%u Cmd=%d. rc=%d\n",
-                        pvBuf, pArg, cbDataReturned, Cmd, rc));
-                rc = EFAULT;
-            }
+            /* this is really bad */
+            LogRel(("vgdrvSolarisIOCtlSlow: ddi_copyout(,%p,%d) failed. rc=%d\n", (void *)iArg, cbBuf, rc));
+            rc = EFAULT;
         }
     }
     else
-    {
-        /*
-         * We Log() instead of LogRel() here because VBOXGUEST_IOCTL_WAITEVENT can return VERR_TIMEOUT,
-         * VBOXGUEST_IOCTL_CANCEL_ALL_EVENTS can return VERR_INTERRUPTED and possibly more in the future;
-         * which are not really failures that require logging.
-         */
-        Log((DEVICE_NAME "::IOCtl: VBoxGuestCommonIOCtl failed. Cmd=%#x rc=%d\n", Cmd, rc));
-        if (rc == VERR_PERMISSION_DENIED)   /* RTErrConvertToErrno() below will ring-0 debug assert if we don't do this. */
-            rc = VERR_ACCESS_DENIED;
-        rc = RTErrConvertToErrno(rc);
-    }
-    *pVal = rc;
-    if (pvBuf)
-        RTMemTmpFree(pvBuf);
+        rc = EINVAL;
+
+    if (pHdr != &StackBuf.Hdr)
+        RTMemTmpFree(pHdr);
     return rc;
 }
 
 
-static int VBoxGuestSolarisPoll(dev_t Dev, short fEvents, int fAnyYet, short *pReqEvents, struct pollhead **ppPollHead)
+#if 0
+/**
+ * @note This code is duplicated on other platforms with variations, so please
+ *       keep them all up to date when making changes!
+ */
+int VBOXCALL VBoxGuestIDC(void *pvSession, uintptr_t uReq, PVBGLREQHDR pReqHdr, size_t cbReq)
 {
-    LogFlow((DEVICE_NAME "::Poll: fEvents=%d fAnyYet=%d\n", fEvents, fAnyYet));
+    /*
+     * Simple request validation (common code does the rest).
+     */
+    int rc;
+    if (   RT_VALID_PTR(pReqHdr)
+        && cbReq >= sizeof(*pReqHdr))
+    {
+        /*
+         * All requests except the connect one requires a valid session.
+         */
+        PVBOXGUESTSESSION pSession = (PVBOXGUESTSESSION)pvSession;
+        if (pSession)
+        {
+            if (   RT_VALID_PTR(pSession)
+                && pSession->pDevExt == &g_DevExt)
+                rc = VGDrvCommonIoCtl(uReq, &g_DevExt, pSession, pReqHdr, cbReq);
+            else
+                rc = VERR_INVALID_HANDLE;
+        }
+        else if (uReq == VBGL_IOCTL_IDC_CONNECT)
+        {
+            rc = VGDrvCommonCreateKernelSession(&g_DevExt, &pSession);
+            if (RT_SUCCESS(rc))
+            {
+                rc = VGDrvCommonIoCtl(uReq, &g_DevExt, pSession, pReqHdr, cbReq);
+                if (RT_FAILURE(rc))
+                    VGDrvCommonCloseSession(&g_DevExt, pSession);
+            }
+        }
+        else
+            rc = VERR_INVALID_HANDLE;
+    }
+    else
+        rc = VERR_INVALID_POINTER;
+    return rc;
+}
+#endif
 
-    vboxguest_state_t *pState = ddi_get_soft_state(g_pVBoxGuestSolarisState, getminor(Dev));
+
+static int vgdrvSolarisPoll(dev_t Dev, short fEvents, int fAnyYet, short *pReqEvents, struct pollhead **ppPollHead)
+{
+    LogFlow(("vgdrvSolarisPoll: fEvents=%d fAnyYet=%d\n", fEvents, fAnyYet));
+
+    vboxguest_state_t *pState = ddi_get_soft_state(g_pvgdrvSolarisState, getminor(Dev));
     if (RT_LIKELY(pState))
     {
         PVBOXGUESTSESSION pSession  = (PVBOXGUESTSESSION)pState->pSession;
@@ -730,11 +860,9 @@ static int VBoxGuestSolarisPoll(dev_t Dev, short fEvents, int fAnyYet, short *pR
 
         return 0;
     }
-    else
-    {
-        Log((DEVICE_NAME "::Poll: no state data for %d\n", getminor(Dev)));
-        return EINVAL;
-    }
+
+    Log(("vgdrvSolarisPoll: no state data for %d\n", getminor(Dev)));
+    return EINVAL;
 }
 
 
@@ -744,91 +872,123 @@ static int VBoxGuestSolarisPoll(dev_t Dev, short fEvents, int fAnyYet, short *pR
  * @returns Solaris error code.
  * @param   pDip     Pointer to the device info structure.
  */
-static int VBoxGuestSolarisAddIRQ(dev_info_t *pDip)
+static int vgdrvSolarisAddIRQ(dev_info_t *pDip)
 {
-    LogFlow((DEVICE_NAME "::AddIRQ: pDip=%p\n", pDip));
+    LogFlow(("vgdrvSolarisAddIRQ: pDip=%p\n", pDip));
 
-    int IntrType = 0;
-    int rc = ddi_intr_get_supported_types(pDip, &IntrType);
+    /* Get the types of interrupt supported for this hardware. */
+    int fIntrType = 0;
+    int rc = ddi_intr_get_supported_types(pDip, &fIntrType);
     if (rc == DDI_SUCCESS)
     {
-        /* We won't need to bother about MSIs. */
-        if (IntrType & DDI_INTR_TYPE_FIXED)
+        /* We only support fixed interrupts at this point, not MSIs. */
+        if (fIntrType & DDI_INTR_TYPE_FIXED)
         {
-            int IntrCount = 0;
-            rc = ddi_intr_get_nintrs(pDip, IntrType, &IntrCount);
+            /* Verify the number of interrupts supported by this device. There can only be one fixed interrupt. */
+            int cIntrCount = 0;
+            rc = ddi_intr_get_nintrs(pDip, fIntrType, &cIntrCount);
             if (   rc == DDI_SUCCESS
-                && IntrCount > 0)
+                && cIntrCount == 1)
             {
-                int IntrAvail = 0;
-                rc = ddi_intr_get_navail(pDip, IntrType, &IntrAvail);
-                if (   rc == DDI_SUCCESS
-                    && IntrAvail > 0)
+                /* Allocated kernel memory for the interrupt handle. The allocation size is stored internally. */
+                g_pahIntrs = RTMemAllocZ(cIntrCount * sizeof(ddi_intr_handle_t));
+                if (g_pahIntrs)
                 {
-                    /* Allocated kernel memory for the interrupt handles. The allocation size is stored internally. */
-                    g_pIntr = RTMemAlloc(IntrCount * sizeof(ddi_intr_handle_t));
-                    if (g_pIntr)
+                    /* Allocate the interrupt for this device and verify the allocation. */
+                    int cIntrAllocated;
+                    rc = ddi_intr_alloc(pDip, g_pahIntrs, fIntrType, 0 /* interrupt number */, cIntrCount, &cIntrAllocated,
+                                        DDI_INTR_ALLOC_NORMAL);
+                    if (   rc == DDI_SUCCESS
+                        && cIntrAllocated == 1)
                     {
-                        int IntrAllocated;
-                        rc = ddi_intr_alloc(pDip, g_pIntr, IntrType, 0, IntrCount, &IntrAllocated, DDI_INTR_ALLOC_NORMAL);
-                        if (   rc == DDI_SUCCESS
-                            && IntrAllocated > 0)
+                        /* Get the interrupt priority assigned by the system. */
+                        uint_t uIntrPriority;
+                        rc = ddi_intr_get_pri(g_pahIntrs[0], &uIntrPriority);
+                        if (rc == DDI_SUCCESS)
                         {
-                            g_cIntrAllocated = IntrAllocated;
-                            uint_t uIntrPriority;
-                            rc = ddi_intr_get_pri(g_pIntr[0], &uIntrPriority);
-                            if (rc == DDI_SUCCESS)
+                            /* Check if the interrupt priority is scheduler level or above, if so we need to use a high-level
+                               and low-level interrupt handlers with corresponding mutexes. */
+                            cmn_err(CE_CONT, "!vboxguest: uIntrPriority=%d hilevel_pri=%d\n", uIntrPriority, ddi_intr_get_hilevel_pri());
+                            if (uIntrPriority >= ddi_intr_get_hilevel_pri())
                             {
-                                /* Initialize the mutex. */
-                                mutex_init(&g_IrqMtx, NULL /* pszDesc */, MUTEX_DRIVER, DDI_INTR_PRI(uIntrPriority));
+                                /* Initialize the high-level mutex. */
+                                mutex_init(&g_HighLevelIrqMtx, NULL /* pszDesc */, MUTEX_DRIVER, DDI_INTR_PRI(uIntrPriority));
 
-                                /* Assign interrupt handler functions and enable interrupts. */
-                                for (int i = 0; i < IntrAllocated; i++)
-                                {
-                                    rc = ddi_intr_add_handler(g_pIntr[i], (ddi_intr_handler_t *)VBoxGuestSolarisISR,
-                                                              NULL /* pvArg1 */, NULL /* pvArg2 */);
-                                    if (rc == DDI_SUCCESS)
-                                        rc = ddi_intr_enable(g_pIntr[i]);
-                                    if (rc != DDI_SUCCESS)
-                                    {
-                                        /* Changing local IntrAllocated to hold so-far allocated handles for freeing. */
-                                        IntrAllocated = i;
-                                        break;
-                                    }
-                                }
+                                /* Assign interrupt handler function to the interrupt handle. */
+                                rc = ddi_intr_add_handler(g_pahIntrs[0], (ddi_intr_handler_t *)&vgdrvSolarisHighLevelISR,
+                                                          NULL /* pvArg1 */, NULL /* pvArg2 */);
+
                                 if (rc == DDI_SUCCESS)
-                                    return rc;
+                                {
+                                    /* Add the low-level interrupt handler. */
+                                    rc = ddi_intr_add_softint(pDip, &g_hSoftIntr, DDI_INTR_SOFTPRI_MAX,
+                                                              (ddi_intr_handler_t *)&vgdrvSolarisISR, NULL /* pvArg1 */);
+                                    if (rc == DDI_SUCCESS)
+                                    {
+                                        /* Initialize the low-level mutex at the corresponding level. */
+                                        mutex_init(&g_IrqMtx, NULL /* pszDesc */,  MUTEX_DRIVER,
+                                                   DDI_INTR_PRI(DDI_INTR_SOFTPRI_MAX));
 
-                                /* Remove any assigned handlers */
-                                LogRel((DEVICE_NAME ":failed to assign IRQs allocated=%d\n", IntrAllocated));
-                                for (int x = 0; x < IntrAllocated; x++)
-                                    ddi_intr_remove_handler(g_pIntr[x]);
+                                        g_fSoftIntRegistered = true;
+                                        /* Enable the high-level interrupt. */
+                                        rc = ddi_intr_enable(g_pahIntrs[0]);
+                                        if (rc == DDI_SUCCESS)
+                                            return rc;
+
+                                        LogRel((DEVICE_NAME "::AddIRQ: failed to enable interrupt. rc=%d\n", rc));
+                                        mutex_destroy(&g_IrqMtx);
+                                    }
+                                    else
+                                        LogRel((DEVICE_NAME "::AddIRQ: failed to add soft interrupt handler. rc=%d\n", rc));
+
+                                    ddi_intr_remove_handler(g_pahIntrs[0]);
+                                }
+                                else
+                                    LogRel((DEVICE_NAME "::AddIRQ: failed to add high-level interrupt handler. rc=%d\n", rc));
+
+                                mutex_destroy(&g_HighLevelIrqMtx);
                             }
                             else
-                                LogRel((DEVICE_NAME "::AddIRQ: failed to get priority of interrupt. rc=%d\n", rc));
+                            {
+                                /* Interrupt handler runs at reschedulable level, initialize the mutex at the given priority. */
+                                mutex_init(&g_IrqMtx, NULL /* pszDesc */, MUTEX_DRIVER, DDI_INTR_PRI(uIntrPriority));
 
-                            /* Remove allocated IRQs, too bad we can free only one handle at a time. */
-                            for (int k = 0; k < g_cIntrAllocated; k++)
-                                ddi_intr_free(g_pIntr[k]);
+                                /* Assign interrupt handler function to the interrupt handle. */
+                                rc = ddi_intr_add_handler(g_pahIntrs[0], (ddi_intr_handler_t *)vgdrvSolarisISR,
+                                                          NULL /* pvArg1 */, NULL /* pvArg2 */);
+                                if (rc == DDI_SUCCESS)
+                                {
+                                    /* Enable the interrupt. */
+                                    rc = ddi_intr_enable(g_pahIntrs[0]);
+                                    if (rc == DDI_SUCCESS)
+                                        return rc;
+
+                                    LogRel((DEVICE_NAME "::AddIRQ: failed to enable interrupt. rc=%d\n", rc));
+                                    mutex_destroy(&g_IrqMtx);
+                                }
+                            }
                         }
                         else
-                            LogRel((DEVICE_NAME "::AddIRQ: failed to allocated IRQs. count=%d\n", IntrCount));
-                        RTMemFree(g_pIntr);
+                            LogRel((DEVICE_NAME "::AddIRQ: failed to get priority of interrupt. rc=%d\n", rc));
+
+                        Assert(cIntrAllocated == 1);
+                        ddi_intr_free(g_pahIntrs[0]);
                     }
                     else
-                        LogRel((DEVICE_NAME "::AddIRQ: failed to allocated IRQs. count=%d\n", IntrCount));
+                        LogRel((DEVICE_NAME "::AddIRQ: failed to allocated IRQs. count=%d\n", cIntrCount));
+                    RTMemFree(g_pahIntrs);
                 }
                 else
-                    LogRel((DEVICE_NAME "::AddIRQ: failed to get or insufficient available IRQs. rc=%d IntrAvail=%d\n", rc, IntrAvail));
+                    LogRel((DEVICE_NAME "::AddIRQ: failed to allocated IRQs. count=%d\n", cIntrCount));
             }
             else
-                LogRel((DEVICE_NAME "::AddIRQ: failed to get or insufficient number of IRQs. rc=%d IntrCount=%d\n", rc, IntrCount));
+                LogRel((DEVICE_NAME "::AddIRQ: failed to get or insufficient number of IRQs. rc=%d cIntrCount=%d\n", rc, cIntrCount));
         }
         else
-            LogRel((DEVICE_NAME "::AddIRQ: invalid irq type. IntrType=%#x\n", IntrType));
+            LogRel((DEVICE_NAME "::AddIRQ: fixed-type interrupts not supported. IntrType=%#x\n", fIntrType));
     }
     else
-        LogRel((DEVICE_NAME "::AddIRQ: failed to get supported interrupt types\n"));
+        LogRel((DEVICE_NAME "::AddIRQ: failed to get supported interrupt types. rc=%d\n", rc));
     return rc;
 }
 
@@ -838,22 +998,49 @@ static int VBoxGuestSolarisAddIRQ(dev_info_t *pDip)
  *
  * @param   pDip     Pointer to the device info structure.
  */
-static void VBoxGuestSolarisRemoveIRQ(dev_info_t *pDip)
+static void vgdrvSolarisRemoveIRQ(dev_info_t *pDip)
 {
-    LogFlow((DEVICE_NAME "::RemoveIRQ:\n"));
+    LogFlow(("vgdrvSolarisRemoveIRQ:\n"));
 
-    for (int i = 0; i < g_cIntrAllocated; i++)
+    int rc = ddi_intr_disable(g_pahIntrs[0]);
+    if (rc == DDI_SUCCESS)
     {
-        int rc = ddi_intr_disable(g_pIntr[i]);
+        rc = ddi_intr_remove_handler(g_pahIntrs[0]);
         if (rc == DDI_SUCCESS)
-        {
-            rc = ddi_intr_remove_handler(g_pIntr[i]);
-            if (rc == DDI_SUCCESS)
-                ddi_intr_free(g_pIntr[i]);
-        }
+            ddi_intr_free(g_pahIntrs[0]);
     }
-    RTMemFree(g_pIntr);
+
+    if (g_fSoftIntRegistered)
+    {
+        ddi_intr_remove_softint(g_hSoftIntr);
+        mutex_destroy(&g_HighLevelIrqMtx);
+        g_fSoftIntRegistered = false;
+    }
+
     mutex_destroy(&g_IrqMtx);
+    RTMemFree(g_pahIntrs);
+}
+
+
+/**
+ * High-level Interrupt Service Routine for VMMDev.
+ *
+ * This routine simply dispatches a soft-interrupt at an acceptable IPL as
+ * VGDrvCommonISR() cannot be called at a high IPL (scheduler level or higher)
+ * due to pollwakeup() in VGDrvNativeISRMousePollEvent().
+ *
+ * @param   Arg     Private data (unused, will be NULL).
+ * @returns DDI_INTR_CLAIMED if it's our interrupt, DDI_INTR_UNCLAIMED if it isn't.
+ */
+static uint_t vgdrvSolarisHighLevelISR(caddr_t Arg)
+{
+    bool const fOurIrq = VGDrvCommonIsOurIRQ(&g_DevExt);
+    if (fOurIrq)
+    {
+        ddi_intr_trigger_softint(g_hSoftIntr, NULL /* Arg */);
+        return DDI_INTR_CLAIMED;
+    }
+    return DDI_INTR_UNCLAIMED;
 }
 
 
@@ -863,21 +1050,30 @@ static void VBoxGuestSolarisRemoveIRQ(dev_info_t *pDip)
  * @param   Arg     Private data (unused, will be NULL).
  * @returns DDI_INTR_CLAIMED if it's our interrupt, DDI_INTR_UNCLAIMED if it isn't.
  */
-static uint_t VBoxGuestSolarisISR(caddr_t Arg)
+static uint_t vgdrvSolarisISR(caddr_t Arg)
 {
-    LogFlow((DEVICE_NAME "::ISR:\n"));
+    LogFlow(("vgdrvSolarisISR:\n"));
 
+    /* The mutex is required to protect against parallel executions (if possible?) and also the
+       mouse notify registeration race between VGDrvNativeSetMouseNotifyCallback() and VGDrvCommonISR(). */
     mutex_enter(&g_IrqMtx);
-    bool fOurIRQ = VBoxGuestCommonISR(&g_DevExt);
+    bool fOurIRQ = VGDrvCommonISR(&g_DevExt);
     mutex_exit(&g_IrqMtx);
 
     return fOurIRQ ? DDI_INTR_CLAIMED : DDI_INTR_UNCLAIMED;
 }
 
 
-void VBoxGuestNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt)
+/**
+ * Poll notifier for mouse poll events.
+ *
+ * @param   pDevExt   Pointer to the device extension.
+ *
+ * @remarks This must be called without holding any spinlocks.
+ */
+void VGDrvNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt)
 {
-    LogFlow((DEVICE_NAME "::NativeISRMousePollEvent:\n"));
+    LogFlow(("VGDrvNativeISRMousePollEvent:\n"));
 
     /*
      * Wake up poll waiters.
@@ -886,6 +1082,20 @@ void VBoxGuestNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt)
 }
 
 
-/* Common code that depend on g_DevExt. */
-#include "VBoxGuestIDC-unix.c.h"
+/**
+ * Sets the mouse notification callback.
+ *
+ * @returns VBox status code.
+ * @param   pDevExt   Pointer to the device extension.
+ * @param   pNotify   Pointer to the mouse notify struct.
+ */
+int VGDrvNativeSetMouseNotifyCallback(PVBOXGUESTDEVEXT pDevExt, PVBGLIOCSETMOUSENOTIFYCALLBACK pNotify)
+{
+    /* Take the mutex here so as to not race with VGDrvCommonISR() which invokes the mouse notify callback. */
+    mutex_enter(&g_IrqMtx);
+    pDevExt->pfnMouseNotifyCallback   = pNotify->u.In.pfnNotify;
+    pDevExt->pvMouseNotifyCallbackArg = pNotify->u.In.pvUser;
+    mutex_exit(&g_IrqMtx);
+    return VINF_SUCCESS;
+}
 

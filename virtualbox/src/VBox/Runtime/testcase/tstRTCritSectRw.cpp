@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/critsect.h>
 
 #include <iprt/asm.h>
@@ -34,6 +35,7 @@
 #include <iprt/err.h>
 #include <iprt/initterm.h>
 #include <iprt/lockvalidator.h>
+#include <iprt/mp.h>
 #include <iprt/rand.h>
 #include <iprt/semaphore.h>
 #include <iprt/string.h>
@@ -43,9 +45,9 @@
 #include <iprt/thread.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTTEST               g_hTest;
 static RTCRITSECTRW         g_CritSectRw;
 static bool volatile        g_fTerminate;
@@ -445,6 +447,7 @@ static bool Test1(void)
 
 int main(int argc, char **argv)
 {
+    RT_NOREF_PV(argv);
     int rc = RTTestInitAndCreate("tstRTCritSectRw", &g_hTest);
     if (rc)
         return 1;
@@ -452,6 +455,7 @@ int main(int argc, char **argv)
 
     if (Test1())
     {
+        RTCPUID cCores = RTMpGetOnlineCoreCount();
         if (argc == 1)
         {
             TestNegative();
@@ -464,25 +468,35 @@ int main(int argc, char **argv)
             Test4(     10,       1,            5,   true,  false);
             Test4(     10,      10,           10,  false,  false);
 
-            RTTestPrintf(g_hTest, RTTESTLVL_ALWAYS, "benchmarking...\n");
-            for (unsigned cThreads = 1; cThreads < 32; cThreads++)
+            if (cCores > 1)
+            {
+                RTTestPrintf(g_hTest, RTTESTLVL_ALWAYS, "benchmarking (%u CPU cores)...\n", cCores);
+                for (unsigned cThreads = 1; cThreads < 32; cThreads++)
                 Test4(cThreads,  2,            1,  false,   true);
+            }
+            else
+                RTTestPrintf(g_hTest, RTTESTLVL_ALWAYS, "skipping benchmarking (only %u core available)\n", cCores);
 
             /** @todo add a testcase where some stuff times out. */
         }
         else
         {
-            /*    threads, seconds, writePercent,  yield,  quiet */
-            RTTestPrintf(g_hTest, RTTESTLVL_ALWAYS, "benchmarking...\n");
-            Test4(      1,       3,            1,  false,   true);
-            Test4(      1,       3,            1,  false,   true);
-            Test4(      1,       3,            1,  false,   true);
-            Test4(      2,       3,            1,  false,   true);
-            Test4(      2,       3,            1,  false,   true);
-            Test4(      2,       3,            1,  false,   true);
-            Test4(      3,       3,            1,  false,   true);
-            Test4(      3,       3,            1,  false,   true);
-            Test4(      3,       3,            1,  false,   true);
+            if (cCores > 1)
+            {
+                /*    threads, seconds, writePercent,  yield,  quiet */
+                RTTestPrintf(g_hTest, RTTESTLVL_ALWAYS, "benchmarking (%u CPU cores)...\n", cCores);
+                Test4(      1,       3,            1,  false,   true);
+                Test4(      1,       3,            1,  false,   true);
+                Test4(      1,       3,            1,  false,   true);
+                Test4(      2,       3,            1,  false,   true);
+                Test4(      2,       3,            1,  false,   true);
+                Test4(      2,       3,            1,  false,   true);
+                Test4(      3,       3,            1,  false,   true);
+                Test4(      3,       3,            1,  false,   true);
+                Test4(      3,       3,            1,  false,   true);
+            }
+            else
+                RTTestPrintf(g_hTest, RTTESTLVL_ALWAYS, "skipping benchmarking (only %u core available)\n", cCores);
         }
     }
 

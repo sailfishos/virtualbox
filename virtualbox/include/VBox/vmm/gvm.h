@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2011 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -32,7 +32,8 @@
 #include <iprt/thread.h>
 
 
-/** @defgroup grp_gvm   GVMCPU - The Global VMCPU Data
+/** @defgroup grp_gvmcpu    GVMCPU - The Global VMCPU Data
+ * @ingroup grp_vmm
  * @{
  */
 
@@ -59,6 +60,7 @@ typedef GVMCPU *PGVMCPU;
 /** @} */
 
 /** @defgroup grp_gvm   GVM - The Global VM Data
+ * @ingroup grp_vmm
  * @{
  */
 
@@ -79,6 +81,8 @@ typedef struct GVM
     uint32_t        hSelf;
     /** The ring-0 mapping of the VM structure. */
     PVM             pVM;
+    /** The support driver session the VM is associated with. */
+    PSUPDRVSESSION  pSession;
     /** Number of Virtual CPUs, i.e. how many entries there are in aCpus.
      * Same same as VM::cCpus. */
     uint32_t        cCpus;
@@ -122,3 +126,4 @@ typedef struct GVM
 /** @} */
 
 #endif
+

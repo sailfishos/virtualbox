@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -53,7 +53,7 @@ int  supSvcDisplayTooManyArgsError(const char *pszAction, int argc, char **argv,
 /**
  * Logs the message to the appropriate system log.
  *
- * @param   psMsg       The log string.
+ * @param   pszMsg      The log string.
  */
 void supSvcOsLogErrorStr(const char *pszMsg);
 /** @} */

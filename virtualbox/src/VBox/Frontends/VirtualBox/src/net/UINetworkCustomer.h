@@ -1,11 +1,10 @@
+/* $Id: UINetworkCustomer.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UINetworkCustomer class declaration
+ * VBox Qt GUI - UINetworkCustomer class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,7 +26,7 @@
 
 /* Forward declarations: */
 class UINetworkReply;
-class QNetworkRequest;
+class QUrl;
 
 /* Interface to access UINetworkManager protected functionality: */
 class UINetworkCustomer : public QObject
@@ -50,12 +49,14 @@ public:
     /* Network-reply finish handler: */
     virtual void processNetworkReplyFinished(UINetworkReply *pReply) = 0;
 
+    /** Returns description of the current network operation. */
+    virtual const QString description() const { return QString(); }
+
 protected:
 
-    /* Network-request wrapper: */
-    void createNetworkRequest(const QNetworkRequest &request, UINetworkRequestType type, const QString &strDescription);
-    /* Network-request wrapper (set): */
-    void createNetworkRequest(const QList<QNetworkRequest> &requests, UINetworkRequestType type, const QString &strDescription);
+    /** Creates network-request of the passed @a type on the basis of the passed @a urls and the @a requestHeaders. */
+    void createNetworkRequest(UINetworkRequestType type, const QList<QUrl> urls,
+                              const UserDictionary requestHeaders = UserDictionary());
 
 private:
 

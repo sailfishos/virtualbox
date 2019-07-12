@@ -1,12 +1,10 @@
 /* $Id: UIWizardNewVMPageBasic1.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardNewVMPageBasic1 class implementation
+ * VBox Qt GUI - UIWizardNewVMPageBasic1 class implementation.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,21 +15,28 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QDir>
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QLineEdit>
+# include <QDir>
+# include <QVBoxLayout>
+# include <QHBoxLayout>
+# include <QLineEdit>
 
 /* GUI includes: */
-#include "UIWizardNewVMPageBasic1.h"
-#include "UIWizardNewVM.h"
-#include "UIMessageCenter.h"
-#include "UINameAndSystemEditor.h"
-#include "QIRichTextLabel.h"
+# include "UIWizardNewVMPageBasic1.h"
+# include "UIWizardNewVM.h"
+# include "UIMessageCenter.h"
+# include "UINameAndSystemEditor.h"
+# include "QIRichTextLabel.h"
 
 /* COM includes: */
-#include "CSystemProperties.h"
+# include "CSystemProperties.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 /* Defines some patterns to guess the right OS type. Should be in sync with
  * VirtualBox-settings-common.xsd in Main. The list is sorted by priority. The
@@ -52,12 +57,14 @@ static const osTypePattern gs_OSTypePattern[] =
     { QRegExp(  "Wi.*95",                         Qt::CaseInsensitive), "Windows95" },
     { QRegExp(  "Wi.*Me",                         Qt::CaseInsensitive), "WindowsMe" },
     { QRegExp( "(Wi.*NT)|(NT4)",                  Qt::CaseInsensitive), "WindowsNT4" },
-    { QRegExp("((Wi.*XP)|(\\bXP\\b)).*64",        Qt::CaseInsensitive), "WindowsXP_64" },
-    { QRegExp("((Wi.*XP)|(\\bXP\\b)).*32",        Qt::CaseInsensitive), "WindowsXP" },
+    /* Note: Do not automatically set WindowsXP_64 on 64-bit hosts, as Windows XP 64-bit
+     *       is extremely rare -- most users never heard of it even. So always default to 32-bit. */
+    { QRegExp("((Wi.*XP)|(XP)).*",                Qt::CaseInsensitive), "WindowsXP" },
     { QRegExp("((Wi.*2003)|(W2K3)|(Win2K3)).*64", Qt::CaseInsensitive), "Windows2003_64" },
     { QRegExp("((Wi.*2003)|(W2K3)|(Win2K3)).*32", Qt::CaseInsensitive), "Windows2003" },
-    { QRegExp("((Wi.*V)|(Vista)).*64",            Qt::CaseInsensitive), "WindowsVista_64" },
-    { QRegExp("((Wi.*V)|(Vista)).*32",            Qt::CaseInsensitive), "WindowsVista" },
+    { QRegExp("((Wi.*Vis)|(Vista)).*64",          Qt::CaseInsensitive), "WindowsVista_64" },
+    { QRegExp("((Wi.*Vis)|(Vista)).*32",          Qt::CaseInsensitive), "WindowsVista" },
+    { QRegExp( "(Wi.*2016)|(W2K16)|(Win2K16)",    Qt::CaseInsensitive), "Windows2016_64" },
     { QRegExp( "(Wi.*2012)|(W2K12)|(Win2K12)",    Qt::CaseInsensitive), "Windows2012_64" },
     { QRegExp("((Wi.*2008)|(W2K8)|(Win2k8)).*64", Qt::CaseInsensitive), "Windows2008_64" },
     { QRegExp("((Wi.*2008)|(W2K8)|(Win2K8)).*32", Qt::CaseInsensitive), "Windows2008" },
@@ -71,15 +78,18 @@ static const osTypePattern gs_OSTypePattern[] =
     { QRegExp( "(Wi.*10.*64)|(W10.*64)",          Qt::CaseInsensitive), "Windows10_64" },
     { QRegExp( "(Wi.*10.*32)|(W10.*32)",          Qt::CaseInsensitive), "Windows10" },
     { QRegExp(  "Wi.*3.*1",                       Qt::CaseInsensitive), "Windows31" },
-    { QRegExp(  "Wi.*64",                         Qt::CaseInsensitive), "WindowsXP_64" },
-    { QRegExp(  "Wi.*32",                         Qt::CaseInsensitive), "WindowsXP" },
+    /* Set Windows 7 as default for "Windows". */
+    { QRegExp(  "Wi.*64",                         Qt::CaseInsensitive), "Windows7_64" },
+    { QRegExp(  "Wi.*32",                         Qt::CaseInsensitive), "Windows7" },
+    /* ReactOS wants to be considered as Windows 2003 */
+    { QRegExp(  "Reac.*",                         Qt::CaseInsensitive), "Windows2003" },
 
     /* Solaris: */
-    { QRegExp("So.*11",                                                 Qt::CaseInsensitive), "Solaris11_64" },
-    { QRegExp("((Op.*So)|(os20[01][0-9])|(So.*10)|(India)|(Neva)).*64", Qt::CaseInsensitive), "OpenSolaris_64" },
-    { QRegExp("((Op.*So)|(os20[01][0-9])|(So.*10)|(India)|(Neva)).*32", Qt::CaseInsensitive), "OpenSolaris" },
-    { QRegExp("So.*64",                                                 Qt::CaseInsensitive), "Solaris_64" },
-    { QRegExp("So.*32",                                                 Qt::CaseInsensitive), "Solaris" },
+    { QRegExp("Sol.*11",                                                  Qt::CaseInsensitive), "Solaris11_64" },
+    { QRegExp("((Op.*Sol)|(os20[01][0-9])|(Sol.*10)|(India)|(Neva)).*64", Qt::CaseInsensitive), "OpenSolaris_64" },
+    { QRegExp("((Op.*Sol)|(os20[01][0-9])|(Sol.*10)|(India)|(Neva)).*32", Qt::CaseInsensitive), "OpenSolaris" },
+    { QRegExp("Sol.*64",                                                  Qt::CaseInsensitive), "Solaris_64" },
+    { QRegExp("Sol.*32",                                                  Qt::CaseInsensitive), "Solaris" },
 
     /* OS/2: */
     { QRegExp( "OS[/|!-]{,1}2.*W.*4.?5",    Qt::CaseInsensitive), "OS2Warp45" },
@@ -87,6 +97,7 @@ static const osTypePattern gs_OSTypePattern[] =
     { QRegExp( "OS[/|!-]{,1}2.*W",          Qt::CaseInsensitive), "OS2Warp3" },
     { QRegExp("(OS[/|!-]{,1}2.*e)|(eCS.*)", Qt::CaseInsensitive), "OS2eCS" },
     { QRegExp( "OS[/|!-]{,1}2",             Qt::CaseInsensitive), "OS2" },
+    { QRegExp( "eComS.*",                   Qt::CaseInsensitive), "OS2eCS" },
 
     /* Other: Must come before Ubuntu/Maverick and before Linux??? */
     { QRegExp("QN", Qt::CaseInsensitive), "QNX" },
@@ -101,14 +112,20 @@ static const osTypePattern gs_OSTypePattern[] =
     { QRegExp( "(mac.*10[.,]{0,1}7)|(os.*x.*10[.,]{0,1}7)|(mac.*ML)|(os.*x.*ML)|(Mount)",       Qt::CaseInsensitive), "MacOS108_64" },
     { QRegExp( "(mac.*10[.,]{0,1}8)|(os.*x.*10[.,]{0,1}8)|(Lion)",                              Qt::CaseInsensitive), "MacOS107_64" },
     { QRegExp( "(mac.*10[.,]{0,1}9)|(os.*x.*10[.,]{0,1}9)|(mac.*mav)|(os.*x.*mav)|(Mavericks)", Qt::CaseInsensitive), "MacOS109_64" },
-    { QRegExp("((Mac)|(Tig)|(Leop)|(os[ ]*x)).*64",                                             Qt::CaseInsensitive), "MacOS_64" },
-    { QRegExp("((Mac)|(Tig)|(Leop)|(os[ ]*x)).*32",                                             Qt::CaseInsensitive), "MacOS" },
+    { QRegExp( "(mac.*yos)|(os.*x.*yos)|(Yosemite)",                                            Qt::CaseInsensitive), "MacOS1010_64" },
+    { QRegExp( "(mac.*cap)|(os.*x.*capit)|(Capitan)",                                           Qt::CaseInsensitive), "MacOS1011_64" },
+    { QRegExp( "(mac.*hig)|(os.*x.*high.*sierr)|(High Sierra)",                                 Qt::CaseInsensitive), "MacOS1013_64" },
+    { QRegExp( "(mac.*sie)|(os.*x.*sierr)|(Sierra)",                                            Qt::CaseInsensitive), "MacOS1012_64" },
+    { QRegExp("((Mac)|(Tig)|(Leop)|(Yose)|(os[ ]*x)).*64",                                      Qt::CaseInsensitive), "MacOS_64" },
+    { QRegExp("((Mac)|(Tig)|(Leop)|(Yose)|(os[ ]*x)).*32",                                      Qt::CaseInsensitive), "MacOS" },
 
     /* Code names for Linux distributions: */
-    { QRegExp("((edgy)|(feisty)|(gutsy)|(hardy)|(intrepid)|(jaunty)|(karmic)|(lucid)|(maverick)|(natty)|(oneiric)|(precise)|(quantal)|(raring)|(saucy)|(trusty)).*64",    Qt::CaseInsensitive), "Ubuntu_64" },
-    { QRegExp("((edgy)|(feisty)|(gutsy)|(hardy)|(intrepid)|(jaunty)|(karmic)|(lucid)|(maverick)|(natty)|(oneiric)|(precise)|(quantal)|(raring)|(saucy)|(trusty)).*32",    Qt::CaseInsensitive), "Ubuntu" },
-    { QRegExp("((sarge)|(etch)|(lenny)|(squeeze)|(wheezy)|(jessie)|(sid)).*64",                                                                          Qt::CaseInsensitive), "Debian_64" },
-    { QRegExp("((sarge)|(etch)|(lenny)|(squeeze)|(wheezy)|(jessie)|(sid)).*32",                                                                          Qt::CaseInsensitive), "Debian" },
+    { QRegExp("((bianca)|(cassandra)|(celena)|(daryna)|(elyssa)|(felicia)|(gloria)|(helena)|(isadora)|(julia)|(katya)|(lisa)|(maya)|(nadia)|(olivia)|(petra)|(qiana)|(rebecca)|(rafaela)|(rosa)).*64", Qt::CaseInsensitive), "Ubuntu_64" },
+    { QRegExp("((bianca)|(cassandra)|(celena)|(daryna)|(elyssa)|(felicia)|(gloria)|(helena)|(isadora)|(julia)|(katya)|(lisa)|(maya)|(nadia)|(olivia)|(petra)|(qiana)|(rebecca)|(rafaela)|(rosa)).*32", Qt::CaseInsensitive), "Ubuntu" },
+    { QRegExp("((edgy)|(feisty)|(gutsy)|(hardy)|(intrepid)|(jaunty)|(karmic)|(lucid)|(maverick)|(natty)|(oneiric)|(precise)|(quantal)|(raring)|(saucy)|(trusty)|(utopic)|(vivid)|(wily)|(xenial)|(yakkety)|(zesty)).*64", Qt::CaseInsensitive), "Ubuntu_64" },
+    { QRegExp("((edgy)|(feisty)|(gutsy)|(hardy)|(intrepid)|(jaunty)|(karmic)|(lucid)|(maverick)|(natty)|(oneiric)|(precise)|(quantal)|(raring)|(saucy)|(trusty)|(utopic)|(vivid)|(wily)|(xenial)|(yakkety)|(zesty)).*32", Qt::CaseInsensitive), "Ubuntu" },
+    { QRegExp("((sarge)|(etch)|(lenny)|(squeeze)|(wheezy)|(jessie)|(stretch)|(buster)|(sid)).*64", Qt::CaseInsensitive), "Debian_64" },
+    { QRegExp("((sarge)|(etch)|(lenny)|(squeeze)|(wheezy)|(jessie)|(stretch)|(buster)|(sid)).*32", Qt::CaseInsensitive), "Debian" },
     { QRegExp("((moonshine)|(werewolf)|(sulphur)|(cambridge)|(leonidas)|(constantine)|(goddard)|(laughlin)|(lovelock)|(verne)|(beefy)|(spherical)).*64", Qt::CaseInsensitive), "Fedora_64" },
     { QRegExp("((moonshine)|(werewolf)|(sulphur)|(cambridge)|(leonidas)|(constantine)|(goddard)|(laughlin)|(lovelock)|(verne)|(beefy)|(spherical)).*32", Qt::CaseInsensitive), "Fedora" },
 
@@ -129,8 +146,8 @@ static const osTypePattern gs_OSTypePattern[] =
     { QRegExp("((Red)|(rhel)|(cen)).*32",          Qt::CaseInsensitive), "RedHat" },
     { QRegExp("Tur.*64",                           Qt::CaseInsensitive), "Turbolinux_64" },
     { QRegExp("Tur.*32",                           Qt::CaseInsensitive), "Turbolinux" },
-    { QRegExp("Ub.*64",                            Qt::CaseInsensitive), "Ubuntu_64" },
-    { QRegExp("Ub.*32",                            Qt::CaseInsensitive), "Ubuntu" },
+    { QRegExp("(Ub)|(Min).*64",                    Qt::CaseInsensitive), "Ubuntu_64" },
+    { QRegExp("(Ub)|(Min).*32",                    Qt::CaseInsensitive), "Ubuntu" },
     { QRegExp("Xa.*64",                            Qt::CaseInsensitive), "Xandros_64" },
     { QRegExp("Xa.*32",                            Qt::CaseInsensitive), "Xandros" },
     { QRegExp("((Or)|(oel)|(ol)).*64",             Qt::CaseInsensitive), "Oracle_64" },
@@ -155,6 +172,7 @@ static const osTypePattern gs_OSTypePattern[] =
     { QRegExp("Ne.*B.*32",            Qt::CaseInsensitive), "NetBSD" },
     { QRegExp("Net",                  Qt::CaseInsensitive), "Netware" },
     { QRegExp("Rocki",                Qt::CaseInsensitive), "JRockitVE" },
+    { QRegExp("bs[23]{0,1}-",         Qt::CaseInsensitive), "VBoxBS_64" }, /* bootsector tests */
     { QRegExp("Ot",                   Qt::CaseInsensitive), "Other" },
 };
 
@@ -168,8 +186,9 @@ UIWizardNewVMPage1::UIWizardNewVMPage1(const QString &strGroup)
 
 void UIWizardNewVMPage1::onNameChanged(QString strNewName)
 {
-    /* Do not forget about achitecture bits: */
-    strNewName += ARCH_BITS == 64 && m_fSupportsHWVirtEx && m_fSupportsLongMode ? "64" : "32";
+    /* Do not forget about achitecture bits, if not yet specified: */
+    if (!strNewName.contains("32") && !strNewName.contains("64"))
+        strNewName += ARCH_BITS == 64 && m_fSupportsHWVirtEx && m_fSupportsLongMode ? "64" : "32";
 
     /* Search for a matching OS type based on the string the user typed already. */
     for (size_t i = 0; i < RT_ELEMENTS(gs_OSTypePattern); ++i)
@@ -205,14 +224,17 @@ bool UIWizardNewVMPage1::createMachineFolder()
 
     /* Get VBox: */
     CVirtualBox vbox = vboxGlobal().virtualBox();
-    /* Get default machines directory: */
-    QString strDefaultMachinesFolder = vbox.GetSystemProperties().GetDefaultMachineFolder();
+    /* Get default machine folder: */
+    const QString strDefaultMachineFolder = vbox.GetSystemProperties().GetDefaultMachineFolder();
     /* Compose machine filename: */
-    QString strMachineFilename = vbox.ComposeMachineFilename(m_pNameAndSystemEditor->name(), m_strGroup, QString::null, strDefaultMachinesFolder);
+    const QString strMachineFilePath = vbox.ComposeMachineFilename(m_pNameAndSystemEditor->name(),
+                                                                   m_strGroup,
+                                                                   QString(),
+                                                                   strDefaultMachineFolder);
     /* Compose machine folder/basename: */
-    QFileInfo fileInfo(strMachineFilename);
-    QString strMachineFolder = fileInfo.absolutePath();
-    QString strMachineBaseName = fileInfo.completeBaseName();
+    const QFileInfo fileInfo(strMachineFilePath);
+    const QString strMachineFolder = fileInfo.absolutePath();
+    const QString strMachineBaseName = fileInfo.completeBaseName();
 
     /* Make sure that folder doesn't exists: */
     if (QDir(strMachineFolder).exists())

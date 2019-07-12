@@ -1,12 +1,10 @@
 /* $Id: UISettingsPage.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UISettingsPage class implementation
+ * VBox Qt GUI - UISettingsPage class implementation.
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,15 +15,22 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* GUI includes: */
-#include "UIConverter.h"
-#include "UISettingsPage.h"
-#include "QIWidgetValidator.h"
+# include "UIConverter.h"
+# include "UISettingsPage.h"
+# include "QIWidgetValidator.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 /* Settings page constructor, hidden: */
 UISettingsPage::UISettingsPage(UISettingsPageType pageType)
     : m_pageType(pageType)
-    , m_dialogType(SettingsDialogType_Wrong)
+    , m_configurationAccessLevel(ConfigurationAccessLevel_Null)
     , m_cId(-1)
     , m_fProcessed(false)
     , m_fFailed(false)
@@ -33,6 +38,14 @@ UISettingsPage::UISettingsPage(UISettingsPageType pageType)
     , m_pValidator(0)
     , m_fIsValidatorBlocked(true)
 {
+}
+
+void UISettingsPage::notifyOperationProgressError(const QString &strErrorInfo)
+{
+    QMetaObject::invokeMethod(this,
+                              "sigOperationProgressError",
+                              Qt::BlockingQueuedConnection,
+                              Q_ARG(QString, strErrorInfo));
 }
 
 void UISettingsPage::setValidator(UIPageValidator *pValidator)
@@ -74,17 +87,16 @@ QPixmap UISettingsPageGlobal::warningPixmap() const
     return gpConverter->toWarningPixmap(internalID());
 }
 
-/* Fetch data to m_properties & m_settings: */
+/* Fetch data to m_properties: */
 void UISettingsPageGlobal::fetchData(const QVariant &data)
 {
     m_properties = data.value<UISettingsDataGlobal>().m_properties;
-    m_settings = data.value<UISettingsDataGlobal>().m_settings;
 }
 
-/* Upload m_properties & m_settings to data: */
+/* Upload m_properties to data: */
 void UISettingsPageGlobal::uploadData(QVariant &data) const
 {
-    data = QVariant::fromValue(UISettingsDataGlobal(m_properties, m_settings));
+    data = QVariant::fromValue(UISettingsDataGlobal(m_properties));
 }
 
 /* Machine settings page constructor, hidden: */

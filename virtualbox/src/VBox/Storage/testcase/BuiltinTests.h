@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2014 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -22,6 +22,8 @@
  */
 typedef struct TSTVDIOTESTENTRY
 {
+    /** Test name. */
+    const char             *pszName;
     /** Pointer to the raw bytes. */
     const unsigned char    *pch;
     /** Number of bytes. */
@@ -31,7 +33,7 @@ typedef struct TSTVDIOTESTENTRY
 typedef TSTVDIOTESTENTRY const *PCTSTVDIOTESTENTRY;
 
 /** Macro for simplifying generating the trust anchor tables. */
-#define TSTVDIOTESTENTRY_GEN(a_abTest)      { &a_abTest[0], sizeof(a_abTest) }
+#define TSTVDIOTESTENTRY_GEN(a_szName, a_abTest)      { #a_szName, &a_abTest[0], sizeof(a_abTest) }
 
 /** All tests we know. */
 extern TSTVDIOTESTENTRY const       g_aVDIoTests[];

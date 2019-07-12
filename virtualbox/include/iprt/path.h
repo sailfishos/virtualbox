@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -341,11 +341,11 @@ RTDECL(char *) RTPathAbsExDup(const char *pszBase, const char *pszPath);
 RTDECL(void) RTPathStripFilename(char *pszPath);
 
 /**
- * Strips the extension from a path.
+ * Strips the last suffix from a path.
  *
- * @param   pszPath     Path which extension should be stripped.
+ * @param   pszPath     Path which suffix should be stripped.
  */
-RTDECL(void) RTPathStripExt(char *pszPath);
+RTDECL(void) RTPathStripSuffix(char *pszPath);
 
 /**
  * Strips the trailing slashes of a path name.
@@ -356,6 +356,31 @@ RTDECL(void) RTPathStripExt(char *pszPath);
  * @param   pszPath     Path to strip.
  */
 RTDECL(size_t) RTPathStripTrailingSlash(char *pszPath);
+
+/**
+ * Skips the root specification, if present.
+ *
+ * @return  Pointer to the first char after the root specification.  This can be
+ *          pointing to the terminator, if the path is only a root
+ *          specification.
+ * @param   pszPath     The path to skip ahead in.
+ */
+RTDECL(char *) RTPathSkipRootSpec(const char *pszPath);
+
+/**
+ * Ensures that the path has a trailing path separator such that file names can
+ * be appended without further work.
+ *
+ * This can be helpful when preparing for efficiently combining a directory path
+ * with the filenames returned by RTDirRead.  The return value gives you the
+ * position at which you copy the RTDIRENTRY::szName to construct a valid path
+ * to it.
+ *
+ * @returns The length of the path, 0 on buffer overflow.
+ * @param   pszPath     The path.
+ * @param   cbPath      The length of the path buffer @a pszPath points to.
+ */
+RTDECL(size_t) RTPathEnsureTrailingSeparator(char *pszPath, size_t cbPath);
 
 /**
  * Changes all the slashes in the specified path to DOS style.
@@ -422,24 +447,27 @@ RTDECL(char *) RTPathFilename(const char *pszPath);
 RTDECL(char *) RTPathFilenameEx(const char *pszPath, uint32_t fFlags);
 
 /**
- * Finds the extension part of in a path.
+ * Finds the suffix part of in a path (last dot and onwards).
  *
- * @returns Pointer to extension within pszPath.
- * @returns NULL if no extension.
- * @param   pszPath     Path to find extension in.
+ * @returns Pointer to suffix within pszPath.
+ * @returns NULL if no suffix
+ * @param   pszPath     Path to find suffix in.
+ *
+ * @remarks IPRT terminology: A suffix includes the dot, the extension starts
+ *          after the dot. For instance suffix '.txt' and extension 'txt'.
  */
-RTDECL(char *) RTPathExt(const char *pszPath);
+RTDECL(char *) RTPathSuffix(const char *pszPath);
 
 /**
- * Checks if a path has an extension.
+ * Checks if a path has an extension / suffix.
  *
- * @returns true if extension present.
- * @returns false if no extension.
+ * @returns true if extension / suffix present.
+ * @returns false if no extension / suffix.
  * @param   pszPath     Path to check.
  */
-RTDECL(bool) RTPathHasExt(const char *pszPath);
-/** Misspelled, don't use.  */
-#define RTPathHaveExt   RTPathHasExt
+RTDECL(bool) RTPathHasSuffix(const char *pszPath);
+/** Same thing, different name.  */
+#define RTPathHasExt RTPathHasSuffix
 
 /**
  * Checks if a path includes more than a filename.
@@ -460,6 +488,8 @@ RTDECL(bool) RTPathHasPath(const char *pszPath);
  * @param   pszPath     Path to check.
  */
 RTDECL(bool) RTPathStartsWithRoot(const char *pszPath);
+
+
 
 /**
  * Counts the components in the specified path.
@@ -582,7 +612,7 @@ RTDECL(int) RTPathCopyComponents(char *pszDst, size_t cbDst, const char *pszSrc,
  *
  * The first component is the root, volume or UNC specifier, if present.  Use
  * RTPATH_PROP_HAS_ROOT_SPEC() on RTPATHPARSED::fProps to determine its
- * precense.
+ * presence.
  *
  * Other than the root component, no component will include directory separators
  * (slashes).
@@ -788,7 +818,7 @@ RTDECL(void) RTPathSplitFree(PRTPATHSPLIT pSplit);
  * @retval  VERR_BUFFER_OVERFLOW if @a cbDstPath is less than or equal to
  *          RTPATHSPLIT::cchPath.
  *
- * @param   pParsed             The parser output for @a pszSrcPath.
+ * @param   pSplit              A split path (see RTPathSplit, RTPathSplitA).
  * @param   fFlags              Combination of RTPATH_STR_F_STYLE_XXX.
  *                              Most users will pass 0.
  * @param   pszDstPath          Pointer to the buffer where the path is to be
@@ -1153,6 +1183,72 @@ RTDECL(int) RTPathAppDocs(char *pszPath, size_t cchPath);
  */
 RTDECL(int) RTPathTemp(char *pszPath, size_t cchPath);
 
+
+/**
+ * RTPathGlobl result entry.
+ */
+typedef struct RTPATHGLOBENTRY
+{
+    /** List entry. */
+    struct RTPATHGLOBENTRY *pNext;
+    /** RTDIRENTRYTYPE value. */
+    uint8_t                 uType;
+    /** Unused explicit padding. */
+    uint8_t                 bUnused;
+    /** The length of the path. */
+    uint16_t                cchPath;
+    /** The path to the file (variable length). */
+    char                    szPath[1];
+} RTPATHGLOBENTRY;
+/** Pointer to a GLOB result entry. */
+typedef RTPATHGLOBENTRY *PRTPATHGLOBENTRY;
+/** Pointer to a const GLOB result entry. */
+typedef RTPATHGLOBENTRY const *PCRTPATHGLOBENTRY;
+/** Pointer to a GLOB result entry pointer. */
+typedef PCRTPATHGLOBENTRY *PPCRTPATHGLOBENTRY;
+
+/**
+ * Performs wildcard expansion on a path pattern.
+ *
+ * @returns IPRT status code.
+ *
+ * @param   pszPattern      The pattern to expand.
+ * @param   fFlags          RTPATHGLOB_F_XXX.
+ * @param   ppHead          Where to return the head of the result list.  This
+ *                          is always set to NULL on failure.
+ * @param   pcResults       Where to return the number of the result. Optional.
+ */
+RTDECL(int) RTPathGlob(const char *pszPattern, uint32_t fFlags, PPCRTPATHGLOBENTRY ppHead, uint32_t *pcResults);
+
+/** @name RTPATHGLOB_F_XXX - RTPathGlob flags
+ *  @{ */
+/** Case insensitive. */
+#define RTPATHGLOB_F_IGNORE_CASE        RT_BIT_32(0)
+/** Do not expand \${EnvOrSpecialVariable} in the pattern. */
+#define RTPATHGLOB_F_NO_VARIABLES       RT_BIT_32(1)
+/** Do not interpret a leading tilde as a home directory reference. */
+#define RTPATHGLOB_F_NO_TILDE           RT_BIT_32(2)
+/** Only return the first match. */
+#define RTPATHGLOB_F_FIRST_ONLY         RT_BIT_32(3)
+/** Only match directories (implied if pattern ends with slash). */
+#define RTPATHGLOB_F_ONLY_DIRS          RT_BIT_32(4)
+/** Do not match directories.  (Can't be used with RTPATHGLOB_F_ONLY_DIRS or
+ * patterns containing a trailing slash.) */
+#define RTPATHGLOB_F_NO_DIRS            RT_BIT_32(5)
+/** Disables the '**' wildcard pattern for matching zero or more subdirs. */
+#define RTPATHGLOB_F_NO_STARSTAR        RT_BIT_32(6)
+/** Mask of valid flags. */
+#define RTPATHGLOB_F_MASK               UINT32_C(0x0000007f)
+/** @} */
+
+/**
+ * Frees the results produced by RTPathGlob.
+ *
+ * @param   pHead           What RTPathGlob returned.  NULL ignored.
+ */
+RTDECL(void) RTPathGlobFree(PCRTPATHGLOBENTRY pHead);
+
+
 /**
  * Query information about a file system object.
  *
@@ -1383,6 +1479,30 @@ RTR3DECL(int) RTPathUnlink(const char *pszPath, uint32_t fUnlink);
  *                              reordered, so the memory must be writable.)
  */
 RTDECL(RTEXITCODE) RTPathRmCmd(unsigned cArgs, char **papszArgs);
+
+# ifdef RT_OS_WINDOWS
+
+/**
+ * Converts the given UTF-8 path into a native windows path.
+ *
+ * @returns IPRT status code.
+ * @param   ppwszPath           Where to return the path.  This will always be
+ *                              set to NULL on failure.  Use RTPathWinFree to
+ *                              free it when done.
+ * @param   pszPath             The UTF-8 path to convert.
+ * @param   fFlags              MBZ, reserved for future hacks.
+ * @sa      RTPathWinFree, RTNtPathFromWinUtf8, RTNtPathRelativeFromUtf8.
+ */
+RTDECL(int)  RTPathWinFromUtf8(PRTUTF16 *ppwszPath, const char *pszPath, uint32_t fFlags);
+
+/**
+ * Frees a native windows path returned by RTPathWinFromUtf8
+ *
+ * @param   pwszPath            The path to free.  NULL is ignored.
+ */
+RTDECL(void) RTPathWinFree(PRTUTF16 pwszPath);
+
+# endif /* RT_OS_WINDOWS */
 
 #endif /* IN_RING3 */
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,15 +17,16 @@
 
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_MAIN
 
 #include <iprt/err.h>
 #include <list>
 #include <sys/ioctl.h>
-#include <net/if.h>
+#include <sys/socket.h>
+#include <linux/wireless.h>
 #include <net/if_arp.h>
 #include <net/route.h>
 #include <netinet/in.h>
@@ -44,9 +45,10 @@
  *
  * @returns VBox status code.
  *
- * @param   pszName     The buffer of IFNAMSIZ+1 length where to put the name.
+ * @param   pszName     The buffer where to put the name.
+ * @param   cbName      Size of of the destination buffer.
  */
-static int getDefaultIfaceName(char *pszName)
+static int getDefaultIfaceName(char *pszName, size_t cbName)
 {
     FILE *fp = fopen("/proc/net/route", "r");
     char szBuf[1024];
@@ -70,9 +72,8 @@ static int getDefaultIfaceName(char *pszName)
             if (uAddr == 0 && uMask == 0)
             {
                 fclose(fp);
-                strncpy(pszName, szIfName, 16);
-                pszName[16] = 0;
-                return VINF_SUCCESS;
+                szIfName[sizeof(szIfName) - 1] = '\0';
+                return RTStrCopy(pszName, cbName, szIfName);
             }
         }
         fclose(fp);
@@ -144,8 +145,8 @@ static int getInterfaceInfo(int iSocket, const char *pszName, PNETIFINFO pInfo)
         RTUUID uuid;
         RTUuidClear(&uuid);
         memcpy(&uuid, Req.ifr_name, RT_MIN(sizeof(Req.ifr_name), sizeof(uuid)));
-        uuid.Gen.u8ClockSeqHiAndReserved = (uuid.Gen.u8ClockSeqHiAndReserved & 0x3f) | 0x80;
-        uuid.Gen.u16TimeHiAndVersion = (uuid.Gen.u16TimeHiAndVersion & 0x0fff) | 0x4000;
+        uuid.Gen.u8ClockSeqHiAndReserved = (uint8_t)((uuid.Gen.u8ClockSeqHiAndReserved & 0x3f) | 0x80);
+        uuid.Gen.u16TimeHiAndVersion = (uint16_t)((uuid.Gen.u16TimeHiAndVersion & 0x0fff) | 0x4000);
         memcpy(uuid.Gen.au8Node, &Req.ifr_hwaddr.sa_data, sizeof(uuid.Gen.au8Node));
         pInfo->Uuid = uuid;
 
@@ -163,6 +164,11 @@ static int getInterfaceInfo(int iSocket, const char *pszName, PNETIFINFO pInfo)
 
         if (ioctl(iSocket, SIOCGIFFLAGS, &Req) >= 0)
             pInfo->enmStatus = Req.ifr_flags & IFF_UP ? NETIF_S_UP : NETIF_S_DOWN;
+
+        struct iwreq WRq;
+        RT_ZERO(WRq);
+        RTStrCopy(WRq.ifr_name, sizeof(WRq.ifr_name), pszName);
+        pInfo->fWireless = ioctl(iSocket, SIOCGIWNAME, &WRq) >= 0;
 
         FILE *fp = fopen("/proc/net/if_inet6", "r");
         if (fp)
@@ -193,7 +199,7 @@ static int getInterfaceInfo(int iSocket, const char *pszName, PNETIFINFO pInfo)
                     pInfo->IPv6Address.au32[1] = htonl(IPv6Address.au32[1]);
                     pInfo->IPv6Address.au32[2] = htonl(IPv6Address.au32[2]);
                     pInfo->IPv6Address.au32[3] = htonl(IPv6Address.au32[3]);
-                    ASMBitSetRange(&pInfo->IPv6NetMask, 0, uLength);
+                    RTNetPrefixToMaskIPv6(uLength, &pInfo->IPv6NetMask);
                 }
             }
             fclose(fp);
@@ -213,11 +219,11 @@ static int getInterfaceInfo(int iSocket, const char *pszName, PNETIFINFO pInfo)
 int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
 {
     char szDefaultIface[256];
-    int rc = getDefaultIfaceName(szDefaultIface);
+    int rc = getDefaultIfaceName(szDefaultIface, sizeof(szDefaultIface));
     if (RT_FAILURE(rc))
     {
         Log(("NetIfList: Failed to find default interface.\n"));
-        szDefaultIface[0] = 0;
+        szDefaultIface[0] = '\0';
     }
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock >= 0)
@@ -232,8 +238,8 @@ int NetIfList(std::list <ComObjPtr<HostNetworkInterface> > &list)
                 if (!pszEndOfName)
                     continue;
                 *pszEndOfName = 0;
-                int iFirstNonWS = strspn(buf, " ");
-                char *pszName = buf+iFirstNonWS;
+                size_t iFirstNonWS = strspn(buf, " ");
+                char *pszName = buf + iFirstNonWS;
                 NETIFINFO Info;
                 RT_ZERO(Info);
                 rc = getInterfaceInfo(sock, pszName, &Info);

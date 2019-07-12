@@ -1,10 +1,10 @@
-/* $Id */
+/* $Id: tstVBoxGINA.cpp $ */
 /** @file
  * tstVBoxGINA.cpp - Simple testcase for invoking VBoxGINA.dll.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,10 +16,10 @@
  */
 
 #define UNICODE
-#include <windows.h>
+#include <iprt/win/windows.h>
 #include <stdio.h>
 
-int main(int argc, TCHAR* argv[])
+int main()
 {
     DWORD dwErr;
 
@@ -29,7 +29,7 @@ int main(int argc, TCHAR* argv[])
      *   release version in "C:\Windows\system32".
      */
 
-    HMODULE hMod = LoadLibrary(L"VBoxGINA.dll");
+    HMODULE hMod = LoadLibraryW(L"VBoxGINA.dll");
     if (!hMod)
     {
         dwErr = GetLastError();
@@ -58,3 +58,4 @@ int main(int argc, TCHAR* argv[])
 
     return dwErr == ERROR_SUCCESS ? 0 : 1;
 }
+

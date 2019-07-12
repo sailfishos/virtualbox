@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_CSAM
 #include <VBox/vmm/cpum.h>
 #include <VBox/vmm/stam.h>
@@ -28,6 +28,9 @@
 #include <VBox/vmm/em.h>
 #include <VBox/vmm/hm.h>
 #include <VBox/vmm/mm.h>
+#ifdef VBOX_WITH_REM
+# include <VBox/vmm/rem.h>
+#endif
 #include <VBox/sup.h>
 #include <VBox/vmm/mm.h>
 #include <VBox/param.h>
@@ -44,11 +47,118 @@
 #include <iprt/asm.h>
 #include <iprt/string.h>
 
+#ifdef IN_RING0
+# error "IN_RING3 & IN_RC only!"
+#endif
+
+
+/**
+ * @callback_method_impl{FNPGMVIRTHANDLER,
+ * Access handler callback for virtual access handler ranges.}
+ */
+PGM_ALL_CB2_DECL(VBOXSTRICTRC)
+csamCodePageWriteHandler(PVM pVM, PVMCPU pVCpu, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf,
+                         PGMACCESSTYPE enmAccessType, PGMACCESSORIGIN enmOrigin, void *pvUser)
+{
+    Log(("csamCodePageWriteHandler: write to %RGv LB %zu\n", GCPtr, cbBuf));
+    Assert(enmAccessType == PGMACCESSTYPE_WRITE); NOREF(enmAccessType);
+    Assert(VMCPU_IS_EMT(pVCpu));
+    RT_NOREF_PV(pvUser);
+    RT_NOREF_PV(enmOrigin);
+
+    /*
+     * Check if it's a dummy write that doesn't change anything.
+     */
+    if (   PAGE_ADDRESS(pvPtr) == PAGE_ADDRESS((uintptr_t)pvPtr + cbBuf - 1)
+        && !memcmp(pvPtr, pvBuf, cbBuf))
+    {
+        Log(("csamCodePageWriteHandler: dummy write -> ignore\n"));
+        return VINF_PGM_HANDLER_DO_DEFAULT;
+    }
+
+#ifdef IN_RING3
+    /*
+     * Ring-3: Do proper handling.
+     */
+    int rc = PATMR3PatchWrite(pVM, GCPtr, (uint32_t)cbBuf);
+    AssertRC(rc);
+    RT_NOREF_PV(pVCpu);
+    return VINF_PGM_HANDLER_DO_DEFAULT;
+
+#else
+    /*
+     * Raw-mode: Try avoid needing to go to ring-3 (same as csamRCCodePageWritePfHandler).
+     */
+    uint32_t     const cpl            = CPUMGetGuestCPL(pVCpu);
+    bool         const fPatchCode     = PATMIsPatchGCAddr(pVM, CPUMGetGuestRIP(pVCpu));
+    PPATMGCSTATE       pPATMGCState   = PATMGetGCState(pVM);
+
+    Assert(pVM->csam.s.cDirtyPages < CSAM_MAX_DIRTY_PAGES);
+    Assert(pPATMGCState);
+    Assert(pPATMGCState->fPIF || fPatchCode);
+
+# ifdef VBOX_WITH_REM
+    /* Flush the recompilers translation block cache as the guest seems to be modifying instructions. */
+    /** @todo a bit overkill?? */
+    REMFlushTBs(pVM);
+# endif
+
+    /*
+     * When patch code is executing instructions that must complete, then we
+     * must *never* interrupt it.
+     */
+    if (!pPATMGCState->fPIF && fPatchCode)
+    {
+        Log(("csamRCCodePageWriteHandler: fPIF=0 -> stack fault in patch generated code at %08RX32!\n", CPUMGetGuestRIP(pVCpu)));
+        return VINF_PGM_HANDLER_DO_DEFAULT;
+    }
+
+    Log(("csamRCCodePageWriteHandler: code page write at %RGv (cpl=%d)\n", GCPtr, cpl));
+
+    /*
+     * If user code is modifying one of our monitored pages, then we can safely
+     * write to it as it's no longer being used for supervisor code.
+     */
+    if (cpl != 3)
+    {
+        VBOXSTRICTRC rcStrict = PATMRCHandleWriteToPatchPage(pVM, NULL /* pRegFrame = no interpret */, (RTRCPTR)GCPtr, cbBuf);
+        if (   rcStrict == VINF_PGM_HANDLER_DO_DEFAULT
+            || rcStrict == VINF_SUCCESS)
+            return rcStrict;
+        if (rcStrict == VINF_EM_RAW_EMULATE_INSTR)
+        {
+            STAM_COUNTER_INC(&pVM->csam.s.StatDangerousWrite);
+            return VINF_EM_RAW_EMULATE_INSTR;
+        }
+        Assert(rcStrict == VERR_PATCH_NOT_FOUND);
+    }
+
+    /*
+     * Schedule ring-3 activity.
+     * Note that GCPtr might be a different address in case of aliases.  So,
+     * take down both alternatives.
+     */
+    VMCPU_FF_SET(pVCpu, VMCPU_FF_CSAM_PENDING_ACTION);
+    pVM->csam.s.pvDirtyBasePage[pVM->csam.s.cDirtyPages]  = (RTRCPTR)GCPtr;
+    pVM->csam.s.pvDirtyFaultPage[pVM->csam.s.cDirtyPages] = (RTRCPTR)GCPtr;
+    if (++pVM->csam.s.cDirtyPages == CSAM_MAX_DIRTY_PAGES)
+        return VINF_CSAM_PENDING_ACTION;
+
+    /*
+     * Continue with the write. The VM_FF_CSAM_FLUSH_DIRTY_PAGE handler will reset it to readonly again.
+     */
+    Log(("csamRCCodePageWriteHandler: enabled r/w for page %RGv (%RGv)\n", GCPtr, GCPtr));
+    STAM_COUNTER_INC(&pVM->csam.s.StatCodePageModified);
+    return VINF_PGM_HANDLER_DO_DEFAULT;
+#endif
+}
+
+
 /**
  * Check if this page needs to be analysed by CSAM
  *
  * @returns VBox status code
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pvFault     Fault address
  */
 VMM_INT_DECL(int) CSAMExecFault(PVM pVM, RTRCPTR pvFault)
@@ -76,7 +186,7 @@ VMM_INT_DECL(int) CSAMExecFault(PVM pVM, RTRCPTR pvFault)
  * Check if this page was previously scanned by CSAM
  *
  * @returns true -> scanned, false -> not scanned
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPage       GC page address
  */
 VMM_INT_DECL(bool) CSAMIsPageScanned(PVM pVM, RTRCPTR pPage)
@@ -103,7 +213,7 @@ VMM_INT_DECL(bool) CSAMIsPageScanned(PVM pVM, RTRCPTR pPage)
  * @note: we always mark it as scanned, even if we haven't completely done so
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pPage       GC page address (not necessarily aligned)
  * @param   fScanned    Mark as scanned or not scanned
  *
@@ -175,7 +285,7 @@ VMM_INT_DECL(int) CSAMMarkPage(PVM pVM, RTRCUINTPTR pPage, bool fScanned)
  * @returns true if the page should be marked not present because
  *          CSAM want need to scan it.
  * @returns false if the page was already scanned.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtr       GC pointer of page
  */
 VMM_INT_DECL(bool) CSAMDoesPageNeedScanning(PVM pVM, RTRCUINTPTR GCPtr)
@@ -199,7 +309,7 @@ VMM_INT_DECL(bool) CSAMDoesPageNeedScanning(PVM pVM, RTRCUINTPTR GCPtr)
  * Remember a possible code page for later inspection
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtr       GC pointer of page
  */
 VMM_INT_DECL(void) CSAMMarkPossibleCodePage(PVM pVM, RTRCPTR GCPtr)
@@ -218,7 +328,7 @@ VMM_INT_DECL(void) CSAMMarkPossibleCodePage(PVM pVM, RTRCPTR GCPtr)
  * Turn on code scanning
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMM_INT_DECL(int) CSAMEnableScanning(PVM pVM)
 {
@@ -231,7 +341,7 @@ VMM_INT_DECL(int) CSAMEnableScanning(PVM pVM)
  * Turn off code scanning
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMM_INT_DECL(int) CSAMDisableScanning(PVM pVM)
 {
@@ -248,7 +358,7 @@ VMM_INT_DECL(int) CSAMDisableScanning(PVM pVM)
  * tree lookup is likely to be more expensive. (as it would also have to be offset based)
  *
  * @returns boolean
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtr       GC pointer of page table entry
  */
 VMM_INT_DECL(bool) CSAMIsKnownDangerousInstr(PVM pVM, RTRCUINTPTR GCPtr)

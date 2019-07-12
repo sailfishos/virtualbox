@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,7 +26,9 @@
 #ifndef ___VBox_com_array_h
 #define ___VBox_com_array_h
 
-/** @defgroup   grp_COM_arrays    COM/XPCOM Arrays
+
+/** @defgroup   grp_com_arrays    COM/XPCOM Arrays
+ * @ingroup grp_com
  * @{
  *
  * The COM/XPCOM array support layer provides a cross-platform way to pass
@@ -155,8 +157,9 @@
  *
  * Arrays of interface pointers are also supported but they require to use a
  * special SafeArray implementation, com::SafeIfacePointer, which takes the
- * interface class name as a template argument (e.g. com::SafeIfacePointer
- * <IUnknown>). This implementation functions identically to com::SafeArray.
+ * interface class name as a template argument (e.g.
+ * com::SafeIfacePointer\<IUnknown\>). This implementation functions
+ * identically to com::SafeArray.
  */
 
 #ifdef VBOX_WITH_XPCOM
@@ -164,6 +167,19 @@
 #endif
 
 #include "VBox/com/defs.h"
+
+#if RT_GNUC_PREREQ(4, 6) || (defined(_MSC_VER) && (_MSC_VER >= 1600))
+/** @def VBOX_WITH_TYPE_TRAITS
+ * Type traits are a C++ 11 feature, so not available everywhere (yet).
+ * Only GCC 4.6 or newer and MSVC++ 16.0 (Visual Studio 2010) or newer.
+ */
+# define VBOX_WITH_TYPE_TRAITS
+#endif
+
+#ifdef VBOX_WITH_TYPE_TRAITS
+# include <type_traits>
+#endif
+
 #include "VBox/com/ptr.h"
 #include "VBox/com/assert.h"
 #include "iprt/cpp/list.h"
@@ -178,7 +194,7 @@
  * @param aArray    com::SafeArray instance to pass as an input parameter.
  */
 #define ComSafeArrayAsInParam(aArray)   \
-    (aArray).size(), (aArray).__asInParam_Arr((aArray).raw())
+    (PRUint32)(aArray).size(), (aArray).__asInParam_Arr((aArray).raw())
 
 /**
  * Wraps the given com::SafeArray instance to generate an expression that is
@@ -393,10 +409,32 @@ protected:
 
     static VARTYPE VarType()
     {
+#ifdef VBOX_WITH_TYPE_TRAITS
+        if (    std::is_integral<T>::value
+            && !std::is_signed<T>::value)
+        {
+            if (sizeof(T) % 8 == 0) return VT_UI8;
+            if (sizeof(T) % 4 == 0) return VT_UI4;
+            if (sizeof(T) % 2 == 0) return VT_UI2;
+            return VT_UI1;
+        }
+#endif
         if (sizeof(T) % 8 == 0) return VT_I8;
         if (sizeof(T) % 4 == 0) return VT_I4;
         if (sizeof(T) % 2 == 0) return VT_I2;
         return VT_I1;
+    }
+
+    /*
+     * Fallback method in case type traits (VBOX_WITH_TYPE_TRAITS)
+     * are not available. Always returns unsigned types.
+     */
+    static VARTYPE VarTypeUnsigned()
+    {
+        if (sizeof(T) % 8 == 0) return VT_UI8;
+        if (sizeof(T) % 4 == 0) return VT_UI4;
+        if (sizeof(T) % 2 == 0) return VT_UI2;
+        return VT_UI1;
     }
 
     static ULONG VarCount(size_t aSize)
@@ -624,10 +662,18 @@ public:
             VARTYPE vt;
             HRESULT rc = SafeArrayGetVartype(arg, &vt);
             AssertComRCReturnVoid(rc);
-            AssertMsgReturnVoid(vt == VarType(),
+# ifndef VBOX_WITH_TYPE_TRAITS
+            AssertMsgReturnVoid(
+                                   vt == VarType()
+                                || vt == VarTypeUnsigned(),
+                                ("Expected vartype %d or %d, got %d.\n",
+                                 VarType(), VarTypeUnsigned(), vt));
+# else /* !VBOX_WITH_TYPE_TRAITS */
+            AssertMsgReturnVoid(
+                                   vt == VarType(),
                                 ("Expected vartype %d, got %d.\n",
                                  VarType(), vt));
-
+# endif
             rc = SafeArrayAccessData(arg, (void HUGEP **)&m.raw);
             AssertComRCReturnVoid(rc);
 
@@ -644,7 +690,7 @@ public:
      *
      * @param aCntr Container object to copy.
      *
-     * @param C     Standard C++ container template class (normally deduced from
+     * @tparam C    Standard C++ container template class (normally deduced from
      *              @c aCntr).
      */
     template<template<typename, typename> class C, class A>
@@ -669,11 +715,11 @@ public:
      *
      * @param aMap  Map object to copy.
      *
-     * @param C     Standard C++ map template class (normally deduced from
-     *              @c aCntr).
-     * @param L     Standard C++ compare class (deduced from @c aCntr).
-     * @param A     Standard C++ allocator class (deduced from @c aCntr).
-     * @param K     Map key class (deduced from @c aCntr).
+     * @tparam C    Standard C++ map template class (normally deduced from
+     *              @a aMap).
+     * @tparam L    Standard C++ compare class (deduced from @a aMap).
+     * @tparam A    Standard C++ allocator class (deduced from @a aMap).
+     * @tparam K    Map key class (deduced from @a aMap).
      */
     template<template<typename, typename, typename, typename>
               class C, class L, class A, class K>
@@ -786,9 +832,9 @@ public:
      * This method is handy for operations like
      * <tt>Bstr("foo").detachTo(array.appendedRaw());</tt>. Don't use it as
      * an l-value (<tt>array.appendedRaw() = SysAllocString(L"tralala");</tt>)
-     * since this doesn't check for a NULL condition; use #resize() and
-     * #setRawAt() instead. If you need to assign a copy of the existing value
-     * instead of transferring the ownership, look at #push_back().
+     * since this doesn't check for a NULL condition; use #resize() instead. If
+     * you need to assign a copy of the existing value instead of transferring
+     * the ownership, look at #push_back().
      *
      * @return          Raw pointer to the added element or NULL if no memory.
      */
@@ -832,7 +878,8 @@ public:
                 SafeArray::Init(m.arr[i]);
         }
 
-        m.size = aNewSize;
+        /** @todo Fix this! */
+        m.size = (PRUint32)aNewSize;
 #else
         /* nothing to do here, SafeArrayCreate() has performed element
          * initialization */
@@ -908,8 +955,8 @@ public:
      */
     const T operator[] (size_t aIdx) const
     {
-        AssertReturn(m.arr != NULL,  *((T *)NULL));
-        AssertReturn(aIdx < size(), *((T *)NULL));
+        AssertReturn(m.arr != NULL,  *((T *)1));
+        AssertReturn(aIdx < size(), *((T *)1));
 #ifdef VBOX_WITH_XPCOM
         return m.arr[aIdx];
 #else
@@ -1048,7 +1095,7 @@ public:
 
 protected:
 
-    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(SafeArray)
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(SafeArray);
 
     /**
      * Ensures that the array is big enough to contain aNewSize elements.
@@ -1099,7 +1146,8 @@ protected:
                     for (size_t i = aNewSize; i < m.size; ++ i)
                         SafeArray::Uninit(m.arr[i]);
 
-                    m.size = aNewSize;
+                    /** @todo Fix this! */
+                    m.size = (PRUint32)aNewSize;
                 }
 
                 /* Copy the old contents. */
@@ -1118,11 +1166,13 @@ protected:
                 for (size_t i = aNewSize; i < m.size; ++ i)
                     SafeArray::Uninit(m.arr[i]);
 
-                m.size = aNewSize;
+                /** @todo Fix this! */
+                m.size = (PRUint32)aNewSize;
             }
         }
 
-        m.capacity = newCapacity;
+        /** @todo Fix this! */
+        m.capacity = (PRUint32)newCapacity;
 
 #else
 
@@ -1409,8 +1459,8 @@ public:
      */
     const nsID &operator[] (size_t aIdx) const
     {
-        AssertReturn(m.arr != NULL,  **((const nsID * *)NULL));
-        AssertReturn(aIdx < size(), **((const nsID * *)NULL));
+        AssertReturn(m.arr != NULL,  **((const nsID * *)1));
+        AssertReturn(aIdx < size(), **((const nsID * *)1));
         return *m.arr[aIdx];
     }
 
@@ -1489,7 +1539,7 @@ protected:
     static SAFEARRAY *CreateSafeArray(VARTYPE aVarType, SAFEARRAYBOUND *aBound)
     {
         NOREF(aVarType);
-        return SafeArrayCreateEx(VT_DISPATCH, 1, aBound, (PVOID)&_ATL_IIDOF(I));
+        return SafeArrayCreateEx(VT_DISPATCH, 1, aBound, (PVOID)&COM_IIDOF(I));
     }
 };
 
@@ -1565,14 +1615,14 @@ public:
             HRESULT rc = SafeArrayGetVartype(arg, &vt);
             AssertComRCReturnVoid(rc);
             AssertMsgReturnVoid(vt == VT_UNKNOWN || vt == VT_DISPATCH,
-                                ("Expected vartype VT_UNKNOWN, got %d.\n",
-                                 VarType(), vt));
+                                ("Expected vartype VT_UNKNOWN or VT_DISPATCH, got %d.\n",
+                                 vt));
             GUID guid;
             rc = SafeArrayGetIID(arg, &guid);
             AssertComRCReturnVoid(rc);
-            AssertMsgReturnVoid(InlineIsEqualGUID(_ATL_IIDOF(I), guid),
+            AssertMsgReturnVoid(InlineIsEqualGUID(COM_IIDOF(I), guid),
                                 ("Expected IID {%RTuuid}, got {%RTuuid}.\n",
-                                 &_ATL_IIDOF(I), &guid));
+                                 &COM_IIDOF(I), &guid));
 
             rc = SafeArrayAccessData(arg, (void HUGEP **)&m.raw);
             AssertComRCReturnVoid(rc);
@@ -1586,14 +1636,14 @@ public:
 
     /**
      * Creates a deep copy of the given standard C++ container that stores
-     * interface pointers as objects of the ComPtr<I> class.
+     * interface pointers as objects of the ComPtr\<I\> class.
      *
      * @param aCntr Container object to copy.
      *
-     * @param C     Standard C++ container template class (normally deduced from
+     * @tparam C    Standard C++ container template class (normally deduced from
      *              @c aCntr).
-     * @param A     Standard C++ allocator class (deduced from @c aCntr).
-     * @param OI    Argument to the ComPtr template (deduced from @c aCntr).
+     * @tparam A    Standard C++ allocator class (deduced from @c aCntr).
+     * @tparam OI   Argument to the ComPtr template (deduced from @c aCntr).
      */
     template<template<typename, typename> class C, class A, class OI>
     SafeIfaceArray(const C<ComPtr<OI>, A> & aCntr)
@@ -1607,7 +1657,7 @@ public:
         for (typename List::const_iterator it = aCntr.begin();
              it != aCntr.end(); ++ it, ++ i)
 #ifdef VBOX_WITH_XPCOM
-            Copy(*it, Base::m.arr[i]);
+            this->Copy(*it, Base::m.arr[i]);
 #else
             Copy(*it, Base::m.raw[i]);
 #endif
@@ -1615,14 +1665,14 @@ public:
 
     /**
      * Creates a deep copy of the given standard C++ container that stores
-     * interface pointers as objects of the ComObjPtr<I> class.
+     * interface pointers as objects of the ComObjPtr\<I\> class.
      *
      * @param aCntr Container object to copy.
      *
-     * @param C     Standard C++ container template class (normally deduced from
+     * @tparam C    Standard C++ container template class (normally deduced from
      *              @c aCntr).
-     * @param A     Standard C++ allocator class (deduced from @c aCntr).
-     * @param OI    Argument to the ComObjPtr template (deduced from @c aCntr).
+     * @tparam A    Standard C++ allocator class (deduced from @c aCntr).
+     * @tparam OI   Argument to the ComObjPtr template (deduced from @c aCntr).
      */
     template<template<typename, typename> class C, class A, class OI>
     SafeIfaceArray(const C<ComObjPtr<OI>, A> & aCntr)
@@ -1644,16 +1694,16 @@ public:
 
     /**
      * Creates a deep copy of the given standard C++ map whose values are
-     * interface pointers stored as objects of the ComPtr<I> class.
+     * interface pointers stored as objects of the ComPtr\<I\> class.
      *
      * @param aMap  Map object to copy.
      *
-     * @param C     Standard C++ map template class (normally deduced from
+     * @tparam C    Standard C++ map template class (normally deduced from
      *              @c aCntr).
-     * @param L     Standard C++ compare class (deduced from @c aCntr).
-     * @param A     Standard C++ allocator class (deduced from @c aCntr).
-     * @param K     Map key class (deduced from @c aCntr).
-     * @param OI    Argument to the ComPtr template (deduced from @c aCntr).
+     * @tparam L    Standard C++ compare class (deduced from @c aCntr).
+     * @tparam A    Standard C++ allocator class (deduced from @c aCntr).
+     * @tparam K    Map key class (deduced from @c aCntr).
+     * @tparam OI   Argument to the ComPtr template (deduced from @c aCntr).
      */
     template<template<typename, typename, typename, typename>
               class C, class L, class A, class K, class OI>
@@ -1676,16 +1726,16 @@ public:
 
     /**
      * Creates a deep copy of the given standard C++ map whose values are
-     * interface pointers stored as objects of the ComObjPtr<I> class.
+     * interface pointers stored as objects of the ComObjPtr\<I\> class.
      *
      * @param aMap  Map object to copy.
      *
-     * @param C     Standard C++ map template class (normally deduced from
+     * @tparam C    Standard C++ map template class (normally deduced from
      *              @c aCntr).
-     * @param L     Standard C++ compare class (deduced from @c aCntr).
-     * @param A     Standard C++ allocator class (deduced from @c aCntr).
-     * @param K     Map key class (deduced from @c aCntr).
-     * @param OI    Argument to the ComObjPtr template (deduced from @c aCntr).
+     * @tparam L    Standard C++ compare class (deduced from @c aCntr).
+     * @tparam A    Standard C++ allocator class (deduced from @c aCntr).
+     * @tparam K    Map key class (deduced from @c aCntr).
+     * @tparam OI   Argument to the ComObjPtr template (deduced from @c aCntr).
      */
     template<template<typename, typename, typename, typename>
               class C, class L, class A, class K, class OI>

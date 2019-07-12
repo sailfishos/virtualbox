@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -43,6 +44,7 @@
 
 RTDECL(int) RTAsn1DynType_Init(PRTASN1DYNTYPE pThis, PCRTASN1ALLOCATORVTABLE pAllocator)
 {
+    RT_NOREF_PV(pAllocator);
     RT_ZERO(*pThis);
     pThis->enmType = RTASN1TYPE_NOT_PRESENT;
     return VINF_SUCCESS;

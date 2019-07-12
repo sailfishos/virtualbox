@@ -1,12 +1,10 @@
 /* $Id: UIAbstractDockIconPreview.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Abstract class for the dock icon preview
+ * VBox Qt GUI - Abstract class for the dock icon preview.
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,7 +33,7 @@ class UIAbstractDockIconPreview
 {
 public:
     UIAbstractDockIconPreview(UISession *pSession, const QPixmap& overlayImage);
-    virtual ~UIAbstractDockIconPreview() {};
+    virtual ~UIAbstractDockIconPreview() {}
 
     virtual void updateDockOverlay() = 0;
     virtual void updateDockPreview(CGImageRef VMImage) = 0;
@@ -50,7 +48,6 @@ public:
     UIAbstractDockIconPreviewHelper(UISession *pSession, const QPixmap& overlayImage);
     virtual ~UIAbstractDockIconPreviewHelper();
     void initPreviewImages();
-    inline CGImageRef stateImage() const;
     void drawOverlayIcons(CGContextRef context);
 
     void* currentPreviewWindowId() const;
@@ -67,10 +64,6 @@ public:
     CGImageRef m_overlayImage;
     CGImageRef m_dockMonitor;
     CGImageRef m_dockMonitorGlossy;
-
-    CGImageRef m_statePaused;
-    CGImageRef m_stateSaving;
-    CGImageRef m_stateRestoring;
 
     CGRect m_updateRect;
     CGRect m_monitorRect;

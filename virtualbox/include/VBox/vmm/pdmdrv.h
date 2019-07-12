@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -174,10 +174,9 @@ typedef FNPDMDRVRESUME *PFNPDMDRVRESUME;
 /**
  * Power Off notification.
  *
- * This is only called when the VMR3PowerOff call is made on a running VM. This
- * means that there is no notification if the VM was suspended before being
- * powered of.  There will also be no callback when hot plugging devices or when
- * replumbing the driver stack.
+ * This is always called when VMR3PowerOff is called.
+ * There will be no callback when hot plugging devices or when replumbing the driver
+ * stack.
  *
  * @param   pDrvIns     The driver instance data.
  */
@@ -188,7 +187,7 @@ typedef FNPDMDRVPOWEROFF *PFNPDMDRVPOWEROFF;
 /**
  * Attach command.
  *
- * This is called to let the drive attach to a driver at runtime.  This is not
+ * This is called to let the driver attach to a driver at runtime.  This is not
  * called during VM construction, the driver constructor have to do this by
  * calling PDMDrvHlpAttach.
  *
@@ -413,22 +412,22 @@ typedef struct PDMDRVINS
 #define PDM_DRVINS_VERSION                      PDM_VERSION_MAKE(0xf0fe, 2, 0)
 
 /** Converts a pointer to the PDMDRVINS::IBase to a pointer to PDMDRVINS. */
-#define PDMIBASE_2_PDMDRV(pInterface)   ( (PPDMDRVINS)((char *)(pInterface) - RT_OFFSETOF(PDMDRVINS, IBase)) )
+#define PDMIBASE_2_PDMDRV(pInterface)   ( (PPDMDRVINS)((char *)(pInterface) - RT_UOFFSETOF(PDMDRVINS, IBase)) )
 
 /** @def PDMDRVINS_2_RCPTR
  * Converts a PDM Driver instance pointer a RC PDM Driver instance pointer.
  */
-#define PDMDRVINS_2_RCPTR(pDrvIns)      ( (RCPTRTYPE(PPDMDRVINS))((RTGCUINTPTR)(pDrvIns)->pvInstanceDataRC - RT_OFFSETOF(PDMDRVINS, achInstanceData)) )
+#define PDMDRVINS_2_RCPTR(pDrvIns)      ( (RCPTRTYPE(PPDMDRVINS))((RTRCUINTPTR)(pDrvIns)->pvInstanceDataRC - (RTRCUINTPTR)RT_UOFFSETOF(PDMDRVINS, achInstanceData)) )
 
 /** @def PDMDRVINS_2_R3PTR
  * Converts a PDM Driver instance pointer a R3 PDM Driver instance pointer.
  */
-#define PDMDRVINS_2_R3PTR(pDrvIns)      ( (R3PTRTYPE(PPDMDRVINS))((RTHCUINTPTR)(pDrvIns)->pvInstanceDataR3 - RT_OFFSETOF(PDMDRVINS, achInstanceData)) )
+#define PDMDRVINS_2_R3PTR(pDrvIns)      ( (R3PTRTYPE(PPDMDRVINS))((RTHCUINTPTR)(pDrvIns)->pvInstanceDataR3 - RT_UOFFSETOF(PDMDRVINS, achInstanceData)) )
 
 /** @def PDMDRVINS_2_R0PTR
  * Converts a PDM Driver instance pointer a R0 PDM Driver instance pointer.
  */
-#define PDMDRVINS_2_R0PTR(pDrvIns)      ( (R0PTRTYPE(PPDMDRVINS))((RTR0UINTPTR)(pDrvIns)->pvInstanceDataR0 - RT_OFFSETOF(PDMDRVINS, achInstanceData)) )
+#define PDMDRVINS_2_R0PTR(pDrvIns)      ( (R0PTRTYPE(PPDMDRVINS))((RTR0UINTPTR)(pDrvIns)->pvInstanceDataR0 - RT_UOFFSETOF(PDMDRVINS, achInstanceData)) )
 
 
 
@@ -464,9 +463,9 @@ typedef struct PDMDRVINS
     do \
     { \
         PPDMDRVINS pDrvInsTypeCheck = (pDrvIns); NOREF(pDrvInsTypeCheck); \
-        if (RT_UNLIKELY(   !PDM_VERSION_ARE_COMPATIBLE((pDrvIns)->u32Version, PDM_DRVINS_VERSION) \
-                        || !PDM_VERSION_ARE_COMPATIBLE((pDrvIns)->pHlpR3->u32Version, PDM_DRVHLPR3_VERSION)) ) \
-            return; \
+        if (RT_LIKELY(   PDM_VERSION_ARE_COMPATIBLE((pDrvIns)->u32Version, PDM_DRVINS_VERSION) \
+                      && PDM_VERSION_ARE_COMPATIBLE((pDrvIns)->pHlpR3->u32Version, PDM_DRVHLPR3_VERSION)) ) \
+        { /* likely */ } else return; \
     } while (0)
 
 /**
@@ -489,8 +488,8 @@ typedef struct PDMDRVINS
     { \
         int rcValCfg = CFGMR3ValidateConfig((pDrvIns)->pCfg, "/", pszValidValues, pszValidNodes, \
                                             (pDrvIns)->pReg->szName, (pDrvIns)->iInstance); \
-        if (RT_FAILURE(rcValCfg)) \
-            return rcValCfg; \
+        if (RT_SUCCESS(rcValCfg)) \
+        { /* likely */ } else return rcValCfg; \
     } while (0)
 
 
@@ -507,12 +506,13 @@ typedef struct PDMUSBHUBREG
      * Request the hub to attach of the specified device.
      *
      * @returns VBox status code.
-     * @param   pDrvIns     The hub instance.
-     * @param   pUsbIns     The device to attach.
-     * @param   piPort      Where to store the port number the device was attached to.
+     * @param   pDrvIns            The hub instance.
+     * @param   pUsbIns            The device to attach.
+     * @param   pszCaptureFilename Path to the file for USB traffic capturing, optional.
+     * @param   piPort             Where to store the port number the device was attached to.
      * @thread EMT.
      */
-    DECLR3CALLBACKMEMBER(int, pfnAttachDevice,(PPDMDRVINS pDrvIns, PPDMUSBINS pUsbIns, uint32_t *piPort));
+    DECLR3CALLBACKMEMBER(int, pfnAttachDevice,(PPDMDRVINS pDrvIns, PPDMUSBINS pUsbIns, const char *pszCaptureFilename, uint32_t *piPort));
 
     /**
      * Request the hub to detach of the specified device.
@@ -536,7 +536,7 @@ typedef struct PDMUSBHUBREG
 typedef const PDMUSBHUBREG *PCPDMUSBHUBREG;
 
 /** Current PDMUSBHUBREG version number. */
-#define PDM_USBHUBREG_VERSION                   PDM_VERSION_MAKE(0xf0fd, 1, 0)
+#define PDM_USBHUBREG_VERSION                   PDM_VERSION_MAKE(0xf0fd, 2, 0)
 
 
 /**
@@ -576,11 +576,12 @@ typedef struct PDMDRVHLPRC
      * @returns rc.
      * @param   pDrvIns         Driver instance.
      * @param   rc              VBox status code.
-     * @param   RT_SRC_POS_DECL Use RT_SRC_POS.
+     * @param   SRC_POS         Use RT_SRC_POS.
      * @param   pszFormat       Error message format string.
      * @param   ...             Error message arguments.
      */
-    DECLRCCALLBACKMEMBER(int, pfnVMSetError,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL, const char *pszFormat, ...));
+    DECLRCCALLBACKMEMBER(int, pfnVMSetError,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL,
+                                             const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(6, 7));
 
     /**
      * Set the VM error message
@@ -588,11 +589,12 @@ typedef struct PDMDRVHLPRC
      * @returns rc.
      * @param   pDrvIns         Driver instance.
      * @param   rc              VBox status code.
-     * @param   RT_SRC_POS_DECL Use RT_SRC_POS.
+     * @param   SRC_POS         Use RT_SRC_POS.
      * @param   pszFormat       Error message format string.
      * @param   va              Error message arguments.
      */
-    DECLRCCALLBACKMEMBER(int, pfnVMSetErrorV,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va));
+    DECLRCCALLBACKMEMBER(int, pfnVMSetErrorV,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL,
+                                              const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(6, 0));
 
     /**
      * Set the VM runtime error message
@@ -604,7 +606,8 @@ typedef struct PDMDRVHLPRC
      * @param   pszFormat       Error message format string.
      * @param   ...             Error message arguments.
      */
-    DECLRCCALLBACKMEMBER(int, pfnVMSetRuntimeError,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, ...));
+    DECLRCCALLBACKMEMBER(int, pfnVMSetRuntimeError,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId,
+                                                    const char *pszFormat, ...)  RT_IPRT_FORMAT_ATTR(4, 5));
 
     /**
      * Set the VM runtime error message
@@ -616,7 +619,8 @@ typedef struct PDMDRVHLPRC
      * @param   pszFormat       Error message format string.
      * @param   va              Error message arguments.
      */
-    DECLRCCALLBACKMEMBER(int, pfnVMSetRuntimeErrorV,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, va_list va));
+    DECLRCCALLBACKMEMBER(int, pfnVMSetRuntimeErrorV,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId,
+                                                     const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(4, 0));
 
     /**
      * Assert that the current thread is the emulation thread.
@@ -672,11 +676,12 @@ typedef struct PDMDRVHLPR0
      * @returns rc.
      * @param   pDrvIns         Driver instance.
      * @param   rc              VBox status code.
-     * @param   RT_SRC_POS_DECL Use RT_SRC_POS.
+     * @param   SRC_POS         Use RT_SRC_POS.
      * @param   pszFormat       Error message format string.
      * @param   ...             Error message arguments.
      */
-    DECLR0CALLBACKMEMBER(int, pfnVMSetError,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL, const char *pszFormat, ...));
+    DECLR0CALLBACKMEMBER(int, pfnVMSetError,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL,
+                                             const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(6, 7));
 
     /**
      * Set the VM error message
@@ -684,11 +689,12 @@ typedef struct PDMDRVHLPR0
      * @returns rc.
      * @param   pDrvIns         Driver instance.
      * @param   rc              VBox status code.
-     * @param   RT_SRC_POS_DECL Use RT_SRC_POS.
+     * @param   SRC_POS         Use RT_SRC_POS.
      * @param   pszFormat       Error message format string.
      * @param   va              Error message arguments.
      */
-    DECLR0CALLBACKMEMBER(int, pfnVMSetErrorV,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va));
+    DECLR0CALLBACKMEMBER(int, pfnVMSetErrorV,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL,
+                                              const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(6, 0));
 
     /**
      * Set the VM runtime error message
@@ -700,7 +706,8 @@ typedef struct PDMDRVHLPR0
      * @param   pszFormat       Error message format string.
      * @param   ...             Error message arguments.
      */
-    DECLR0CALLBACKMEMBER(int, pfnVMSetRuntimeError,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, ...));
+    DECLR0CALLBACKMEMBER(int, pfnVMSetRuntimeError,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId,
+                                                    const char *pszFormat, ...)  RT_IPRT_FORMAT_ATTR(4, 5));
 
     /**
      * Set the VM runtime error message
@@ -712,7 +719,8 @@ typedef struct PDMDRVHLPR0
      * @param   pszFormat       Error message format string.
      * @param   va              Error message arguments.
      */
-    DECLR0CALLBACKMEMBER(int, pfnVMSetRuntimeErrorV,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, va_list va));
+    DECLR0CALLBACKMEMBER(int, pfnVMSetRuntimeErrorV,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId,
+                                                     const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(4, 0));
 
     /**
      * Assert that the current thread is the emulation thread.
@@ -838,11 +846,12 @@ typedef struct PDMDRVHLPR3
      * @returns rc.
      * @param   pDrvIns         Driver instance.
      * @param   rc              VBox status code.
-     * @param   RT_SRC_POS_DECL Use RT_SRC_POS.
+     * @param   SRC_POS         Use RT_SRC_POS.
      * @param   pszFormat       Error message format string.
      * @param   ...             Error message arguments.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVMSetError,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL, const char *pszFormat, ...));
+    DECLR3CALLBACKMEMBER(int, pfnVMSetError,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL,
+                                             const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(6, 7));
 
     /**
      * Set the VM error message
@@ -850,11 +859,12 @@ typedef struct PDMDRVHLPR3
      * @returns rc.
      * @param   pDrvIns         Driver instance.
      * @param   rc              VBox status code.
-     * @param   RT_SRC_POS_DECL Use RT_SRC_POS.
+     * @param   SRC_POS         Use RT_SRC_POS.
      * @param   pszFormat       Error message format string.
      * @param   va              Error message arguments.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVMSetErrorV,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va));
+    DECLR3CALLBACKMEMBER(int, pfnVMSetErrorV,(PPDMDRVINS pDrvIns, int rc, RT_SRC_POS_DECL,
+                                              const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(6, 0));
 
     /**
      * Set the VM runtime error message
@@ -866,7 +876,8 @@ typedef struct PDMDRVHLPR3
      * @param   pszFormat       Error message format string.
      * @param   ...             Error message arguments.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVMSetRuntimeError,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, ...));
+    DECLR3CALLBACKMEMBER(int, pfnVMSetRuntimeError,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId,
+                                                    const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(4, 5));
 
     /**
      * Set the VM runtime error message
@@ -878,7 +889,8 @@ typedef struct PDMDRVHLPR3
      * @param   pszFormat       Error message format string.
      * @param   va              Error message arguments.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVMSetRuntimeErrorV,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, va_list va));
+    DECLR3CALLBACKMEMBER(int, pfnVMSetRuntimeErrorV,(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId,
+                                                     const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(4, 0));
 
     /**
      * Gets the VM state.
@@ -1047,7 +1059,8 @@ typedef struct PDMDRVHLPR3
      * @param   ...         Arguments to the format string.
      */
     DECLR3CALLBACKMEMBER(void, pfnSTAMRegisterF,(PPDMDRVINS pDrvIns, void *pvSample, STAMTYPE enmType, STAMVISIBILITY enmVisibility,
-                                                 STAMUNIT enmUnit, const char *pszDesc, const char *pszName, ...));
+                                                 STAMUNIT enmUnit, const char *pszDesc,
+                                                 const char *pszName, ...) RT_IPRT_FORMAT_ATTR(7, 8));
 
     /**
      * Same as pfnSTAMRegister except that the name is specified in a
@@ -1063,7 +1076,8 @@ typedef struct PDMDRVHLPR3
      * @param   args            Arguments to the format string.
      */
     DECLR3CALLBACKMEMBER(void, pfnSTAMRegisterV,(PPDMDRVINS pDrvIns, void *pvSample, STAMTYPE enmType, STAMVISIBILITY enmVisibility,
-                                                 STAMUNIT enmUnit, const char *pszDesc, const char *pszName, va_list args));
+                                                 STAMUNIT enmUnit, const char *pszDesc,
+                                                 const char *pszName, va_list args) RT_IPRT_FORMAT_ATTR(7, 0));
 
     /**
      * Deregister a statistic item previously registered with pfnSTAMRegister,
@@ -1241,15 +1255,13 @@ typedef struct PDMDRVHLPR3
      * @returns VBox status code.
      * @param   pDrvIns             The driver instance.
      * @param   pCritSect           Pointer to the critical section.
-     * @param   RT_SRC_POS_DECL     Use RT_SRC_POS.
+     * @param   SRC_POS             Use RT_SRC_POS.
      * @param   pszName             The base name of the critical section.  Will be
      *                              mangeled with the instance number.  For
      *                              statistics and lock validation.
-     * @param   va                  Arguments for the format string.
      * @thread  EMT
      */
-    DECLR3CALLBACKMEMBER(int, pfnCritSectInit,(PPDMDRVINS pDrvIns, PPDMCRITSECT pCritSect,
-                                               RT_SRC_POS_DECL, const char *pszName));
+    DECLR3CALLBACKMEMBER(int, pfnCritSectInit,(PPDMDRVINS pDrvIns, PPDMCRITSECT pCritSect, RT_SRC_POS_DECL, const char *pszName));
 
     /**
      * Call the ring-0 request handler routine of the driver.
@@ -1286,11 +1298,12 @@ typedef struct PDMDRVHLPR3
      * Creates a block cache for a driver driver instance.
      *
      * @returns VBox status code.
-     * @param   pDrvIns         The driver instance.
-     * @param   ppBlkCache      Where to store the handle to the block cache.
-     * @param   pfnXferComplete The I/O transfer complete callback.
-     * @param   pfnXferEnqueue  The I/O request enqueue callback.
-     * @param   pcszId          Unique ID used to identify the user.
+     * @param   pDrvIns             The driver instance.
+     * @param   ppBlkCache          Where to store the handle to the block cache.
+     * @param   pfnXferComplete     The I/O transfer complete callback.
+     * @param   pfnXferEnqueue      The I/O request enqueue callback.
+     * @param   pfnXferEnqueueDiscard   The discard request enqueue callback.
+     * @param   pcszId              Unique ID used to identify the user.
      */
     DECLR3CALLBACKMEMBER(int, pfnBlkCacheRetain, (PPDMDRVINS pDrvIns, PPPDMBLKCACHE ppBlkCache,
                                                   PFNPDMBLKCACHEXFERCOMPLETEDRV pfnXferComplete,
@@ -1339,9 +1352,10 @@ typedef struct PDMDRVHLPR3
 
 
 /**
- * @copydoc PDMDRVHLP::pfnVMSetError
+ * @copydoc PDMDRVHLPR3::pfnVMSetError
  */
-DECLINLINE(int) PDMDrvHlpVMSetError(PPDMDRVINS pDrvIns, const int rc, RT_SRC_POS_DECL, const char *pszFormat, ...)
+DECLINLINE(int)  RT_IPRT_FORMAT_ATTR(6, 7) PDMDrvHlpVMSetError(PPDMDRVINS pDrvIns, const int rc, RT_SRC_POS_DECL,
+                                                               const char *pszFormat, ...)
 {
     va_list va;
     va_start(va, pszFormat);
@@ -1357,18 +1371,20 @@ DECLINLINE(int) PDMDrvHlpVMSetError(PPDMDRVINS pDrvIns, const int rc, RT_SRC_POS
     PDMDrvHlpVMSetError(pDrvIns, rc, RT_SRC_POS, "%s", pszError)
 
 /**
- * @copydoc PDMDRVHLP::pfnVMSetErrorV
+ * @copydoc PDMDRVHLPR3::pfnVMSetErrorV
  */
-DECLINLINE(int) PDMDrvHlpVMSetErrorV(PPDMDRVINS pDrvIns, const int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va)
+DECLINLINE(int)  RT_IPRT_FORMAT_ATTR(6, 0) PDMDrvHlpVMSetErrorV(PPDMDRVINS pDrvIns, const int rc, RT_SRC_POS_DECL,
+                                                                const char *pszFormat, va_list va)
 {
     return pDrvIns->CTX_SUFF(pHlp)->pfnVMSetErrorV(pDrvIns, rc, RT_SRC_POS_ARGS, pszFormat, va);
 }
 
 
 /**
- * @copydoc PDMDRVHLP::pfnVMSetRuntimeError
+ * @copydoc PDMDRVHLPR3::pfnVMSetRuntimeError
  */
-DECLINLINE(int) PDMDrvHlpVMSetRuntimeError(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, ...)
+DECLINLINE(int)  RT_IPRT_FORMAT_ATTR(4, 5) PDMDrvHlpVMSetRuntimeError(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId,
+                                                                      const char *pszFormat, ...)
 {
     va_list va;
     int rc;
@@ -1385,9 +1401,10 @@ DECLINLINE(int) PDMDrvHlpVMSetRuntimeError(PPDMDRVINS pDrvIns, uint32_t fFlags, 
     PDMDrvHlpVMSetRuntimeError(pDrvIns, fFlags, pszErrorId, "%s", pszError)
 
 /**
- * @copydoc PDMDRVHLP::pfnVMSetRuntimeErrorV
+ * @copydoc PDMDRVHLPR3::pfnVMSetRuntimeErrorV
  */
-DECLINLINE(int) PDMDrvHlpVMSetRuntimeErrorV(PPDMDRVINS pDrvIns, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, va_list va)
+DECLINLINE(int)  RT_IPRT_FORMAT_ATTR(4, 0) PDMDrvHlpVMSetRuntimeErrorV(PPDMDRVINS pDrvIns, uint32_t fFlags,
+                                                                       const char *pszErrorId,  const char *pszFormat, va_list va)
 {
     return pDrvIns->CTX_SUFF(pHlp)->pfnVMSetRuntimeErrorV(pDrvIns, fFlags, pszErrorId, pszFormat, va);
 }
@@ -1413,7 +1430,7 @@ DECLINLINE(int) PDMDrvHlpVMSetRuntimeErrorV(PPDMDRVINS pDrvIns, uint32_t fFlags,
 #endif
 
 /**
- * @copydoc PDMDRVHLP::pfnFTSetCheckpoint
+ * @copydoc PDMDRVHLPR3::pfnFTSetCheckpoint
  */
 DECLINLINE(int) PDMDrvHlpFTSetCheckpoint(PPDMDRVINS pDrvIns, FTMCHECKPOINTTYPE enmType)
 {
@@ -1424,7 +1441,7 @@ DECLINLINE(int) PDMDrvHlpFTSetCheckpoint(PPDMDRVINS pDrvIns, FTMCHECKPOINTTYPE e
 #ifdef IN_RING3
 
 /**
- * @copydoc PDMDRVHLP::pfnAttach
+ * @copydoc PDMDRVHLPR3::pfnAttach
  */
 DECLINLINE(int) PDMDrvHlpAttach(PPDMDRVINS pDrvIns, uint32_t fFlags, PPDMIBASE *ppBaseInterface)
 {
@@ -1443,7 +1460,7 @@ DECLINLINE(int) PDMDrvHlpNoAttach(PPDMDRVINS pDrvIns)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnDetach
+ * @copydoc PDMDRVHLPR3::pfnDetach
  */
 DECLINLINE(int) PDMDrvHlpDetach(PPDMDRVINS pDrvIns, uint32_t fFlags)
 {
@@ -1451,7 +1468,7 @@ DECLINLINE(int) PDMDrvHlpDetach(PPDMDRVINS pDrvIns, uint32_t fFlags)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnDetachSelf
+ * @copydoc PDMDRVHLPR3::pfnDetachSelf
  */
 DECLINLINE(int) PDMDrvHlpDetachSelf(PPDMDRVINS pDrvIns, uint32_t fFlags)
 {
@@ -1459,7 +1476,7 @@ DECLINLINE(int) PDMDrvHlpDetachSelf(PPDMDRVINS pDrvIns, uint32_t fFlags)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnMountPrepare
+ * @copydoc PDMDRVHLPR3::pfnMountPrepare
  */
 DECLINLINE(int) PDMDrvHlpMountPrepare(PPDMDRVINS pDrvIns, const char *pszFilename, const char *pszCoreDriver)
 {
@@ -1467,7 +1484,7 @@ DECLINLINE(int) PDMDrvHlpMountPrepare(PPDMDRVINS pDrvIns, const char *pszFilenam
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnVMState
+ * @copydoc PDMDRVHLPR3::pfnVMState
  */
 DECLINLINE(VMSTATE) PDMDrvHlpVMState(PPDMDRVINS pDrvIns)
 {
@@ -1475,7 +1492,7 @@ DECLINLINE(VMSTATE) PDMDrvHlpVMState(PPDMDRVINS pDrvIns)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnVMTeleportedAndNotFullyResumedYet
+ * @copydoc PDMDRVHLPR3::pfnVMTeleportedAndNotFullyResumedYet
  */
 DECLINLINE(bool) PDMDrvHlpVMTeleportedAndNotFullyResumedYet(PPDMDRVINS pDrvIns)
 {
@@ -1483,7 +1500,7 @@ DECLINLINE(bool) PDMDrvHlpVMTeleportedAndNotFullyResumedYet(PPDMDRVINS pDrvIns)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnGetSupDrvSession
+ * @copydoc PDMDRVHLPR3::pfnGetSupDrvSession
  */
 DECLINLINE(PSUPDRVSESSION) PDMDrvHlpGetSupDrvSession(PPDMDRVINS pDrvIns)
 {
@@ -1491,7 +1508,7 @@ DECLINLINE(PSUPDRVSESSION) PDMDrvHlpGetSupDrvSession(PPDMDRVINS pDrvIns)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnQueueCreate
+ * @copydoc PDMDRVHLPR3::pfnQueueCreate
  */
 DECLINLINE(int) PDMDrvHlpQueueCreate(PPDMDRVINS pDrvIns, uint32_t cbItem, uint32_t cItems, uint32_t cMilliesInterval,
                                         PFNPDMQUEUEDRV pfnCallback, const char *pszName, PPDMQUEUE *ppQueue)
@@ -1500,7 +1517,7 @@ DECLINLINE(int) PDMDrvHlpQueueCreate(PPDMDRVINS pDrvIns, uint32_t cbItem, uint32
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnTMGetVirtualFreq
+ * @copydoc PDMDRVHLPR3::pfnTMGetVirtualFreq
  */
 DECLINLINE(uint64_t) PDMDrvHlpTMGetVirtualFreq(PPDMDRVINS pDrvIns)
 {
@@ -1508,7 +1525,7 @@ DECLINLINE(uint64_t) PDMDrvHlpTMGetVirtualFreq(PPDMDRVINS pDrvIns)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnTMGetVirtualTime
+ * @copydoc PDMDRVHLPR3::pfnTMGetVirtualTime
  */
 DECLINLINE(uint64_t) PDMDrvHlpTMGetVirtualTime(PPDMDRVINS pDrvIns)
 {
@@ -1516,7 +1533,7 @@ DECLINLINE(uint64_t) PDMDrvHlpTMGetVirtualTime(PPDMDRVINS pDrvIns)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnTMTimerCreate
+ * @copydoc PDMDRVHLPR3::pfnTMTimerCreate
  */
 DECLINLINE(int) PDMDrvHlpTMTimerCreate(PPDMDRVINS pDrvIns, TMCLOCK enmClock, PFNTMTIMERDRV pfnCallback, void *pvUser, uint32_t fFlags, const char *pszDesc, PPTMTIMERR3 ppTimer)
 {
@@ -1544,7 +1561,7 @@ DECLINLINE(int) PDMDrvHlpSSMRegister(PPDMDRVINS pDrvIns, uint32_t uVersion, size
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnSSMRegister
+ * @copydoc PDMDRVHLPR3::pfnSSMRegister
  */
 DECLINLINE(int) PDMDrvHlpSSMRegisterEx(PPDMDRVINS pDrvIns, uint32_t uVersion, size_t cbGuess,
                                        PFNSSMDRVLIVEPREP pfnLivePrep, PFNSSMDRVLIVEEXEC pfnLiveExec, PFNSSMDRVLIVEVOTE pfnLiveVote,
@@ -1573,7 +1590,7 @@ DECLINLINE(int) PDMDrvHlpSSMRegisterLoadDone(PPDMDRVINS pDrvIns, PFNSSMDRVLOADDO
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnDBGFInfoRegister
+ * @copydoc PDMDRVHLPR3::pfnDBGFInfoRegister
  */
 DECLINLINE(int) PDMDrvHlpDBGFInfoRegister(PPDMDRVINS pDrvIns, const char *pszName, const char *pszDesc, PFNDBGFHANDLERDRV pfnHandler)
 {
@@ -1581,7 +1598,7 @@ DECLINLINE(int) PDMDrvHlpDBGFInfoRegister(PPDMDRVINS pDrvIns, const char *pszNam
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnDBGFInfoDeregister
+ * @copydoc PDMDRVHLPR3::pfnDBGFInfoRegister
  */
 DECLINLINE(int) PDMDrvHlpDBGFInfoDeregister(PPDMDRVINS pDrvIns, const char *pszName, const char *pszDesc, PFNDBGFHANDLERDRV pfnHandler)
 {
@@ -1589,7 +1606,7 @@ DECLINLINE(int) PDMDrvHlpDBGFInfoDeregister(PPDMDRVINS pDrvIns, const char *pszN
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnSTAMRegister
+ * @copydoc PDMDRVHLPR3::pfnSTAMRegister
  */
 DECLINLINE(void) PDMDrvHlpSTAMRegister(PPDMDRVINS pDrvIns, void *pvSample, STAMTYPE enmType, const char *pszName, STAMUNIT enmUnit, const char *pszDesc)
 {
@@ -1597,10 +1614,11 @@ DECLINLINE(void) PDMDrvHlpSTAMRegister(PPDMDRVINS pDrvIns, void *pvSample, STAMT
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnSTAMRegisterF
+ * @copydoc PDMDRVHLPR3::pfnSTAMRegisterF
  */
-DECLINLINE(void) PDMDrvHlpSTAMRegisterF(PPDMDRVINS pDrvIns, void *pvSample, STAMTYPE enmType, STAMVISIBILITY enmVisibility, STAMUNIT enmUnit,
-                                        const char *pszDesc, const char *pszName, ...)
+DECLINLINE(void)  RT_IPRT_FORMAT_ATTR(7, 8) PDMDrvHlpSTAMRegisterF(PPDMDRVINS pDrvIns, void *pvSample, STAMTYPE enmType,
+                                                                   STAMVISIBILITY enmVisibility, STAMUNIT enmUnit,
+                                                                   const char *pszDesc, const char *pszName, ...)
 {
     va_list va;
     va_start(va, pszName);
@@ -1703,7 +1721,7 @@ DECLINLINE(void) PDMDrvHlpSTAMRegProfileAdv(PPDMDRVINS pDrvIns, PSTAMPROFILEADV 
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnSTAMDeregister
+ * @copydoc PDMDRVHLPR3::pfnSTAMDeregister
  */
 DECLINLINE(int) PDMDrvHlpSTAMDeregister(PPDMDRVINS pDrvIns, void *pvSample)
 {
@@ -1711,7 +1729,7 @@ DECLINLINE(int) PDMDrvHlpSTAMDeregister(PPDMDRVINS pDrvIns, void *pvSample)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnSUPCallVMMR0Ex
+ * @copydoc PDMDRVHLPR3::pfnSUPCallVMMR0Ex
  */
 DECLINLINE(int) PDMDrvHlpSUPCallVMMR0Ex(PPDMDRVINS pDrvIns, unsigned uOperation, void *pvArg, unsigned cbArg)
 {
@@ -1719,7 +1737,7 @@ DECLINLINE(int) PDMDrvHlpSUPCallVMMR0Ex(PPDMDRVINS pDrvIns, unsigned uOperation,
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnUSBRegisterHub
+ * @copydoc PDMDRVHLPR3::pfnUSBRegisterHub
  */
 DECLINLINE(int) PDMDrvHlpUSBRegisterHub(PPDMDRVINS pDrvIns, uint32_t fVersions, uint32_t cPorts, PCPDMUSBHUBREG pUsbHubReg, PPCPDMUSBHUBHLP ppUsbHubHlp)
 {
@@ -1727,7 +1745,7 @@ DECLINLINE(int) PDMDrvHlpUSBRegisterHub(PPDMDRVINS pDrvIns, uint32_t fVersions, 
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnSetAsyncNotification
+ * @copydoc PDMDRVHLPR3::pfnSetAsyncNotification
  */
 DECLINLINE(int) PDMDrvHlpSetAsyncNotification(PPDMDRVINS pDrvIns, PFNPDMDRVASYNCNOTIFY pfnAsyncNotify)
 {
@@ -1735,7 +1753,7 @@ DECLINLINE(int) PDMDrvHlpSetAsyncNotification(PPDMDRVINS pDrvIns, PFNPDMDRVASYNC
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnAsyncNotificationCompleted
+ * @copydoc PDMDRVHLPR3::pfnAsyncNotificationCompleted
  */
 DECLINLINE(void) PDMDrvHlpAsyncNotificationCompleted(PPDMDRVINS pDrvIns)
 {
@@ -1743,7 +1761,7 @@ DECLINLINE(void) PDMDrvHlpAsyncNotificationCompleted(PPDMDRVINS pDrvIns)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnThreadCreate
+ * @copydoc PDMDRVHLPR3::pfnThreadCreate
  */
 DECLINLINE(int) PDMDrvHlpThreadCreate(PPDMDRVINS pDrvIns, PPPDMTHREAD ppThread, void *pvUser, PFNPDMTHREADDRV pfnThread,
                                       PFNPDMTHREADWAKEUPDRV pfnWakeup, size_t cbStack, RTTHREADTYPE enmType, const char *pszName)
@@ -1753,7 +1771,7 @@ DECLINLINE(int) PDMDrvHlpThreadCreate(PPDMDRVINS pDrvIns, PPPDMTHREAD ppThread, 
 
 # ifdef VBOX_WITH_PDM_ASYNC_COMPLETION
 /**
- * @copydoc PDMDRVHLP::pfnAsyncCompletionTemplateCreate
+ * @copydoc PDMDRVHLPR3::pfnAsyncCompletionTemplateCreate
  */
 DECLINLINE(int) PDMDrvHlpAsyncCompletionTemplateCreate(PPDMDRVINS pDrvIns, PPPDMASYNCCOMPLETIONTEMPLATE ppTemplate,
                                                        PFNPDMASYNCCOMPLETEDRV pfnCompleted, void *pvTemplateUser, const char *pszDesc)
@@ -1764,7 +1782,7 @@ DECLINLINE(int) PDMDrvHlpAsyncCompletionTemplateCreate(PPDMDRVINS pDrvIns, PPPDM
 
 # ifdef VBOX_WITH_NETSHAPER
 /**
- * @copydoc PDMDRVHLP::pfnNetShaperAttach
+ * @copydoc PDMDRVHLPR3::pfnNetShaperAttach
  */
 DECLINLINE(int) PDMDrvHlpNetShaperAttach(PPDMDRVINS pDrvIns, const char *pcszBwGroup, PPDMNSFILTER pFilter)
 {
@@ -1772,7 +1790,7 @@ DECLINLINE(int) PDMDrvHlpNetShaperAttach(PPDMDRVINS pDrvIns, const char *pcszBwG
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnNetShaperDetach
+ * @copydoc PDMDRVHLPR3::pfnNetShaperDetach
  */
 DECLINLINE(int) PDMDrvHlpNetShaperDetach(PPDMDRVINS pDrvIns, PPDMNSFILTER pFilter)
 {
@@ -1781,7 +1799,7 @@ DECLINLINE(int) PDMDrvHlpNetShaperDetach(PPDMDRVINS pDrvIns, PPDMNSFILTER pFilte
 # endif
 
 /**
- * @copydoc PDMDRVHLP::pfnCritSectInit
+ * @copydoc PDMDRVHLPR3::pfnCritSectInit
  */
 DECLINLINE(int) PDMDrvHlpCritSectInit(PPDMDRVINS pDrvIns, PPDMCRITSECT pCritSect, RT_SRC_POS_DECL, const char *pszName)
 {
@@ -1789,7 +1807,7 @@ DECLINLINE(int) PDMDrvHlpCritSectInit(PPDMDRVINS pDrvIns, PPDMCRITSECT pCritSect
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnCallR0
+ * @copydoc PDMDRVHLPR3::pfnCallR0
  */
 DECLINLINE(int) PDMDrvHlpCallR0(PPDMDRVINS pDrvIns, uint32_t uOperation, uint64_t u64Arg)
 {
@@ -1797,7 +1815,7 @@ DECLINLINE(int) PDMDrvHlpCallR0(PPDMDRVINS pDrvIns, uint32_t uOperation, uint64_
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnBlkCacheRetain
+ * @copydoc PDMDRVHLPR3::pfnBlkCacheRetain
  */
 DECLINLINE(int) PDMDrvHlpBlkCacheRetain(PPDMDRVINS pDrvIns, PPPDMBLKCACHE ppBlkCache,
                                         PFNPDMBLKCACHEXFERCOMPLETEDRV pfnXferComplete,
@@ -1809,7 +1827,7 @@ DECLINLINE(int) PDMDrvHlpBlkCacheRetain(PPDMDRVINS pDrvIns, PPPDMBLKCACHE ppBlkC
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnVMGetSuspendReason
+ * @copydoc PDMDRVHLPR3::pfnVMGetSuspendReason
  */
 DECLINLINE(VMSUSPENDREASON) PDMDrvHlpVMGetSuspendReason(PPDMDRVINS pDrvIns)
 {
@@ -1817,7 +1835,7 @@ DECLINLINE(VMSUSPENDREASON) PDMDrvHlpVMGetSuspendReason(PPDMDRVINS pDrvIns)
 }
 
 /**
- * @copydoc PDMDRVHLP::pfnVMGetResumeReason
+ * @copydoc PDMDRVHLPR3::pfnVMGetResumeReason
  */
 DECLINLINE(VMRESUMEREASON) PDMDrvHlpVMGetResumeReason(PPDMDRVINS pDrvIns)
 {

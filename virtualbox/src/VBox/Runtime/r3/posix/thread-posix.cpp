@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_THREAD
 #include <errno.h>
 #include <pthread.h>
@@ -67,18 +67,18 @@
 #include "internal/thread.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #ifndef IN_GUEST
 /** Includes RTThreadPoke. */
 # define RTTHREAD_POSIX_WITH_POKE
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The pthread key in which we store the pointer to our own PRTTHREAD structure. */
 static pthread_key_t    g_SelfKey;
 #ifdef RTTHREAD_POSIX_WITH_POKE
@@ -112,12 +112,14 @@ static PFNPTHREADSETNAME g_pfnThreadSetName = NULL;
 #endif /* IPRT_MAY_HAVE_PTHREAD_SET_NAME_NP */
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void *rtThreadNativeMain(void *pvArgs);
 static void rtThreadKeyDestruct(void *pvValue);
+#ifdef RTTHREAD_POSIX_WITH_POKE
 static void rtThreadPosixPokeSignal(int iSignal);
+#endif
 
 
 #ifdef RTTHREAD_POSIX_WITH_POKE
@@ -291,7 +293,8 @@ static void *rtThreadNativeMain(void *pvArgs)
 {
     PRTTHREADINT  pThread = (PRTTHREADINT)pvArgs;
     pthread_t     Self    = pthread_self();
-    Assert((uintptr_t)Self == (RTNATIVETHREAD)Self && (uintptr_t)Self != NIL_RTNATIVETHREAD);
+    Assert((uintptr_t)Self != NIL_RTNATIVETHREAD);
+    Assert(Self == (pthread_t)(RTNATIVETHREAD)Self);
 
 #if defined(RT_OS_LINUX)
     /*
@@ -361,6 +364,7 @@ DECLHIDDEN(int) rtThreadNativeCreate(PRTTHREADINT pThread, PRTNATIVETHREAD pNati
                 rc = pthread_create(&ThreadId, &ThreadAttr, rtThreadNativeMain, pThread);
                 if (!rc)
                 {
+                    pthread_attr_destroy(&ThreadAttr);
                     *pNativeThread = (uintptr_t)ThreadId;
                     return VINF_SUCCESS;
                 }

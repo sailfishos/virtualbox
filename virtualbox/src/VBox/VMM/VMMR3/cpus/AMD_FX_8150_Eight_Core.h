@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,10 +24,10 @@
 /**
  * CPUID leaves for AMD FX(tm)-8150 Eight-Core Processor.
  */
-static CPUMCPUIDLEAF const g_aCpuIdLeaves_AMD_FX_8150_Eight_Core[] = 
+static CPUMCPUIDLEAF const g_aCpuIdLeaves_AMD_FX_8150_Eight_Core[] =
 {
     { 0x00000000, 0x00000000, 0x00000000, 0x0000000d, 0x68747541, 0x444d4163, 0x69746e65, 0 },
-    { 0x00000001, 0x00000000, 0x00000000, 0x00600f12, 0x02080800, 0x1e98220b, 0x178bfbff, 0 },
+    { 0x00000001, 0x00000000, 0x00000000, 0x00600f12, 0x02080800, 0x1e98220b, 0x178bfbff, 0 | CPUMCPUIDLEAF_F_CONTAINS_APIC_ID | CPUMCPUIDLEAF_F_CONTAINS_APIC },
     { 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0 },
     { 0x00000003, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0 },
     { 0x00000004, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0 },
@@ -42,7 +42,7 @@ static CPUMCPUIDLEAF const g_aCpuIdLeaves_AMD_FX_8150_Eight_Core[] =
     { 0x0000000d, 0x00000000, UINT32_MAX, 0x00000007, 0x00000340, 0x000003c0, 0x40000000, 0 },
     { 0x0000000d, 0x00000001, UINT32_MAX, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0 },
     { 0x80000000, 0x00000000, 0x00000000, 0x8000001e, 0x68747541, 0x444d4163, 0x69746e65, 0 },
-    { 0x80000001, 0x00000000, 0x00000000, 0x00600f12, 0x10000000, 0x01c9bfff, 0x2fd3fbff, 0 },
+    { 0x80000001, 0x00000000, 0x00000000, 0x00600f12, 0x10000000, 0x01c9bfff, 0x2fd3fbff, 0 | CPUMCPUIDLEAF_F_CONTAINS_APIC },
     { 0x80000002, 0x00000000, 0x00000000, 0x20444d41, 0x74285846, 0x382d296d, 0x20303531, 0 },
     { 0x80000003, 0x00000000, 0x00000000, 0x68676945, 0x6f432d74, 0x50206572, 0x65636f72, 0 },
     { 0x80000004, 0x00000000, 0x00000000, 0x726f7373, 0x20202020, 0x20202020, 0x00202020, 0 },
@@ -75,7 +75,7 @@ static CPUMCPUIDLEAF const g_aCpuIdLeaves_AMD_FX_8150_Eight_Core[] =
     { 0x8000001d, 0x00000002, UINT32_MAX, 0x00004143, 0x03c0003f, 0x000007ff, 0x00000001, 0 },
     { 0x8000001d, 0x00000003, UINT32_MAX, 0x0001c163, 0x0fc0003f, 0x000007ff, 0x00000001, 0 },
     { 0x8000001d, 0x00000004, UINT32_MAX, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0 },
-    { 0x8000001e, 0x00000000, 0x00000000, 0x00000012, 0x00000101, 0x00000000, 0x00000000, 0 },
+    { 0x8000001e, 0x00000000, 0x00000000, 0x00000012, 0x00000101, 0x00000000, 0x00000000, 0 | CPUMCPUIDLEAF_F_CONTAINS_APIC_ID },
 };
 #endif /* !CPUM_DB_STANDALONE */
 
@@ -84,7 +84,7 @@ static CPUMCPUIDLEAF const g_aCpuIdLeaves_AMD_FX_8150_Eight_Core[] =
 /**
  * MSR ranges for AMD FX(tm)-8150 Eight-Core Processor.
  */
-static CPUMMSRRANGE const g_aMsrRanges_AMD_FX_8150_Eight_Core[] = 
+static CPUMMSRRANGE const g_aMsrRanges_AMD_FX_8150_Eight_Core[] =
 {
     MAL(0x00000000, "IA32_P5_MC_ADDR", 0x00000402),
     MAL(0x00000001, "IA32_P5_MC_TYPE", 0x00000401),
@@ -354,7 +354,7 @@ static CPUMMSRRANGE const g_aMsrRanges_AMD_FX_8150_Eight_Core[] =
 /**
  * Database entry for AMD FX(tm)-8150 Eight-Core Processor.
  */
-static CPUMDBENTRY const g_Entry_AMD_FX_8150_Eight_Core = 
+static CPUMDBENTRY const g_Entry_AMD_FX_8150_Eight_Core =
 {
     /*.pszName          = */ "AMD FX-8150 Eight-Core",
     /*.pszFullName      = */ "AMD FX(tm)-8150 Eight-Core Processor",
@@ -366,9 +366,10 @@ static CPUMDBENTRY const g_Entry_AMD_FX_8150_Eight_Core =
     /*.uScalableBusFreq = */ CPUM_SBUSFREQ_UNKNOWN,
     /*.fFlags           = */ 0,
     /*.cMaxPhysAddrWidth= */ 48,
+    /*.fMxCsrMask       = */ 0x2ffff,
     /*.paCpuIdLeaves    = */ NULL_ALONE(g_aCpuIdLeaves_AMD_FX_8150_Eight_Core),
     /*.cCpuIdLeaves     = */ ZERO_ALONE(RT_ELEMENTS(g_aCpuIdLeaves_AMD_FX_8150_Eight_Core)),
-    /*.enmUnknownCpuId  = */ CPUMUKNOWNCPUID_DEFAULTS,
+    /*.enmUnknownCpuId  = */ CPUMUNKNOWNCPUID_DEFAULTS,
     /*.DefUnknownCpuId  = */ { 0x00000000, 0x00000000, 0x00000000, 0x00000000 },
     /*.fMsrMask         = */ UINT32_MAX,
     /*.cMsrRanges       = */ ZERO_ALONE(RT_ELEMENTS(g_aMsrRanges_AMD_FX_8150_Eight_Core)),

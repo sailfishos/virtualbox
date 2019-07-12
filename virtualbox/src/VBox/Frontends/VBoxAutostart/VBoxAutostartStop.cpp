@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -50,6 +50,7 @@ typedef struct AUTOSTOPVM
 static HRESULT autostartSaveVMState(ComPtr<IConsole> &console)
 {
     HRESULT rc = S_OK;
+    ComPtr<IMachine> machine;
     ComPtr<IProgress> progress;
 
     do
@@ -82,7 +83,8 @@ static HRESULT autostartSaveVMState(ComPtr<IConsole> &console)
                 break;
         }
 
-        CHECK_ERROR(console, SaveState(progress.asOutParam()));
+        CHECK_ERROR(console, COMGETTER(Machine)(machine.asOutParam()));
+        CHECK_ERROR(machine, SaveState(progress.asOutParam()));
         if (FAILED(rc))
         {
             if (!fPaused)
@@ -104,8 +106,8 @@ static HRESULT autostartSaveVMState(ComPtr<IConsole> &console)
 
 DECLHIDDEN(RTEXITCODE) autostartStopMain(PCFGAST pCfgAst)
 {
+    RT_NOREF(pCfgAst);
     RTEXITCODE rcExit = RTEXITCODE_SUCCESS;
-    int vrc = VINF_SUCCESS;
     std::list<AUTOSTOPVM> listVM;
 
     /*
@@ -144,10 +146,10 @@ DECLHIDDEN(RTEXITCODE) autostartStopMain(PCFGAST pCfgAst)
         }
 
         if (   SUCCEEDED(rc)
-            && listVM.size())
+            && !listVM.empty())
         {
             std::list<AUTOSTOPVM>::iterator it;
-            for (it = listVM.begin(); it != listVM.end(); it++)
+            for (it = listVM.begin(); it != listVM.end(); ++it)
             {
                 MachineState_T enmMachineState;
                 ComPtr<IMachine> machine;

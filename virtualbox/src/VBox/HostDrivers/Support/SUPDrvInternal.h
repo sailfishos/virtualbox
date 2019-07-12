@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -47,32 +47,8 @@
 /* do nothing */
 
 #elif defined(RT_OS_WINDOWS)
-    RT_C_DECLS_BEGIN
-#   if (_MSC_VER >= 1400) && !defined(VBOX_WITH_PATCHED_DDK)
-#       define _InterlockedExchange           _InterlockedExchange_StupidDDKVsCompilerCrap
-#       define _InterlockedExchangeAdd        _InterlockedExchangeAdd_StupidDDKVsCompilerCrap
-#       define _InterlockedCompareExchange    _InterlockedCompareExchange_StupidDDKVsCompilerCrap
-#       define _InterlockedAddLargeStatistic  _InterlockedAddLargeStatistic_StupidDDKVsCompilerCrap
-#       define _interlockedbittestandset      _interlockedbittestandset_StupidDDKVsCompilerCrap
-#       define _interlockedbittestandreset    _interlockedbittestandreset_StupidDDKVsCompilerCrap
-#       define _interlockedbittestandset64    _interlockedbittestandset64_StupidDDKVsCompilerCrap
-#       define _interlockedbittestandreset64  _interlockedbittestandreset64_StupidDDKVsCompilerCrap
-#       pragma warning(disable : 4163)
-#       include <iprt/nt/nt.h>
-#       pragma warning(default : 4163)
-#       undef  _InterlockedExchange
-#       undef  _InterlockedExchangeAdd
-#       undef  _InterlockedCompareExchange
-#       undef  _InterlockedAddLargeStatistic
-#       undef  _interlockedbittestandset
-#       undef  _interlockedbittestandreset
-#       undef  _interlockedbittestandset64
-#       undef  _interlockedbittestandreset64
-#   else
-#       include <iprt/nt/nt.h>
-#   endif
+#   include <iprt/nt/nt.h>
 #   include <memory.h>
-    RT_C_DECLS_END
 
 #elif defined(RT_OS_LINUX)
 #   include <linux/version.h>
@@ -88,9 +64,6 @@
 #       if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 71)
 #           include <linux/modversions.h>
 #       endif
-#   endif
-#   if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 0)
-#       undef ALIGN
 #   endif
 #   ifndef KBUILD_STR
 #       if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 16)
@@ -215,12 +188,80 @@
      && pDevExt->u32Cookie == BIRD)
 
 
+/** @def SUPDRV_WITH_MSR_PROBER
+ * Enables the SUP_IOCTL_MSR_PROBER function.
+ * By default, only enabled in DEBUG builds as it's a sensitive feature.
+ */
+#if defined(DEBUG) && !defined(SUPDRV_WITH_MSR_PROBER) && !defined(SUPDRV_WITHOUT_MSR_PROBER)
+# define SUPDRV_WITH_MSR_PROBER
+#endif
+
+/** @def SUPDRV_WITHOUT_MSR_PROBER
+ * Executive overide for disabling the SUP_IOCTL_MSR_PROBER function.
+ */
+#ifdef SUPDRV_WITHOUT_MSR_PROBER
+# undef SUPDRV_WITH_MSR_PROBER
+#endif
+
+#ifdef DOXYGEN_RUNNING
+# define SUPDRV_WITH_MSR_PROBER
+# define SUPDRV_WITHOUT_MSR_PROBER
+#endif
+
+#if 1
+/** @def SUPDRV_USE_TSC_DELTA_THREAD
+ * Use a dedicated kernel thread to service TSC-delta measurement requests.
+ * @todo Test on servers with many CPUs and sockets. */
+# define SUPDRV_USE_TSC_DELTA_THREAD
+#endif
+
+
 /*******************************************************************************
 *   Structures and Typedefs                                                    *
 *******************************************************************************/
 /** Pointer to the device extension. */
 typedef struct SUPDRVDEVEXT *PSUPDRVDEVEXT;
 
+#ifdef SUPDRV_USE_TSC_DELTA_THREAD
+/**
+ * TSC-delta measurement thread state machine.
+ */
+typedef enum SUPDRVTSCDELTATHREADSTATE
+{
+    /** Uninitialized/invalid value. */
+    kTscDeltaThreadState_Invalid = 0,
+    /** The thread is being created.
+     * Next state: Listening, Butchered, Terminating  */
+    kTscDeltaThreadState_Creating,
+    /** The thread is listening for events.
+     * Previous state: Creating, Measuring
+     * Next state: WaitAndMeasure, Butchered, Terminated */
+    kTscDeltaThreadState_Listening,
+    /** The thread is sleeping before starting a measurement.
+     * Previous state: Listening, Measuring
+     * Next state:     Measuring, Butchered, Terminating
+     * @remarks The thread won't enter this state on its own, it is put into this
+     *          state by the GIP timer, the CPU online callback and by the
+     *          SUP_IOCTL_TSC_DELTA_MEASURE code. */
+    kTscDeltaThreadState_WaitAndMeasure,
+    /** The thread is currently servicing a measurement request.
+     * Previous state: WaitAndMeasure
+     * Next state:     Listening, WaitAndMeasure, Terminate */
+    kTscDeltaThreadState_Measuring,
+    /** The thread is terminating.
+     * @remarks The thread won't enter this state on its own, is put into this state
+     *          by supdrvTscDeltaTerm. */
+    kTscDeltaThreadState_Terminating,
+    /** The thread is butchered due to an unexpected error.
+     * Previous State: Creating, Listening, WaitAndMeasure  */
+    kTscDeltaThreadState_Butchered,
+    /** The thread is destroyed (final).
+     * Previous state: Terminating */
+    kTscDeltaThreadState_Destroyed,
+    /** The usual 32-bit blowup hack. */
+    kTscDeltaThreadState_32BitHack = 0x7fffffff
+} SUPDRVTSCDELTATHREADSTATE;
+#endif /* SUPDRV_USE_TSC_DELTA_THREAD */
 
 /**
  * Memory reference types.
@@ -322,6 +363,16 @@ typedef struct SUPDRVLDRIMAGE
     int                             idSolMod;
     /** Pointer to the module control structure. */
     struct modctl                  *pSolModCtl;
+#endif
+#ifdef RT_OS_LINUX
+    /** Hack for seeing the module in perf, dtrace and other stack crawlers. */
+    struct module                  *pLnxModHack;
+#endif
+#if defined(RT_OS_DARWIN) && defined(VBOX_WITH_DARWIN_R0_DARWIN_IMAGE_VERIFICATION)
+    /** Load module handle. */
+    RTLDRMOD                        hLdrMod;
+    /** Allocate object. */
+    RTR0MEMOBJ                      hMemAlloc;
 #endif
     /** Whether it's loaded by the native loader or not. */
     bool                            fNative;
@@ -442,8 +493,14 @@ typedef struct SUPDRVSESSION
      * This is NIL_RTR0PROCESS for kernel sessions and valid for user ones. */
     RTR0PROCESS                     R0Process;
 
-    /** The VM associated with the session. */
-    PVM                             pVM;
+    /** The GVM associated with the session.
+     * This is set by VMMR0.  */
+    PGVM                            pSessionGVM;
+    /** The VM associated with the session.
+     * This is set by VMMR0.  */
+    PVM                             pSessionVM;
+    /** Set to pSessionVM if fast I/O controlls are enabled. */
+    PVM                             pFastIoCtrlVM;
     /** Handle table for IPRT semaphore wrapper APIs.
      * This takes care of its own locking in an IRQ safe manner. */
     RTHANDLETABLE                   hHandleTable;
@@ -483,6 +540,8 @@ typedef struct SUPDRVSESSION
     RTLISTANCHOR                    TpUmods;
     /** The user tracepoint module lookup table. */
     struct SUPDRVTRACERUMOD        *apTpLookupTable[32];
+    /** Whether this is a GIP test-mode client session or not. */
+    bool                            fGipTestMode;
 #ifndef SUPDRV_AGNOSTIC
 # if defined(RT_OS_DARWIN)
     /** Pointer to the associated org_virtualbox_SupDrvClient object. */
@@ -539,12 +598,11 @@ typedef struct SUPDRVDEVEXT
     /** VMM Module 'handle'.
      * 0 if the code VMM isn't loaded and Idt are nops. */
     void * volatile                 pvVMMR0;
-    /** VMMR0EntryInt() pointer. */
-    DECLR0CALLBACKMEMBER(int,       pfnVMMR0EntryInt, (PVM pVM, unsigned uOperation, void *pvArg));
     /** VMMR0EntryFast() pointer. */
-    DECLR0CALLBACKMEMBER(void,      pfnVMMR0EntryFast, (PVM pVM, VMCPUID idCpu, unsigned uOperation));
+    DECLR0CALLBACKMEMBER(void,      pfnVMMR0EntryFast, (PGVM pGVM, PVM pVM, VMCPUID idCpu, uint32_t uOperation));
     /** VMMR0EntryEx() pointer. */
-    DECLR0CALLBACKMEMBER(int,       pfnVMMR0EntryEx, (PVM pVM, VMCPUID idCpu, unsigned uOperation, PSUPVMMR0REQHDR pReq, uint64_t u64Arg, PSUPDRVSESSION pSession));
+    DECLR0CALLBACKMEMBER(int,       pfnVMMR0EntryEx, (PGVM pGVM, PVM pVM, VMCPUID idCpu, uint32_t uOperation,
+                                                      PSUPVMMR0REQHDR pReq, uint64_t u64Arg, PSUPDRVSESSION pSession));
 
     /** Linked list of loaded code. */
     PSUPDRVLDRIMAGE volatile        pLdrImages;
@@ -561,6 +619,9 @@ typedef struct SUPDRVDEVEXT
     RTNATIVETHREAD volatile         hLdrInitThread;
     /** @} */
 
+    /** Number of times someone reported bad execution context via SUPR0BadContext.
+     * (This is times EFLAGS.AC is zero when we expected it to be 1.) */
+    uint32_t volatile               cBadContextCalls;
 
     /** GIP mutex.
      * Any changes to any of the GIP members requires ownership of this mutex,
@@ -588,7 +649,10 @@ typedef struct SUPDRVDEVEXT
     /** If non-zero we've successfully called RTTimerRequestSystemGranularity(). */
     uint32_t                        u32SystemTimerGranularityGrant;
     /** The CPU id of the GIP master.
-     * This CPU is responsible for the updating the common GIP data. */
+     * This CPU is responsible for the updating the common GIP data and it is
+     * the one used to calculate TSC deltas relative to.
+     * (The initial master will have a 0 zero value, but it it goes offline the
+     * new master may have a non-zero value.) */
     RTCPUID volatile                idGipMaster;
 
     /** Component factory mutex.
@@ -633,6 +697,68 @@ typedef struct SUPDRVDEVEXT
     int32_t                         cSessions;
     /** @} */
 
+    /** @name Invariant TSC frequency refinement.
+     * @{ */
+    /** Nanosecond timestamp at the start of the TSC frequency refinement phase. */
+    uint64_t                        nsStartInvarTscRefine;
+    /** TSC reading at the start of the TSC frequency refinement phase. */
+    uint64_t                        uTscStartInvarTscRefine;
+    /** The CPU id of the CPU that u64TscAnchor was measured on. */
+    RTCPUID                         idCpuInvarTscRefine;
+    /** Pointer to the timer used to refine the TSC frequency. */
+    PRTTIMER                        pInvarTscRefineTimer;
+    /** Stop the timer on the next tick because we saw a power event. */
+    bool volatile                   fInvTscRefinePowerEvent;
+    /** @} */
+
+    /** @name TSC-delta measurement.
+     *  @{ */
+    /** Number of online/offline events, incremented each time a CPU goes online
+     *  or offline. */
+    uint32_t volatile               cMpOnOffEvents;
+    /** TSC-delta measurement mutext.
+     * At the moment, we don't want to have more than one measurement going on at
+     * any one time.  We might be using broadcast IPIs which are heavy and could
+     * perhaps get in each others way. */
+#ifdef SUPDRV_USE_MUTEX_FOR_GIP
+    RTSEMMUTEX                      mtxTscDelta;
+#else
+    RTSEMFASTMUTEX                  mtxTscDelta;
+#endif
+    /** The set of CPUs we need to take measurements for. */
+    RTCPUSET                        TscDeltaCpuSet;
+    /** The set of CPUs we have completed taken measurements for. */
+    RTCPUSET                        TscDeltaObtainedCpuSet;
+    /** @}  */
+
+#ifdef SUPDRV_USE_TSC_DELTA_THREAD
+    /** @name TSC-delta measurement thread.
+     *  @{ */
+    /** Spinlock protecting enmTscDeltaThreadState. */
+    RTSPINLOCK                      hTscDeltaSpinlock;
+    /** TSC-delta measurement thread. */
+    RTTHREAD                        hTscDeltaThread;
+    /** The event signalled during state changes to the TSC-delta thread. */
+    RTSEMEVENT                      hTscDeltaEvent;
+    /** The state of the TSC-delta measurement thread. */
+    SUPDRVTSCDELTATHREADSTATE       enmTscDeltaThreadState;
+    /** Thread timeout time before rechecking state in ms. */
+    RTMSINTERVAL                    cMsTscDeltaTimeout;
+    /** Whether the TSC-delta measurement was successful. */
+    int32_t volatile                rcTscDelta;
+    /** Tell the thread we want TSC-deltas for all CPUs with retries. */
+    bool                            fTscThreadRecomputeAllDeltas;
+    /** @} */
+#endif
+
+    /** @name GIP test mode.
+     *  @{ */
+    /** Reference counter for GIP test-mode sessions. */
+    uint32_t                        cGipTestModeRefs;
+    /** Cache of TSC frequency before enabling test-mode on invariant GIP systems. */
+    uint64_t                        uGipTestModeInvariantCpuHz;
+    /** @} */
+
     /*
      * Note! The non-agnostic bits must be at the very end of the structure!
      */
@@ -642,6 +768,11 @@ typedef struct SUPDRVDEVEXT
     PCALLBACK_OBJECT                pObjPowerCallback;
     /** Callback handle returned by ExRegisterCallback. */
     PVOID                           hPowerCallback;
+# elif defined(RT_OS_DARWIN) && defined(VBOX_WITH_DARWIN_R0_DARWIN_IMAGE_VERIFICATION)
+    /** Trusted root certificates for code signing validation. */
+    RTCRSTORE                       hRootStore;
+    /** Intermedite certificates for code signing validation. */
+    RTCRSTORE                       hAdditionalStore;
 # endif
 #endif
 } SUPDRVDEVEXT;
@@ -683,12 +814,53 @@ void VBOXCALL   supdrvOSSessionHashTabInserted(PSUPDRVDEVEXT pDevExt, PSUPDRVSES
  */
 void VBOXCALL   supdrvOSSessionHashTabRemoved(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, void *pvUser);
 
+/**
+ * Called during GIP initializtion to calc the CPU group table size.
+ *
+ * This is currently only implemented on windows [lazy bird].
+ *
+ * @returns Number of bytes needed for SUPGIPCPUGROUP structures.
+ * @param   pDevExt             The device globals.
+ */
+size_t VBOXCALL supdrvOSGipGetGroupTableSize(PSUPDRVDEVEXT pDevExt);
+
+/**
+ * Called during GIP initialization to set up the group table and group count.
+ *
+ * This is currently only implemented on windows [lazy bird].
+ *
+ * @param   pDevExt             The device globals.
+ * @param   pGip                The GIP which group table needs initialization.
+ *                              It's only partially initialized at this point.
+ * @param   cbGipCpuGroups      What supdrvOSGipGetGroupTableSize returned.
+ */
+int VBOXCALL    supdrvOSInitGipGroupTable(PSUPDRVDEVEXT pDevExt, PSUPGLOBALINFOPAGE pGip, size_t cbGipCpuGroups);
+
+/**
+ * Initializes the group related members when a CPU is added to the GIP.
+ *
+ * This is called both during GIP initalization and during an CPU online event.
+ *
+ * This is currently only implemented on windows [lazy bird].
+ *
+ * @returns CPU group number.
+ * @param   pDevExt             The device globals.
+ * @param   pGip                The GIP.
+ * @param   pGipCpu             The GIP CPU structure being initialized.
+ */
+void VBOXCALL supdrvOSGipInitGroupBitsForCpu(PSUPDRVDEVEXT pDevExt, PSUPGLOBALINFOPAGE pGip, PSUPGIPCPU pGipCpu);
+
 void VBOXCALL   supdrvOSObjInitCreator(PSUPDRVOBJ pObj, PSUPDRVSESSION pSession);
 bool VBOXCALL   supdrvOSObjCanAccess(PSUPDRVOBJ pObj, PSUPDRVSESSION pSession, const char *pszObjName, int *prc);
 bool VBOXCALL   supdrvOSGetForcedAsyncTscMode(PSUPDRVDEVEXT pDevExt);
+bool VBOXCALL   supdrvOSAreCpusOfflinedOnSuspend(void);
+bool VBOXCALL   supdrvOSAreTscDeltasInSync(void);
 int  VBOXCALL   supdrvOSEnableVTx(bool fEnabled);
+RTCCUINTREG VBOXCALL supdrvOSChangeCR4(RTCCUINTREG fOrMask, RTCCUINTREG fAndMask);
 bool VBOXCALL   supdrvOSSuspendVTxOnCpu(void);
 void VBOXCALL   supdrvOSResumeVTxOnCpu(bool fSuspended);
+int  VBOXCALL   supdrvOSGetCurrentGdtRw(RTHCUINTPTR *pGdtRw);
+int  VBOXCALL   supdrvOSGetRawModeUsability(void);
 
 /**
  * Try open the image using the native loader.
@@ -708,12 +880,16 @@ int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
 /**
  * Notification call indicating that a image is being opened for the first time.
  *
- * Can be used to log the load address of the image.
+ * Called for both native and non-native images (after supdrvOSLdrOpen).  Can be
+ * used to log the load address of the image or inform the kernel about the
+ * alien image.
  *
  * @param   pDevExt             The device globals.
  * @param   pImage              The image handle.
+ * @param   pszFilename         The file name - UTF-8, may containing UNIX
+ *                              slashes on non-UNIX systems.
  */
-void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage);
+void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const char *pszFilename);
 
 /**
  * Validates an entry point address.
@@ -725,9 +901,10 @@ void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE p
  * @param   pImage              The image data (still in the open state).
  * @param   pv                  The address within the image.
  * @param   pbImageBits         The image bits as loaded by ring-3.
+ * @param   pszSymbol           The name of the entrypoint being checked.
  */
 int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage,
-                                           void *pv, const uint8_t *pbImageBits);
+                                           void *pv, const uint8_t *pbImageBits, const char *pszSymbol);
 
 /**
  * Load the image.
@@ -742,20 +919,90 @@ int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAG
  */
 int  VBOXCALL   supdrvOSLdrLoad(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const uint8_t *pbImageBits, PSUPLDRLOAD pReq);
 
-
 /**
- * Unload the image.
+ * Unload the image (only called if supdrvOSLdrOpen returned success).
  *
  * @param   pDevExt             The device globals.
  * @param   pImage              The image data (mostly still valid).
  */
 void VBOXCALL   supdrvOSLdrUnload(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage);
 
+/**
+ * Notification call indicating that a image is being unloaded.
+ *
+ * Called for both native and non-native images.  In the former case, it's
+ * called after supdrvOSLdrUnload.
+ *
+ * @param   pDevExt             The device globals.
+ * @param   pImage              The image handle.
+ */
+void VBOXCALL   supdrvOSLdrNotifyUnloaded(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage);
+
+/**
+ * Queries a symbol address is a native module.
+ *
+ * @returns IPRT status code.
+ * @param   pDevExt             The device globals.
+ * @param   pImage              The image to search.
+ * @param   pszSymbol           The symbol to search for.
+ * @param   cchSymbol           The length of the symbol.
+ * @param   ppvSymbol           Where to return the symbol address if found.
+ */
+int  VBOXCALL   supdrvOSLdrQuerySymbol(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage,
+                                       const char *pszSymbol, size_t cchSymbol, void **ppvSymbol);
+
+
+#ifdef SUPDRV_WITH_MSR_PROBER
+
+/**
+ * Tries to read an MSR.
+ *
+ * @returns One of the listed VBox status codes.
+ * @retval  VINF_SUCCESS if read successfully, value in *puValue.
+ * @retval  VERR_ACCESS_DENIED if we couldn't read it (GP).
+ * @retval  VERR_NOT_SUPPORTED if not supported.
+ *
+ * @param   uMsr                The MSR to read from.
+ * @param   idCpu               The CPU to read the MSR on. NIL_RTCPUID
+ *                              indicates any suitable CPU.
+ * @param   puValue             Where to return the value.
+ */
+int VBOXCALL    supdrvOSMsrProberRead(uint32_t uMsr, RTCPUID idCpu, uint64_t *puValue);
+
+/**
+ * Tries to write an MSR.
+ *
+ * @returns One of the listed VBox status codes.
+ * @retval  VINF_SUCCESS if written successfully.
+ * @retval  VERR_ACCESS_DENIED if we couldn't write the value to it (GP).
+ * @retval  VERR_NOT_SUPPORTED if not supported.
+ *
+ * @param   uMsr                The MSR to write to.
+ * @param   idCpu               The CPU to write the MSR on. NIL_RTCPUID
+ *                              indicates any suitable CPU.
+ * @param   uValue              The value to write.
+ */
+int VBOXCALL    supdrvOSMsrProberWrite(uint32_t uMsr, RTCPUID idCpu, uint64_t uValue);
+
+/**
+ * Tries to modify an MSR value.
+ *
+ * @returns One of the listed VBox status codes.
+ * @retval  VINF_SUCCESS if succeeded.
+ * @retval  VERR_NOT_SUPPORTED if not supported.
+ *
+ * @param   idCpu               The CPU to modify the MSR on. NIL_RTCPUID
+ *                              indicates any suitable CPU.
+ * @param   pReq                The request packet with input arguments and
+ *                              where to store the results.
+ */
+int VBOXCALL    supdrvOSMsrProberModify(RTCPUID idCpu, PSUPMSRPROBER pReq);
+
+#endif /* SUPDRV_WITH_MSR_PROBER */
 
 #if defined(RT_OS_DARWIN)
 int VBOXCALL    supdrvDarwinResumeSuspendedKbds(void);
 #endif
-
 
 /*******************************************************************************
 *   Shared Functions                                                           *
@@ -773,7 +1020,20 @@ PSUPDRVSESSION VBOXCALL supdrvSessionHashTabLookup(PSUPDRVDEVEXT pDevExt, RTPROC
                                                    PSUPDRVSESSION *ppOsSessionPtr);
 uint32_t VBOXCALL supdrvSessionRetain(PSUPDRVSESSION pSession);
 uint32_t VBOXCALL supdrvSessionRelease(PSUPDRVSESSION pSession);
+void VBOXCALL   supdrvBadContext(PSUPDRVDEVEXT pDevExt, const char *pszFile, uint32_t uLine, const char *pszExtra);
+int VBOXCALL    supdrvQueryVTCapsInternal(uint32_t *pfCaps);
+int VBOXCALL    supdrvLdrLoadError(int rc, PSUPLDRLOAD pReq, const char *pszFormat, ...);
+int VBOXCALL    supdrvLdrGetExportedSymbol(const char *pszSymbol, uintptr_t *puValue);
 
+/* SUPDrvGip.cpp */
+int  VBOXCALL   supdrvGipCreate(PSUPDRVDEVEXT pDevExt);
+void VBOXCALL   supdrvGipDestroy(PSUPDRVDEVEXT pDevExt);
+int  VBOXCALL   supdrvIOCtl_TscDeltaMeasure(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPTSCDELTAMEASURE pReq);
+int  VBOXCALL   supdrvIOCtl_TscRead(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPTSCREAD pReq);
+int  VBOXCALL   supdrvIOCtl_GipSetFlags(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, uint32_t fOrMask, uint32_t fAndMask);
+
+
+/* SUPDrvTracer.cpp */
 int  VBOXCALL   supdrvTracerInit(PSUPDRVDEVEXT pDevExt);
 void VBOXCALL   supdrvTracerTerm(PSUPDRVDEVEXT pDevExt);
 void VBOXCALL   supdrvTracerModuleUnloading(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage);

@@ -1,10 +1,9 @@
 /** @file
- * MS COM / XPCOM Abstraction Layer:
- * Event and EventQueue class declaration
+ * MS COM / XPCOM Abstraction Layer - Event and EventQueue class declaration.
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,13 +27,19 @@
 #define ___VBox_com_EventQueue_h
 
 #ifndef VBOX_WITH_XPCOM
-# include <Windows.h>
-#else // VBOX_WITH_XPCOM
+# include <iprt/win/windows.h>
+#else
 # include <nsEventQueueUtils.h>
-#endif // VBOX_WITH_XPCOM
+#endif
 
 #include <VBox/com/defs.h>
 #include <VBox/com/assert.h>
+
+
+/** @defgroup grp_com_evt   Event and EventQueue Classes
+ * @ingroup grp_com
+ * @{
+ */
 
 namespace com
 {
@@ -137,4 +142,7 @@ private:
 
 } /* namespace com */
 
+/** @} */
+
 #endif
+

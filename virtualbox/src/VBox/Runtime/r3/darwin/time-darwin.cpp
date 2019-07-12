@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_TIME
 #define RTTIME_INCL_TIMEVAL
 #include <mach/mach_time.h>
@@ -40,9 +40,9 @@
 #include "internal/time.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static struct mach_timebase_info    g_Info = { 0, 0 };
 static double                       g_rdFactor = 0.0;
 static bool                         g_fFailedToGetTimeBaseInfo = false;
@@ -88,8 +88,8 @@ DECLINLINE(uint64_t) rtTimeGetSystemNanoTS(void)
     /* worst case: fallback to gettimeofday(). */
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return (uint64_t)tv.tv_sec  * (uint64_t)(1000 * 1000 * 1000)
-         + (uint64_t)(tv.tv_usec * 1000);
+    return (uint64_t)tv.tv_sec  * RT_NS_1SEC_64
+         + (uint64_t)(tv.tv_usec * RT_NS_1US);
 }
 
 
@@ -101,7 +101,7 @@ RTDECL(uint64_t) RTTimeSystemNanoTS(void)
 
 RTDECL(uint64_t) RTTimeSystemMilliTS(void)
 {
-    return rtTimeGetSystemNanoTS() / 1000000;
+    return rtTimeGetSystemNanoTS() / RT_NS_1MS;
 }
 
 

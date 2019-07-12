@@ -10,7 +10,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -32,9 +32,9 @@
 static CPUMCPUIDLEAF const g_aCpuIdLeaves_AMD_Athlon_64_X2_Dual_Core_4200[] =
 {
     { 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x68747541, 0x444d4163, 0x69746e65, 0 },
-    { 0x00000001, 0x00000000, 0x00000000, 0x00040fb2, 0x01020800, 0x00002001, 0x178bfbff, 0 },
+    { 0x00000001, 0x00000000, 0x00000000, 0x00040fb2, 0x01020800, 0x00002001, 0x178bfbff, 0 | CPUMCPUIDLEAF_F_CONTAINS_APIC_ID | CPUMCPUIDLEAF_F_CONTAINS_APIC },
     { 0x80000000, 0x00000000, 0x00000000, 0x80000018, 0x68747541, 0x444d4163, 0x69746e65, 0 },
-    { 0x80000001, 0x00000000, 0x00000000, 0x00040fb2, 0x000008d1, 0x0000001f, 0xebd3fbff, 0 },
+    { 0x80000001, 0x00000000, 0x00000000, 0x00040fb2, 0x000008d1, 0x0000001f, 0xebd3fbff, 0 | CPUMCPUIDLEAF_F_CONTAINS_APIC },
     { 0x80000002, 0x00000000, 0x00000000, 0x20444d41, 0x6c687441, 0x74286e6f, 0x3620296d, 0 },
     { 0x80000003, 0x00000000, 0x00000000, 0x32582034, 0x61754420, 0x6f43206c, 0x50206572, 0 },
     { 0x80000004, 0x00000000, 0x00000000, 0x65636f72, 0x726f7373, 0x30323420, 0x00002b30, 0 },
@@ -215,9 +215,10 @@ static CPUMDBENTRY const g_Entry_AMD_Athlon_64_X2_Dual_Core_4200 =
     /*.uScalableBusFreq = */ CPUM_SBUSFREQ_UNKNOWN,
     /*.fFlags           = */ 0,
     /*.cMaxPhysAddrWidth= */ 40,
+    /*.fMxCsrMask       = */ 0xffff,
     /*.paCpuIdLeaves    = */ NULL_ALONE(g_aCpuIdLeaves_AMD_Athlon_64_X2_Dual_Core_4200),
     /*.cCpuIdLeaves     = */ ZERO_ALONE(RT_ELEMENTS(g_aCpuIdLeaves_AMD_Athlon_64_X2_Dual_Core_4200)),
-    /*.enmUnknownCpuId  = */ CPUMUKNOWNCPUID_DEFAULTS,
+    /*.enmUnknownCpuId  = */ CPUMUNKNOWNCPUID_DEFAULTS,
     /*.DefUnknownCpuId  = */ { 0x00000000, 0x00000000, 0x00000000, 0x00000000 },
     /*.fMsrMask         = */ UINT32_MAX,
     /*.cMsrRanges       = */ ZERO_ALONE(RT_ELEMENTS(g_aMsrRanges_AMD_Athlon_64_X2_Dual_Core_4200)),

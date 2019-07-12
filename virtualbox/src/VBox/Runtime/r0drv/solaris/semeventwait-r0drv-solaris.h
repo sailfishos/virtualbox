@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -42,6 +42,9 @@
  * @todo Fixed by @bugref{5595}, can be reenabled after checking out
  *       CY_HIGH_LEVEL. */
 #define RTR0SEMSOLWAIT_NO_OLD_S10_FALLBACK
+
+#define SOL_THREAD_TINTR_PTR        ((kthread_t **)((char *)curthread + g_offrtSolThreadIntrThread))
+
 
 /**
  * Solaris semaphore wait structure.
@@ -97,7 +100,6 @@ typedef RTR0SEMSOLWAIT *PRTR0SEMSOLWAIT;
  * @param   pWait               The wait structure.
  * @param   fFlags              The wait flags.
  * @param   uTimeout            The timeout.
- * @param   pWaitQueue          The wait queue head.
  */
 DECLINLINE(int) rtR0SemSolWaitInit(PRTR0SEMSOLWAIT pWait, uint32_t fFlags, uint64_t uTimeout)
 {
@@ -454,15 +456,17 @@ DECLINLINE(void) rtR0SemSolWaitEnterMutexWithUnpinningHack(kmutex_t *pMtx)
     if (!fAcquired)
     {
         /*
-         * Note! This assumes nobody is using the RTThreadPreemptDisable in an
+         * Note! This assumes nobody is using the RTThreadPreemptDisable() in an
          *       interrupt context and expects it to work right.  The swtch will
          *       result in a voluntary preemption.  To fix this, we would have to
-         *       do our own counting in RTThreadPreemptDisable/Restore like we do
+         *       do our own counting in RTThreadPreemptDisable/Restore() like we do
          *       on systems which doesn't do preemption (OS/2, linux, ...) and
-         *       check whether preemption was disabled via RTThreadPreemptDisable
-         *       or not and only call swtch if RTThreadPreemptDisable wasn't called.
+         *       check whether preemption was disabled via RTThreadPreemptDisable()
+         *       or not and only call swtch if RTThreadPreemptDisable() wasn't called.
          */
-        if (curthread->t_intr && getpil() < DISP_LEVEL)
+        kthread_t **ppIntrThread = SOL_THREAD_TINTR_PTR;
+        if (   *ppIntrThread
+            && getpil() < DISP_LEVEL)
         {
             RTTHREADPREEMPTSTATE PreemptState = RTTHREADPREEMPTSTATE_INITIALIZER;
             RTThreadPreemptDisable(&PreemptState);
@@ -486,5 +490,5 @@ DECLINLINE(uint32_t) rtR0SemSolWaitGetResolution(void)
          : cyclic_getres();
 }
 
-#endif /* ___r0drv_solaris_semeventwait_r0drv_solaris_h */
+#endif /* !___r0drv_solaris_semeventwait_r0drv_solaris_h */
 

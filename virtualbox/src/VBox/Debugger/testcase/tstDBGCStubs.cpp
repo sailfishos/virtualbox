@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -41,7 +41,7 @@ VMMR3DECL(int) DBGFR3AddrFromSelOff(PUVM pUVM, VMCPUID idCpu, PDBGFADDRESS pAddr
     return VINF_SUCCESS;
 }
 
-VMMR3DECL(int)  DBGFR3AddrToPhys(PUVM pUVM, VMCPUID idCpu, PDBGFADDRESS pAddress, PRTGCPHYS pGCPhys)
+VMMR3DECL(int)  DBGFR3AddrToPhys(PUVM pUVM, VMCPUID idCpu, PCDBGFADDRESS pAddress, PRTGCPHYS pGCPhys)
 {
     return VERR_INTERNAL_ERROR;
 }
@@ -67,7 +67,7 @@ VMMR3DECL(int) DBGFR3BpEnum(PUVM pUVM, PFNDBGFBPENUM pfnCallback, void *pvUser)
 {
     return VERR_INTERNAL_ERROR;
 }
-VMMR3DECL(int) DBGFR3BpSet(PUVM pUVM, PCDBGFADDRESS pAddress, uint64_t iHitTrigger, uint64_t iHitDisable, PRTUINT piBp)
+VMMR3DECL(int) DBGFR3BpSetInt3(PUVM pUVM, VMCPUID idCpu, PCDBGFADDRESS pAddress, uint64_t iHitTrigger, uint64_t iHitDisable, PRTUINT piBp)
 {
     return VERR_INTERNAL_ERROR;
 }
@@ -97,6 +97,15 @@ VMMR3DECL(int) DBGFR3EventWait(PUVM pUVM, RTMSINTERVAL cMillies, PCDBGFEVENT *pp
 {
     return VERR_INTERNAL_ERROR;
 }
+VMMR3DECL(int) DBGFR3EventConfigEx(PUVM pUVM, PCDBGFEVENTCONFIG paConfigs, size_t cConfigs)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3InterruptConfigEx(PUVM pUVM, PCDBGFINTERRUPTCONFIG paConfigs, size_t cConfigs)
+{
+    return VERR_INTERNAL_ERROR;
+}
+
 VMMR3DECL(int) DBGFR3Halt(PUVM pUVM)
 {
     return VERR_INTERNAL_ERROR;
@@ -166,7 +175,8 @@ VMMR3DECL(PCDBGFSTACKFRAME) DBGFR3StackWalkNext(PCDBGFSTACKFRAME pCurrent)
 VMMR3DECL(void) DBGFR3StackWalkEnd(PCDBGFSTACKFRAME pFirstFrame)
 {
 }
-VMMR3DECL(int) DBGFR3Step(PUVM pUVM, VMCPUID idCpu)
+VMMR3DECL(int) DBGFR3StepEx(PUVM pUVM, VMCPUID idCpu, uint32_t fFlags, PCDBGFADDRESS pStopPcAddr,
+                            PCDBGFADDRESS pStopPopAddr, RTGCUINTPTR cbStopPop, uint32_t cMaxSteps)
 {
     return VERR_INTERNAL_ERROR;
 }
@@ -293,6 +303,10 @@ VMMR3DECL(int) DBGFR3OSQueryNameAndVersion(PUVM pUVM, char *pszName, size_t cchN
 {
     return VERR_INTERNAL_ERROR;
 }
+VMMR3DECL(void *) DBGFR3OSQueryInterface(PUVM pUVM, DBGFOSINTERFACE enmIf)
+{
+    return NULL;
+}
 
 VMMR3DECL(int) DBGFR3SelQueryInfo(PUVM pUVM, VMCPUID idCpu, RTSEL Sel, uint32_t fFlags, PDBGFSELINFO pSelInfo)
 {
@@ -311,16 +325,252 @@ VMMR3DECL(bool) DBGFR3CpuIsIn64BitCode(PUVM pUVM, VMCPUID idCpu)
 {
     return false;
 }
+VMMR3DECL(bool) DBGFR3CpuIsInV86Code(PUVM pUVM, VMCPUID idCpu)
+{
+    return false;
+}
 
 VMMR3DECL(int) DBGFR3CoreWrite(PUVM pUVM, const char *pszFilename, bool fReplaceFile)
 {
     return VERR_INTERNAL_ERROR;
 }
 
+VMMR3DECL(int)  DBGFR3PlugInLoad(PUVM pUVM, const char *pszPlugIn, char *pszActual, size_t cbActual, PRTERRINFO pErrInfo)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int)  DBGFR3PlugInUnload(PUVM pUVM, const char *pszName)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(void) DBGFR3PlugInLoadAll(PUVM pUVM)
+{
+}
+VMMR3DECL(int) DBGFR3TypeRegister(  PUVM pUVM, uint32_t cTypes, PCDBGFTYPEREG paTypes)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3TypeDeregister(PUVM pUVM, const char *pszType)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3TypeQueryReg(  PUVM pUVM, const char *pszType, PCDBGFTYPEREG *ppTypeReg)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3TypeQuerySize( PUVM pUVM, const char *pszType, size_t *pcbType)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3TypeSetSize(   PUVM pUVM, const char *pszType, size_t cbType)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3TypeDumpEx(    PUVM pUVM, const char *pszType, uint32_t fFlags,
+                                    uint32_t cLvlMax, PFNDBGFR3TYPEDUMP pfnDump, void *pvUser)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3TypeQueryValByType(PUVM pUVM, PCDBGFADDRESS pAddress, const char *pszType,
+                                        PDBGFTYPEVAL *ppVal)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(void) DBGFR3TypeValFree(PDBGFTYPEVAL pVal)
+{
+}
+VMMR3DECL(int)  DBGFR3TypeValDumpEx(PUVM pUVM, PCDBGFADDRESS pAddress, const char *pszType, uint32_t fFlags,
+                                    uint32_t cLvlMax, FNDBGFR3TYPEVALDUMP pfnDump, void *pvUser)
+{
+    return VERR_INTERNAL_ERROR;
+}
+
+VMMR3DECL(int) DBGFR3FlowCreate(PUVM pUVM, VMCPUID idCpu, PDBGFADDRESS pAddressStart, uint32_t cbDisasmMax,
+                                uint32_t fFlagsFlow, uint32_t fFlagsDisasm, PDBGFFLOW phFlow)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowRetain(DBGFFLOW hFlow)
+{
+    return 0;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowRelease(DBGFFLOW hFlow)
+{
+    return 0;
+}
+VMMR3DECL(int) DBGFR3FlowQueryStartBb(DBGFFLOW hFlow, PDBGFFLOWBB phFlowBb)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3FlowQueryBbByAddress(DBGFFLOW hFlow, PDBGFADDRESS pAddr, PDBGFFLOWBB phFlowBb)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3FlowQueryBranchTblByAddress(DBGFFLOW hFlow, PDBGFADDRESS pAddr, PDBGFFLOWBRANCHTBL phFlowBranchTbl)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowGetBbCount(DBGFFLOW hFlow)
+{
+    return 0;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowGetBranchTblCount(DBGFFLOW hFlow)
+{
+    return 0;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowBbRetain(DBGFFLOWBB hFlowBb)
+{
+    return 0;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowBbRelease(DBGFFLOWBB hFlowBb)
+{
+    return 0;
+}
+VMMR3DECL(PDBGFADDRESS) DBGFR3FlowBbGetStartAddress(DBGFFLOWBB hFlowBb, PDBGFADDRESS pAddrStart)
+{
+    return NULL;
+}
+VMMR3DECL(PDBGFADDRESS) DBGFR3FlowBbGetEndAddress(DBGFFLOWBB hFlowBb, PDBGFADDRESS pAddrEnd)
+{
+    return NULL;
+}
+VMMR3DECL(PDBGFADDRESS) DBGFR3FlowBbGetBranchAddress(DBGFFLOWBB hFlowBb, PDBGFADDRESS pAddrTarget)
+{
+    return NULL;
+}
+VMMR3DECL(PDBGFADDRESS) DBGFR3FlowBbGetFollowingAddress(DBGFFLOWBB hFlowBb, PDBGFADDRESS pAddrFollow)
+{
+    return NULL;
+}
+VMMR3DECL(DBGFFLOWBBENDTYPE) DBGFR3FlowBbGetType(DBGFFLOWBB hFlowBb)
+{
+    return DBGFFLOWBBENDTYPE_INVALID;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowBbGetInstrCount(DBGFFLOWBB hFlowBb)
+{
+    return 0;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowBbGetFlags(DBGFFLOWBB hFlowBb)
+{
+    return 0;
+}
+VMMR3DECL(int) DBGFR3FlowBbQueryBranchTbl(DBGFFLOWBB hFlowBb, PDBGFFLOWBRANCHTBL phBranchTbl)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3FlowBbQueryError(DBGFFLOWBB hFlowBb, const char **ppszErr)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3FlowBbQueryInstr(DBGFFLOWBB hFlowBb, uint32_t idxInstr, PDBGFADDRESS pAddrInstr,
+                                      uint32_t *pcbInstr, const char **ppszInstr)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3FlowBbQuerySuccessors(DBGFFLOWBB hFlowBb, PDBGFFLOWBB phFlowBbFollow,
+                                           PDBGFFLOWBB phFlowBbTarget)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowBbGetRefBbCount(DBGFFLOWBB hFlowBb)
+{
+    return 0;
+}
+VMMR3DECL(int) DBGFR3FlowBbGetRefBb(DBGFFLOWBB hFlowBb, PDBGFFLOWBB pahFlowBbRef, uint32_t cRef)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowBranchTblRetain(DBGFFLOWBRANCHTBL hFlowBranchTbl)
+{
+    return 0;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowBranchTblRelease(DBGFFLOWBRANCHTBL hFlowBranchTbl)
+{
+    return 0;
+}
+VMMR3DECL(uint32_t) DBGFR3FlowBranchTblGetSlots(DBGFFLOWBRANCHTBL hFlowBranchTbl)
+{
+    return 0;
+}
+VMMR3DECL(PDBGFADDRESS) DBGFR3FlowBranchTblGetStartAddress(DBGFFLOWBRANCHTBL hFlowBranchTbl, PDBGFADDRESS pAddrStart)
+{
+    return NULL;
+}
+VMMR3DECL(PDBGFADDRESS) DBGFR3FlowBranchTblGetAddrAtSlot(DBGFFLOWBRANCHTBL hFlowBranchTbl, uint32_t idxSlot, PDBGFADDRESS pAddrSlot)
+{
+    return NULL;
+}
+VMMR3DECL(int) DBGFR3FlowBranchTblQueryAddresses(DBGFFLOWBRANCHTBL hFlowBranchTbl, PDBGFADDRESS paAddrs, uint32_t cAddrs)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3FlowItCreate(DBGFFLOW hFlow, DBGFFLOWITORDER enmOrder, PDBGFFLOWIT phFlowIt)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(void) DBGFR3FlowItDestroy(DBGFFLOWIT hFlowIt)
+{
+}
+VMMR3DECL(DBGFFLOWBB) DBGFR3FlowItNext(DBGFFLOWIT hFlowIt)
+{
+    return NULL;
+}
+VMMR3DECL(int) DBGFR3FlowItReset(DBGFFLOWIT hFlowIt)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(int) DBGFR3FlowBranchTblItCreate(DBGFFLOW hFlow, DBGFFLOWITORDER enmOrder, PDBGFFLOWBRANCHTBLIT phFlowBranchTblIt)
+{
+    return VERR_INTERNAL_ERROR;
+}
+VMMR3DECL(void) DBGFR3FlowBranchTblItDestroy(DBGFFLOWBRANCHTBLIT hFlowBranchTblIt)
+{
+}
+VMMR3DECL(DBGFFLOWBRANCHTBL) DBGFR3FlowBranchTblItNext(DBGFFLOWBRANCHTBLIT hFlowBranchTblIt)
+{
+    return NULL;
+}
+VMMR3DECL(int) DBGFR3FlowBranchTblItReset(DBGFFLOWBRANCHTBLIT hFlowBranchTblIt)
+{
+    return VERR_INTERNAL_ERROR;
+}
+
+#include <VBox/vmm/cfgm.h>
+VMMR3DECL(int) CFGMR3ValidateConfig(PCFGMNODE pNode, const char *pszNode,
+                                    const char *pszValidValues, const char *pszValidNodes,
+                                    const char *pszWho, uint32_t uInstance)
+{
+    return VINF_SUCCESS;
+}
+
+VMMR3DECL(PCFGMNODE) CFGMR3GetRootU(PUVM pUVM)
+{
+    return NULL;
+}
+
+VMMR3DECL(PCFGMNODE) CFGMR3GetChild(PCFGMNODE pNode, const char *pszPath)
+{
+    return NULL;
+}
+
+VMMR3DECL(int) CFGMR3QueryString(PCFGMNODE pNode, const char *pszName, char *pszString, size_t cchString)
+{
+    *pszString = '\0';
+    return VINF_SUCCESS;
+}
+
+VMMR3DECL(int) CFGMR3QueryStringDef(PCFGMNODE pNode, const char *pszName, char *pszString, size_t cchString, const char *pszDef)
+{
+    *pszString = '\0';
+    return VINF_SUCCESS;
+}
+
+
 
 //////////////////////////////////////////////////////////////////////////
 // The rest should eventually be replaced by DBGF calls and eliminated. //
 /////////////////////////////////////////////////////////////////////////
+
 
 #include <VBox/vmm/cpum.h>
 
@@ -434,4 +684,9 @@ VMMR3DECL(PVMCPU) VMMR3GetCpuByIdU(PUVM pUVM, RTCPUID idCpu)
 VMMR3DECL(PVM) VMR3GetVM(PUVM pUVM)
 {
     return NULL;
+}
+
+VMMR3DECL(VMSTATE) VMR3GetStateU(PUVM pUVM)
+{
+    return VMSTATE_DESTROYING;
 }

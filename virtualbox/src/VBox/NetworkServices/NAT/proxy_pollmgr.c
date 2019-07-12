@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,6 +27,7 @@
 #include <netinet/in.h>
 #include <err.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,7 +41,26 @@
 #include "winpoll.h"
 #endif
 
+#include <iprt/req.h>
+#include <iprt/err.h>
+
+
 #define POLLMGR_GARBAGE (-1)
+
+
+enum {
+    POLLMGR_QUEUE = 0,
+
+    POLLMGR_SLOT_STATIC_COUNT,
+    POLLMGR_SLOT_FIRST_DYNAMIC = POLLMGR_SLOT_STATIC_COUNT
+};
+
+
+struct pollmgr_chan {
+    struct pollmgr_handler *handler;
+    void *arg;
+    bool arg_valid;
+};
 
 struct pollmgr {
     struct pollfd *fds;
@@ -52,8 +72,17 @@ struct pollmgr {
     SOCKET chan[POLLMGR_SLOT_STATIC_COUNT][2];
 #define POLLMGR_CHFD_RD 0       /* - pollmgr side */
 #define POLLMGR_CHFD_WR 1       /* - client side */
+
+
+    /* emulate channels with request queue */
+    RTREQQUEUE queue;
+    struct pollmgr_handler queue_handler;
+    struct pollmgr_chan chan_handlers[POLLMGR_CHAN_COUNT];
 } pollmgr;
 
+
+static int pollmgr_queue_callback(struct pollmgr_handler *, SOCKET, int);
+static void pollmgr_chan_call_handler(int, void *);
 
 static void pollmgr_loop(void);
 
@@ -81,8 +110,12 @@ pollmgr_init(void)
     struct pollfd *newfds;
     struct pollmgr_handler **newhdls;
     nfds_t newcap;
-    int status;
+    int rc, status;
     nfds_t i;
+
+    rc = RTReqQueueCreate(&pollmgr.queue);
+    if (RT_FAILURE(rc))
+        return -1;
 
     pollmgr.fds = NULL;
     pollmgr.handlers = NULL;
@@ -90,16 +123,36 @@ pollmgr_init(void)
     pollmgr.nfds = 0;
 
     for (i = 0; i < POLLMGR_SLOT_STATIC_COUNT; ++i) {
-        pollmgr.chan[i][POLLMGR_CHFD_RD] = -1;
-        pollmgr.chan[i][POLLMGR_CHFD_WR] = -1;
+        pollmgr.chan[i][POLLMGR_CHFD_RD] = INVALID_SOCKET;
+        pollmgr.chan[i][POLLMGR_CHFD_WR] = INVALID_SOCKET;
     }
 
     for (i = 0; i < POLLMGR_SLOT_STATIC_COUNT; ++i) {
 #ifndef RT_OS_WINDOWS
+        int j;
+
         status = socketpair(PF_LOCAL, SOCK_DGRAM, 0, pollmgr.chan[i]);
         if (status < 0) {
             DPRINTF(("socketpair: %R[sockerr]\n", SOCKERRNO()));
             goto cleanup_close;
+        }
+
+        /* now manually make them O_NONBLOCK */
+        for (j = 0; j < 2; ++j) {
+            int s = pollmgr.chan[i][j];
+            int sflags;
+
+            sflags = fcntl(s, F_GETFL, 0);
+            if (sflags < 0) {
+                DPRINTF0(("F_GETFL: %R[sockerr]\n", errno));
+                goto cleanup_close;
+            }
+
+            status = fcntl(s, F_SETFL, sflags | O_NONBLOCK);
+            if (status < 0) {
+                DPRINTF0(("O_NONBLOCK: %R[sockerr]\n", errno));
+                goto cleanup_close;
+            }
         }
 #else
         status = RTWinSocketPair(PF_INET, SOCK_DGRAM, 0, pollmgr.chan[i]);
@@ -140,12 +193,21 @@ pollmgr_init(void)
         pollmgr.fds[i].revents = 0;
     }
 
+    /* add request queue notification */
+    pollmgr.queue_handler.callback = pollmgr_queue_callback;
+    pollmgr.queue_handler.data = NULL;
+    pollmgr.queue_handler.slot = -1;
+
+    pollmgr_add_at(POLLMGR_QUEUE, &pollmgr.queue_handler,
+                   pollmgr.chan[POLLMGR_QUEUE][POLLMGR_CHFD_RD],
+                   POLLIN);
+
     return 0;
 
   cleanup_close:
     for (i = 0; i < POLLMGR_SLOT_STATIC_COUNT; ++i) {
         SOCKET *chan = pollmgr.chan[i];
-        if (chan[POLLMGR_CHFD_RD] >= 0) {
+        if (chan[POLLMGR_CHFD_RD] != INVALID_SOCKET) {
             closesocket(chan[POLLMGR_CHFD_RD]);
             closesocket(chan[POLLMGR_CHFD_WR]);
         }
@@ -156,18 +218,171 @@ pollmgr_init(void)
 
 
 /*
+ * Add new channel.  We now implement channels with request queue, so
+ * all channels get the same socket that triggers queue processing.
+ *
  * Must be called before pollmgr loop is started, so no locking.
  */
 SOCKET
 pollmgr_add_chan(int slot, struct pollmgr_handler *handler)
 {
-    if (slot >= POLLMGR_SLOT_FIRST_DYNAMIC) {
-        handler->slot = -1;
+    AssertReturn(0 <= slot && slot < POLLMGR_CHAN_COUNT, INVALID_SOCKET);
+    AssertReturn(handler != NULL && handler->callback != NULL, INVALID_SOCKET);
+
+    handler->slot = slot;
+    pollmgr.chan_handlers[slot].handler = handler;
+    return pollmgr.chan[POLLMGR_QUEUE][POLLMGR_CHFD_WR];
+}
+
+
+/*
+ * This used to actually send data over the channel's socket.  Now we
+ * queue a request and send single byte notification over shared
+ * POLLMGR_QUEUE socket.
+ */
+ssize_t
+pollmgr_chan_send(int slot, void *buf, size_t nbytes)
+{
+    static const char notification = 0x5a;
+
+    void *ptr;
+    SOCKET fd;
+    ssize_t nsent;
+    int rc;
+
+    AssertReturn(0 <= slot && slot < POLLMGR_CHAN_COUNT, -1);
+
+    /*
+     * XXX: Hack alert.  We only ever "sent" single pointer which was
+     * simultaneously both the wakeup event for the poll and the
+     * argument for the channel handler that it read from the channel.
+     * So now we pass this pointer to the request and arrange for the
+     * handler to "read" it when it asks for it.
+     */
+    if (nbytes != sizeof(void *)) {
         return -1;
     }
 
-    pollmgr_add_at(slot, handler, pollmgr.chan[slot][POLLMGR_CHFD_RD], POLLIN);
-    return pollmgr.chan[slot][POLLMGR_CHFD_WR];
+    ptr = *(void **)buf;
+
+    rc = RTReqQueueCallEx(pollmgr.queue, NULL, 0,
+                          RTREQFLAGS_VOID | RTREQFLAGS_NO_WAIT,
+                          (PFNRT)pollmgr_chan_call_handler, 2,
+                          slot, ptr);
+
+    fd = pollmgr.chan[POLLMGR_QUEUE][POLLMGR_CHFD_WR];
+    nsent = send(fd, &notification, 1, 0);
+    if (nsent == SOCKET_ERROR) {
+        DPRINTF(("send on chan %d: %R[sockerr]\n", slot, SOCKERRNO()));
+        return -1;
+    }
+    else if ((size_t)nsent != 1) {
+        DPRINTF(("send on chan %d: datagram truncated to %u bytes",
+                 slot, (unsigned int)nsent));
+        return -1;
+    }
+
+    /* caller thinks it's sending the pointer */
+    return sizeof(void *);
+}
+
+
+/*
+ * pollmgr_chan_send() sent us a notification, process the queue.
+ */
+static int
+pollmgr_queue_callback(struct pollmgr_handler *handler, SOCKET fd, int revents)
+{
+    ssize_t nread;
+    int sockerr;
+    int rc;
+
+    RT_NOREF(handler, revents);
+    Assert(pollmgr.queue != NIL_RTREQQUEUE);
+
+    nread = recv(fd, (char *)pollmgr_udpbuf, sizeof(pollmgr_udpbuf), 0);
+    sockerr = SOCKERRNO();      /* save now, may be clobbered */
+
+    if (nread == SOCKET_ERROR) {
+        DPRINTF0(("%s: recv: %R[sockerr]\n", __func__, sockerr));
+        return POLLIN;
+    }
+
+    DPRINTF2(("%s: read %zd\n", __func__, nread));
+    if (nread == 0) {
+        return POLLIN;
+    }
+
+    rc = RTReqQueueProcess(pollmgr.queue, 0);
+    if (RT_UNLIKELY(rc != VERR_TIMEOUT && RT_FAILURE_NP(rc))) {
+        DPRINTF0(("%s: RTReqQueueProcess: %Rrc\n", __func__, rc));
+    }
+
+    return POLLIN;
+}
+
+
+/*
+ * Queued requests use this function to emulate the call to the
+ * handler's callback.
+ */
+static void
+pollmgr_chan_call_handler(int slot, void *arg)
+{
+    struct pollmgr_handler *handler;
+    int nevents;
+
+    AssertReturnVoid(0 <= slot && slot < POLLMGR_CHAN_COUNT);
+
+    handler = pollmgr.chan_handlers[slot].handler;
+    AssertReturnVoid(handler != NULL && handler->callback != NULL);
+
+    /* arrange for pollmgr_chan_recv_ptr() to "receive" the arg */
+    pollmgr.chan_handlers[slot].arg = arg;
+    pollmgr.chan_handlers[slot].arg_valid = true;
+
+    nevents = handler->callback(handler, INVALID_SOCKET, POLLIN);
+    if (nevents != POLLIN) {
+        DPRINTF2(("%s: nevents=0x%x!\n", __func__, nevents));
+    }
+}
+
+
+/*
+ * "Receive" a pointer "sent" over poll manager channel.
+ */
+void *
+pollmgr_chan_recv_ptr(struct pollmgr_handler *handler, SOCKET fd, int revents)
+{
+    int slot;
+    void *ptr;
+
+    RT_NOREF(fd);
+
+    slot = handler->slot;
+    Assert(0 <= slot && slot < POLLMGR_CHAN_COUNT);
+
+    if (revents & POLLNVAL) {
+        errx(EXIT_FAILURE, "chan %d: fd invalid", (int)handler->slot);
+        /* NOTREACHED */
+    }
+
+    if (revents & (POLLERR | POLLHUP)) {
+        errx(EXIT_FAILURE, "chan %d: fd error", (int)handler->slot);
+        /* NOTREACHED */
+    }
+
+    LWIP_ASSERT1(revents & POLLIN);
+
+    if (!pollmgr.chan_handlers[slot].arg_valid) {
+        err(EXIT_FAILURE, "chan %d: recv", (int)handler->slot);
+        /* NOTREACHED */
+    }
+
+    ptr = pollmgr.chan_handlers[slot].arg;
+    pollmgr.chan_handlers[slot].arg_valid = false;
+
+    return ptr;
 }
 
 
@@ -238,68 +453,6 @@ pollmgr_add_at(int slot, struct pollmgr_handler *handler, SOCKET fd, int events)
     pollmgr.handlers[slot] = handler;
 
     handler->slot = slot;
-}
-
-
-ssize_t
-pollmgr_chan_send(int slot, void *buf, size_t nbytes)
-{
-    SOCKET fd;
-    ssize_t nsent;
-
-    if (slot >= POLLMGR_SLOT_FIRST_DYNAMIC) {
-        return -1;
-    }
-
-    fd = pollmgr.chan[slot][POLLMGR_CHFD_WR];
-    nsent = send(fd, buf, (int)nbytes, 0);
-    if (nsent == SOCKET_ERROR) {
-        DPRINTF(("send on chan %d: %R[sockerr]\n", slot, SOCKERRNO()));
-        return -1;
-    }
-    else if ((size_t)nsent != nbytes) {
-        DPRINTF(("send on chan %d: datagram truncated to %u bytes",
-                 slot, (unsigned int)nsent));
-        return -1;
-    }
-
-    return nsent;
-}
-
-
-/**
- * Receive a pointer sent over poll manager channel.
- */
-void *
-pollmgr_chan_recv_ptr(struct pollmgr_handler *handler, SOCKET fd, int revents)
-{
-    void *ptr;
-    ssize_t nread;
-
-    if (revents & POLLNVAL) {
-        errx(EXIT_FAILURE, "chan %d: fd invalid", (int)handler->slot);
-        /* NOTREACHED */
-    }
-
-    if (revents & (POLLERR | POLLHUP)) {
-        errx(EXIT_FAILURE, "chan %d: fd error", (int)handler->slot);
-        /* NOTREACHED */
-    }
-
-    LWIP_ASSERT1(revents & POLLIN);
-    nread = recv(fd, (char *)&ptr, sizeof(ptr), 0);
-
-    if (nread == SOCKET_ERROR) {
-        err(EXIT_FAILURE, "chan %d: recv", (int)handler->slot);
-        /* NOTREACHED */
-    }
-    if (nread != sizeof(ptr)) {
-        errx(EXIT_FAILURE, "chan %d: recv: read %d bytes",
-             (int)handler->slot, (int)nread);
-        /* NOTREACHED */
-    }
-
-    return ptr;
 }
 
 
@@ -402,7 +555,8 @@ pollmgr_loop(void)
             handler = pollmgr.handlers[i];
 
             if (handler != NULL && handler->callback != NULL) {
-#if LWIP_PROXY_DEBUG /* DEBUG */
+#ifdef LWIP_PROXY_DEBUG
+# if LWIP_PROXY_DEBUG /* DEBUG */
                 if (i < POLLMGR_SLOT_FIRST_DYNAMIC) {
                     if (revents == POLLIN) {
                         DPRINTF2(("%s: ch %d\n", __func__, i));
@@ -416,7 +570,8 @@ pollmgr_loop(void)
                     DPRINTF2(("%s: fd %d @ revents 0x%x\n",
                               __func__, fd, revents));
                 }
-#endif /* DEBUG */
+# endif /* LWIP_PROXY_DEBUG / DEBUG */
+#endif
                 nevents = (*handler->callback)(handler, fd, revents);
             }
             else {
@@ -487,7 +642,7 @@ pollmgr_loop(void)
                 /* drop garbage entry at the end of the array */
                 --pollmgr.nfds;
 
-                if (delfirst == last) {
+                if (delfirst == (SOCKET)last) {
                     /* congruent to delnext >= pollmgr.nfds test below */
                     delfirst = INVALID_SOCKET; /* done */
                 }

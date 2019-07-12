@@ -3,6 +3,7 @@
 #
 # See the file LICENSE.txt for information on redistributing this software.
 
+from __future__ import print_function
 
 num_get_values = {
     'GL_ACCUM_ALPHA_BITS' : 1,
@@ -355,8 +356,6 @@ extensions_num_get_values = {
     'GL_FOG_COORDINATE_ARRAY_BUFFER_BINDING_ARB': (1, 'CR_ARB_vertex_buffer_object'),
     'GL_WEIGHT_ARRAY_BUFFER_BINDING_ARB': (1, 'CR_ARB_vertex_buffer_object'),
     'GL_MAX_TEXTURE_IMAGE_UNITS_ARB': (1, 'CR_ARB_fragment_program'),
-    # We don't support GL_ARB_draw_buffers, but for some reason ubuntu64 8.10 vm queries it on macos host
-    'GL_MAX_DRAW_BUFFERS_ARB': (1, 'VBOX'),
     'GL_MAX_PROGRAM_MATRICES_ARB': (1, 'CR_ARB_vertex_program'),
     'GL_MAX_PROGRAM_MATRIX_STACK_DEPTH_ARB': (1, 'CR_ARB_vertex_program'),
     # Vertex shaders (2.0) #
@@ -372,7 +371,7 @@ extensions_num_get_values = {
     # Fragment shaders (2.0) #
     'GL_MAX_FRAGMENT_UNIFORM_COMPONENTS': (1, 'CR_OPENGL_VERSION_2_0'),
     'GL_FRAGMENT_SHADER_DERIVATIVE_HINT': (1, 'CR_OPENGL_VERSION_2_0'),
-    # Draw buffers (2.0) #
+    # Draw buffers (2.0) / GL_ARB_draw_buffers #
     'GL_MAX_DRAW_BUFFERS': (1, 'CR_OPENGL_VERSION_2_0'),
     'GL_DRAW_BUFFER0': (1, 'CR_OPENGL_VERSION_2_0'),
     'GL_DRAW_BUFFER1': (1, 'CR_OPENGL_VERSION_2_0'),
@@ -413,47 +412,47 @@ extensions_num_get_values = {
     'GL_ACTIVE_STENCIL_FACE_EXT': (1, 'CR_EXT_stencil_two_side'),
 }
 
-get_keys = num_get_values.keys() + extensions_num_get_values.keys()
+get_keys = list(num_get_values.keys()) + list(extensions_num_get_values.keys())
 get_keys.sort()
 max_keyvalues = 0
 
-print """
+print("""
 static struct nv_struct { GLenum pname; unsigned int num_values;
 #ifdef VBOX_WITH_CRDUMPER 
 const char* pszName;
 #endif
 } num_values_array[] = {
-"""
+""")
 for key in get_keys:
     try:
         keyvalues = num_get_values[key]
         if max_keyvalues < keyvalues:
             max_keyvalues = keyvalues
-        print """
+        print("""
         \t{ %s, %d
 #ifdef VBOX_WITH_CRDUMPER
             , "%s"
 #endif
         },
-        """ % (key, keyvalues, key)
+        """ % (key, keyvalues, key))
     except KeyError:
         (nv, ifdef) = extensions_num_get_values[key]
         if max_keyvalues < nv:
             max_keyvalues = nv
-        print '#ifdef %s' % ifdef
-        print """
+        print('#ifdef %s' % ifdef)
+        print("""
         \t{ %s, %d
         #ifdef VBOX_WITH_CRDUMPER
             , "%s"
         #endif
         },
-        """ % (key, nv, key)
-        print '#endif /* %s */' % ifdef
-print "\t{ 0, 0 }"
-print "};"
-print "#define CR_MAX_GET_VALUES %d" % max_keyvalues
+        """ % (key, nv, key))
+        print('#endif /* %s */' % ifdef)
+print("\t{ 0, 0 }")
+print("};")
+print("#define CR_MAX_GET_VALUES %d" % max_keyvalues)
 
-print """
+print("""
 static unsigned int __numValues( GLenum pname )
 {
     struct nv_struct *temp;
@@ -466,4 +465,4 @@ static unsigned int __numValues( GLenum pname )
     crDebug( "Invalid pname to __numValues: 0x%x\\n", (int) pname );
     return 0;
 }
-"""
+""")

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,11 +27,21 @@
 #ifndef ___VBox_VBoxNetCfg_win_h
 #define ___VBox_VBoxNetCfg_win_h
 
-#include <winsock2.h>
-#include <Windows.h>
+/*
+ * Defining VBOXNETCFG_DELAYEDRENAME postpones renaming of host-only adapter
+ * connection during adapter creation after it has been assigned with an
+ * IP address. This hopefully prevents collisions that may happen when we
+ * attempt to rename a connection too early, while its configuration is
+ * still being 'committed' by the network setup engine.
+ */
+#define VBOXNETCFG_DELAYEDRENAME
+
+#include <iprt/win/winsock2.h>
+#include <iprt/win/windows.h>
 #include <Netcfgn.h>
-#include <Setupapi.h>
+#include <iprt/win/Setupapi.h>
 #include <VBox/cdefs.h>
+#include <iprt/types.h>
 
 /** @defgroup grp_vboxnetcfgwin     The Windows Network Configration Library
  * @{ */
@@ -64,13 +74,23 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinGetComponentByGuid(IN INetCfg *pNc, IN 
 
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetFltInstall(IN INetCfg *pNc, IN LPCWSTR const * apInfFullPaths, IN UINT cInfFullPaths);
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetFltUninstall(IN INetCfg *pNc);
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetLwfInstall(IN INetCfg *pNc, IN LPCWSTR const pInfFullPath);
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetLwfUninstall(IN INetCfg *pNc);
 
-VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetAdpUninstall(IN INetCfg *pNc);
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetAdpUninstall(IN INetCfg *pNc, IN LPCWSTR pwszId);
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetAdpInstall(IN INetCfg *pNc,IN LPCWSTR const pInfFullPath);
 
+#ifndef VBOXNETCFG_DELAYEDRENAME
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWSTR pInfPath, IN bool bIsInfPathFile,
                                                                         OUT GUID *pGuid, OUT BSTR *lppszName,
                                                                         OUT BSTR *pErrMsg);
-VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinUpdateHostOnlyNetworkInterface(LPCWSTR pcsxwInf, BOOL *pbRebootRequired);
+#else /* VBOXNETCFG_DELAYEDRENAME */
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWSTR pInfPath, IN bool bIsInfPathFile,
+                                                                        OUT GUID *pGuid, OUT BSTR *lppszId,
+                                                                        OUT BSTR *pErrMsg);
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRenameHostOnlyConnection(IN const GUID *pGuid, IN LPCWSTR pszId,  OUT BSTR *pDevName);
+#endif /* VBOXNETCFG_DELAYEDRENAME */
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinUpdateHostOnlyNetworkInterface(LPCWSTR pcsxwInf, BOOL *pbRebootRequired, LPCWSTR pcsxwId);
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRemoveHostOnlyNetworkInterface(IN const GUID *pGUID, OUT BSTR *pErrMsg);
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRemoveAllNetDevicesOfId(IN LPCWSTR lpszPnPId);
 

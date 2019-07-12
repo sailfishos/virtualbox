@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,15 +25,15 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-linux-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/thread.h>
 
 #include <iprt/asm.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 28)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 5, 28) || defined(CONFIG_X86_SMAP)
 # include <iprt/asm-amd64-x86.h>
 #endif
 #include <iprt/assert.h>
@@ -41,9 +41,9 @@
 #include <iprt/mp.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifndef CONFIG_PREEMPT
 /** Per-cpu preemption counters. */
 static int32_t volatile g_acPreemptDisabled[NR_CPUS];
@@ -59,9 +59,11 @@ RT_EXPORT_SYMBOL(RTThreadNativeSelf);
 
 static int rtR0ThreadLnxSleepCommon(RTMSINTERVAL cMillies)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
     long cJiffies = msecs_to_jiffies(cMillies);
     set_current_state(TASK_INTERRUPTIBLE);
     cJiffies = schedule_timeout(cJiffies);
+    IPRT_LINUX_RESTORE_EFL_AC();
     if (!cJiffies)
         return VINF_SUCCESS;
     return VERR_INTERRUPTED;
@@ -84,6 +86,7 @@ RT_EXPORT_SYMBOL(RTThreadSleepNoLog);
 
 RTDECL(bool) RTThreadYield(void)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 4, 20)
     yield();
 #else
@@ -92,6 +95,7 @@ RTDECL(bool) RTThreadYield(void)
     sys_sched_yield();
     schedule();
 #endif
+    IPRT_LINUX_RESTORE_EFL_AC();
     return true;
 }
 RT_EXPORT_SYMBOL(RTThreadYield);
@@ -100,7 +104,7 @@ RT_EXPORT_SYMBOL(RTThreadYield);
 RTDECL(bool) RTThreadPreemptIsEnabled(RTTHREAD hThread)
 {
 #ifdef CONFIG_PREEMPT
-    Assert(hThread == NIL_RTTHREAD);
+    Assert(hThread == NIL_RTTHREAD); RT_NOREF_PV(hThread);
 # ifdef preemptible
     return preemptible();
 # else
@@ -133,7 +137,7 @@ RT_EXPORT_SYMBOL(RTThreadPreemptIsEnabled);
 
 RTDECL(bool) RTThreadPreemptIsPending(RTTHREAD hThread)
 {
-    Assert(hThread == NIL_RTTHREAD);
+    Assert(hThread == NIL_RTTHREAD); RT_NOREF_PV(hThread);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 4)
     return !!test_tsk_thread_flag(current, TIF_NEED_RESCHED);
 
@@ -199,10 +203,12 @@ RT_EXPORT_SYMBOL(RTThreadPreemptDisable);
 RTDECL(void) RTThreadPreemptRestore(PRTTHREADPREEMPTSTATE pState)
 {
 #ifdef CONFIG_PREEMPT
+    IPRT_LINUX_SAVE_EFL_AC(); /* paranoia */
     AssertPtr(pState);
     Assert(pState->u32Reserved == 42);
     RT_ASSERT_PREEMPT_CPUID_RESTORE(pState);
     preempt_enable();
+    IPRT_LINUX_RESTORE_EFL_ONLY_AC();  /* paranoia */
 
 #else
     int32_t volatile *pc;

@@ -33,6 +33,7 @@
 %VERPKG%: shlib-with-non-pic-code usr/lib/virtualbox/VBoxDbg.so
 %VERPKG%: binary-without-manpage usr/bin/VBox
 %VERPKG%: binary-without-manpage usr/bin/VBoxBalloonCtrl
+%VERPKG%: binary-without-manpage usr/bin/VBoxDTrace
 %VERPKG%: binary-without-manpage usr/bin/VBoxHeadless
 %VERPKG%: binary-without-manpage usr/bin/VBoxManage
 %VERPKG%: binary-without-manpage usr/bin/VBoxSDL
@@ -41,16 +42,15 @@
 %VERPKG%: binary-without-manpage usr/bin/VirtualBox
 %VERPKG%: binary-without-manpage usr/bin/rdesktop-vrdp
 %VERPKG%: binary-without-manpage usr/bin/vboxballoonctrl
+%VERPKG%: binary-without-manpage usr/bin/vboxdtrace
 %VERPKG%: binary-without-manpage usr/bin/vboxheadless
 %VERPKG%: binary-without-manpage usr/bin/vboxmanage
 %VERPKG%: binary-without-manpage usr/bin/vboxsdl
 %VERPKG%: binary-without-manpage usr/bin/vboxwebsrv
 %VERPKG%: binary-without-manpage usr/bin/virtualbox
-%VERPKG%: unstripped-binary-or-object usr/lib/virtualbox/VBoxDDGC.gc
-%VERPKG%: unstripped-binary-or-object usr/lib/virtualbox/VBoxDD2GC.gc
+%VERPKG%: unstripped-binary-or-object usr/lib/virtualbox/VBoxDDRC.rc
 %VERPKG%: unstripped-binary-or-object usr/lib/virtualbox/VBoxDDR0.r0
-%VERPKG%: unstripped-binary-or-object usr/lib/virtualbox/VBoxDD2R0.r0
-%VERPKG%: unstripped-binary-or-object usr/lib/virtualbox/VMMGC.gc
+%VERPKG%: unstripped-binary-or-object usr/lib/virtualbox/VMMRC.rc
 %VERPKG%: unstripped-binary-or-object usr/lib/virtualbox/VMMR0.r0
 %VERPKG%: no-shlibs-control-file usr/lib/virtualbox/VBoxRT.so
 %VERPKG%: no-shlibs-control-file usr/lib/virtualbox/VBoxDD.so
@@ -74,6 +74,7 @@
 %VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/VBoxDD2.so /usr/lib/virtualbox
 %VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/VBoxDDU.so /usr/lib/virtualbox
 %VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/VBoxDbg.so /usr/lib/virtualbox
+%VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/VBoxDTrace /usr/lib/virtualbox
 %VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/VBoxGuestPropSvc.so /usr/lib/virtualbox
 %VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/VBoxGuestControlSvc.so /usr/lib/virtualbox
 %VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/VBoxHostChannel.so /usr/lib/virtualbox
@@ -112,7 +113,6 @@
 %VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/kchmviewer /usr/lib/virtualbox
 %VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/VBoxBalloonCtrl /usr/lib/virtualbox
 %VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/vboxwebsrv /usr/lib/virtualbox
-%VERPKG%: binary-or-shlib-defines-rpath ./usr/lib/virtualbox/webtest /usr/lib/virtualbox
 %VERPKG%: postrm-contains-additional-updaterc.d-calls /etc/init.d/vboxnet
 %VERPKG%: package-contains-empty-directory usr/lib/virtualbox/ExtensionPacks/
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -37,13 +37,14 @@
  * against glibc < 2.6.
  */
 #include "../posix/semevent-posix.cpp"
-asm volatile (".global epoll_pwait");
+__asm__ (".global epoll_pwait");
 
 #else /* glibc < 2.6 */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/semaphore.h>
 #include "internal/iprt.h"
 
@@ -71,9 +72,9 @@ asm volatile (".global epoll_pwait");
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Linux (single wakup) event semaphore.
  */
@@ -158,6 +159,8 @@ RTDECL(int)  RTSemEventCreateEx(PRTSEMEVENT phEventSem, uint32_t fFlags, RTLOCKV
             va_end(va);
         }
         pThis->fEverHadSignallers = false;
+#else
+        RT_NOREF(hClass, pszNameFmt);
 #endif
 
         *phEventSem = pThis;
@@ -238,7 +241,9 @@ RTDECL(int)  RTSemEventSignal(RTSEMEVENT hEventSem)
 
 static int rtSemEventWait(RTSEMEVENT hEventSem, RTMSINTERVAL cMillies, bool fAutoResume)
 {
+#ifdef RTSEMEVENT_STRICT
     PCRTLOCKVALSRCPOS pSrcPos = NULL;
+#endif
 
     /*
      * Validate input.
@@ -374,6 +379,8 @@ RTDECL(void) RTSemEventSetSignaller(RTSEMEVENT hEventSem, RTTHREAD hThread)
 
     ASMAtomicWriteBool(&pThis->fEverHadSignallers, true);
     RTLockValidatorRecSharedResetOwner(&pThis->Signallers, hThread, NULL);
+#else
+    RT_NOREF(hEventSem, hThread);
 #endif
 }
 
@@ -387,6 +394,8 @@ RTDECL(void) RTSemEventAddSignaller(RTSEMEVENT hEventSem, RTTHREAD hThread)
 
     ASMAtomicWriteBool(&pThis->fEverHadSignallers, true);
     RTLockValidatorRecSharedAddOwner(&pThis->Signallers, hThread, NULL);
+#else
+    RT_NOREF(hEventSem, hThread);
 #endif
 }
 
@@ -399,6 +408,8 @@ RTDECL(void) RTSemEventRemoveSignaller(RTSEMEVENT hEventSem, RTTHREAD hThread)
     AssertReturnVoid(pThis->iMagic == RTSEMEVENT_MAGIC);
 
     RTLockValidatorRecSharedRemoveOwner(&pThis->Signallers, hThread);
+#else
+    RT_NOREF(hEventSem, hThread);
 #endif
 }
 

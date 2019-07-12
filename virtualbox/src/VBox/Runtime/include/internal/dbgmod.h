@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -232,7 +232,7 @@ typedef struct RTDBGMODVTIMG
      *
      * @returns IPRT status code.
      * @param   pMod            Pointer to the module structure.
-     * @param   enmLdrProp      The property to query.
+     * @param   enmProp         The property to query.
      * @param   pvBuf           Pointer to the return buffer.
      * @param   cbBuf           The size of the return buffer.
      * @sa      RTLdrQueryProp
@@ -523,10 +523,10 @@ typedef RTDBGMODVTDBG const *PCRTDBGMODVTDBG;
  *
  * @returns IPRT status code. On success the necessary method tables should be
  *          installed in @a pMod.
- * @param   pMod            Pointer to the debug module structure.
+ * @param   pDbgMod         Pointer to the debug module structure.
  * @param   pDeferred       The deferred load data.
  */
-typedef DECLCALLBACK(int) FNRTDBGMODDEFERRED(PRTDBGMODINT pMod, struct RTDBGMODDEFERRED *pDeferred);
+typedef DECLCALLBACK(int) FNRTDBGMODDEFERRED(PRTDBGMODINT pDbgMod, struct RTDBGMODDEFERRED *pDeferred);
 /** Pointer to a deferred loading callback. */
 typedef FNRTDBGMODDEFERRED *PFNRTDBGMODDEFERRED;
 
@@ -638,27 +638,6 @@ typedef struct RTDBGMODINT
 } RTDBGMODINT;
 /** Pointer to an debug module structure.  */
 typedef RTDBGMODINT *PRTDBGMODINT;
-
-
-/**
- * Special segment package used passing segment order information for mach-o
- * images (mainly mach_kernel, really).
- *
- * Passes to rtDbgModDwarf_TryOpen via RTDBGMODINF::pvDbgPriv.
- */
-typedef struct RTDBGDWARFSEGPKG
-{
-    /** Pointer to the segment array. */
-    PCRTDBGSEGMENT      paSegs;
-    /** Number of segments. */
-    uint32_t            cSegs;
-    /** For use more internal use in file locator callbacks. */
-    RTLDRARCH           enmArch;
-    /** For use more internal use in file locator callbacks. */
-    PCRTUUID            pUuid;
-} RTDBGDWARFSEGPKG;
-/** Pointer to a const segment package. */
-typedef RTDBGDWARFSEGPKG const *PCRTDBGDWARFSEGPKG;
 
 
 extern DECLHIDDEN(RTSTRCACHE)           g_hDbgModStrCache;

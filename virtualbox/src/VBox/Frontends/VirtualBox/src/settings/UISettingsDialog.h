@@ -1,11 +1,10 @@
+/* $Id: UISettingsDialog.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UISettingsDialog class declaration
+ * VBox Qt GUI - UISettingsDialog class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,8 +30,9 @@ class QProgressBar;
 class QStackedWidget;
 class QTimer;
 class UIWarningPane;
-class VBoxSettingsSelector;
+class UISettingsSelector;
 class UISettingsPage;
+class UISettingsSerializer;
 
 /* Using declarations: */
 using namespace UISettingsDefs;
@@ -53,6 +53,9 @@ public:
 
 protected slots:
 
+    /** Hides the modal dialog and sets the result code to Accepted. */
+    virtual void accept();
+
     /* Category-change slot: */
     virtual void sltCategoryChanged(int cId);
 
@@ -63,28 +66,42 @@ protected slots:
 
     /* Handlers for process bar: */
     void sltHandleProcessStarted();
-    void sltHandlePageProcessed();
+    void sltHandleProcessProgressChange(int iValue);
 
 protected:
 
-    /* Save/load API: */
-    virtual void loadData();
-    virtual void saveData();
+    /** Returns the serialize process instance. */
+    UISettingsSerializer* serializeProcess() const { return m_pSerializeProcess; }
+    /** Returns whether the serialization is in progress. */
+    bool isSerializationInProgress() const { return m_fSerializationIsInProgress; }
+
+    /** Loads the @a data. */
+    void loadData(QVariant &data);
+    /** Wrapper for the method above.
+      * Loads the data from the corresponding source. */
+    virtual void loadOwnData() = 0;
+
+    /** Saves the @a data. */
+    void saveData(QVariant &data);
+    /** Wrapper for the method above.
+      * Saves the data to the corresponding source. */
+    virtual void saveOwnData() = 0;
 
     /* UI translator: */
     virtual void retranslateUi();
 
-    /* Dialog type: */
-    SettingsDialogType dialogType() { return m_dialogType; }
-    void setDialogType(SettingsDialogType settingsDialogType);
-    /* Dialog title: */
+    /** Returns configuration access level. */
+    ConfigurationAccessLevel configurationAccessLevel() { return m_configurationAccessLevel; }
+    /** Defines configuration access level. */
+    void setConfigurationAccessLevel(ConfigurationAccessLevel newConfigurationAccessLevel);
+
+    /** Returns the dialog title extension. */
+    virtual QString titleExtension() const = 0;
+    /** Returns the dialog title. */
     virtual QString title() const = 0;
-    /* Dialog title extension: */
-    virtual QString titleExtension() const;
 
     /* Add settings page: */
-    void addItem(const QString &strBigIcon, const QString &strBigIconDisabled,
-                 const QString &strSmallIcon, const QString &strSmallIconDisabled,
+    void addItem(const QString &strBigIcon, const QString &strMediumIcon, const QString &strSmallIcon,
                  int cId, const QString &strLink,
                  UISettingsPage* pSettingsPage = 0, int iParentId = -1);
 
@@ -94,7 +111,7 @@ protected:
     void revalidate();
 
     /* Protected variables: */
-    VBoxSettingsSelector *m_pSelector;
+    UISettingsSelector *m_pSelector;
     QStackedWidget *m_pStack;
 
 private slots:
@@ -119,13 +136,18 @@ private:
     /* Helper: Validation stuff: */
     void assignValidator(UISettingsPage *pPage);
 
+    /** Holds configuration access level. */
+    ConfigurationAccessLevel m_configurationAccessLevel;
+
     /* Global Flags: */
-    SettingsDialogType m_dialogType;
     bool m_fPolished;
 
-    /* Loading/saving stuff: */
-    bool m_fLoaded;
-    bool m_fSaved;
+    /** Holds the serialize process instance. */
+    UISettingsSerializer *m_pSerializeProcess;
+    /** Holds whether the serialization is in progress. */
+    bool m_fSerializationIsInProgress;
+    /** Holds whether there were no serialization errors. */
+    bool m_fSerializationClean;
 
     /* Status bar widget: */
     QStackedWidget *m_pStatusBar;
@@ -144,9 +166,9 @@ private:
     QPointer<QWidget> m_pWhatsThisCandidate;
 
     QMap<int, int> m_pages;
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     QList<QSize> m_sizeList;
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 };
 
 #endif // __UISettingsDialog_h__
