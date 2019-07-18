@@ -37,7 +37,8 @@ BuildRequires:  gcc
 BuildRequires:  gcc-c++
 BuildRequires:  kernel-adaptation-pc >= 5.0.21
 BuildRequires:  kernel-adaptation-pc-devel >= 5.0.21
-%define kernel_version %{expand:%(rpm -q --qf '[%%{version}-%%{release}]' kernel-adaptation-pc-devel)}
+%define kernel_rpm_version %{expand:%(rpm -q --qf '[%%{version}-%%{release}]' kernel-adaptation-pc-devel)}
+%define kernel_version %{lua:print((rpm.expand("%{kernel_rpm_version}"):gsub("\+.+-", "-")))}
 BuildRequires:  kbuild
 #BuildRequires:  kernel-syms
 BuildRequires:  libcap-devel
@@ -102,7 +103,7 @@ GNU Public License (GPL).
 %package guest-modules
 Summary:        Guest kernel modules for VirtualBox
 Group:          System/Emulators/PC
-Requires:	kernel-adaptation-pc == %{kernel_version}
+Requires:	kernel-adaptation-pc == %{kernel_rpm_version}
 
 %description guest-modules
 This package contains the kernel-module for VirtualBox.
