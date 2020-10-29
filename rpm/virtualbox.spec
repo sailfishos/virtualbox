@@ -169,7 +169,7 @@ echo "SED = $(readlink -f ./kmk_sed)"  >> LocalConfig.kmk
 	--enable-webservice
 
 # configure actually warns we should source env.sh (which seems like it could influence the build...)
-source env.sh
+source ./env.sh
 
 #
 #  	VBOX_PATH_PACKAGE_DOCS set propper path for link to pdf in .desktop file
