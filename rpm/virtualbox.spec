@@ -60,7 +60,7 @@ BuildRequires:  udev
 BuildRequires:  yasm
 #BuildRequires:  zlib-devel-static
 # and just for the macro:
-BuildRequires:   systemd
+BuildRequires:   pkgconfig(systemd)
 
 Version:        5.2.30
 Release:        1
