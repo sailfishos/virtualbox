@@ -68,3 +68,11 @@ __divdi3(a, b)
 		uq = - uq;
 	return uq;
 }
+
+quad_t
+__divmoddi4(quad_t a, quad_t b, quad_t* rem)
+{
+	quad_t d = __divdi3(a,b);
+	*rem = a - (d*b);
+	return d;
+}
