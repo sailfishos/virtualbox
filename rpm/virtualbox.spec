@@ -49,7 +49,7 @@ BuildRequires:  libxslt-devel
 BuildRequires:  module-init-tools
 #BuildRequires:  pam-devel
 BuildRequires:  pulseaudio-devel
-BuildRequires:  python-devel
+#BuildRequires:  python-devel
 BuildRequires:  quilt
 BuildRequires:  udev
 #BuildRequires:  update-desktop-files
