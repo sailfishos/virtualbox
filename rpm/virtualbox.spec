@@ -222,6 +222,10 @@ rm -f %{buildroot}/lib/modules/*/modules.*
 # Remove vboxvideo which is not needed with new kernel
 rm -f %{buildroot}/lib/modules/*/vbox/vboxvideo.ko
 
+# Make modules temporarily executable for find-debuginfo to notice them.
+# The exec permissions will be implicitly dropped in later phases of the build.
+find %{buildroot}/lib/modules/*/vbox/ -name "*.ko" -type f -exec chmod u+x {} \;
+
 ###########################################
 echo "entering guest-tools install section"
 ###########################################
